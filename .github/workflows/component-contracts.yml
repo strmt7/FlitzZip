@@ -36,6 +36,7 @@ on:
       - .github/scanner-source-reviews.csv
       - .github/scanner-hosted-reviews.csv
       - .github/scanner-hosted-approval.csv
+      - .github/scanner-false-positive-reviews.csv
       - .github/codeql/**
       - .github/openvas/**
       - .github/workflows/greenbone-openvas-vulnetix.yml

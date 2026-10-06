@@ -605,7 +605,7 @@ Assert-Selector ($fullIntermediate.scope.fullEscalationRequired -and $fullInterm
 
 foreach ($path in @('tools/github_post_push_audit.ps1', 'tools/test_github_post_push_audit.ps1',
         'tools/scanner_metadata_review.py', 'tools/test_scanner_metadata_review.py', '.github/scanner-source-reviews.csv',
-        'tools/scanner_hosted_review.py', 'tools/test_scanner_hosted_review.py', '.github/scanner-hosted-reviews.csv', '.github/scanner-hosted-approval.csv')) {
+        'tools/scanner_hosted_review.py', 'tools/test_scanner_hosted_review.py', '.github/scanner-hosted-reviews.csv', '.github/scanner-hosted-approval.csv', '.github/scanner-false-positive-reviews.csv')) {
     $auditPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     if ($path.StartsWith('tools/')) {
         Assert-Selector $auditPlan.scope.touchesVerification "post-push audit changes are verification tooling: $path"
@@ -615,7 +615,7 @@ foreach ($path in @('tools/github_post_push_audit.ps1', 'tools/test_github_post_
 }
 
 foreach ($path in @('tools/scanner_hosted_review.py', 'tools/test_scanner_hosted_review.py',
-        '.github/scanner-hosted-reviews.csv', '.github/scanner-hosted-approval.csv', 'tools/scanner_metadata_review.py', 'tools/github_post_push_audit.ps1')) {
+        '.github/scanner-hosted-reviews.csv', '.github/scanner-hosted-approval.csv', '.github/scanner-false-positive-reviews.csv', 'tools/scanner_metadata_review.py', 'tools/github_post_push_audit.ps1')) {
     $hostedReviewPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     Assert-Selector (Test-RequiredCommand -Plan $hostedReviewPlan -Id 'scanner-hosted-review-tests') "hosted review producers and consumers must run expiry contracts: $path"
     Assert-Selector (-not (Test-RequiredCommand -Plan $hostedReviewPlan -Id 'release-build')) "hosted admission tooling must not repeat an unchanged native build: $path"

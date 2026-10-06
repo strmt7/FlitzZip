@@ -634,8 +634,9 @@ an enforceable production contract, its direct-consumer regression and fresh
 analysis of the repaired bytes before claiming source closure. The maintainer's
 exact [governance baseline](../.github/scanner-governance-baseline.json) accepts
 the identified CodeReview and CII Best Practices observations as passing.
-Reports remain visible; every other open or reproduced finding still blocks
-acceptance. Retain
+Reports remain visible. A separately authorized, individually proven false
+positive may use the [current exact-source review contract](security-source-remediation-redesign.md#acceptance-and-recurrence).
+All unmatched open or reproduced findings still block acceptance. Retain
 deliberately failing sanitizer controls and staged upstream header contracts;
 an empty alert list never justifies weakening them.
 

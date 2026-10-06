@@ -1,4 +1,4 @@
-"""Retain raw findings and historical reviews; only exact public metadata can be admitted."""
+"""Retain raw reports and distinguish metadata, current false positives and historical reviews."""
 
 from __future__ import annotations
 
@@ -11,7 +11,11 @@ import re
 import subprocess
 from pathlib import Path
 
-from tools.scanner_hosted_review import match_historical_hosted_alerts, read_hosted_policy
+from tools.scanner_hosted_review import (
+    match_current_false_positives,
+    match_historical_hosted_alerts,
+    read_hosted_policy,
+)
 
 POLICY = Path(".github/scanner-metadata-reviews.csv")
 FIELDS = ("path", "rule", "input_sha256", "public_sha256", "evidence")
@@ -238,14 +242,16 @@ def match_historical_source_alerts(root: Path, alerts: list[dict], commit: str, 
     return accepted
 
 
-# Purpose: Report historical source context or revalidate exact current public-integrity metadata.
+# Purpose: Report historical context or revalidate explicitly authorized current finding reviews.
 # Inputs: A bounded raw alert snapshot and optional full commit.
-# Outputs: Informational source matches or exact metadata IDs; source reviews never establish closure.
+# Outputs: Historical context or exact reviewed IDs; no disposition claims a production repair.
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hosted-alerts", required=True, type=Path)
     parser.add_argument("--commit", default="")
     parser.add_argument("--current-metadata", action="store_true")
+    parser.add_argument("--current-reviews", action="store_true")
+    parser.add_argument("--repository", default="")
     arguments = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     with arguments.hosted_alerts.open("rb") as stream:
@@ -260,6 +266,15 @@ def main() -> None:
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True, timeout=15
         ).stdout.strip()
+    if arguments.current_reviews:
+        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", arguments.repository) is None:
+            raise ValueError("Current finding review requires the audited repository")
+        accepted = match_current_metadata_alerts(root, alerts, commit, read_policy(root))
+        accepted += match_current_false_positives(root, alerts, commit, arguments.repository)
+        if len(set(accepted)) != len(accepted):
+            raise ValueError("Current finding reviews overlap")
+        print(json.dumps({"reviewed_findings": sorted(accepted)}))
+        return
     if arguments.current_metadata:
         accepted = match_current_metadata_alerts(root, alerts, commit, read_policy(root))
         print(json.dumps({"reviewed_metadata": sorted(accepted)}))

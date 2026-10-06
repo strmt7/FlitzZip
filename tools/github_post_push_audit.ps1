@@ -248,18 +248,19 @@ function Assert-CodeScanningClosure {
     }
 }
 
-# Purpose: Apply only the existing exact public-integrity contract to current dismissed metadata reports.
-# Inputs: Current dismissed alert objects and a full analyzed commit; no source-review ledger is consulted.
-# Outputs: Returns individually matched metadata IDs; unavailable or malformed review evidence fails closed.
-function Get-CurrentMetadataReview {
-    param([object[]]$Alerts, [string]$Commit)
+# Purpose: Verify exact authorized false positives and public metadata against the audited Git source.
+# Inputs: Complete open/current dismissed reports, repository identity and qualified commit.
+# Outputs: Individually matched IDs; historical approvals and malformed evidence cannot admit findings.
+function Get-CurrentFindingReview {
+    param([object[]]$Alerts, [string]$Commit, [string]$Repository)
 
-    if (@($Alerts | Where-Object { $_.tool.name -eq 'devskim' -and $_.rule.id -eq 'DS173237' }).Count -eq 0) {
+    if (@($Alerts | Where-Object { $_.tool.name -in @('CodeQL', 'devskim') -and
+            $_.tool.version -is [string] -and $_.tool.version.Length -gt 0 }).Count -eq 0) {
         return @()
     }
     $directory = Join-Path $repoRoot ('out/post-push-audit/' + [Guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($directory)
-    $snapshot = Join-Path $directory 'current-dismissed.json'
+    $snapshot = Join-Path $directory 'current-findings.json'
     $minimal = @($Alerts | ForEach-Object {
         [ordered]@{ number = $_.number; state = $_.state; tool = $_.tool; rule = $_.rule
             most_recent_instance = $_.most_recent_instance }
@@ -267,23 +268,24 @@ function Get-CurrentMetadataReview {
     [IO.File]::WriteAllText($snapshot, (ConvertTo-Json -InputObject $minimal -Depth 12), [Text.UTF8Encoding]::new($false))
     Push-Location $repoRoot
     try {
-        $output = py -3 -B -m tools.scanner_metadata_review --hosted-alerts $snapshot --commit $Commit --current-metadata
-        if ($LASTEXITCODE -ne 0) { throw 'Current public-metadata review failed; source findings remain blocking.' }
+        $output = py -3 -B -m tools.scanner_metadata_review --hosted-alerts $snapshot --commit $Commit `
+            --current-reviews --repository $Repository
+        if ($LASTEXITCODE -ne 0) { throw 'Current finding review failed; findings remain blocking.' }
         $review = ($output -join "`n") | ConvertFrom-Json
         if ($review.PSObject.Properties.Name.Count -ne 1 -or
-            $review.PSObject.Properties.Name -ne 'reviewed_metadata' -or
-            $review.reviewed_metadata -isnot [System.Array]) {
-            throw 'Current public-metadata review returned an invalid decision.'
+            $review.PSObject.Properties.Name -ne 'reviewed_findings' -or
+            $review.reviewed_findings -isnot [System.Array]) {
+            throw 'Current finding review returned an invalid decision.'
         }
         $seen = [System.Collections.Generic.HashSet[long]]::new()
         $possible = @($Alerts.number)
-        foreach ($number in $review.reviewed_metadata) {
+        foreach ($number in $review.reviewed_findings) {
             if (($number -isnot [int] -and $number -isnot [long]) -or $number -le 0 -or
                 $number -notin $possible -or -not $seen.Add([long]$number)) {
-                throw 'Current public-metadata review returned an unbound decision.'
+                throw 'Current finding review returned an unbound decision.'
             }
         }
-        return @($review.reviewed_metadata)
+        return @($review.reviewed_findings)
     } finally {
         Pop-Location
     }
@@ -383,10 +385,10 @@ $current = @($dismissed | Where-Object {
     $analysisCommit = if ($analyses.ContainsKey($key)) { $analyses[$key] } else { $Commit }
     $_.most_recent_instance.commit_sha -eq $analysisCommit -and $_.most_recent_instance.state -eq 'dismissed'
 })
-$metadata = @(Get-CurrentMetadataReview -Alerts $current -Commit $Commit)
+$reviewed = @(Get-CurrentFindingReview -Alerts (@($alerts) + @($current)) -Commit $Commit -Repository $repo)
 $governance = @(Get-AcceptedGovernanceAlert -Repository $repo -Alerts (@($alerts) + @($current)))
-$blockingOpen = @($alerts | Where-Object { $_.number -notin $governance })
-$unresolved = @($current | Where-Object { $_.number -notin $metadata -and $_.number -notin $governance })
+$blockingOpen = @($alerts | Where-Object { $_.number -notin $governance -and $_.number -notin $reviewed })
+$unresolved = @($current | Where-Object { $_.number -notin $reviewed -and $_.number -notin $governance })
 Write-Output "Accepted governance baseline: $($governance.Count). Raw open alerts retained: $($alerts.Count)."
 Assert-CodeScanningClosure -Alerts $blockingOpen -CurrentDismissed $unresolved
-Write-Output "GitHub post-push audit passed for $repo. Deployments: 0. Blocking open alerts: 0. Active dismissed findings outside the baseline: 0. Exact public-metadata reviews: $($metadata.Count). Commit: $Commit."
+Write-Output "GitHub post-push audit passed for $repo. Deployments: 0. Unresolved open/current dismissed findings: 0. Exact authorized reviews: $($reviewed.Count). Commit: $Commit."

@@ -46,10 +46,14 @@ Broad size superiority and comparative GPU speed remain research targets.
 - Current source-analysis reports also require review even when GitHub retains
   an earlier dismissed state. The audit checks those current instances and does
   not equate a dismissal or an empty open-alert list with a production repair.
+  The maintainer authorizes only [individually proven false positives](security-reviews/current-source-findings.md)
+  through the exact-source contract; unmatched findings remain blocking.
 - Dependabot reports the development crawler's upstream NLTK advisory, whose
   reviewed upstream version has no officially released fix. The source-built
   downstream repair has retained original-failure and installed-consumer tests.
-  It does not relabel the upstream version or remove the advisory.
+  It does not relabel the upstream version or remove the advisory. The maintainer
+  [temporarily accepts this exact alert](security-reviews/dependency-risk-acceptance.md)
+  for this round, so it is not a current blocker.
 - Exact candidate ZIP/MSI, checksums and installer install/repair/uninstall
   qualification must pass on the candidate's pushed SHA before release approval.
 - A full version-eleven Govdocs1 study, controlled paired timings and authenticated

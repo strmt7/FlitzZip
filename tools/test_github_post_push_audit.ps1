@@ -404,6 +404,55 @@ try {
     Remove-Item -LiteralPath Alias:py
 }
 
+# Purpose: Exercise the authorized exact-review decision without consulting historical cohorts.
+# Inputs: The real audit CLI arguments and retained raw snapshot, with controlled matcher responses.
+# Outputs: Bounded fixture output/status; a wrong snapshot, repository or command fails the test.
+function Invoke-TestCurrentReview {
+    if ($args.Count -ne 11 -or ($args[0..4] -join ' ') -ne '-3 -B -m tools.scanner_metadata_review --hosted-alerts' -or
+            $args[6] -ne '--commit' -or $args[7] -ne ('a' * 40) -or $args[8] -ne '--current-reviews' -or
+            $args[9] -ne '--repository' -or $args[10] -ne 'fixture/repository') {
+        throw 'Unexpected current finding review command.'
+    }
+    $snapshot = Get-Content -LiteralPath $args[5] -Raw | ConvertFrom-Json
+    $incident = @($snapshot | Where-Object number -eq 77)
+    if ($snapshot.Count -ne $currentSnapshotCount -or $incident.Count -ne 1 -or
+            $incident[0].state -ne 'open' -or $incident[0].tool.version -ne 'fixture-version') {
+        throw 'Current finding review lost raw report identity or state.'
+    }
+    $global:LASTEXITCODE = $currentReviewExitCode
+    return $currentReviewReply
+}
+$currentReviewExitCode = 0
+$currentSnapshotCount = 1
+$currentReviewReply = '{"reviewed_findings":[77]}'
+$reviewableJson = '[{"number":77,"state":"open","tool":{"name":"CodeQL","version":"fixture-version"},"rule":{"id":"cpp/test-rule"}}]'
+$emptyDismissed = Get-ApiReply $dismissedEndpoint 0 '[]'
+Set-Alias -Name py -Value Invoke-TestCurrentReview -Scope Script
+try {
+    Test-AuditCase 'current exact false positive passes with raw report retained' @($emptyDeployments, (Get-ApiReply $alerts 0 $reviewableJson))
+    if (-not $lastAuditOutput.Contains('Raw open alerts retained: 1.')) { throw 'Reviewed raw finding disappeared from audit output.' }
+    $currentSnapshotCount = 2
+    $mixedReviewable = $reviewableJson.TrimEnd(']') + ',' + $unapprovedJson.TrimStart('[')
+    Test-AuditCase 'exact review leaves every other report blocking' @($emptyDeployments, (Get-ApiReply $alerts 0 $mixedReviewable)) `
+        'Unresolved code-scanning alerts are open: 1.'
+    $currentSnapshotCount = 1
+    $currentReviewReply = '{"reviewed_findings":[]}'
+    Test-AuditCase 'expired exact review keeps source blocking' @($emptyDeployments, (Get-ApiReply $alerts 0 $reviewableJson)) `
+        'Unresolved code-scanning alerts are open: 1.'
+    foreach ($currentReviewReply in @('{"reviewed_findings":[2]}', '{"reviewed_findings":["77"]}',
+            '{"reviewed_findings":[77,77]}', '{"reviewed_findings":77}', '{"reviewed_findings":null}',
+            '{"reviewed_findings":[77],"extra":true}', '{"reviewed_metadata":[77]}')) {
+        Test-AuditCase 'unbound or malformed review decision cannot pass' @($emptyDeployments, (Get-ApiReply $alerts 0 $reviewableJson)) `
+            'Current finding review returned' -DismissedResponses @($emptyDismissed)
+    }
+    $currentReviewReply = '{"reviewed_findings":[77]}'
+    $currentReviewExitCode = 1
+    Test-AuditCase 'failed matcher cannot admit plausible exact decision' @($emptyDeployments, (Get-ApiReply $alerts 0 $reviewableJson)) `
+        'Current finding review failed' -DismissedResponses @($emptyDismissed)
+} finally {
+    Remove-Item -LiteralPath Alias:py
+}
+
 $reportRoot = Join-Path ([IO.Path]::GetTempPath()) ('superzip-history-audit-' + [Guid]::NewGuid().ToString('N'))
 $reportPath = Join-Path $reportRoot 'history.json'
 try {

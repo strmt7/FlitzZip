@@ -1,4 +1,4 @@
-"""Match historical hosted review identities for audit context; never establish source closure."""
+"""Retain historical reviews and verify separately authorized, exact false-positive evidence."""
 
 from __future__ import annotations
 
@@ -53,6 +53,184 @@ SOURCE = re.compile(
 MAX_POLICY = 64 * 1024
 DERIVED_ROOT = "build/zstd-v1.5.7-source/zstd-1.5.7/lib"
 APPROVAL = ".github/scanner-hosted-approval.csv"
+CURRENT_POLICY = ".github/scanner-false-positive-reviews.csv"
+MAX_CURRENT_CACHE_BYTES = 32 * 1024**2
+CURRENT_FIELDS = (
+    "repository",
+    "alert",
+    "tool",
+    "version",
+    "category",
+    "path",
+    "rule",
+    "start_line",
+    "start_column",
+    "end_line",
+    "end_column",
+    "input_sha256",
+    "context_paths",
+    "context_sha256",
+    "evidence",
+)
+CURRENT_CONFIGURATION = (
+    *CONFIGURATION,
+    ".github/requirements/devskim-packaging.json",
+    "tools/devskim_scope.py",
+    "tools/devskim_report.py",
+)
+
+
+# Purpose: Reject ambiguous or redirected review input names before filesystem or Git access.
+# Inputs: One repository-relative filename. Outputs: The validated name or an error.
+def review_path(name: str) -> str:
+    if not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9_.\-/]+", name) is None:
+        raise ValueError("Invalid false-positive review path")
+    if name.startswith("/") or any(part in ("", ".", "..") for part in name.split("/")):
+        raise ValueError("Invalid false-positive review path")
+    return name
+
+
+# Purpose: Read a complete regular Git blob with bounded output, without following symbolic links.
+# Inputs: Checkout, full commit and validated filename. Outputs: Immutable blob bytes or an error.
+def committed_review_blob(root: Path, commit: str, name: str) -> bytes:
+    review_path(name)
+    if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+        raise ValueError("False-positive review requires a full commit")
+    options = {"cwd": root, "check": True, "capture_output": True, "timeout": 15}
+    entry = subprocess.run(["git", "ls-tree", "-l", "-z", commit, "--", name], **options).stdout
+    metadata, separator, filename = entry.partition(b"\t")
+    fields = metadata.split()
+    if (
+        not separator
+        or filename != name.encode("utf-8") + b"\0"
+        or len(fields) != 4
+        or fields[0] not in (b"100644", b"100755")
+        or fields[1] != b"blob"
+        or not fields[3].isdigit()
+        or int(fields[3]) > 2 * 1024**2
+    ):
+        raise ValueError("False-positive review requires a bounded regular committed file")
+    payload = subprocess.run(["git", "cat-file", "blob", fields[2].decode("ascii")], **options).stdout
+    if len(payload) != int(fields[3]):
+        raise ValueError("False-positive review blob size changed")
+    return payload
+
+
+# Purpose: Validate individual current decisions independently of all historical approval ledgers.
+# Inputs: Bounded CSV bytes. Outputs: Strict records; malformed, duplicate or broadened decisions fail.
+def read_current_reviews(payload: bytes) -> list[dict[str, str]]:
+    if len(payload) > MAX_POLICY:
+        raise ValueError("Current false-positive review exceeds its byte budget")
+    reader = csv.DictReader(io.StringIO(payload.decode("utf-8")))
+    if tuple(reader.fieldnames or ()) != CURRENT_FIELDS:
+        raise ValueError("Current false-positive review has an unknown schema")
+    rows, seen = [], set()
+    for row in reader:
+        if len(rows) >= 256 or set(row) != set(CURRENT_FIELDS) or any(not value for value in row.values()):
+            raise ValueError("Invalid current false-positive review record")
+        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", row["repository"]) is None:
+            raise ValueError("Invalid reviewed repository")
+        for key in ("alert", "start_line", "start_column", "end_line", "end_column"):
+            minimum = 0 if key.endswith("column") else 1
+            if not row[key].isascii() or not row[key].isdecimal() or not minimum <= int(row[key]) <= 10**7:
+                raise ValueError("Invalid reviewed alert or location")
+        if (int(row["end_line"]), int(row["end_column"])) < (int(row["start_line"]), int(row["start_column"])):
+            raise ValueError("Reversed reviewed location")
+        if row["tool"] not in ("CodeQL", "devskim") or any(
+            re.fullmatch(r"[0-9a-f]{64}", row[key]) is None for key in ("input_sha256", "context_sha256")
+        ):
+            raise ValueError("Invalid reviewed scanner or digest")
+        review_path(row["path"])
+        context = row["context_paths"].split("|")
+        if len(context) > 64 or context != sorted(set(context)):
+            raise ValueError("Invalid reviewed caller context")
+        for name in context:
+            review_path(name)
+        evidence, separator, anchor = row["evidence"].partition("#")
+        review_path(evidence)
+        if not separator or anchor != "alert-" + row["alert"] or evidence not in context:
+            raise ValueError("Individual false-positive evidence is missing")
+        if not set(CURRENT_CONFIGURATION).issubset(context) or row["path"] not in context:
+            raise ValueError("False-positive review omits source or scanner configuration")
+        identity = (row["repository"], int(row["alert"]))
+        if identity in seen:
+            raise ValueError("Duplicate false-positive review identity")
+        seen.add(identity)
+        rows.append(row)
+    return rows
+
+
+# Purpose: Compare complete source, relevant callers, scanner recipes and evidence with a reviewed context.
+# Inputs: Validated record and cached immutable file reader. Outputs: True only for the exact reviewed bytes.
+def current_context_matches(row: dict[str, str], read_blob) -> bool:
+    evidence = read_blob(row["evidence"].split("#", 1)[0]).decode("utf-8")
+    if f"### Alert {row['alert']}" not in evidence.splitlines():
+        return False
+    hashes = {
+        name: hashlib.sha256(read_blob(name).replace(b"\r\n", b"\n")).hexdigest()
+        for name in row["context_paths"].split("|")
+    }
+    return (
+        hashes[row["path"]] == row["input_sha256"]
+        and hashlib.sha256(canonical(hashes)).hexdigest() == row["context_sha256"]
+    )
+
+
+# Purpose: Admit only individually proven false positives authorized in the current committed ledger.
+# Inputs: Raw hosted alerts, repository and qualified commit; all dependencies are read from Git.
+# Outputs: Exact reviewed IDs without altering reports; changed identities and all other findings remain unresolved.
+def match_current_false_positives(root: Path, alerts: list[dict], commit: str, repository: str) -> list[int]:
+    if re.fullmatch(r"[0-9a-f]{40}", commit) is None or len(alerts) > 20000:
+        raise ValueError("False-positive review requires a full commit and bounded inventory")
+    cache = {}
+    cached_bytes = 0
+
+    # Purpose: Reuse an immutable blob within this single decision without stale cross-run state.
+    # Inputs: Full commit and relative name. Outputs: Complete bytes, verified once per identity.
+    def blob(revision: str, name: str) -> bytes:
+        nonlocal cached_bytes
+        key = (revision, name)
+        if key not in cache:
+            payload = committed_review_blob(root, revision, name)
+            cached_bytes += len(payload)
+            if cached_bytes > MAX_CURRENT_CACHE_BYTES:
+                raise ValueError("Current review exceeds its aggregate evidence byte budget")
+            cache[key] = payload
+        return cache[key]
+
+    policy = blob(commit, CURRENT_POLICY)
+    if source_digest(root, CURRENT_POLICY) != hashlib.sha256(policy.replace(b"\r\n", b"\n")).hexdigest():
+        raise ValueError("Current false-positive ledger differs from the audited commit")
+    rows = {int(row["alert"]): row for row in read_current_reviews(policy) if row["repository"] == repository}
+    accepted, seen = [], set()
+    for alert in alerts:
+        number = alert.get("number")
+        if type(number) is not int or number <= 0 or number in seen:
+            raise ValueError("Invalid or duplicate hosted alert identity")
+        seen.add(number)
+        row = rows.get(number)
+        if row is None or alert.get("state") not in ("open", "dismissed"):
+            continue
+        tool, instance = alert.get("tool", {}), alert.get("most_recent_instance", {})
+        if (tool.get("name"), tool.get("version"), instance.get("category"), alert.get("rule", {}).get("id")) != tuple(
+            row[key] for key in ("tool", "version", "category", "rule")
+        ):
+            continue
+        location = instance.get("location", {})
+        if location.get("path") != row["path"] or any(
+            type(location.get(key)) is not int or location[key] != int(row[key])
+            for key in ("start_line", "start_column", "end_line", "end_column")
+        ):
+            continue
+        analyzed = instance.get("commit_sha", "")
+        if not current_context_matches(row, lambda name: blob(commit, name)):
+            continue
+        # Analysis may precede a docs-only push. Its executable context must independently match.
+        executable = [name for name in row["context_paths"].split("|") if not name.startswith("docs/")]
+        if any(blob(analyzed, name) != blob(commit, name) for name in executable):
+            continue
+        accepted.append(number)
+    return accepted
 
 
 # Purpose: Seal every approved incident field independently from a renewable caller-context receipt.

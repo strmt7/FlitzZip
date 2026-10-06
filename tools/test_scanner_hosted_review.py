@@ -4,6 +4,8 @@ import copy
 import csv
 import hashlib
 import io
+import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -205,6 +207,215 @@ class HostedReviewTests(unittest.TestCase):
             path.write_text(payload, encoding="utf-8")
             with self.assertRaises(ValueError):
                 review.read_approval_digest(self.root)
+
+
+class CurrentFalsePositiveTests(unittest.TestCase):
+    # Purpose: Exercise committed review identity using an isolated real Git repository.
+    # Inputs: Independent source, caller, configuration and reviewed incident fixtures.
+    # Outputs: A complete valid decision with no network access or scanner/build invocation.
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.context = sorted((*review.CURRENT_CONFIGURATION, "src/example.c", "src/caller.c", "docs/review.md"))
+        for name in self.context:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"### Alert 17\nreviewed fixture\n" if name.startswith("docs/") else b"fixture input\n")
+        self.row = dict(
+            repository="fixture/repository",
+            alert="17",
+            tool="CodeQL",
+            version="test-version",
+            category="/language:c-cpp",
+            path="src/example.c",
+            rule="cpp/test-rule",
+            start_line="1",
+            start_column="1",
+            end_line="1",
+            end_column="6",
+            input_sha256="",
+            context_sha256="",
+            context_paths="|".join(self.context),
+            evidence="docs/review.md#alert-17",
+        )
+        self.write_policy()
+        self.git("init", "-q")
+        self.commit = self.save_commit()
+        self.alert = {
+            "number": 17,
+            "state": "open",
+            "tool": {"name": "CodeQL", "version": "test-version"},
+            "rule": {"id": "cpp/test-rule"},
+            "most_recent_instance": {
+                "category": "/language:c-cpp",
+                "commit_sha": self.commit,
+                "location": {
+                    "path": "src/example.c",
+                    "start_line": 1,
+                    "start_column": 1,
+                    "end_line": 1,
+                    "end_column": 6,
+                },
+            },
+        }
+
+    # Purpose: Keep fixture Git configuration and commands local to the owned temporary repository.
+    # Inputs: Literal argument vector. Outputs: Captured successful command output or a test failure.
+    def git(self, *arguments):
+        return subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.autocrlf=false",
+                "-c",
+                "user.name=Review fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                *arguments,
+            ],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        ).stdout.strip()
+
+    # Purpose: Commit the complete independent fixture for real blob and revision validation.
+    # Inputs: Current fixture files. Outputs: New full Git commit identity.
+    def save_commit(self):
+        self.git("add", ".")
+        self.git("commit", "-qm", "Independent review fixture")
+        return self.git("rev-parse", "HEAD")
+
+    # Purpose: Serialize an explicit review with hashes computed independently from the matcher.
+    # Inputs: Current fixture bytes. Outputs: Complete current CSV with exact context evidence.
+    def write_policy(self):
+        hashes = {name: hashlib.sha256((self.root / name).read_bytes()).hexdigest() for name in self.context}
+        self.row["input_sha256"] = hashes[self.row["path"]]
+        encoded = json.dumps(hashes, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        self.row["context_sha256"] = hashlib.sha256(encoded).hexdigest()
+        output = io.StringIO(newline="")
+        writer = csv.DictWriter(output, fieldnames=review.CURRENT_FIELDS, lineterminator="\n")
+        writer.writeheader()
+        writer.writerow(self.row)
+        (self.root / review.CURRENT_POLICY).write_text(output.getvalue(), encoding="utf-8", newline="\n")
+
+    # Purpose: Call the production matcher with fixture identities and complete raw reports.
+    # Inputs: Optional report array, revision and repository. Outputs: Reviewed IDs from the real implementation.
+    def match(self, alerts=None, commit=None, repository="fixture/repository"):
+        return review.match_current_false_positives(
+            self.root, [self.alert] if alerts is None else alerts, commit or self.commit, repository
+        )
+
+    # Purpose: Preserve reports and require real committed source evidence for open and dismissed states.
+    # Inputs: A current decision and an unrelated report. Outputs: Only the reviewed ID, without mutation.
+    def test_exact_match_keeps_raw_reports_and_other_findings(self):
+        for state in ("open", "dismissed"):
+            self.alert["state"] = state
+            other = copy.deepcopy(self.alert)
+            other["number"] = 18
+            alerts = [self.alert, other]
+            before = copy.deepcopy(alerts)
+            self.assertEqual(self.match(alerts), [17])
+            self.assertEqual(alerts, before)
+        self.assertEqual(self.match(repository="another/repository"), [])
+
+    # Purpose: Prove scanner, location, rule and incident identity changes cannot inherit a review.
+    # Inputs: Independent one-field mutations including malformed numeric coordinates.
+    # Outputs: Every different finding remains unadmitted; duplicate reports fail closed.
+    def test_report_identity_expiry(self):
+        changes = [
+            ("tool", "name", "devskim"),
+            ("tool", "version", "next"),
+            ("rule", "id", "cpp/other"),
+            ("most_recent_instance", "category", "other"),
+        ]
+        for parent, key, value in changes:
+            changed = copy.deepcopy(self.alert)
+            changed[parent][key] = value
+            self.assertEqual(self.match([changed]), [])
+        for key, value in (
+            ("path", "src/caller.c"),
+            ("start_line", 2),
+            ("end_line", 2),
+            ("start_column", True),
+            ("end_column", 7),
+        ):
+            changed = copy.deepcopy(self.alert)
+            changed["most_recent_instance"]["location"][key] = value
+            self.assertEqual(self.match([changed]), [])
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            self.match([self.alert, self.alert])
+
+    # Purpose: Expire decisions on source, caller, scanner configuration and evidence changes.
+    # Inputs: Successive committed mutations without renewing the review.
+    # Outputs: Every mutation keeps the existing report unresolved.
+    def test_every_bound_input_expires_the_review(self):
+        for name in self.context:
+            path = self.root / name
+            original = path.read_bytes()
+            path.write_bytes(original + b"changed\n")
+            commit = self.save_commit()
+            self.assertEqual(self.match(commit=commit), [], name)
+            path.write_bytes(original)
+
+    # Purpose: Prevent renewed current evidence from accepting an analysis of different source bytes.
+    # Inputs: Changed caller and renewed fixture review, but the original analysis revision.
+    # Outputs: Old analysis stays unresolved; fresh matching analysis succeeds.
+    def test_analysis_must_match_current_executable_context(self):
+        (self.root / "src/caller.c").write_bytes(b"changed caller\n")
+        self.write_policy()
+        commit = self.save_commit()
+        self.assertEqual(self.match(commit=commit), [])
+        self.alert["most_recent_instance"]["commit_sha"] = commit
+        self.assertEqual(self.match(commit=commit), [17])
+
+    # Purpose: Accept a documentation-only revision without demanding an unchanged native rebuild.
+    # Inputs: An unrelated documentation commit with the existing source/configuration identity.
+    # Outputs: The current exact decision continues to match the qualified earlier analysis.
+    def test_unrelated_documentation_does_not_expire_review(self):
+        (self.root / "docs/unrelated.md").write_text("Unrelated documentation\n", encoding="utf-8")
+        self.assertEqual(self.match(commit=self.save_commit()), [17])
+
+    # Purpose: Bound aggregate review memory even when individual Git files fit their own limits.
+    # Inputs: A valid fixture under an intentionally tiny aggregate budget.
+    # Outputs: The review fails instead of admitting a partial evidence set.
+    def test_aggregate_evidence_budget(self):
+        with patch.object(review, "MAX_CURRENT_CACHE_BYTES", 1), self.assertRaisesRegex(ValueError, "aggregate"):
+            self.match()
+
+    # Purpose: Reject local policy substitution and incomplete per-incident evidence.
+    # Inputs: Uncommitted ledger edits and then a committed missing evidence anchor.
+    # Outputs: Neither can establish a reviewed decision.
+    def test_uncommitted_ledger_and_missing_evidence_fail(self):
+        policy = self.root / review.CURRENT_POLICY
+        original = policy.read_bytes()
+        policy.write_bytes(original + b"\n")
+        with self.assertRaisesRegex(ValueError, "differs"):
+            self.match()
+        policy.write_bytes(original)
+        (self.root / "docs/review.md").write_text("No individual decision\n", encoding="utf-8")
+        self.write_policy()
+        self.assertEqual(self.match(commit=self.save_commit()), [])
+
+    # Purpose: Reject broadened policy schemas, duplicate identities, unsafe paths and incomplete binding.
+    # Inputs: Mutated CSV records from an otherwise valid fixture.
+    # Outputs: Each malformed policy fails closed before any alert admission.
+    def test_malformed_policies_fail_closed(self):
+        original = (self.root / review.CURRENT_POLICY).read_text(encoding="utf-8")
+        for payload in (
+            original.replace("input_sha256", "ignored_sha256"),
+            original + original.splitlines()[-1] + "\n",
+            original.replace("src/example.c", "../example.c"),
+            original.replace("alert-17", "alert-18"),
+            original.replace("tools/devskim_scope.py", "tools/unreviewed_scope.py"),
+            original + "x" * review.MAX_POLICY,
+        ):
+            with self.subTest(payload=payload[:60]), self.assertRaises(ValueError):
+                review.read_current_reviews(payload.encode("utf-8"))
+        with self.assertRaisesRegex(ValueError, "regular committed"):
+            review.committed_review_blob(self.root, self.commit, "src/missing.c")
 
 
 if __name__ == "__main__":

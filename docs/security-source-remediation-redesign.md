@@ -1,8 +1,9 @@
 # Source Remediation Requirements
 
-Source findings require production repairs and fresh verification. Historical
-approvals establish reviewed identity; they do not prove memory safety or admit
-an outstanding source finding. Completed implementation details are retained in
+Demonstrated defects require production repairs and fresh verification. An
+individually proven false positive may instead use the maintainer-authorized
+contract below. Historical approvals establish reviewed identity; they do not
+prove memory safety or activate a current disposition. Completed details are retained in
 [the remediation record](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/source-remediation-implementation.md).
 
 ## Repair And Closure
@@ -39,9 +40,16 @@ Retain raw reports and stable SARIF categories and paths.
 
 `github_post_push_audit.ps1` checks the complete open inventory and findings
 reproduced on the requested commit despite an earlier dismissal. It revalidates
-only existing public-integrity approvals against the committed ledger, complete
-Git blob, producer and highlighted value. It has no source-admission path.
-Dismissal is not evidence of a source repair. The separately authorized
+existing public-integrity approvals and the separately authorized
+[individual false-positive decisions](security-reviews/current-source-findings.md).
+The latter bind repository, alert, rule, scanner version/category, exact location,
+complete source, relevant callers/tests, scanner configuration and review evidence
+through the [committed ledger](../.github/scanner-false-positive-reviews.csv).
+Both current and analyzed executable inputs must match. Changed bytes, locations,
+producers or new alerts leave a report unresolved; never renew hashes without
+reviewing the changed assumptions. Historical cohorts cannot activate this path.
+Raw reports remain retained and scanned. Neither a disposition nor GitHub
+dismissal is evidence of a production repair. The separately authorized
 [governance baseline](../.github/scanner-governance-baseline.json) accepts only
 the exact identified Scorecard observations; it does not assert that their
 governance controls have been implemented.

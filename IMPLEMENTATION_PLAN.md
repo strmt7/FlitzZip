@@ -16,7 +16,8 @@ See [beta readiness](docs/beta-readiness.md) and [release qualification](docs/re
 3. Investigate GPU failures through code, runtime and retained execution evidence.
    Keep unexplained incidents visible; a successful rerun does not establish a cause.
 4. Repair actionable security findings at source. Preserve raw findings, provenance
-   and executable recurrence guards without admitting source alerts through suppressions.
+   and executable recurrence guards. Individually proven false positives use
+   the authorized exact-source review contract without suppressing scanner output.
 5. Use licensed real corpora and RAM-only transport. Separate size qualification,
    descriptive timings, controlled comparisons and broader effectiveness claims.
 6. Keep development tools portable, verification proportional to changed consumers,
@@ -39,18 +40,14 @@ publication; resume these gates before declaring the next beta ready.
    Gzip and Bzip2 callback lifetimes, LZ4 length/error handling and staged-header
    contract, and remaining allocation/copy and test-fixture reports. Preserve
    independent regressions and verify production repairs with the original
-   detectors. Only the two exact, maintainer-approved governance observations
-   count as a pass through the existing baseline.
-2. **Resolve the development dependency advisory.** Preserve the NLTK repair's
-   original-failure and installed-consumer evidence. Check the upstream advisory
-   and compatible fixed releases before changing the pinned crawler environment.
-   The outstanding upstream alert must remain visible; successful crawler use
-   alone does not close it.
-3. **Complete the GPU incident investigation.** Trace bounded kernel progress,
+   detectors. The separately authorized [individual false positives](docs/security-reviews/current-source-findings.md)
+   and two exact governance observations may pass only through their current
+   identity checks. Record the final pushed audit result before closing this gate.
+2. **Complete the GPU incident investigation.** Trace bounded kernel progress,
    asynchronous ownership, failure cleanup and runtime admission against the
    retained incident evidence. The supplied empty watchdog dumps cannot establish
    a cause. Do not label the freeze resolved from successful later GPU tests.
-4. **Finish source and release qualification.** Complete the remaining parser,
+3. **Finish source and release qualification.** Complete the remaining parser,
    extraction, codec, driver and kernel review, plus any
    required authenticated scanner qualification. Qualify the final pushed SHA's
    workflows, audit, HIP-enabled ZIP/MSI, checksums and installer lifecycle before
@@ -59,6 +56,10 @@ publication; resume these gates before declaring the next beta ready.
 
 ## Deferred Improvement Work
 
+- **Development dependency:** the maintainer temporarily accepts the exact NLTK
+  advisory for this round under the [current risk record](docs/security-reviews/dependency-risk-acceptance.md).
+  Keep the upstream alert visible and reassess when the official fix or pinned
+  environment changes. This accepted item does not block the current round.
 - **Neutron effectiveness:** complete the current-format Govdocs1 study using
   the existing licensed corpus controller and RAM-only payload transport.
   Follow with controlled, paired CPU/GPU measurements and multiple independent

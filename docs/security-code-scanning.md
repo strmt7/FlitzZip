@@ -91,7 +91,9 @@ does not authorize a review record.
 This local admission does not dismiss hosted alerts or qualify release security.
 The post-push audit independently revalidates existing public-integrity approvals
 against the requested commit's ledger and source blobs. It checks dismissed
-reports reproduced on that commit and keeps every source/test finding blocking.
+reports reproduced on that commit. Source/test findings require a repair or the
+separate [individually proven false-positive contract](security-source-remediation-redesign.md#acceptance-and-recurrence);
+the public-metadata path cannot admit them.
 The pinned DevSkim writer emits zero-based UTF-16 columns; the reader uses that
 producer's exact coordinate contract, verified against its raw character offsets
 and [upstream writer](https://github.com/microsoft/DevSkim/blob/ea92e6f3cc/DevSkim-DotNet/Microsoft.DevSkim.CLI/Writers/SarifWriter.cs).
@@ -533,7 +535,7 @@ variables.
 - The maintainer's [governance baseline](../.github/scanner-governance-baseline.json)
   accepts the exact CodeReview and CII Best Practices reports as a pass. The
   audit binds repository, alert number, producer and rule; other identities
-  remain blocking. It retains raw reports and does not claim peer review or
+  remain outside this baseline. It retains raw reports and does not claim peer review or
   certification was completed. Source fixes require fresh analysis of the
   repaired revision; this baseline cannot admit a source finding.
 - After every push that changes security, workflows, dependencies, packaging, or
