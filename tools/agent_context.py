@@ -21,20 +21,32 @@ SKILLS = ("caveman", "cocoindex-code-search")
 KEY = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
 
 
-def safe_path(root: Path, name: str) -> Path:
-    """Purpose: Contain local paths.
-    Inputs: root/relative name.
-    Outputs: path or rejection, including reparse points."""
+def relative_source_path(name: str) -> PurePosixPath:
+    """Purpose: Apply one portable non-secret path policy to context reads and code mirroring.
+    Inputs: Repository-relative name. Outputs: Parsed path or refusal before filesystem access.
+    """
     relative = PurePosixPath(name)
     if (
         not name
+        or not relative.parts
         or relative.is_absolute()
         or "\\" in name
-        or any(part.lower() in (".", "..", ".git", "secrets") or ":" in part for part in relative.parts)
+        or any(
+            part != part.rstrip(" .") or part.lower() in (".", "..", ".git", "secrets") or ":" in part
+            for part in relative.parts
+        )
         or relative.name.lower().startswith(".env")
         or relative.suffix.lower() in (".pem", ".key", ".p12", ".pfx")
     ):
         raise ValueError("expected a repository-relative, non-secret path")
+    return relative
+
+
+def safe_path(root: Path, name: str) -> Path:
+    """Purpose: Contain local paths.
+    Inputs: root/relative name.
+    Outputs: path or rejection, including reparse points."""
+    relative = relative_source_path(name)
     selected = root.resolve()
     for part in relative.parts:
         selected /= part

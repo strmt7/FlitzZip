@@ -20,6 +20,11 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+if __package__:
+    from .agent_context import relative_source_path, safe_path
+else:
+    from agent_context import relative_source_path, safe_path
+
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = "0.2.41"
 MODEL = "Snowflake/snowflake-arctic-embed-xs"
@@ -154,21 +159,12 @@ def tracked_files(repo: Path) -> list[tuple[str, Path]]:
     result = []
     deleted: set[str] | None = None
     for name in (part.decode("utf-8", "surrogateescape") for part in raw.split(b"\0") if part):
-        rel = PurePosixPath(name)
-        if (
-            rel.is_absolute()
-            or not rel.parts
-            or any(part in (".", "..") or ":" in part for part in rel.parts)
-            or "\\" in name
-        ):
-            raise ValueError(f"unsafe source path: {name!r}")
-        if rel.parts[0] == "secrets" or rel.name.endswith((".env", ".pem", ".key", ".p12", ".pfx")):
-            raise ValueError(f"refusing to mirror secret-like path: {name}")
+        rel = relative_source_path(name)
         if rel.parts[0] in ("tests", "third_party"):
             continue
         if rel.suffix.lower() not in INDEX_SUFFIXES and rel.name != "CMakeLists.txt":
             continue
-        source = repo.joinpath(*rel.parts)
+        source = safe_path(repo, name)
         if not source.exists() and not source.is_symlink():
             if deleted is None:
                 removed = subprocess.run(
@@ -183,8 +179,6 @@ def tracked_files(repo: Path) -> list[tuple[str, Path]]:
                 continue
         if source.is_symlink() or not source.is_file():
             raise ValueError(f"source is not a regular file: {name}")
-        if not source.resolve().is_relative_to(repo.resolve()):
-            raise ValueError(f"source escapes checkout: {name}")
         if source.stat().st_size > 32 * 1024 * 1024:
             raise ValueError(f"source exceeds 32 MiB index bound: {name}")
         result.append((name, source))

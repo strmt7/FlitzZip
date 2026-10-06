@@ -105,6 +105,8 @@ class AgentContextTests(unittest.TestCase):
         Inputs: hostile paths/binary/oversized text.
         Outputs: rejected access."""
         for name in (
+            "",
+            ".",
             "../escape",
             "/absolute",
             "C:/absolute",
@@ -139,6 +141,28 @@ class AgentContextTests(unittest.TestCase):
             context.read_source(self.root, "alias/guide.md")
         with self.assertRaisesRegex(ValueError, "reparse"):
             context.write_state(self.root, "alias/note.json", {"schema": 1})
+
+    def test_windows_path_aliases_cannot_bypass_source_or_state_policy(self):
+        """Purpose: Reject Windows-normalized aliases before any context file access.
+        Inputs: Real protected fixtures and trailing-dot/space path components. Outputs: No read or state mutation.
+        """
+        for directory in ("secrets", ".git"):
+            protected = self.root / directory
+            protected.mkdir()
+            marker = protected / "fixture.json"
+            original = '{"schema":1,"value":"controlled fixture"}'
+            marker.write_text(original, encoding="utf-8")
+            for alias in (directory + ".", directory + " "):
+                with self.subTest(alias=alias):
+                    name = alias + "/fixture.json"
+                    with self.assertRaises(ValueError):
+                        context.read_source(self.root, name)
+                    with self.assertRaises(ValueError):
+                        context.write_state(self.root, name, {"schema": 1})
+                    self.assertEqual(marker.read_text(encoding="utf-8"), original)
+        for name in ("guide.md.", "guide.md ", "key.pem.", ".env.", "out./note.json"):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                context.safe_path(self.root, name)
 
     def test_note_freshness_is_not_validation_and_source_change_withholds_summary(self):
         """Purpose: Keep synthesis evidence honest.

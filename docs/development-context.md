@@ -82,6 +82,10 @@ other heading conventions. The default content budget is 8,000 characters;
 `--max-chars` accepts 1-32,000. The budget measures emitted source characters,
 not tokens or JSON metadata. Never describe it as a tokenizer or billing saving.
 
+Context access and CocoIndex mirroring share a repository-relative path policy.
+It rejects secret-like names, case variants, Windows trailing-dot/space aliases,
+path escapes and reparse traversal before reading or writing those paths.
+
 Oversized windows return `partial` plus the exact unread line range. Continue
 from that range until required reading is complete. Long individual lines are
 not silently shortened; increase the explicit budget or inspect them directly.

@@ -182,6 +182,25 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             self.assertIn("--others", run.call_args.args[0])
             self.assertIn("--exclude-standard", run.call_args.args[0])
 
+    def test_context_and_index_share_secret_and_alias_boundaries(self):
+        """Purpose: Keep code mirroring behind the context reader's path policy.
+        Inputs: Real mixed-case and environment-prefix fixtures plus Windows aliases. Outputs: Refusal before mirroring.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ("SECRETS/source.py", ".env.py", "key.PEM"):
+                source = root / name
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("controlled fixture only\n", encoding="utf-8")
+            for name in ("SECRETS/source.py", ".env.py", "key.PEM", "secrets./source.py", "source.py."):
+                with (
+                    self.subTest(name=name),
+                    patch("tools.cocoindex_agent_search.subprocess.run") as run,
+                    self.assertRaises(ValueError),
+                ):
+                    run.return_value.stdout = name.encode("utf-8") + b"\0"
+                    tracked_files(root)
+
     def test_superzip_headers_and_build_files_are_indexed_without_vendored_code(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
