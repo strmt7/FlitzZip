@@ -16,8 +16,8 @@ instead of inheriting a blanket directory exception.
 
 Historical October 4 source dispositions are recorded in
 `.github/scanner-source-reviews.csv` and the
-[individual review](history/security/security-source-finding-review-2026-10-04.md). The
-[SDK copy supplement](history/security/security-sdk-finding-review-2026-10-04.md) records the
+[individual review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-source-finding-review-2026-10-04.md). The
+[SDK copy supplement](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-sdk-finding-review-2026-10-04.md) records the
 six separately approved fixed-width byte-access operations. The actual
 detectors still scan those files. Historical matching recognizes only each
 exact source hash, rule and complete line/column region. Raw reports and counts
@@ -27,7 +27,7 @@ findings to publication or security acceptance. Every source report counts as
 unresolved in the preflight, including an exact historical match. The hosted
 audit requires closure of every open alert and never consults approval ledgers.
 
-The [remaining individual review](history/security/security-remaining-finding-review-2026-10-04.md)
+The [remaining individual review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-remaining-finding-review-2026-10-04.md)
 records 54 separately approved reports in `.github/scanner-hosted-reviews.csv`.
 Their complete incident identities use the public integrity pin in
 `.github/scanner-hosted-approval.csv`, independently from caller-context
@@ -217,7 +217,7 @@ gate, never clean-scan evidence.
 
 ## Finding Triage
 
-The [individual Crawl4AI public-example review](history/security/security-crawl4ai-public-proxy-review-2026-10-05.md)
+The [individual Crawl4AI public-example review](security-reviews/crawl4ai-public-proxies.md)
 records the maintainer's exact authorization for four historical URI examples
 and their public integrity identities. Its separate approval cohort preserves
 the original NLTK ledger bytes and bindings. Metadata admission requires the
@@ -225,25 +225,25 @@ complete cohort hash and exact approved digest; source, location, value or
 scanner changes expire the relevant review. Every sanitized raw finding is
 retained, and no source-code vulnerability is closed by these dispositions.
 
-The [6 October public-test review](history/security/security-crawl4ai-public-test-review-2026-10-06.md)
+The [6 October public-test review](security-reviews/crawl4ai-public-tests.md)
 records four separately authorized parser/filter fixtures and their five public
 integrity values. Its independent cohort preserves both earlier ledgers. The
 consumer binds actual member/source locations separately from reported archive
 attributions, and rejects verified credentials or any unmatched identity.
 
 The maintainer approved the ten exact integrity metadata records in
-[the 5 October review](history/security/security-public-checksum-review-2026-10-05.md). These
+[the 5 October review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-public-checksum-review-2026-10-05.md). These
 cover original corpus, comparator binary and license-notice hashes. Raw reports
 remain intact, changed file bytes or values expire admission, and source/test
 findings cannot use this metadata ledger. This approval does not dismiss hosted
 alerts or close unresolved legal, source, GPU or release obligations.
 
-The [NLTK public commit review](history/security/security-nltk-public-commit-review-2026-10-05.md)
+The [NLTK public commit review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-nltk-public-commit-review-2026-10-05.md)
 documents one additional provenance report. Its status and individual maintainer
 authorization are recorded in that review; the admission ledger cannot inherit
 the earlier checksum approvals for this separate value.
 
-The [latest individual review](history/security/security-finding-review-2026-10-03.md#latest-individual-metadata-triage)
+The [latest individual review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-finding-review-2026-10-03.md#latest-individual-metadata-triage)
 records five metadata/namespace false-positive dispositions at `ed3ea0f`.
 Each has its own source/producer evidence and GitHub audit comment. They are
 not automatic closures or code-finding exemptions; all remaining source and
@@ -556,7 +556,7 @@ variables.
   totals, then applies the unchanged open-alert gate. An unresolved finding still
   fails the command after its report is saved. Ordinary post-push checks remain
   open-only to avoid repeatedly downloading the entire history.
-  See [the review and recurrence map](history/security/code-scanning-history-review.md).
+  See [the review and recurrence map](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/code-scanning-history-review.md).
 - The push and pull-request lane validates the workflow, hash-locked Greenbone
   tools, and GMP script contract without touching a network target.
 - The scheduled/manual live scan lane fails closed with an explicit report when

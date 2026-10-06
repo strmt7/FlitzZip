@@ -335,7 +335,7 @@ process-memory containment. AMD notes that
 may account only for allocations in the current process; neither a snapshot
 nor this ledger reserves physical memory against other applications.
 
-### Dispatch-Bound Timing (2026-09-08)
+### Dispatch-Bound Timing
 
 Production codec and diagnostic launches now attach their start/stop events
 directly through HIP's `hipExtLaunchKernel` API. A shared helper derives the
@@ -344,21 +344,11 @@ preserves the existing per-thread stream and ordered-launch flags, and retains
 stop-event synchronization before reading results or releasing device memory.
 This changes instrumentation, not kernel algorithms or archive bytes.
 
-A standalone HIP 7.1 probe on the available gfx1201 device compared identical
-deterministic kernels with separate event markers versus dispatch-bound events.
-Four runs alternated the two methods on per-thread and explicit nonblocking
-streams, with 16,384 and 1,048,576 output words. All API calls and independent
-CPU output checks passed. Of 1,600 marker measurements, 128 were negative;
-all 1,600 dispatch-bound measurements were finite and positive. This isolates
-the marker-timing failure outside SuperZip but does not establish whether the
-underlying fault belongs to the installed runtime or driver.
-
-Production regression coverage adds four concurrent HIP callers, fill,
-pattern, static/adaptive prefix and raw data, short tails, independent-block
-CRCs, decoded CRCs, CPU/HIP roundtrips, and diagnostic compute/checksum kernels.
-All 385 native tests passed on the available device. Other release GPU targets
-are compile-validated, not hardware-tested. The experimental dictionary
-pipeline's multi-kernel timing intervals are not changed by this checkpoint.
+Regression coverage exercises concurrent HIP callers, fill, pattern,
+static/adaptive prefix and raw data, short tails, independent-block and decoded
+CRCs, CPU/HIP roundtrips, and diagnostic compute/checksum kernels. Other release
+targets require their own hardware evidence; compilation alone does not qualify
+runtime behavior. Historical probe measurements remain in Git.
 
 Invalid-duration propagation and benchmark rejection remain unchanged. Do not
 compare these dispatch durations directly with historical marker intervals,
@@ -382,7 +372,7 @@ Record these fields for every block size:
 | `MemoryOnly`, `DiskWriteBytes` | Confirms the benchmark did not write the workload to storage. |
 | CPU/GPU utilization samples | Helps interpret whether the bottleneck is host, device, or scheduling. |
 
-The owned-output [development checkpoint](history/benchmarks/2026-10-01-pinned-output-pool.md)
+The owned-output [development checkpoint](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/benchmarks/2026-10-01-pinned-output-pool.md)
 records the bounded pin policy, production/RAM path parity, and matched
 extraction measurements. Its new schema-two fields are additive. Historical
 records without decoder counters retain unavailable values; do not infer their
@@ -392,80 +382,17 @@ reconstruction in those historical measurements is checked by CRC; their
 separate byte-comparison fixtures are not an interchangeable benchmark claim.
 The current independent benchmark validation pass is documented above.
 
-### Per-Block Adaptive Selection (2026-09-05)
+### Per-Block Selection And Scheduling
 
-The adaptive encoder now compares each candidate against that block's existing
-static/raw representation before packing. It retains smaller static blocks in
-mixed chunks and does not transfer losing adaptive payloads. The native format
-and GPU kernels are unchanged in this checkpoint.
-
-Three alternating old/new repetitions at levels 5 and 9 used the Mixed 10 GiB
-RAM-only workload, four workers, and 1 MiB blocks on an RX 9070 XT. All 12 runs
-produced 4,570,658,964 bytes and passed roundtrip verification. At level 9,
-mean compression time changed from 9.1101 to 8.6601 seconds; total operation
-time changed from 18.2572 to 17.9439 seconds with overlapping run ranges.
-Kernel launches decreased from 420 to 400, and device-to-host bytes decreased
-from 14,517,430,568 to 12,633,988,244. The unchanged level-5 path's small timing
-movement is inconclusive. These are modest improvements, not multi-fold gains
-or a solution to the two-tier effort limitation.
-
-Concurrent A/B samples recorded CPU utilization up to 37.7%, at least 31,042 MiB
-available RAM, disk activity up to 37.2%, and a maximum sampled individual GPU
-engine utilization of 64.6%. Invalid dynamic-counter instances were unavailable,
-not zero. These observations do not establish an entirely idle host.
-
-The subsequent standard level-5 sweep passed all seven block sizes in both
-CPU and required-HIP lanes: 14 runs, each with 10,737,418,240 input bytes,
-`memory_only=true`, and `disk_write_bytes=0`. This sweep validates production
-block-size coverage, not an old/new speedup. The 306-test native suite and full
-GUI smoke also passed. Dedicated security review remains explicitly deferred;
-this checkpoint is not release-wide performance or security certification.
-
-### Register Word-Packing Experiment (2026-09-05)
-
-A register-buffer rewrite of both prefix packers passed independent bit-exact
-reference tests, but did not demonstrate the requested substantial improvement.
-It was removed; the reference tests remain. The comparison used the same Mixed
-10 GiB required-HIP workload, four workers, 1 MiB blocks, and three alternating
-old/new repetitions at each of levels 5 and 9. All 12 runs produced
-4,570,658,964 bytes with verified roundtrips, RAM-only mode, and no workload
-disk writes. Level-9 mean compression time was 8.5681 seconds before and
-8.5242 after; level-5 times varied from 8.0679 to 9.5573 seconds across both
-binaries. Neither establishes a substantial end-to-end benefit.
-
-Shared-host samples showed CPU up to 36.7%, at least 31,509 MiB available RAM,
-disk activity up to 3.7%, and individual GPU engine utilization up to 67.3%.
-Timing variation remains inconclusive, not proof that all related approaches
-are slower. Do not repeat this candidate without new profiling evidence.
+Compare each candidate with the block's existing representation before packing;
+retain smaller static blocks in mixed chunks and avoid transferring losing
+payloads. More active GPU lanes, fewer local loads or shorter kernel-only times
+do not establish an end-to-end improvement. Prior register-packing and prefix
+scheduling experiments did not qualify a production benefit. Their detailed
+measurements remain in Git; revisit them only with new profiling evidence.
+Keep the boundary regressions even when a candidate is rejected.
 
 ## Storage Policy
-
-### Rejected Prefix Scheduling Experiment (2026-09-05)
-
-A candidate packed independent 4 KiB prefix decode segments into 128-thread
-blocks instead of the existing one-thread blocks. Correctness passed for static
-and adaptive prefix data, including one segment, uneven segment counts, and
-partial final segments. The candidate nevertheless regressed the production
-RAM-only pipeline and was removed. The boundary regression test remains.
-
-The A/B comparison used preserved Release binaries, AMD Radeon RX 9070 XT,
-10,737,418,240 input bytes, Mixed profile, required HIP, four workers,
-1 MiB blocks, and three repetitions per binary and compression level. Run order
-alternated old/new and new/old. All 12 runs produced 4,570,658,964 output bytes
-(ratio 0.425676), validated roundtrips, and reported `memory_only=true` and
-`disk_write_bytes=0`.
-
-| Level | Existing mean total seconds | Candidate mean total seconds | Existing mean verify seconds | Candidate mean verify seconds |
-| --- | --- | --- | --- | --- |
-| 5 | 17.219 | 18.584 | 1.517 | 2.155 |
-| 9 | 17.982 | 19.614 | 1.517 | 2.308 |
-
-Pre-run samples showed 1.7-8.0% CPU, about 29 GiB available RAM, low paging and
-disk activity, and no individual GPU engine above 5%. During-run spot samples
-showed other GPU activity, so this is a local rejection decision, not a universal
-hardware claim. The consistent repeated regression is sufficient not to ship
-the candidate. More active lanes alone do not establish a faster kernel;
-instruction divergence, memory access, and end-to-end effects require profiling.
 
 Large filesystem benchmarks are intentionally excluded from development. They
 write generated input, archives, and extracted outputs, which can produce tens
@@ -491,25 +418,23 @@ Not allowed during development:
 
 ## Acceptance Gates
 
-The October Mixed study and its failed-export recovery are recorded in
-[round nineteen of the modernization audit](history/development/modernization-audit-2026-10-02.md#round-nineteen-completed-measurements-and-report-export-repair).
-Its full raw journal is retained; three larger-block GPU cases remain
-inconclusive. Compression phase time includes generated-source preparation
-inside owned encode tasks. Generation and encoding worker totals overlap, so
-they must not be subtracted from elapsed wall time or presented as phase shares.
-Independent bytewise validation and controller costs are separately recorded.
+Compression phase time includes generated-source preparation inside owned
+encode tasks. Generation and encoding worker totals overlap; do not subtract
+them from elapsed wall time or present them as phase shares. Record independent
+bytewise validation and controller costs separately.
 
-A block-size or performance change is not complete until:
+Use the change-aware verifier for mandatory source, build, correctness, security
+and post-push checks. Choose the benchmark's affected consumer explicitly:
 
-- `tools\build.ps1 -Configuration Release` passes.
-- `tools\test.ps1 -Configuration Release` passes, including block metadata
-  bounds for every supported block size.
-- `tools\gui_smoke.ps1 -Configuration Release` passes and verifies the block
-  dropdown, file picker queueing, folder picker queueing, and native drag/drop.
-- `tools\security_scan.ps1` passes.
-- `tools\bench.ps1` runs in memory mode for all seven block sizes on a HIP host,
-  or the result is explicitly recorded as not run with the reason.
-- Benchmark records include compression ratio for both CPU and GPU lanes.
-- Benchmark records include initial input bytes and final output bytes for every
-  lane, in addition to compression ratio.
-- No benchmark or test writes a multi-GB generated workload to SSD.
+- Numeric block-size, routing or codec-policy changes require the seven-setting
+  RAM-only CPU/HIP comparison with exact input/output sizes and ratios.
+- Neutron-only changes require its independent oracle, actual required-HIP
+  archive readback and representative public-corpus protocol. Do not substitute
+  a numeric-level sweep for Neutron execution.
+- Changes to visible controls require the GUI smoke and screenshot review in
+  the operating guide. A kernel-only change does not justify launching the GUI.
+- Preserve every failed or inconclusive observation. Deferred measurements
+  remain deferred with their reason; no narrower passing check replaces a
+  required affected-consumer check.
+- Benchmark and test payloads follow the RAM-only and bounded-smoke storage
+  contracts above.

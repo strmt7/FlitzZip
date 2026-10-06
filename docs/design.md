@@ -12,7 +12,7 @@ Generated design boards are stored under `resources/design/`:
 - `superzip-ui-iteration-3.png`: security and integrity options added.
 - `superzip-ui-iteration-4.png`: final reference direction with cleaner labels
   and a simpler enterprise layout.
-- `superzip-ui-imagegen-polish-20260615.png`: imagegen-assisted polish pass for
+- `superzip-ui-design-reference.png`: imagegen-assisted polish pass for
   shared page-grid alignment, Queue-local actions, and symmetric rail icons.
 
 The current Win32 implementation follows iteration 4 at the structural level:

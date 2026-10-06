@@ -44,11 +44,11 @@ foreach ($path in @('CMakeLists.txt', 'cmake/ResolveHipArchitecture.cmake', 'src
     Assert-NativeCi ($selection.windows -and $selection.rocm) "shared/native ABI inputs retain both builds: $path"
 }
 foreach ($path in @('src/core/checksum.cpp', 'src/app/main_window_controls.cpp', 'tests/cpp/test_zip_compat.cpp',
-        'tools/gui_smoke.ps1', 'resources/design/fixture.svg', 'LICENSE')) {
+        'tools/gui_smoke.ps1', 'resources/brand/fixture.svg', 'LICENSE')) {
     $selection = Get-SuperZipHostedWorkflowSelection -Paths @($path)
     Assert-NativeCi ($selection.windows -and -not $selection.rocm) "CPU mechanisms avoid unrelated SDK provisioning: $path"
 }
-foreach ($path in @('docs/design.md', 'tools/native_test_selection.ps1', 'tools/native_ci.ps1')) {
+foreach ($path in @('docs/design.md', 'resources/design/fixture.svg', 'tools/native_test_selection.ps1', 'tools/native_ci.ps1')) {
     $selection = Get-SuperZipHostedWorkflowSelection -Paths @($path)
     Assert-NativeCi (-not $selection.windows -and -not $selection.rocm) "tool/docs contracts do not require product builds: $path"
 }

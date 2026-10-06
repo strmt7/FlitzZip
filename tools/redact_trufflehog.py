@@ -20,15 +20,9 @@ MAX_REVIEW_EXPANDED_BYTES = 64 * 1024 * 1024
 
 # Approved ledgers retain immutable review identifiers; only the evidence documents' storage moved.
 REVIEW_EVIDENCE_PATHS = {
-    "docs/security-nltk-ssrf-fixture-review-2026-10-05.md": (
-        "docs/history/security/security-nltk-ssrf-fixture-review-2026-10-05.md"
-    ),
-    "docs/security-crawl4ai-public-proxy-review-2026-10-05.md": (
-        "docs/history/security/security-crawl4ai-public-proxy-review-2026-10-05.md"
-    ),
-    "docs/security-crawl4ai-public-test-review-2026-10-06.md": (
-        "docs/history/security/security-crawl4ai-public-test-review-2026-10-06.md"
-    ),
+    "docs/security-nltk-ssrf-fixture-review-2026-10-05.md": ("docs/security-reviews/nltk-public-fixture.md"),
+    "docs/security-crawl4ai-public-proxy-review-2026-10-05.md": ("docs/security-reviews/crawl4ai-public-proxies.md"),
+    "docs/security-crawl4ai-public-test-review-2026-10-06.md": ("docs/security-reviews/crawl4ai-public-tests.md"),
 }
 
 

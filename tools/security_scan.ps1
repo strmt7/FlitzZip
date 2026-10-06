@@ -337,12 +337,13 @@ function Test-ExternalComparisonNamePolicy {
         ".md", ".txt", ".ps1", ".psm1", ".yml", ".yaml", ".json", ".cmake",
         ".cpp", ".hpp", ".h", ".c", ".rc", ".wxs", ".xml", ".svg", ".py", ".js", ".cjs", ".mjs"
     )
-    $policyFiles = Get-ChildItem -Path $repo -Recurse -File -Force | Where-Object {
-        $path = $_.FullName
-        $relativePath = $path.Substring($repo.Length + 1) -replace "\\", "/"
-        $relativePath -match '^(src|include)/' -and
-        ($textExtensions -contains $_.Extension.ToLowerInvariant()) -and
-        -not ($excludedRoots | Where-Object { $path.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase) })
+    $policyFiles = foreach ($directory in @('src', 'include')) {
+        $sourceRoot = Join-Path $repo $directory
+        if (Test-Path -LiteralPath $sourceRoot -PathType Container) {
+            Get-ChildItem -LiteralPath $sourceRoot -Recurse -File -Force -ErrorAction Stop | Where-Object {
+                $textExtensions -contains $_.Extension.ToLowerInvariant()
+            }
+        }
     }
     foreach ($file in $policyFiles) {
         $text = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction SilentlyContinue

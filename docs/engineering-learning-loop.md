@@ -32,7 +32,7 @@ not changing finding counts or chronological progress reports. Prefer extending
 an existing executable guard over adding another parallel policy framework.
 
 Completed source-specific lessons and their original guard references remain in
-[the engineering record](history/development/engineering-learning-record.md).
+[the engineering record](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/development/engineering-learning-record.md).
 Archiving prose does not retire any test, scanner or enforcement boundary.
 Optional accelerator registration must not execute before capability admission.
 Keep startup-absence regressions alongside real accelerator execution tests;

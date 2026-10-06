@@ -26,5 +26,4 @@ See [beta readiness](docs/beta-readiness.md) and [release qualification](docs/re
 
 [Agent instructions](AGENTS.md) define the mandatory operating rules.
 [Benchmark index](docs/benchmarks/README.md) identifies current evidence and limitations.
-Completed checkpoint narratives are retained in the
-[documentation archive](docs/history/development/implementation-checkpoints.md).
+Completed checkpoint narratives remain in Git history and local review artifacts.

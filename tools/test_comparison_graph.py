@@ -138,7 +138,7 @@ class ComparisonGraphTests(unittest.TestCase):
     # Inputs: The committed level-five Silesia comparison record.
     # Outputs: Its corpus validates without changing historical result files.
     def test_reviewed_corpus_matches_sha256_pins(self) -> None:
-        path = Path(__file__).resolve().parents[1] / "docs/benchmarks/data/comparison-silesia-current.json"
+        path = Path(__file__).resolve().parents[1] / "docs/benchmarks/data/fixtures/comparison-v1.json"
         record = json.loads(path.read_text(encoding="utf-8"))
         graph.summarize(record)
 

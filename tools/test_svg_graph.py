@@ -134,7 +134,7 @@ class SvgDocumentTests(unittest.TestCase):
         self.assertEqual(reread[0].text, "<title> & label")
         self.assertEqual(reread[1].text, '<desc attribute="value">')
         self.assertEqual(len(reread), 3)
-        published = TEMPLATE_PATH.with_name("beta-native-cpu-hip.svg")
+        published = TEMPLATE_PATH.parent / "fixtures/native-v1.svg"
         self.assertEqual(reread.tag, read_bounded_document(published).tag)
         self.assertEqual(reread.tag, f"{{{SVG}}}svg")
 

@@ -1,33 +1,30 @@
 # Neutron star mode public-corpus benchmark
 
-## Latest Retained Evidence
+## Current Evidence
 
-These are complete original-file, RAM-only studies with required-HIP bytewise
-readback. Each JSON retains its measured source and binary identities. Reusing
-an observation does not turn it into a measurement of a later revision.
+These complete original-file studies use RAM-only transport and required-HIP
+bytewise readback. The records retain exact source, binary and corpus identities.
+They qualify the shared-workspace implementation; reusing them does not turn
+them into measurements of a later revision.
 
-| Corpus and retained revision | Original files | Input bytes | Complete modeled archive bytes | Evidence |
+| Corpus | Original files | Input bytes | Complete modeled archive bytes | Evidence |
 | --- | ---: | ---: | ---: | --- |
-| Canterbury, version-eleven contexts with admitted kernel module, 1 MiB blocks | 11 | 2,810,784 | 723,429 in each of three runs | [Study](benchmarks/data/neutron-canterbury-lazy-kernel-block-1024-2026-10-06.json) |
-| Pythia14M, version-eleven contexts with admitted kernel module, 1 MiB blocks | 1 complete checkpoint | 28,143,920 | 24,162,233 in each of three runs | [Study](benchmarks/data/neutron-pythia14m-lazy-kernel-block-1024-2026-10-06.json) |
-| Govdocs1 thread0, preceding pruning revision, 1 MiB blocks | 991 | 593,182,383 | 331,334,741 | [Study](benchmarks/data/neutron-govdocs1-thread0-pruning-block-1024-2026-10-06.json) |
+| Canterbury | 11 | 2,810,784 | 723,429 in each of three runs | [Study](benchmarks/data/neutron-canterbury.json) |
+| Pythia14M | 1 complete checkpoint | 28,143,920 | 24,162,233 in each of three runs | [Study](benchmarks/data/neutron-pythia14m.json) |
 
-The fresh module-boundary studies preserve every original file's preceding
-context-study size in three repetitions, with actual HIP encoding and decoding.
-The [preceding Canterbury](benchmarks/data/neutron-canterbury-contexts-block-1024-2026-10-06.json)
-and [Pythia studies](benchmarks/data/neutron-pythia14m-contexts-block-1024-2026-10-06.json)
-remain unchanged. The context refinement saved 1,935,715 bytes (7.42%) on the complete Pythia
-checkpoint against its same-setting Neutron baseline. Canterbury retained the
-preceding 1 MiB sizes. The complete Govdocs1 study belongs to its preceding
-revision; full version-eleven context coverage remains unqualified.
-Every record has `memory_only=true`, `disk_write_bytes=0` and
-`timing_qualified=false`. Sizes and correctness are qualified within the recorded
-scope; comparative speed, universal GPU stability and universal compression
-superiority are not established.
+Both studies use 1 MiB blocks and preserve every original file's preceding
+archive size. All observations have `memory_only=true`, `disk_write_bytes=0`
+and `timing_qualified=false`. The workspace refactor removes five allocation/free
+pairs per trial; these studies do not establish a comparative speed improvement.
+
+The earlier complete Govdocs1 pruning study covered 991 files, but it does not
+qualify the current version-eleven context implementation. That broader study
+remains an explicit gap. Current size and correctness evidence does not establish
+universal GPU stability or universal compression superiority.
 
 ## Standard-Format Size Reference
 
-The [complete reference](benchmarks/data/neutron-canterbury-standard-size-reference-2026-10-06.json)
+The [complete reference](benchmarks/data/canterbury-standard-reference.json)
 uses the same eleven unmodified Canterbury files and counts full independent-file
 containers, including headers, directories and padding. Each member was restored
 bytewise in RAM. Different algorithms have different windows and search budgets;
@@ -139,16 +136,10 @@ lifetime admission, not HIP launch size, synchronization, cancellation, memory
 admission or compression search. A timeout is a failed study, never permission
 to omit, truncate or replace the file.
 
-The first complete Govdocs attempt on 5 October 2026 reached 175 byte-validated
-files, covering 82,765,977 input bytes and 65,430,295 complete single-file archive
-bytes. The following 175,101,388-byte natural file exceeded the explicitly
-selected 600-second deadline. The controller terminated its owned tree and
-retained the completed prefix with `study_qualified=false`; these partial totals
-are not a Govdocs baseline. All 991 original members were admitted from the
-published ZIP, whose measured SHA-256 was
-`662343a0725b350d1d37496b8d2a53ee85bfa27a48e05209ddd8d3de5163e84a`.
-This timeout establishes an incomplete workload, not the cause of the earlier
-system freeze or a GPU speedup.
+Failed attempts retain completed observations with `study_qualified=false`.
+Those partial totals cannot establish a complete-corpus baseline. Original
+timeout and failure reports remain in the local archive and Git; a successful
+later study does not explain an earlier failure or establish a GPU speedup.
 
 ## Reporting And Limits
 
@@ -190,6 +181,6 @@ and complete workload coverage. Size gains on one model or file type cannot
 establish broad effectiveness. Numeric efforts 1–9 remain separate from Neutron.
 
 Earlier rounds, unsuccessful complete-corpus attempts and their original claims
-remain in [the benchmark history](history/benchmarks/neutron-public-corpus-rounds.md).
+remain in [the benchmark history](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/benchmarks/neutron-public-corpus-rounds.md).
 The reported system-freeze cause remains unconfirmed; successful studies do not
 establish its resolution.

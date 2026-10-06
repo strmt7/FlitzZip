@@ -1,44 +1,49 @@
 # Benchmark Evidence
 
-Start with [the Neutron public-corpus studies](../neutron-public-corpus-benchmark.md)
-for the latest retained size evidence, representative workload limits and RAM-only
-transport. [The native suite](../compression-level-and-benchmark-suite.md) defines
-numeric-effort measurements; Neutron results remain a separate series.
-[Comparison methodology](../comparative-benchmark-methodology.md) defines equal
-settings, complete container bytes, correctness, uncertainty and provenance.
+The [Neutron public-corpus report](../neutron-public-corpus-benchmark.md) contains
+current size evidence and its qualification limits. The
+[native suite](../compression-level-and-benchmark-suite.md) defines numeric-level
+CPU/HIP measurements. [Comparison methodology](../comparative-benchmark-methodology.md)
+defines equal settings, complete container bytes, correctness and uncertainty.
 
-## Current Evidence And Limits
+## Published Records
 
-Fresh Neutron studies after kernel-module admission cover all eleven Canterbury
-files and the complete Pythia14M checkpoint in three byte-exact HIP repetitions
-each, preserving the preceding context studies' complete per-file sizes.
-The complete 991-file Govdocs1 pruning study belongs to its earlier revision.
-All payloads remained in RAM. Comparative timing and broad superiority remain
-unqualified; archival size observations are not freshly collected measurements.
-
-The [frozen JSON records](data) retain exact source/binary/corpus identities and
-all samples. Do not rewrite old measurements when algorithms, hardware or chart
-styling change. New observations require a new source-bound record.
-
-## Figures Across All Documents
-
-| Figure | Scope and interpretation |
+| Record | Scope |
 | --- | --- |
-| [Beta native CPU/HIP](../../resources/benchmarks/beta-native-cpu-hip.svg) | Retained synthetic Mixed level-5 study; median elapsed-time throughput and observed all-sample min–max whiskers |
-| [Native CPU/HIP](../../resources/benchmarks/native-cpu-hip.svg) | Historical native study with all recorded observed ranges |
-| [Application comparison](../../resources/benchmarks/application-comparison.svg) | Historical Silesia subset; complete size and median times with observed min–max ranges |
-| [Compatibility effort](../../resources/benchmarks/effort-tradeoff.svg) | Historical size/time tradeoff; logarithmic time axis and capped observed ranges |
-| [Native effort](../../resources/benchmarks/native-effort-tradeoff.svg) | Historical native size/time study; CPU and required-HIP results retain their measured sizes |
+| [Neutron Canterbury](data/neutron-canterbury.json) | Eleven complete original files, three actual HIP repetitions, 1 MiB blocks |
+| [Neutron Pythia14M](data/neutron-pythia14m.json) | One complete trained checkpoint, three actual HIP repetitions, 1 MiB blocks |
+| [Canterbury standard formats](data/canterbury-standard-reference.json) | Fixed independent ZIP, gzip, bzip2 and XZ size references with RAM readback |
+| [Pythia14M standard formats](data/pythia-standard-reference.json) | Fixed complete-checkpoint size references with RAM readback |
 
-Whiskers describe observed sample ranges, not standard errors or confidence
-intervals. The graph workflow regenerates all five figures from unchanged raw
-records. Renderer contracts independently check finite geometry, interval ends,
-perpendicular caps, zero-width ranges and data-to-figure consistency.
+Neutron records preserve source, binary, corpus and tool identities, every
+observation and actual completion time. Payloads remain in RAM. Comparative
+timing remains unqualified. Standard-format records retain their original
+measurement identities; they are comparisons, not new runs of current source.
 
-The shared SVG template is an uninstantiated source template, not a measured
-figure. Mermaid diagrams in domain guides describe behavior and security flow,
-not quantitative results. Design-reference images show historical UI concepts,
-not the current frontend or benchmark evidence.
+The complete Govdocs1 pruning study belongs to an earlier implementation.
+Current context-codec qualification across that full corpus remains open.
+Superseded studies, abandoned runs and chronological narratives are recoverable
+from Git history and the local material archive, rather than published as
+current evidence. Follow the operating guide's
+[evidence lifecycle](../agent-operating-guide.md#engineering-quality-baseline)
+when replacing a record; do not change dates or measurements to imply freshness.
 
-Completed study narratives live in [benchmark history](../history/README.md).
-They remain scanned, and their relative links lead to the retained raw records.
+## Graphs And Regression Fixtures
+
+Current guides use the measured size tables above. Superseded quantitative
+graphs have been retired from product documentation. Mermaid diagrams describe
+behavior and security flow; design-reference images describe UI concepts.
+
+The [fixture directory](data/fixtures) retains immutable historical record
+formats required by renderer and scanner-policy regression tests, including
+paired and GPU-only effort records with a nonmonotonic size observation. The
+[expected native SVG](../../resources/benchmarks/fixtures/native-v1.svg) is a
+golden test output, not a current performance chart. Their original dates,
+source identities and measurements remain intact. These passive fixtures stay
+within normal repository scanning and never authorize another corpus run.
+
+The graph workflow still runs every renderer's validation tests, including
+byte-identical legacy regeneration, finite geometry, observed range endpoints,
+perpendicular caps, zero-width ranges and data-to-figure consistency. Whiskers
+denote the stated observed range; they are not standard errors or confidence
+intervals. The shared SVG template is not a measured figure.

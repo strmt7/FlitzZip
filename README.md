@@ -303,83 +303,26 @@ weekly schedule, and manual dispatch.
 
 ## Benchmarking
 
-![Qualified synthetic native CPU/HIP comparison](resources/benchmarks/beta-native-cpu-hip.svg)
+The [benchmark index](docs/benchmarks/README.md) identifies current evidence,
+measurement limits and reproducible commands. Neutron star mode is measured
+separately from numeric compression levels and always requires HIP.
 
-The [3 October beta block-size report](docs/history/benchmarks/native-beta-blocks-2026-10-03.md)
-retains all **42 pilots and 112 confirmations** from seven independent 10 GiB
-RAM-only Mixed studies at level 5. Only the 8 MiB case met every declared timing
-quality threshold; all six inconclusive cases remain in the report. Its observed
-CPU/GPU mean compress + verify + extract time ratio was **2.0094**, while the GPU
-archive was **11,768,213 bytes (0.2606%) larger**. GPU extraction alone was slower.
-The plot uses encoded payload bytes and throughput from median combined elapsed
-time, with the full observed range; the report gives full modeled archive bytes,
-mean times, sample SD, exact counts, HIP telemetry and source/binary identity.
-This synthetic workload result establishes neither competitor superiority nor a
-before/after improvement. Broader beta qualification remains in progress.
+The latest RAM-only Neutron studies cover the eleven original Canterbury files
+and one complete Pythia14M checkpoint, with three byte-exact HIP repetitions
+each. Complete modeled archive sizes were **723,429 bytes** from **2,810,784
+bytes** for Canterbury and **24,162,233 bytes** from **28,143,920 bytes** for
+Pythia14M. These workload-specific results do not establish universal size
+superiority or a GPU speed advantage. The
+[public-corpus report](docs/neutron-public-corpus-benchmark.md) provides source
+identities, per-file observations and independent standard-format references.
 
-Fresh [all-nine native effort sizes](docs/history/benchmarks/native-beta-effort-sizes-2026-10-03.md)
-retain 18 byte-exact RAM observations with unqualified single-run timings.
-The [writable-format size report](docs/history/benchmarks/beta-format-sizes-2026-10-03.md)
-covers 132 archive/reader cases across all 13 writable formats on bounded
-synthetic fixtures. Separately, all 36 registered formats passed the CLI
-correctness matrix. These size/correctness results are not speed rankings.
-
-For reviewed exact-file CPU/HIP RAM studies, the scientific controller accepts
-`-CorpusManifest`, `-CorpusRoot` and `-CorpusFile` together. It preserves natural
-byte counts, source identity and every pilot/confirmation observation; noisy
-or short studies remain explicitly inconclusive. See the
-[corpus protocol and command](docs/compression-level-and-benchmark-suite.md#native-suite).
-These studies remain separate from generated-profile measurements.
-
-**Historical evidence:** the linked graphs describe earlier engineering runs,
-not the current source or a release-ready product ranking. The Silesia series
-is excluded from new runs and headline comparisons after its dataset-rights
-review. Licensed replacements, additional applications and the final
-five-run-per-point refresh are in preparation. See the
-[permission decisions](docs/benchmark-permissions.md) and
-[research and methodology](docs/benchmark-research.md).
-
-[Historical application comparison graph](resources/benchmarks/application-comparison.svg).
-
-The [Silesia application comparison report](docs/history/benchmarks/comparison-silesia-2026-09-29.md)
-shows exact test-system specifications and five-run ZIP/Zstandard results.
-The [reviewed raw record](docs/benchmarks/data/comparison-silesia-current.json)
-and [comparison methodology](docs/comparative-benchmark-methodology.md) disclose
-commands, hashes, host load, and limits. SuperZip is not uniformly faster or
-smaller: the official Zstd CLI was faster on both single-file cases. These
-compatibility-format results do not measure native HIP compression.
-
-[Historical compatibility effort graph](resources/benchmarks/effort-tradeoff.svg).
-
-The [size-versus-time effort study](docs/history/benchmarks/comparison-effort-2026-09-29.md)
-compares SuperZip ZIP and ZST output with 7-Zip and Zstandard on the same
-Silesia inputs. Each point has ten timed runs, exact archive bytes, and
-independently verified extraction. Higher effort sometimes costs far more time
-for a smaller file; equal numeric levels do not imply equal work across tools.
-
-[Historical native CPU/HIP graph](resources/benchmarks/native-cpu-hip.svg).
-
-This snapshot uses three paired RAM-only 10 GiB runs per case, 16 MiB blocks,
-an AMD Ryzen 9 9950X, and an AMD Radeon RX 9070 XT. It measures median
-encode, verify, and extract throughput on the synthetic profiles shown, from
-commit `fd92bc5c728443800040c93509c2cf249fb3a0a1`; the
-[reviewed records](docs/benchmarks/data) include exact byte counts and binary
-hashes. GPU mode is slower on SegmentedRecords at level 1. It requires AMD HIP
-but still uses CPU work for orchestration and I/O. Its device-event time
-was unavailable, so that case supports wall-time comparisons only. These
-results do not predict performance on other files or hardware. The
-`benchmark-graph` workflow regenerates and checks the image from those records.
-
-[Historical native effort graph](resources/benchmarks/native-effort-tradeoff.svg).
-
-The [native effort report](docs/history/benchmarks/native-effort-2026-09-29.md) compares
-five settings on the same 10 GiB RAM-only Mixed workload. GPU archives have
-different measured sizes at every plotted setting, and every sample passed
-verification and extraction. The graph prints exact archive bytes; its
-archive-size axis is truncated to make nearby points readable. The
-[methodology](docs/comparative-benchmark-methodology.md) and
-[raw records](docs/benchmarks/data) contain the source and binary hashes,
-individual timings, and limits of the comparison.
+For exact-file CPU/HIP comparisons at numeric levels, the scientific controller
+accepts `-CorpusManifest`, `-CorpusRoot` and `-CorpusFile` together. It preserves
+natural byte counts, source identity and every pilot/confirmation observation;
+short or noisy studies remain inconclusive. See the
+[native suite](docs/compression-level-and-benchmark-suite.md#native-suite),
+[comparison methodology](docs/comparative-benchmark-methodology.md) and
+[action-specific permissions](docs/benchmark-permissions.md).
 
 For a direct correctness proof that `--require-gpu` is not falling back to CPU,
 run:
@@ -450,7 +393,5 @@ See `docs/security.md`, `docs/portability.md`, `docs/design.md`,
 `docs/performance-block-size-validation.md`,
 `docs/compression-level-and-benchmark-suite.md`,
 `docs/refactoring-governance.md`,
-`docs/history/benchmarks/2026-06-15-ram-block-size-sweep.md`,
-`docs/history/benchmarks/2026-06-15-ram-level5-benchmark-suite.md`,
 `docs/third-party.md`, `docs/release.md`, and
 `docs/security-code-scanning.md`.

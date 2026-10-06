@@ -195,11 +195,17 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 ## Engineering Quality Baseline
 
 Keep current user guidance, reusable agent procedures and release requirements
-separate from completed chronological reports. Store retained development,
-benchmark and security narratives in `docs/history`; keep raw host logs and
-build artifacts local. Archive moves must preserve scanning coverage, immutable
-review identities and working relative links. Preserve original measurement
-dates and source identities instead of presenting archived results as current.
+in the published tree. Keep chronological progress reports, superseded benchmark
+records, abandoned experiments and raw host logs in ignored local artifacts;
+Git retains previously published revisions. Use stable descriptive filenames
+for current benchmark evidence, and retain its actual measurement date, source,
+tool identities and limitations inside the record. Replace a published record
+only with a complete reviewed study, preserving its predecessor in Git.
+Retain the specific legal notices, active approval evidence and regression
+fixtures consumed by current checks. Keep those fixtures clearly labelled and
+separate from published performance claims. Before retiring material, identify
+its consumers, preserve an exact recoverable copy, repair links and verify those
+consumers. Archiving never retires source remediation, tests or scanner coverage.
 
 These rules were checked against official guidance on 2026-06-20: NIST SSDF,
 CISA Secure by Design, OWASP Secure Coding Practices, Microsoft SDL, GitHub
@@ -977,7 +983,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
   provenance checks, and publication safeguards intact. Never restore compiled
   outputs into a fresh CodeQL build. Cancel superseded stateless checks, but
   preserve stateful live scans and release transactions. See
-  [the workflow performance review](history/development/workflow-performance-review.md).
+  [the workflow performance review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/development/workflow-performance-review.md).
 - After pushing, verify the remote URL does not contain credentials.
 - After pushing, choose checkpoint intent from actual remaining work, not file
   type. When another development step is planned, use planner/verifier
@@ -1071,7 +1077,7 @@ product CI.
 
 Before using, modifying, benchmarking, publishing or redistributing third-party
 material, check the action-specific rights and retained notices in the
-[license audit](history/security/license-and-permission-audit-2026-10-05.md) and
+[license audit](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/license-and-permission-audit-2026-10-05.md) and
 [benchmark permissions](benchmark-permissions.md). A download, root license,
 badge, maintainer instruction or successful test does not establish third-party
 rights. Preserve upstream attribution and modified-source notices. Unknown

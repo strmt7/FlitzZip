@@ -47,6 +47,54 @@ def zip_fixture(rows: list[tuple[str, bytes]], *, link: bool = False) -> tuple[b
 # Inputs: Tiny controlled archive/protocol fixtures and mocked fixed-source network responses.
 # Outputs: Rejects malformed, changed, lossy, substituted or disk-writing observations; no benchmark is launched.
 class CorpusContracts(unittest.TestCase):
+    def test_published_corpus_studies(self) -> None:
+        """Purpose: Verify the records consumed by current guides without acquiring or executing a corpus.
+        Inputs: Published JSON and canonical corpus pins. Outputs: Complete repeated HIP evidence or a failure.
+        """
+        root = Path(__file__).resolve().parents[1]
+        pins = json.loads((root / "docs/benchmarks/corpora/neutron-public-corpora.json").read_text("utf-8"))
+        for name in ("Canterbury", "Pythia14M"):
+            with self.subTest(corpus=name):
+                path = root / f"docs/benchmarks/data/neutron-{name.lower()}.json"
+                record = json.loads(path.read_text("utf-8"))
+                self.assertEqual(record["corpus"], name)
+                self.assertTrue(record["study_qualified"])
+                self.assertFalse(record["timing_qualified"])
+                self.assertTrue(record["memory_only"])
+                self.assertEqual(record["disk_write_bytes"], 0)
+                provenance, summary = record["provenance"], record["summary"]
+                self.assertEqual(provenance["archive_sha256"], pins[name]["archive_sha256"])
+                self.assertEqual(provenance["input_bytes"], pins[name]["decoded_bytes"])
+                self.assertEqual(provenance["published_file_count"], pins[name]["file_count"])
+                self.assertEqual(provenance["excluded"], [])
+                count = provenance["admitted_file_count"]
+                self.assertEqual(count, provenance["published_file_count"])
+                self.assertEqual(len(record["runs"]), summary["observation_count"])
+                self.assertEqual(len(record["runs"]), count * len(summary["totals"]))
+                self.assertGreaterEqual(len(summary["totals"]), 3)
+                previous = None
+                for run, total in enumerate(summary["totals"], 1):
+                    self.assertEqual(total["run"], run)
+                    selected = [row for row in record["runs"] if row["run"] == run]
+                    self.assertEqual(len({row["name"] for row in selected}), count)
+                    self.assertEqual([row["index"] for row in selected], list(range(count)))
+                    identities = []
+                    for row in selected:
+                        fields = row["stats"]
+                        payload = " ".join(f"{key}={value}" for key, value in fields.items()).encode("ascii")
+                        parsed = corpus.parse_stats(
+                            payload, {"sha256": fields["source_sha256"], "bytes": int(fields["input_bytes"])}
+                        )
+                        self.assertEqual(parsed, fields)
+                        self.assertEqual(int(fields["block_size_bytes"]), record["block_size_kib"] * 1024)
+                        identities.append((row["name"], fields["source_sha256"], fields["archive_bytes"]))
+                    for field in ("input_bytes", "archive_bytes"):
+                        self.assertEqual(sum(int(row["stats"][field]) for row in selected), total[field])
+                    self.assertEqual(total["input_bytes"], provenance["input_bytes"])
+                    if previous is not None:
+                        self.assertEqual(identities, previous)
+                    previous = identities
+
     def test_pinned_publisher_redirect_boundary(self) -> None:
         """Purpose: Guard CDN transport. Inputs: Publisher URLs and boundary mutations. Outputs: Only bounded HTTPS."""
         handler = corpus.PinnedCorpusRedirects(["huggingface.co", "hf.co"])

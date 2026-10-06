@@ -253,10 +253,10 @@ class BenchmarkGraphTests(unittest.TestCase):
     # Outputs: Requires byte-identical graph regeneration without inventing newer toolchain evidence.
     def test_reviewed_historical_beta_regeneration(self):
         root = Path(__file__).resolve().parents[1]
-        record = json.loads((root / "docs/benchmarks/data/beta-mixed-l5-b8192-20261003.json").read_text("utf-8"))
+        record = json.loads((root / "docs/benchmarks/data/fixtures/native-v1.json").read_text("utf-8"))
         self.assertNotIn("cmake_abi_header_sha256", record["native_build_receipt"]["toolchain"])
         identity, rows = graph.summarize_records([record], False)
-        expected = (root / "resources/benchmarks/beta-native-cpu-hip.svg").read_bytes()
+        expected = (root / "resources/benchmarks/fixtures/native-v1.svg").read_bytes()
         self.assertEqual(graph.render_svg(identity, rows), expected)
 
     # Purpose: Reject inconsistent, private, incomplete and CPU-fallback receipt-backed publication metadata.

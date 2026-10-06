@@ -1,5 +1,5 @@
 $Script:SuperZipVerificationRepoRoot = Split-Path -Parent $PSScriptRoot
-$Script:SuperZipReviewEvidencePattern = '^docs/(?:history/security/)?security-(?:nltk-ssrf-fixture|crawl4ai-public-(?:proxy|test))-review-[0-9-]+\.md$'
+$Script:SuperZipReviewEvidencePattern = '^docs/(?:(?:history/security/)?security-(?:nltk-ssrf-fixture|crawl4ai-public-(?:proxy|test))-review-[0-9-]+|security-reviews/[^/]+)\.md$'
 . (Join-Path $PSScriptRoot 'local_resources.ps1')
 . (Join-Path $PSScriptRoot 'native_test_selection.ps1')
 . (Join-Path $PSScriptRoot 'native_ci.ps1')
@@ -222,6 +222,7 @@ function Get-SuperZipVerificationPathPolicy {
             '^README\.md$',
             '^IMPLEMENTATION_PLAN\.md$',
             '^docs/',
+            '^resources/design/.*\.(png|jpe?g|svg)$',
             '^\.github/copilot-instructions\.md$',
             '^\.agents/skills/.*\.md$'
         )
@@ -341,12 +342,12 @@ function Get-SuperZipVerificationScope {
         $Script:SuperZipReviewEvidencePattern,
         '^\.github/'
     ))
-    $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(design|app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/SuperZip\.GuiSmoke\.[^/]+\.psm1$')
+    $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/SuperZip\.GuiSmoke\.[^/]+\.psm1$')
     $touchesBrand = Test-SuperZipAnyPath -Path $paths -Pattern @('^resources/brand/', '^resources/app/', '^tools/(generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^src/app/superzip_brand_logo')
     $touchesPackaging = Test-SuperZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version|release_metadata)\.(ps1|py)$')
     $touchesLintSurface = Test-SuperZipAnyPath -Path $paths -Pattern $patterns.lint
     $touchesBenchmarkCliDiff = (Test-SuperZipAnyPath -Path $paths -Pattern @('^src/cli/main\.cpp$')) -and (Test-SuperZipDiffLine -Path @("src/cli/main.cpp") -Pattern @('benchmark', 'throughput', 'compression.?level', 'block.?size', 'workers', 'inflight', 'gpu'))
-    $touchesPerformance = $touchesBenchmarkCliDiff -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^src/gpu/', '^src/core/(archive|archive_blocks|archive_block_types|resource_limits)\.', '^tools/(bench|gpu_|storage_smoke)', '^docs/(performance|compression-level|compression-backend)'))
+    $touchesPerformance = $touchesBenchmarkCliDiff -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^src/gpu/', '^src/core/(archive|archive_blocks|archive_block_types|resource_limits)\.', '^tools/(bench|gpu_|storage_smoke)'))
     $touchesMcp = Test-SuperZipAnyPath -Path $paths -Pattern @('^mcp/.*\.py$')
     $docsOnly = (@($paths).Count -gt 0) -and (Test-SuperZipAllPath -Path $paths -Pattern $patterns.documentation)
 
@@ -433,13 +434,15 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id "github-post-push-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_github_post_push_audit.ps1") -Reason "post-push audits must reject unavailable API evidence, including partial pagination") }
         @{ Pattern = @('^tools/(refactor_audit|test_refactor_audit)\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id "refactor-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_refactor_audit.ps1") -Reason "source audits must include new and changed files without traversing ignored workspace copies") }
+        @{ Pattern = @('^tools/(security_scan|test_security_scan)\.ps1$')
+           Command = (Get-SuperZipVerificationCommand -Id 'security-scan-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_security_scan.ps1') -Reason 'source policy enumeration must stay within its intended roots while detecting nested and hidden source violations') }
         @{ Pattern = @('^tools/(bench|test_benchmark_reporting|benchmark_statistics|benchmark_corpus|test_memory_benchmark_plan)\.ps1$', '^tools/(benchmark_corpus|test_benchmark_corpus)\.py$', '^src/cli/(main|memory_benchmark).*\.(cpp|hpp)$')
            Command = (Get-SuperZipVerificationCommand -Id "benchmark-reporting-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_benchmark_reporting.ps1") -Reason "benchmark reporting must preserve typed results and unavailable counter values without running a timed workload") }
         @{ Pattern = @('^tools/(benchmark_corpus|test_benchmark_corpus)\.py$', '^tools/benchmark_corpus\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id "benchmark-corpus-admission-test" -Stage "local" -Executable "py" -Arguments @('-3', '-m', 'unittest', 'tools.test_benchmark_corpus') -Reason "corpus inputs must use the shared permission boundary and freeze exact payload and provenance bytes") }
         @{ Pattern = @('^tools/(acquire_benchmark_corpus|test_acquire_benchmark_corpus)\.py$', '^docs/benchmarks/(data/)?corpora/.*\.json$', '^tools/benchmark_permissions\.json$')
            Command = (Get-SuperZipVerificationCommand -Id "benchmark-corpus-acquisition-test" -Stage "local" -Executable "py" -Arguments @('-3', '-m', 'unittest', 'tools.test_acquire_benchmark_corpus') -Reason "reviewed corpus acquisition must bound network and decoded bytes, authenticate complete sources and preserve literal rows without overwrites") }
-        @{ Pattern = @('^tools/(neutron_corpus_(benchmark|ipc)|test_neutron_corpus_benchmark)\.py$', '^docs/benchmarks/corpora/neutron-public-corpora\.json$', '^tools/benchmark_permissions\.json$', '^mcp/superzip_mcp\.py$')
+        @{ Pattern = @('^tools/(neutron_corpus_(benchmark|ipc)|test_neutron_corpus_benchmark)\.py$', '^docs/benchmarks/corpora/neutron-public-corpora\.json$', '^docs/benchmarks/data/neutron-(canterbury|pythia14m)\.json$', '^tools/benchmark_permissions\.json$', '^mcp/superzip_mcp\.py$')
            Command = (Get-SuperZipVerificationCommand -Id 'neutron-public-corpus-test' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_neutron_corpus_benchmark') -Reason 'public Neutron corpora must preserve the complete canonical inventory and binary RAM input with bounded acquisition, process I/O and honest HIP telemetry; this offline contract never rebuilds or benchmarks') }
         @{ Pattern = @('^tools/(test_memory_benchmark_corpus|test_binary_corpus_transport|benchmark_statistics)\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id 'binary-corpus-transport-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_binary_corpus_transport.ps1', '-AllRuntimes') -Reason 'binary corpus pipes must preserve exact bytes and restore ambient encoding under Windows PowerShell and PowerShell 7; this offline contract never builds or benchmarks') }
@@ -637,7 +640,9 @@ function Get-SuperZipVerificationPlan {
     }
     $touchesBenchmarkGraph = Test-SuperZipAnyPath -Path $paths -Pattern @(
         '^docs/benchmarks/data/', '^resources/benchmarks/',
+        '^docs/(benchmarks/README|neutron-public-corpus-benchmark)\.md$',
         '^docs/(comparative-benchmark-methodology|benchmark-permissions|benchmark-research)\.md$',
+        '^tools/(neutron_corpus_(benchmark|ipc)|test_neutron_corpus_benchmark)\.py$',
         '^tools/(render_.*graph|test_.*graph|run_archive_comparison|test_archive_comparison|benchmark_comparators|test_benchmark_comparators|benchmark_cache|test_benchmark_cache)\.py$',
         '^tools/benchmark_permissions\.json$'
     )

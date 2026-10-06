@@ -9,17 +9,18 @@ documentation, source contracts and commands in normal, precise language.
 
 | Question | Open next |
 | --- | --- |
-| Current development and unresolved work | [handoff](history/development/development-handoff.md), [fresh audit](history/development/modernization-audit-2026-10-02.md), then relevant headings in [implementation history](../IMPLEMENTATION_PLAN.md) |
+| Current development and unresolved work | [Implementation plan](../IMPLEMENTATION_PLAN.md), [beta readiness](beta-readiness.md), then exact current source and GitHub checks |
 | Format capabilities and wire contracts | [format support](archive-format-support.md), [native format](native-suzip-format.md) |
 | GPU admission, codecs and timing | [GPU research](gpu-accelerated-ui-and-codec-research.md), [performance validation](performance-block-size-validation.md), exact `src/gpu` and `src/core` sources |
 | Comparison eligibility and results | [comparison methodology](comparative-benchmark-methodology.md), [benchmark index](compression-level-and-benchmark-suite.md) |
-| Validation and hosted acceptance | [targeted verification](targeted-verification.md), [workflow timings](history/development/workflow-performance-review.md) |
+| Validation and hosted acceptance | [Targeted verification](targeted-verification.md), selected workflows for the exact pushed commit |
 | Repeated mistakes and scanner evidence | [learning loop](engineering-learning-loop.md), [security scanning](security-code-scanning.md) |
 | Native GUI design and diagnosis | [design](design.md), [debugging strategy](debugging-strategy.md) |
 
 This index routes to sources rather than copying their current SHAs, counts,
-versions or policy. Historical measurements stay in dated audit/benchmark
-records. Resolve current Git, host, scanner and workflow values when needed.
+versions or policy. Historical measurements remain in Git and local evidence;
+they do not establish current status. Resolve current Git, host, scanner and
+workflow values when needed.
 
 ## Mandatory Skills And Actual Use
 
@@ -103,7 +104,7 @@ Write a short synthesis file under ignored `out/` after a useful investigation.
 Record its kind and all source/evidence dependencies explicitly:
 
 ```powershell
-py -3 tools/agent_context.py remember allocation-rejection-round-one --summary-file out/allocation-note.md --kind decision --source docs/modernization-audit-2026-10-02.md --source out/allocation-evidence.json
+py -3 tools/agent_context.py remember allocation-rejection-round-one --summary-file out/allocation-note.md --kind decision --source src/gpu/hip_allocation_policy.hpp --source out/allocation-evidence.json
 py -3 tools/agent_context.py recall allocation-rejection-round-one
 ```
 
@@ -127,14 +128,6 @@ state loses convenience, not repository evidence. Promote durable lessons into
 existing reviewed documents/tests instead of appending another giant wiki.
 
 ## Evidence And Research Basis
-
-The October review retrieved 1,132 comments in 12 API pages through October 1,
-preserving the raw thread locally. A deterministic screen examined all records,
-identified five exact duplicate bodies and 306 technical keyword candidates,
-then narrowed to 282 short, non-image candidates for bounded review. Selected
-substantive discussions received deeper source reads. This is screening and
-targeted reading, not a claim that every word of the 1.75-million-character
-thread was read by the model or that advertised products were validated.
 
 [Karpathy's April 2026 idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
 motivates reusable synthesis separate from underlying sources and a small

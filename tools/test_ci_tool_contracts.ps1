@@ -29,6 +29,8 @@ Assert-CiContractPlan -Path 'cmake/SuperZipPrecompiledHeaders.cmake' -Required @
 Assert-CiContractPlan -Path 'tests/cmake/precompiled_headers/contract.c' -Required @('precompiled-header-tests')
 Assert-CiContractPlan -Path 'src/core/checksum.cpp' -Required @()
 Assert-CiContractPlan -Path 'tools/verify_changes.ps1' -Required @('verification-runner-tests')
+Assert-CiContractPlan -Path 'tools/security_scan.ps1' -Required @('security-scan-tests')
+Assert-CiContractPlan -Path 'tools/test_security_scan.ps1' -Required @('security-scan-tests')
 Assert-CiContractPlan -Path 'tools/native_component_tests.ps1' -Required @('native-selection-contracts')
 Assert-CiContractPlan -Path 'tests/cpp/test_main.cpp' -Required @('native-runner-contracts')
 Assert-CiContractPlan -Path 'tools/native_ci.ps1' -Required @('native-ci-contracts')

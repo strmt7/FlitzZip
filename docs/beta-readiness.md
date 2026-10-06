@@ -64,4 +64,4 @@ same artifact checksums again.
 
 This page records acceptance boundaries, not a declaration that all gates passed.
 Exact runs and final status are retained in the local handoff and GitHub checks.
-Completed chronological reports belong in [documentation history](history/README.md).
+Completed chronological reports remain in Git history and local review artifacts.

@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - .github/workflows/benchmark-graph.yml
+      - docs/benchmarks/README.md
+      - docs/neutron-public-corpus-benchmark.md
+      - tools/neutron_corpus_benchmark.py
+      - tools/neutron_corpus_ipc.py
+      - tools/test_neutron_corpus_benchmark.py
       - README.md
       - docs/benchmarks/data/**
       - docs/comparative-benchmark-methodology.md
@@ -35,6 +40,11 @@ on:
   pull_request:
     paths:
       - .github/workflows/benchmark-graph.yml
+      - docs/benchmarks/README.md
+      - docs/neutron-public-corpus-benchmark.md
+      - tools/neutron_corpus_benchmark.py
+      - tools/neutron_corpus_ipc.py
+      - tools/test_neutron_corpus_benchmark.py
       - README.md
       - docs/benchmarks/data/**
       - docs/comparative-benchmark-methodology.md
@@ -73,7 +83,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Regenerate reviewed README graph
+    name: Validate benchmark evidence and graph contracts
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -92,79 +102,4 @@ jobs:
           tools.test_comparison_graph tools.test_tradeoff_graph tools.test_native_tradeoff_graph
           tools.test_benchmark_comparators tools.test_benchmark_cache
           tools.test_native_build_provenance tools.test_native_build_receipt
-      - name: Generate and verify README graph
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t records < <(find docs/benchmarks/data -maxdepth 1 -type f -name 'native-*.json' -print | LC_ALL=C sort)
-          if [[ ${#records[@]} -eq 0 ]]; then
-            echo 'No reviewed native benchmark records found.' >&2
-            exit 1
-          fi
-          arguments=()
-          for record in "${records[@]}"; do
-            arguments+=(--input "$record")
-          done
-          python tools/render_benchmark_graph.py "${arguments[@]}" --output resources/benchmarks/native-cpu-hip.svg --check
-          grep -Fq 'resources/benchmarks/native-cpu-hip.svg' README.md
-      - name: Regenerate reviewed beta native comparison
-        run: |
-          python tools/render_benchmark_graph.py \
-            --input docs/benchmarks/data/beta-mixed-l5-b8192-20261003.json \
-            --output resources/benchmarks/beta-native-cpu-hip.svg --check
-          grep -Fq 'resources/benchmarks/beta-native-cpu-hip.svg' README.md
-      - name: Regenerate reviewed application comparison
-        shell: bash
-        run: |
-          set -euo pipefail
-          record=docs/benchmarks/data/comparison-silesia-current.json
-          if [[ ! -f "$record" ]]; then
-            echo 'No reviewed application comparison record yet; renderer unit tests passed.'
-            exit 0
-          fi
-          python -m tools.render_comparison_graph --input "$record" --output "$RUNNER_TEMP/comparison.svg"
-          cmp "$RUNNER_TEMP/comparison.svg" resources/benchmarks/application-comparison.svg
-          grep -Fq 'resources/benchmarks/application-comparison.svg' README.md
-          grep -Fq 'docs/comparative-benchmark-methodology.md' README.md
-      - name: Regenerate reviewed effort tradeoff
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t records < <(find docs/benchmarks/data -maxdepth 1 -type f \
-            -name 'comparison-silesia-effort-L*.json' -print | LC_ALL=C sort)
-          if [[ ${#records[@]} -eq 0 ]]; then
-            echo 'No reviewed effort sweep yet; renderer unit tests passed.'
-            exit 0
-          fi
-          if [[ ${#records[@]} -ne 5 ]]; then
-            echo 'Incomplete reviewed effort sweep.' >&2
-            exit 1
-          fi
-          arguments=()
-          for record in "${records[@]}"; do
-            arguments+=(--input "$record")
-          done
-          python -m tools.render_tradeoff_graph "${arguments[@]}" --output "$RUNNER_TEMP/tradeoff.svg"
-          cmp "$RUNNER_TEMP/tradeoff.svg" resources/benchmarks/effort-tradeoff.svg
-          grep -Fq 'resources/benchmarks/effort-tradeoff.svg' README.md
-      - name: Regenerate reviewed native effort tradeoff
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t records < <(find docs/benchmarks/data -maxdepth 1 -type f \
-            -name 'effort-native-L*.json' -print | LC_ALL=C sort)
-          if [[ ${#records[@]} -eq 0 ]]; then
-            echo 'No reviewed native effort sweep yet; renderer unit tests passed.'
-            exit 0
-          fi
-          if [[ ${#records[@]} -ne 5 ]]; then
-            echo 'Incomplete reviewed native effort sweep.' >&2
-            exit 1
-          fi
-          arguments=()
-          for record in "${records[@]}"; do
-            arguments+=(--input "$record")
-          done
-          python -m tools.render_native_tradeoff_graph "${arguments[@]}" --output "$RUNNER_TEMP/native-effort.svg"
-          cmp "$RUNNER_TEMP/native-effort.svg" resources/benchmarks/native-effort-tradeoff.svg
-          grep -Fq 'resources/benchmarks/native-effort-tradeoff.svg' README.md
+          tools.test_neutron_corpus_benchmark.CorpusContracts.test_published_corpus_studies

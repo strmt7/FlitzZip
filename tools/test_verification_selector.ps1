@@ -259,7 +259,9 @@ $componentCases = @(
     @('tools/analyze_hip_trace.py', 'hip-api-trace-tests'),
     @('tools/test_hip_trace.py', 'hip-api-trace-tests'),
     @('tools/refactor_audit.ps1', 'refactor-audit-tests'),
-    @('tools/test_refactor_audit.ps1', 'refactor-audit-tests')
+    @('tools/test_refactor_audit.ps1', 'refactor-audit-tests'),
+    @('tools/security_scan.ps1', 'security-scan-tests'),
+    @('tools/test_security_scan.ps1', 'security-scan-tests')
 )
 foreach ($case in $componentCases) {
     $componentPlan = Get-SuperZipVerificationPlan -ChangedPath @($case[0])
@@ -316,7 +318,7 @@ Assert-Selector (-not (Test-Workflow -Plan $workflowPlan -Name "benchmark-graph"
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "security") "workflow changes must wait for security"
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "scorecard") "workflow changes must wait for scorecard"
 Assert-Selector $workflowPlan.postPushAuditRequired "workflow changes must require post-push audit"
-$benchmarkPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/benchmarks/data/effort-native-L5.json")
+$benchmarkPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/benchmarks/data/neutron-canterbury.json")
 Assert-Selector (Test-Workflow -Plan $benchmarkPlan -Name "benchmark-graph") "benchmark records must wait for graph regeneration"
 Assert-Selector (Test-RequiredCommand -Plan $benchmarkPlan -Id "benchmark-tooling-tests") "benchmark data must retain graph contracts"
 $svgPlan = Get-SuperZipVerificationPlan -ChangedPath @('tools/render_svg_graph.py', 'tools/test_svg_graph.py', 'resources/benchmarks/chart-template.svg')
@@ -325,7 +327,7 @@ $svgTests = @($svgPlan.requiredLocalCommands | Where-Object { $_.id -eq 'benchma
 Assert-Selector ($svgTests.Count -eq 1 -and $svgTests[0].arguments -contains 'tools.test_svg_graph') 'shared SVG document changes must run their passive-markup contracts'
 Assert-Selector (Test-Workflow -Plan $svgPlan -Name 'benchmark-graph') 'shared SVG document changes must select hosted byte-exact graph checks'
 Assert-Selector (-not (Test-RequiredCommand -Plan $svgPlan -Id 'release-build')) 'shared SVG documentation tooling must not trigger a product rebuild'
-foreach ($path in @('docs/benchmarks/corpora.md', 'docs/benchmarks/household-power-diagnostic-2026-10-03.md')) {
+foreach ($path in @('docs/benchmarks/corpora.md', 'docs/benchmarks/study-methodology.md')) {
     $benchmarkNarrativePlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     Assert-Selector (-not (Test-RequiredCommand -Plan $benchmarkNarrativePlan -Id 'benchmark-tooling-tests')) "benchmark narrative alone must not rerun unchanged graph contracts: $path"
     Assert-Selector (-not (Test-Workflow -Plan $benchmarkNarrativePlan -Name 'benchmark-graph')) "benchmark narrative alone must not wait for a path-filtered graph workflow: $path"
@@ -408,6 +410,26 @@ foreach ($directory in @('docs', 'docs/history/security')) {
         Assert-Selector (-not (Test-RequiredCommand -Plan $evidencePlan -Id 'unit-tests')) "evidence relocation must not repeat unchanged native tests: $path"
     }
 }
+$designReferencePlan = Get-SuperZipVerificationPlan -ChangedPath @('resources/design/superzip-ui-design-reference.png')
+Assert-Selector $designReferencePlan.scope.docsOnly 'design reference artwork is documentation, not native UI rendering input'
+Assert-Selector (-not $designReferencePlan.scope.touchesGui) 'design reference updates must not launch the GUI'
+foreach ($id in @('release-build', 'unit-tests', 'gui-smoke')) {
+    Assert-Selector (-not (Test-RequiredCommand -Plan $designReferencePlan -Id $id)) "design reference alone must not execute product work: $id"
+}
+$productArtworkPlan = Get-SuperZipVerificationPlan -ChangedPath @('resources/brand/superzip-logo.svg')
+Assert-Selector $productArtworkPlan.scope.touchesGui 'actual product artwork retains GUI verification'
+foreach ($path in @('docs/performance-block-size-validation.md', 'docs/compression-level-and-benchmark-suite.md')) {
+    $performanceGuidePlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (-not $performanceGuidePlan.scope.touchesPerformance) 'prose edits are not changes to measured execution'
+    Assert-Selector ($performanceGuidePlan.manualLocalCommands.Count -eq 0) 'performance guide edits must not repeat an unchanged native benchmark'
+}
+foreach ($path in @('docs/benchmarks/data/neutron-canterbury.json', 'docs/benchmarks/data/neutron-pythia14m.json')) {
+    $publishedStudyPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $publishedStudyPlan -Id 'neutron-public-corpus-test') 'current Neutron measurements require their exact publication consumer'
+    Assert-Selector (-not (Test-RequiredCommand -Plan $publishedStudyPlan -Id 'release-build')) 'publication checks do not rebuild or repeat measured workloads'
+}
+$activeReviewPlan = Get-SuperZipVerificationPlan -ChangedPath @('docs/security-reviews/nltk-public-fixture.md')
+Assert-Selector (Test-RequiredCommand -Plan $activeReviewPlan -Id 'secret-report-tests') 'active security evidence retains its exact source consumer after relocation'
 
 $packagingPlan = Get-SuperZipVerificationPlan -ChangedPath @("CMakeLists.txt")
 foreach ($guardPath in @('tools/zstd_rewrite_policy.ps1', 'tools/test_zstd_rewrite_policy.ps1',

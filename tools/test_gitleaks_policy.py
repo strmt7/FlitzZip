@@ -38,7 +38,7 @@ class GitleaksPolicyTests(unittest.TestCase):
     # Inputs: The immutable benchmark source revision and production regexes.
     # Outputs: Both original source fields match; changed or authentication values remain rejected.
     def test_exact_public_source_values_and_authentication_boundaries(self):
-        record = json.loads((ROOT / "docs/benchmarks/data/beta-effort-size-L4-20261003.json").read_text("utf-8-sig"))
+        record = json.loads((ROOT / "docs/benchmarks/data/fixtures/native-v1.json").read_text("utf-8-sig"))
         revision = record["source_commit"]
         self.assertRegex(revision, r"\A[0-9a-f]{40}\Z")
         for name in ("tests/cpp/sdk_byte_access_checks.hpp", "tests/cpp/test_sdk_byte_access.cpp"):

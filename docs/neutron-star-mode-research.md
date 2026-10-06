@@ -14,10 +14,10 @@ uses the [version-nine compound representation](native-suzip-format.md).
 Neutron also evaluates exact byte-plane permutations at widths two, four and
 eight against that winner, using the closed version-ten representation only
 for a smaller complete result. Transform and inverse execute through HIP.
-The [three-run Canterbury study](benchmarks/data/neutron-canterbury-byte-plane-2026-10-05.json)
-retained identical complete archive sizes and increased computation. Numeric
-correctness fixtures exercise an actual byte-plane winner, but do not establish
-a real-model or general-workload size benefit. Broader qualification remains open.
+The version-eleven context representation separately codes byte planes so
+different field distributions do not share one pooled entropy model. Current
+[public-corpus evidence](neutron-public-corpus-benchmark.md) qualifies complete
+file sizes and readback on its stated workloads; broader qualification remains open.
 Both required-HIP decode stages execute on the GPU. The independent CPU
 decoder verifies portability without providing a Neutron creation fallback.
 It is not a claim of universal minimum size, best-in-class compression or an
@@ -88,113 +88,79 @@ workspace before later work succeeds. Empty input and absent HIP remain
 explicit contracts. Product integration requires archive readback, policy and
 cancellation checks in addition to the primitive qualification.
 
-## Improvement Rounds And Isolation
+## Portfolio And Isolation
 
-Each Neutron round preserves an exact source identity, complete archive sizes,
-CPU/HIP bytewise readback, memory admission and real HIP telemetry. Changes to
-this mode do not change numeric effort policies. The ordinary numeric-level
-benchmark protocol rejects a Neutron result. A later transfer to another level
-requires controlled evidence of both smaller complete archives and higher
-speed, followed by that level's consumer and compatibility checks.
+Each candidate preserves an exact source identity, complete archive sizes,
+CPU/HIP bytewise readback, memory admission and actual HIP telemetry. Neutron
+retains the ordinary GPU portfolio winner and replaces it only when a complete
+framed candidate is smaller. The numeric-level benchmark protocol rejects a
+Neutron result. Transferring an improvement to another level requires controlled
+evidence of both smaller archives and faster execution, followed by that level's
+consumer and compatibility checks.
 
-The first round replaces greedy dictionary parsing with minimum-byte parsing
-over its admitted match graph. The second round integrates this trial into the
-native portfolio, retaining each ordinary GPU winner and replacing it only
-when the complete framed block is smaller. The third round expands only Neutron
-matches to the full 16-bit range and covers the additional extension-cost
-plateaus with bounded lane strides. Further rounds must measure their
-incremental effect against the preceding Neutron implementation; extra search
-work alone is not evidence of improvement.
-
-The fourth round changes only Neutron's private integer-minimum reduction.
-Hardware wavefronts independently reduce cost/position keys using HIP shuffles,
-then the first wavefront combines their staged minima. Two block barriers
-replace nine per reduction. The actual hardware width admits the 32- and
-64-lane paths; other widths retain the exact shared-memory reduction. Match
-search, parse tiles, cancellation checkpoints, memory limits, deterministic
-tie ordering and complete archive selection remain unchanged. Qualification
-must retain exact output and exercise winners across wavefront boundaries.
+The private minimum reduction first combines cost/position keys within each
+hardware wavefront, then combines staged minima across wavefronts. Supported
+32- and 64-lane paths preserve exact tie ordering; other widths use the exact
+shared-memory reduction. The operation remains bounded by the same parse tiles,
+cancellation checkpoints and memory admission.
 [AMD's reduction guidance](https://rocm-handbook.amd.com/projects/amd-rocm-optimization-guide/en/latest/patterns/examples/reduction.html)
-describes the two-phase reduction pattern. Real-device results remain specific
-to the tested architecture; a supported code path does not establish testing
-on every AMD GPU.
+describes this two-phase pattern. Supporting a width in source does not establish
+runtime qualification on every device.
 
-The fifth round classifies each completed match graph on HIP. A graph without
-any usable match has exactly one legal parse: a literal-only sequence. The GPU
-publishes that decision and its exact cost, then the existing GPU writer emits
-and validates it. Host scheduling receives only bounded zero/one activity words.
-It schedules parse tiles through the longest active segment; inactive segments
-do not enter the dynamic program. An activity mask and the exact parse launch
-count bind telemetry to source geometry. The gate is a proof over the admitted
-graph, not a data-type heuristic or an omitted compression candidate. Active
-graphs retain the complete previous minimum-byte search.
+HIP classifies completed match graphs before dynamic programming. A graph with
+no usable match has only its literal parse; the GPU publishes and emits that
+exact result. Host scheduling receives bounded activity words and skips only
+proved inactive work. This is a proof about the admitted graph, not a file-type
+heuristic. Competitive graphs retain the complete minimum-byte search.
 
-## Further Ratio Work
+## Research Priorities
 
-The byte-plane experiment follows established reversible preconditioning in
-[Blosc](https://www.blosc.org/c-blosc2/reference/blosc1.html) and
-[ZipNN](https://github.com/zipnn/zipnn), reviewed through Crawl4AI on 2026-10-05,
-with the [ZipNN paper](https://arxiv.org/html/2411.05239v2) providing numeric-field
-motivation. Model compression results do not predict arbitrary-file results.
-SuperZip imports neither their runtime nor their source code. It tests the
-three byte permutations on generic source bytes, including incomplete tails,
-and measures their complete GPU codec output. Input names, extensions and
-corpus identities never select a transform. Independent source-byte readback,
-malformed-frame controls and representative public measurements must qualify
-the experiment before claims or publication.
+The current [standard-format references](neutron-public-corpus-benchmark.md#standard-format-size-reference)
+show the remaining workload-specific gap: Canterbury needs 723,429 complete
+Neutron bytes, versus 543,236 for TAR/bzip2 and 494,376 for TAR/XZ. Pythia14M
+benefits from separate byte contexts, but one trained checkpoint does not
+establish general effectiveness. Measure each proposal against complete framed
+costs, not kernel activity, unframed entropy estimates or a paper's headline.
 
-The [2026-10-05 ratio review](history/research/neutron-ratio-research-2026-10-05.md) evaluates
-recent lossless AI-model coding, tile-addressable ANS, reversible field
-transforms and neural predictors, with an ordered Neutron-only experiment
-sequence. [Canonical public-corpus benchmarking](neutron-public-corpus-benchmark.md)
-uses the original Canterbury bytes and the complete current Govdocs1 thread0
-inventory through the existing RAM engine and Hyperfine.
+The self-hosted Crawl4AI research batch retrieved twenty primary-source pages;
+selected method and limitation passages informed these hypotheses. The full
+page captures and access metadata remain local. These are research directions,
+not implemented codecs or measured SuperZip speedups:
 
-The application portfolio must retain level-nine GPU candidates and select
-using complete block costs, including framing, so a stronger dictionary trial
-cannot enlarge the chosen archive. Compact canonical entropy metadata and
-reversible byte/bit-plane transforms are further research directions. Typed
-floating-point transforms must preserve every original bit, including NaN
-payloads and signed zero; lossy model quantization is outside this mode.
+- **Separate predictable fields from residual bits.**
+  [DFloat11](https://arxiv.org/html/2504.11651),
+  [exponent concentration](https://arxiv.org/html/2510.02676),
+  [Invariant Bit Packing](https://arxiv.org/html/2605.30728) and
+  [Unweight](https://research.cloudflare.com/nikulin2026/) exploit structure in
+  trained numerical representations. Test reversible constant-bit/bit-plane
+  contexts with explicit masks, outliers and table overhead. Preserve headers,
+  signed zero, NaN payloads and every original bit. Existing low-precision model
+  results do not authorize quantization of input files.
+- **Improve context and entropy coding.**
+  [ZipNN](https://github.com/zipnn/zipnn) and
+  [Falcon](https://arxiv.org/html/2511.04140) motivate exact representation
+  selection. A byte permutation alone leaves a pooled histogram unchanged;
+  separate contexts must justify their tables and offsets. Add an independent
+  decoder and malformed-frame checks before introducing a representation.
+- **Account for the decoder model.**
+  [Nacrith](https://arxiv.org/html/2602.19626) combines predictors with arithmetic
+  coding, but its reported text sizes exclude a large shared model and its paper
+  discusses training-data overlap. A self-contained archive comparison must
+  include required model bytes and deterministic cross-host reconstruction.
+  No neural-model runtime or implicit external decoder dependency is adopted.
+- **Distinguish archive cost from accelerator microbenchmarks.**
+  [RAS](https://arxiv.org/html/2511.04684) reports a simulated hardware design;
+  [absolute-offset LZ work](https://arxiv.org/html/2607.18541) measures a match
+  phase with a different offset representation. Neither establishes end-to-end
+  HIP speed or a new cost rule for Neutron's fixed two-byte LZ4 distances.
+  Include acquisition boundaries, transfers, all coding stages and decoding.
 
-[AMD's HIP performance guidance](https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/performance_guidelines.html)
-informs bounded parallel work and transfer accounting. The author manuscript
-[A High-Throughput GPU Framework for Adaptive Lossless Compression of Floating-Point Data](https://arxiv.org/abs/2511.04140)
-suggests adaptive bit-plane research, but its reported results are not SuperZip
-or AMD HIP benchmark evidence. No external compression runtime, neural model
-or new product dependency is adopted by this primitive.
-
-The [current standard-format size reference](history/benchmarks/neutron-public-corpus-rounds.md#standard-format-size-reference-6-october)
-shows a substantial remaining ratio gap on Canterbury: Neutron uses 741,174
-complete bytes, compared with 729,272 for ZIP/DEFLATE, 543,236 for TAR/bzip2 and
-494,376 for TAR/XZ. Further work must target that measured gap, rather than
-treating additional trial count or GPU activity as progress.
-
-Primary sources read through Crawl4AI on 6 October include
-[DFloat11](https://arxiv.org/html/2504.11651),
-[exponent concentration](https://arxiv.org/html/2510.02676),
-[Falcon](https://arxiv.org/html/2511.04140),
-[DietGPU](https://github.com/facebookresearch/dietgpu) and the
-[bzip2 manual](https://sourceware.org/bzip2/manual/manual.html).
-They support two distinct hypotheses: separate low-entropy numeric fields from
-high-entropy payload bits, and exploit longer contexts through reversible
-block sorting and stronger entropy coding. Their CUDA throughput, model-specific
-results and numeric assumptions are not measurements of SuperZip or AMD HIP.
-Two eScholarship GPU-paper pages returned HTTP 202 with one-character content;
-their extraction provided no usable paper evidence and is retained as an
-access failure, despite the crawler's success flag.
-
-The next experiments need independent original-bit readers, bounded GPU work
-and complete framed-cost selection. An actual trained-model corpus is needed
-before claiming numeric/model benefits. The public Apache-2.0
-[Pythia models](https://github.com/EleutherAI/pythia#license) supply the pinned
-complete 14M checkpoint. Its [actual GPU observation](benchmarks/data/neutron-pythia14m-pruning-2026-10-06.json)
-and independent standard-container comparison now qualify that file's exact
-size and correctness. That pruning observation was larger than its ZIP,
-bzip2 and XZ references; the subsequent context measurement below beats those
-unchanged references for the same complete checkpoint. General text, binary and already-compressed
-files must remain in the study. These are research directions, not implemented
-codecs, new runtime dependencies or demonstrated general improvements.
+Use the existing licensed public corpora and exact RAM-only engine for each
+candidate. Select transforms from original bytes and measured complete costs,
+never filenames, extensions or corpus identities. Test text, mixed documents,
+models and already-compressed data; retain losing and failed observations
+locally. Additional dependencies and format changes follow the existing
+approval and compatibility contracts.
 
 ## Exact Dictionary Work Admission
 
@@ -213,78 +179,31 @@ The limit excludes its offset-table framing and comes from the preceding
 measured winner. Competitive groups retain the full existing optimal parser;
 ordinary numeric efforts are untouched. HIP performs the graph analysis and
 literal materialization, with the existing workspace and per-launch limits.
-The HIP regressions passed, including exact competitive output, losing
-nonempty graphs, partial tails, budget admission and cancellation/recovery.
-The [complete Canterbury record](benchmarks/data/neutron-canterbury-pruning-2026-10-06.json)
-preserved every archive size and used 27,753 fewer kernel launches across
-33 observations. This qualifies that corpus's sizes and launch counts, not a
-paired speed improvement or other unfinished workloads. The pruning changes
-no representation and admits no heuristic omission of a competitive graph.
+Regression coverage includes competitive output, losing nonempty graphs,
+partial tails, budget admission and cancellation/recovery. Pruning changes no
+representation and admits no heuristic omission of a competitive graph.
 
 ## Independent Entropy Contexts
 
-The current development candidate adds a version-eleven closed context frame
-and initially trials two byte planes independently through the existing plain
-HIP portfolio. The reader supports widths two, four and eight with derived
-plane extents and exact tail reconstruction. Handcrafted mixed raw/fill/pattern
-fixtures, malformed tables, version admission and independent CPU/HIP readers
-are part of its qualification. No compression result is claimed until the
-candidate passes actual GPU execution and representative bytewise studies.
-The [complete Pythia14M pilot](benchmarks/data/neutron-pythia14m-contexts-pilot-2026-10-06.json)
-now provides the first actual measurement of this candidate: 28,143,920 original
-bytes became 24,162,233 complete modeled archive bytes at a 1 MiB block size,
-with byte-exact required-HIP readback and zero payload writes. This saves
-1,935,715 bytes against the preceding same-block-size result and beats the
-retained ZIP, bzip2 and XZ references for this checkpoint. One file and one
-repetition do not establish broad effectiveness or comparative speed. The
-[subsequent three-run measurement](benchmarks/data/neutron-pythia14m-contexts-block-1024-2026-10-06.json)
-reproduced the identical size in every run, preserving those qualification limits.
+The version-eleven closed context frame trials two byte planes independently
+through the existing plain HIP portfolio. Its reader supports widths two,
+four and eight, derived plane extents and exact tail reconstruction. Mixed
+raw/fill/pattern fixtures, malformed tables, version admission and independent
+CPU/HIP readers cover this boundary. Every context's framing participates in
+selection; the preceding winner remains when the complete candidate does not
+improve size. Numeric efforts remain unchanged.
 
-The trained checkpoint exposes a specific limitation in the current byte-plane
-trial: it reorders the complete block and then supplies that whole block to
-one primitive stage. A permutation preserves a pooled byte histogram; a
-single global entropy table cannot exploit differing distributions between
-planes solely because their order changed. This follows from the current
-trial geometry and is an algorithmic inference, not a measured new codec.
-
-The [Bitshuffle project](https://github.com/kiyo-masui/bitshuffle) describes
-reversible bit transposition followed by compression and explicitly limits
-its effectiveness to suitable correlated data. The June 2026 preprint
-[Approaching Shannon Bound with Lossless LLM Weight Compression](https://arxiv.org/html/2606.15789)
-studies representation-specific entropy, tile-addressable ANS and GPU
-decompression integrated with inference. Their assumptions and CUDA results
-do not qualify HIP archive performance or justify modifying original weights.
-Both primary pages were retrieved through Crawl4AI; retained text includes
-the actual method discussion rather than a search excerpt.
-
-The implemented byte-field experiment includes every context's framing in
-selection and retains the existing winner whenever the complete candidate
-does not improve size. Its explicit format version, bounded HIP forward/inverse
-work, independent original-bit reader and malformed-frame rejection are
-documented in the native format contract. Bit-field contexts remain a separate
-research direction. Every file byte, including model headers, is preserved;
-there is no quantization, model execution, workload-specific omission or
-transfer to ordinary efforts.
-
-A RAM-only independent histogram oracle examined every byte of the same
-28,143,920-byte trained checkpoint in 1 MiB blocks. Unconstrained Huffman bit
-cost, rounded to bytes without format framing, was 25,934,479 with a pooled
-distribution, 23,911,319 with two byte-plane contexts, 23,906,678 with four,
-and 23,900,318 with eight. The existing twelve-bit code-length limit, lookup
-tables, segment offsets and complete container overhead are absent from these
-estimates. This is evidence for testing the representation, not an encoded
-archive, a production implementation, a GPU result or a speed claim. More
-contexts barely improve the unframed cost here and may lose after their
-additional tables are counted.
+The [current complete-checkpoint study](benchmarks/data/neutron-pythia14m.json)
+records Pythia14M sizes and byte-exact required-HIP readback. More contexts may
+reduce unframed entropy yet lose after extra tables and offsets. Bit-field
+contexts remain prospective; neither histogram estimates nor an upstream
+inference benchmark is an encoded SuperZip archive.
 
 ## Prospective Match-Sequence Bound
 
-A private independent CPU oracle checked 1,872 legal small match graphs,
-including exhaustive sixteen-byte graphs and sampled extension/tail cases.
-For 1,836 graphs, including the unavoidable match-token/offset cost produced
-a stronger lower bound than uncovered literals alone. Every bound remained
-at or below the independently enumerated optimal LZ4 parse price. This is a
-prospective proof check, not a production implementation or GPU measurement.
+A stronger lower bound can additionally count unavoidable match-token and
+offset costs. Private oracle observations remain local; this is a prospective
+derivation, not a production implementation or GPU performance result.
 
 Let `L` be the uncovered literal count, `N` the source size, and `M` the largest
 legal verified match length. With `m` matches, literal count is at least

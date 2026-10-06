@@ -3,7 +3,7 @@
 Source findings require production repairs and fresh verification. Historical
 approvals establish reviewed identity; they do not prove memory safety or admit
 an outstanding source finding. Completed implementation details are retained in
-[the remediation record](history/security/source-remediation-implementation.md).
+[the remediation record](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/source-remediation-implementation.md).
 
 ## Repair And Closure
 

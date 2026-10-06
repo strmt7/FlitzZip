@@ -100,15 +100,10 @@ block; SuperZip does not add padding or weaken low levels to manufacture a
 difference. Distinct search budgets do not establish nine distinct sizes on
 every corpus or a universal speedup. Broader ratio strategies remain open.
 
-The earlier 10 GiB Mixed study with 16 MiB blocks produced distinct GPU
-archive sizes at levels 1-9, though level 6 was 1,660 bytes larger than level 5
-in a single-run size diagnostic before nested selection. The reviewed five-level
-[CPU/GPU report](history/benchmarks/native-effort-2026-09-29.md) provides repeated,
-clean-source measurements. This is not a guarantee
-of monotonic size on arbitrary files. RAM-only shifted-alphabet regressions
-require a strong-tier size reduction and CPU/HIP roundtrips. Longer-repeat and
-context coding strategies remain separate work; do not weaken lower levels to
-manufacture a difference.
+RAM-only shifted-alphabet regressions require a strong-tier size reduction
+and CPU/HIP roundtrips. Equal sizes remain valid when additional effort does
+not improve a file. Detailed superseded effort studies are recoverable in Git;
+they do not establish monotonic size on arbitrary inputs.
 
 Entropy selection compares each block's measured payload size, including
 codebook/lookup and offset-table overhead, against its existing representation
@@ -147,16 +142,11 @@ output capacity is one byte less than raw size; a candidate that fills it
 without finishing cannot save space. Existing descriptors and decoding remain
 unchanged, so this does not require a new native format version.
 
-At cutoff-fix checkpoint `4ef1d2c`, September 2026 checks covered all nine
-efforts, tiny framing boundaries,
-periodic/random inputs, and short tails after full-sized raw blocks with
-multiple worker budgets. An independent zlib 1.3.1 reader and the previous
-SuperZip executable verified 189 generated archives: 63 became smaller, none
-grew, and tested inputs of 512 bytes or more stayed byte-identical. For one
-511-byte period-three fixture at level 9, payload fell from 511 to 26 bytes
-and the complete archive from 609 to 124 bytes. These are fixture-specific
-size results, not speed or GPU claims. The filesystem correctness experiment
-wrote 123,006 bytes of fixtures and archives, below the 64 MiB smoke limit.
+Regression coverage includes all nine efforts, tiny framing boundaries,
+periodic/random inputs and short tails after full raw blocks with multiple
+worker budgets. Independent standard readers and prior-version readability
+remain required for changes to the relevant format boundary. Fixture-specific
+size changes do not establish a throughput improvement.
 
 ### Shared Deflate Block Selection
 
@@ -280,11 +270,6 @@ The stable parameter meanings were checked against the
 Tests cover every product level, stream lifetime, and an 8 MiB deterministic
 long-distance-repeat workload. Higher effort does not guarantee the smallest
 file for every input; ratio and speed claims require workload-specific results.
-
-The September 2026 ratio regression uses 8,388,608 input bytes. On that case,
-Balanced writes 8,388,813 bytes and Maximum writes 4,194,769 bytes, with exact
-roundtrip validation. These are bounded filesystem correctness-test results,
-not RAM-only throughput measurements or a universal compression claim.
 
 ### Native Suite
 

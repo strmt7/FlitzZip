@@ -12,7 +12,6 @@ on:
       - tests/**
       - third_party/**
       - resources/app/**
-      - resources/design/**
       - resources/brand/**
       - resources/licenses/**
       - tools/build.ps1

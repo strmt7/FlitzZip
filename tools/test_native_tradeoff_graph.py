@@ -31,11 +31,11 @@ def sweep_fixture() -> list[dict]:
 
 
 class NativeTradeoffGraphTests(unittest.TestCase):
-    # Purpose: Keep the published all-nine GPU size claim tied to one clean binary and checked evidence.
-    # Inputs: Five paired and four GPU-only reviewed native effort records.
+    # Purpose: Preserve interpretation of legacy paired and GPU-only records from one clean binary.
+    # Inputs: Immutable regression fixtures, including a real nonmonotonic effort-size observation.
     # Outputs: Rejects missing, inconsistent, repeated-size, or mislabeled diagnostic evidence.
-    def test_reviewed_nine_level_gpu_sizes(self) -> None:
-        data = Path(__file__).resolve().parents[1] / "docs/benchmarks/data"
+    def test_legacy_effort_record_sizes(self) -> None:
+        data = Path(__file__).resolve().parents[1] / "docs/benchmarks/data/fixtures/effort"
         identity = None
         sizes = {}
         for level in range(1, 10):
