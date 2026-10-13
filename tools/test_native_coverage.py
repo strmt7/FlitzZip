@@ -9,9 +9,11 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlsplit
+from urllib.request import Request
 
 from tools import native_coverage as collector
-from tools.native_coverage_report import normalize_report, source_path
+from tools.native_coverage_report import normalize_report, read_report, source_path
 
 
 class CoverageTests(unittest.TestCase):
@@ -35,7 +37,7 @@ class CoverageTests(unittest.TestCase):
         self.raw.write_text(self.xml, encoding="utf-8")
         summary = normalize_report(self.raw, self.output, self.root)
         self.assertEqual(summary, {"files": ["src/example.cpp"], "lines_valid": 2, "lines_covered": 1})
-        tree = ET.parse(self.output)
+        tree = read_report(self.output)
         self.assertEqual(tree.find("./sources/source").text, ".")
         self.assertEqual(tree.find(".//class").get("filename"), "src/example.cpp")
         self.assertEqual(
@@ -97,7 +99,51 @@ class CoverageTests(unittest.TestCase):
         self.raw.write_bytes(ET.tostring(element))
         summary = normalize_report(self.raw, self.output, self.root)
         self.assertEqual((summary["lines_valid"], summary["lines_covered"]), (2, 2))
-        self.assertEqual(len(ET.parse(self.output).findall(".//class")), 2)
+        self.assertEqual(len(read_report(self.output).findall(".//class")), 2)
+
+    # Purpose: Reject entity expansion independently of XML encoding and use the same reader for all consumers.
+    # Inputs: Entity-bearing UTF-8/16/32 and ordinary UTF-16 documents. Outputs: Refusal before parsing expansion.
+    def test_xml_reader_rejects_encoded_entities(self):
+        entity = '<!DOCTYPE coverage [<!ENTITY repeated "payload">]><coverage>&repeated;</coverage>'
+        for encoding in ("utf-8", "utf-16", "utf-16-le", "utf-32", "utf-32-le"):
+            with self.subTest(encoding=encoding):
+                self.raw.write_bytes(entity.encode(encoding))
+                with self.assertRaises(ValueError):
+                    read_report(self.raw)
+        self.raw.write_bytes(self.xml.encode("utf-16-le"))
+        with self.assertRaises(ValueError):
+            read_report(self.raw)
+
+    # Purpose: Exercise the normalization boundary with an entity disguised by UTF-16 byte layout.
+    # Inputs: Otherwise valid source/hit evidence with an entity-valued hit count. Outputs: No report publication.
+    def test_normalizer_rejects_encoded_entity_attribute(self):
+        xml = '<!DOCTYPE coverage [<!ENTITY observed "2">]>' + self.xml.replace('hits="2"', 'hits="&observed;"')
+        self.raw.write_bytes(xml.encode("utf-16-le"))
+        with self.assertRaises(ValueError):
+            normalize_report(self.raw, self.output, self.root)
+        self.assertFalse(self.output.exists())
+
+    # Purpose: Prove a trusted initial download cannot redirect to an unauthorized transport or host.
+    # Inputs: Independent scheme, authority and credential mutations. Outputs: Every hostile hop fails before access.
+    def test_installer_redirects_remain_on_official_https(self):
+        initial = "https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-0.9.9.0/installer.exe"
+        valid = "https://release-assets.githubusercontent.com/release-asset?signature=public-fixture"
+        handler = collector.ReleaseRedirects()
+        request = Request(initial)
+        self.assertEqual(handler.redirect_request(request, None, 302, "Found", {}, valid).full_url, valid)
+        parsed = urlsplit(valid)
+        mutations = [
+            parsed._replace(scheme="file"),
+            parsed._replace(scheme="http"),
+            parsed._replace(netloc="github.com.example.invalid"),
+            parsed._replace(netloc="192.0.2.1"),  # RFC 5737 documentation address; IP hosts are never admitted.
+            parsed._replace(netloc="user@github.com"),
+            parsed._replace(netloc="github.com:444"),
+            parsed._replace(fragment="unexpected"),
+        ]
+        for changed in mutations:
+            with self.subTest(url=changed.geturl()), self.assertRaises(ValueError):
+                handler.redirect_request(request, None, 302, "Found", {}, changed.geturl())
 
     # Purpose: Reject changed collector code and unexpected runtime libraries.
     # Inputs: A complete binary fixture and separate mutations. Outputs: Identity-bound acceptance or refusal.

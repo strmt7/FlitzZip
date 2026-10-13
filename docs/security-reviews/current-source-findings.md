@@ -55,7 +55,7 @@ The source snapshot has already been required to contain at least `sizeof(DropFi
 
 `GlobalSize` supplies the bounded allocation size, `GlobalLockView` holds the source lock through the copy, and the destination vector has exactly that size. The non-null lock is checked before copying. The owned snapshot prevents later parsing from retaining an external allocation pointer.
 
-### Alert 821
+### Alert 8348
 
 **Sanitizer allocator instrumentation.** `DS161085` at `third_party/miniz/miniz_common.h:76`.
 
@@ -133,7 +133,7 @@ The format is the constant file/line diagnostic and its arguments are `__FILE__`
 
 The macro maps the default C allocator to the corresponding free/calloc family. Its allocation calls use fixed `LZ4_stream_t` or stream-decoder sizes, check allocation failure and free their owners on the corresponding exits. Custom and disabled allocator modes preserve their upstream contracts. This is an allocator-choice report, not evidence of an unbounded allocation or mismatched release.
 
-### Alert 852
+### Alert 8349
 
 **Serial benchmark opt-in flag.** `DS154189` at `tests/cpp/test_flzip_gpu_prefix.cpp:1016`.
 
@@ -223,19 +223,19 @@ The value is the SHA-256 field for the public AMD HTTPS distribution in the ROCm
 
 The HTTP URL is passed directly to `NoRedirect.redirect_request` inside `assertRaisesRegex`. No network request is made. The fixture verifies that redirects are rejected before following an insecure destination; changing it to HTTPS would remove this negative case.
 
-### Alert 1749
+### Alert 8350
 
 **Chunk-boundary SHA-256 vector.** `DS173237` at `tests/cpp/test_integrity.cpp:531`.
 
 The expected digest is independently reproducible with Python hashlib for 1,048,577 ASCII `a` bytes. It tests hashing across a chunk boundary and is not a credential.
 
-### Alert 1750
+### Alert 8351
 
 **SHA-256 abc vector.** `DS173237` at `tests/cpp/test_integrity.cpp:529`.
 
 The value is the public SHA-256 digest of `abc`, asserted against the production hashing implementation. It is not a credential.
 
-### Alert 1751
+### Alert 8352
 
 **Empty-input SHA-256 vector.** `DS173237` at `tests/cpp/test_integrity.cpp:527`.
 
@@ -255,3 +255,14 @@ DevSkim package and CodeQL configuration remains byte-identical to the reviewed
 FlitzZip commit. The complete workflow diff was checked before renewing these
 contexts. This changes no individual rationale or admitted location; subsequent
 source or scanner changes still expire the corresponding decision.
+
+## Renamed finding identities
+
+The rename emitted new DevSkim identities for the sanitizer allocator, the serial
+benchmark opt-in, and three public SHA-256 test vectors. Each new report was
+checked against its exact scanner version, full source hash, location, callers,
+and regression context. The three hashes were independently recomputed for empty
+input, `abc`, and 1,048,577 ASCII `a` bytes. The allocator remains guarded by the
+sanitizer-only configuration; the environment read remains a serial test opt-in.
+Their individual decisions above bind the new reports. Preceding identities and
+review text remain in Git; other findings cannot inherit these decisions.
