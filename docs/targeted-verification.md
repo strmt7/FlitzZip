@@ -5,6 +5,10 @@ the changed path set and its direct consumers. Batch related changes. Tooling
 edits, path count and failed checks do not automatically justify unrelated
 suites. Unknown paths must be classified before a plan can execute.
 
+[Native code coverage](code-coverage.md) reuses the Windows CI build and records
+measured CPU line hits. Its offline contracts run locally; collector changes
+also require the real hosted measurement and upload consumer.
+
 ## Commands
 
 Plan without running:

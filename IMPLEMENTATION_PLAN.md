@@ -37,9 +37,9 @@ Completed checkpoint narratives remain in Git history and local review artifacts
 
 ## Release Blockers
 
-The maintainer requested a prompt handoff to conserve usage. The work below is
-deferred, not completed or waived. The existing candidate is not approved for
-publication; resume these gates before declaring the next beta ready.
+The work below remains required before release approval. Completed source-bound
+checks may be reused only while their inputs remain unchanged. The existing
+candidate is not approved for publication.
 
 The product and format migration uses FlitzZip and `.flzip` throughout active
 interfaces, build targets, packages and tooling. Wire signatures and the MSI
@@ -104,11 +104,11 @@ request; this does not authorize publication of a replacement.
   existing-installation tool qualification where evidence is missing. Keep
   canonical agent rules concise, crawler installation portable and finding
   prevention executable; do not add recurring maintenance for unchanged tools.
-- **Coverage:** finish the researched Codecov integration with measured native
-  host and Python branch coverage, explicit GPU-device coverage limitations, and
-  the requested README badge between commit activity and cocoindex-code. Add
-  tests to investigate uncovered behavior and root causes, never to inflate a
-  percentage. The research and pinned tool candidates alone are not integration.
+- **Coverage:** qualify the [native CPU Codecov integration](docs/code-coverage.md)
+  on the actual hosted build, then use uncovered behavior to choose root-cause
+  tests. Extend measurement to Python branches and currently unmeasured executable
+  paths when their consumers are qualified. GPU device coverage remains a separate
+  limitation; do not infer it from host line coverage or inflate percentages.
 
 Reuse completed checks only when source, tools, configuration and outputs still
 match. Resume from the retained local evidence and current GitHub audit rather

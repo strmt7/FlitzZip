@@ -4,7 +4,8 @@
 
 These complete original-file studies use RAM-only transport and required-HIP
 bytewise readback. The records retain exact source, binary and corpus identities.
-They qualify the shared-workspace implementation; reusing them does not turn
+They qualify the FlitzZip implementation at commit `e7a6c6c`, including bounded
+GPU dictionary batches and wider numerical contexts. Reusing them does not turn
 them into measurements of a later revision.
 
 | Corpus | Original files | Input bytes | Complete modeled archive bytes | Evidence |
@@ -14,8 +15,9 @@ them into measurements of a later revision.
 
 Both studies use 1 MiB blocks and preserve every original file's preceding
 archive size. All observations have `memory_only=true`, `disk_write_bytes=0`
-and `timing_qualified=false`. The workspace refactor removes five allocation/free
-pairs per trial; these studies do not establish a comparative speed improvement.
+and `timing_qualified=false`. The additional candidates did not reduce complete
+archive sizes on either corpus. These studies do not establish a comparative
+speed improvement; their Hyperfine and per-phase times remain descriptive.
 
 The earlier complete Govdocs1 pruning study covered 991 files, but it does not
 qualify the current version-eleven context implementation. That broader study

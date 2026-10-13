@@ -213,6 +213,12 @@ gate, never clean-scan evidence.
 
 ## Finding Triage
 
+The [coverage collector integrity review](security-reviews/coverage-integrity.md)
+documents individually recomputed public installer and runtime hashes under the
+maintainer's authorization for exact proven false positives. The metadata ledger
+binds each value to the complete manifest; raw reports remain retained and no
+source-code rule is suppressed.
+
 The [individual Crawl4AI public-example review](security-reviews/crawl4ai-public-proxies.md)
 records the maintainer's exact authorization for four historical URI examples
 and their public integrity identities. Its separate approval cohort preserves

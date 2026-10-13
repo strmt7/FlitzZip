@@ -36,6 +36,9 @@ on:
       - tools/native_build_provenance.py
       - tools/native_build_receipt.py
       - tools/bootstrap_rocm_sdk.py
+      - tools/native_coverage.py
+      - tools/native_coverage_report.py
+      - tools/native-coverage-toolchain.json
       - '!src/gpu/*.hip.cpp'
   pull_request:
     paths: *native-inputs
@@ -59,6 +62,9 @@ jobs:
     name: Build and test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -67,12 +73,17 @@ jobs:
           - os: windows-2022
             generator: Visual Studio 17 2022
             disable_pch: true
+            configuration: RelWithDebInfo
+            coverage: true
           - os: windows-2025-vs2026
             generator: Visual Studio 18 2026
             disable_pch: false
+            configuration: Release
+            coverage: false
     env:
       FLITZZIP_CMAKE_GENERATOR: ${{ matrix.generator }}
       FLITZZIP_DISABLE_PCH: ${{ matrix.disable_pch }}
+      FLITZZIP_CONFIGURATION: ${{ matrix.configuration }}
       # Shared build scheduling is derived from available RAM and logical CPUs.
     steps:
       - name: Checkout
@@ -90,7 +101,8 @@ jobs:
           DISPATCH_BASE: ${{ inputs.comparison_base }}
         run: |
           tools/ci_native_plan.ps1 -EventName $env:EVENT_NAME -PushBase $env:PUSH_BASE `
-            -PullRequestBase $env:PR_BASE -DispatchBase $env:DISPATCH_BASE -GitHubOutput $env:GITHUB_OUTPUT
+            -PullRequestBase $env:PR_BASE -DispatchBase $env:DISPATCH_BASE `
+            -Configuration $env:FLITZZIP_CONFIGURATION -GitHubOutput $env:GITHUB_OUTPUT
       - name: Toolchain diagnostics
         if: steps.native_plan.outputs.native_build == 'true'
         shell: pwsh
@@ -108,6 +120,7 @@ jobs:
         # the other uses the same PCH strategy as ordinary local/product builds.
         run: >-
           tools/build.ps1 -CpuOnlyValidation -Generator $env:FLITZZIP_CMAKE_GENERATOR
+          -Configuration $env:FLITZZIP_CONFIGURATION
           -DisablePrecompiledHeaders:($env:FLITZZIP_DISABLE_PCH -eq 'true')
       - name: Validate actual native invocation receipt
         if: steps.native_plan.outputs.native_build == 'true'
@@ -115,7 +128,7 @@ jobs:
         # This check binds every native build to its actual configured outputs.
         shell: pwsh
         run: |
-          python tools/native_build_receipt.py validate --configuration Release
+          python tools/native_build_receipt.py validate --configuration $env:FLITZZIP_CONFIGURATION
           if ($LASTEXITCODE -ne 0) { throw "Configured CPU build receipt is stale or incomplete." }
       - name: Test
         if: steps.native_plan.outputs.native_tests == 'true'
@@ -127,11 +140,39 @@ jobs:
           DISPATCH_BASE: ${{ inputs.comparison_base }}
         run: |
           tools/ci_native_plan.ps1 -EventName $env:EVENT_NAME -PushBase $env:PUSH_BASE `
-            -PullRequestBase $env:PR_BASE -DispatchBase $env:DISPATCH_BASE -RunTests
+            -PullRequestBase $env:PR_BASE -DispatchBase $env:DISPATCH_BASE `
+            -Configuration $env:FLITZZIP_CONFIGURATION -RunTests
       - name: CLI format compatibility matrix
         if: steps.native_plan.outputs.format_matrix == 'true'
         shell: pwsh
-        run: tools/format_matrix_smoke.ps1
+        run: tools/format_matrix_smoke.ps1 -Configuration $env:FLITZZIP_CONFIGURATION
+      - name: Measure native CPU coverage
+        if: matrix.coverage && steps.native_plan.outputs.native_coverage == 'true'
+        shell: pwsh
+        run: python -B -m tools.native_coverage
+      - name: Upload measured coverage to Codecov
+        if: >-
+          matrix.coverage && steps.native_plan.outputs.native_coverage == 'true' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: out/coverage/native.xml
+          flags: native_cpu
+          disable_search: true
+          fail_ci_if_error: true
+          use_oidc: true
+          version: v11.3.1
+      - name: Retain coverage evidence
+        if: always() && matrix.coverage && steps.native_plan.outputs.native_coverage == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-cpu-coverage
+          path: |
+            out/coverage/*.xml
+            out/coverage/*.json
+            out/coverage/*.log
+          if-no-files-found: error
+          retention-days: 7
       - name: Affected repository policy scan
         if: steps.native_plan.outputs.policy_scan == 'true' && matrix.os == 'windows-2022'
         shell: pwsh

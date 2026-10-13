@@ -1,0 +1,206 @@
+"""Measure native CPU test coverage with the pinned Windows debugger-based collector."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+import re
+import stat
+import time
+import uuid
+from pathlib import Path
+from urllib.request import urlopen
+
+from tools.native_build_receipt import validate_current
+from tools.native_coverage_report import normalize_report
+
+ROOT = Path(__file__).resolve().parents[1]
+LOCK = ROOT / "tools/native-coverage-toolchain.json"
+
+
+# Purpose: Hash complete regular files without allocating their full contents.
+# Inputs: File path. Outputs: SHA-256 digest; missing or unreadable files fail.
+def digest(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+# Purpose: Confine writable artifacts and tool execution to an owned, unredirected checkout directory.
+# Inputs: Checkout root and candidate. Outputs: Absolute path, or refusal of traversal and reparse points.
+def owned_path(root: Path, path: Path) -> Path:
+    root = root.resolve(strict=True)
+    candidate = Path(os.path.abspath(path))
+    relative = candidate.relative_to(root)
+    current = root
+    for part in relative.parts:
+        current /= part
+        if current.exists() or current.is_symlink():
+            attributes = current.lstat()
+            if stat.S_ISLNK(attributes.st_mode) or getattr(attributes, "st_file_attributes", 0) & 0x400:
+                raise ValueError("Coverage paths must not use symbolic links or reparse points")
+    return candidate
+
+
+# Purpose: Verify the complete executable/DLL closure before trusting a cached collector.
+# Inputs: Installation directory and reviewed runtime file identities. Outputs: Verified executable or refusal.
+def verify_collector(directory: Path, files: dict[str, str]) -> Path:
+    if "OpenCppCoverage.exe" not in files:
+        raise ValueError("The collector lock has no executable")
+    actual = {path.name for path in directory.glob("*.dll")} | {"OpenCppCoverage.exe"}
+    if actual != set(files):
+        raise ValueError("The collector runtime file inventory differs from its lock")
+    for name, expected in files.items():
+        if Path(name).name != name or not re.fullmatch(r"[a-f0-9]{64}", expected):
+            raise ValueError("Invalid collector runtime identity")
+        path = owned_path(directory, directory / name)
+        if not path.is_file() or digest(path) != expected:
+            raise ValueError(f"Collector file identity mismatch: {name}")
+    return directory / "OpenCppCoverage.exe"
+
+
+# Purpose: Reuse the canonical Windows memory, deadline, output and process-tree containment.
+# Inputs: Fixed repository module path. Outputs: Existing bounded command implementation without SDK shadowing.
+def process_owner():
+    spec = importlib.util.spec_from_file_location("flitzzip_coverage_child", ROOT / "mcp/flitzzip_mcp.py")
+    if spec is None or spec.loader is None:
+        raise ValueError("The repository process containment contract is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Purpose: Retain bounded diagnostics and reject collector/installer errors without running a replacement command.
+# Inputs: Fixed argv, seconds and owned report path. Outputs: Successful invocation or diagnostic-bearing failure.
+def run_checked(arguments: list[str], timeout: int, log: Path) -> None:
+    result = process_owner().run_bounded_command(
+        arguments, timeout_seconds=timeout, max_output_bytes=8 * 1024 * 1024, response_tail_bytes=8 * 1024 * 1024
+    )
+    log.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    if result["exit_code"] != 0 or result["timed_out"] or result["output_limit_exceeded"]:
+        raise RuntimeError(f"Coverage command failed; retained diagnostics: {log}")
+
+
+# Purpose: Install only the reviewed official collector bytes into the checkout's tool cache.
+# Inputs: Hash-locked manifest and owned cache. Outputs: Verified executable; altered caches remain rejected.
+def provision(lock: dict, output: Path) -> Path:
+    directory = owned_path(ROOT, ROOT / "out/tools" / ("opencppcoverage-" + lock["version"]))
+    if directory.exists():
+        return verify_collector(directory, lock["files"])
+    installer = owned_path(ROOT, output / f"OpenCppCoverageSetup-{uuid.uuid4().hex}.exe")
+    started = time.monotonic()
+    with urlopen(lock["url"], timeout=30) as response, installer.open("xb") as stream:
+        remaining = lock["installer_bytes"]
+        while remaining:
+            if time.monotonic() - started > 120:
+                raise TimeoutError("Collector acquisition exceeded its deadline")
+            chunk = response.read(min(65536, remaining))
+            if not chunk:
+                raise ValueError("Collector installer is incomplete")
+            stream.write(chunk)
+            remaining -= len(chunk)
+        if response.read(1):
+            raise ValueError("Collector installer exceeded its reviewed size")
+    if digest(installer) != lock["installer_sha256"]:
+        raise ValueError("Collector installer SHA-256 mismatch")
+    run_checked(
+        [
+            str(installer),
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/SP-",
+            "/CURRENTUSER",
+            "/TASKS=",
+            f"/DIR={directory}",
+            f"/LOG={output / 'installer.log'}",
+        ],
+        180,
+        output / "installer-process.json",
+    )
+    return verify_collector(directory, lock["files"])
+
+
+# Purpose: Measure the real native registry in its existing symbols-enabled CPU build.
+# Inputs: Current successful build receipt and verified collector.
+# Outputs: Normalized Cobertura and source-bound metadata.
+def collect(collector: Path, lock: dict, output: Path) -> None:
+    before = validate_current(ROOT, "RelWithDebInfo", False)
+    if before["recipe"]["FLITZZIP_ENABLE_HIP"] != "OFF":
+        raise ValueError("The native CPU coverage lane requires HIP OFF; GPU qualification runs separately")
+    binary = ROOT / "build/RelWithDebInfo"
+    pdb = binary / "flitzzip_tests.pdb"
+    pdb_hash = digest(pdb)
+    raw = output / "native-raw.xml"
+    run_checked(
+        [
+            str(collector),
+            "--quiet",
+            "--cover_children",
+            "--modules",
+            str(binary / "*"),
+            "--sources",
+            str(ROOT / "src" / "*"),
+            "--working_dir",
+            str(ROOT),
+            "--export_type",
+            f"cobertura:{raw}",
+            "--",
+            str(binary / "flitzzip_tests.exe"),
+        ],
+        900,
+        output / "native-process.json",
+    )
+    if validate_current(ROOT, "RelWithDebInfo", False) != before or digest(pdb) != pdb_hash:
+        raise ValueError("Native source, binary or symbols changed during coverage measurement")
+    verify_collector(collector.parent, lock["files"])
+    summary = normalize_report(raw, output / "native.xml", ROOT)
+    required = {"src/core/archive_format.cpp", "src/core/path_safety.cpp", "src/zip/zip_adapter.cpp"}
+    if not required.issubset(summary["files"]):
+        raise ValueError("Coverage missed required native parser, filesystem or ZIP consumers")
+    record = {
+        "scope": "native-cpu-first-party-lines",
+        "gpu_device_coverage": False,
+        "native_inputs_sha256": before["inputs_sha256"],
+        "native_receipt_sha256": before["receipt_sha256"],
+        "collector_version": lock["version"],
+        "toolchain_sha256": digest(LOCK),
+        "test_pdb_sha256": pdb_hash,
+        "report_sha256": digest(output / "native.xml"),
+        **summary,
+    }
+    (output / "summary.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    print(
+        json.dumps(
+            {
+                "coverage": "native-cpu",
+                "files": len(summary["files"]),
+                "lines_covered": summary["lines_covered"],
+                "lines_valid": summary["lines_valid"],
+            }
+        )
+    )
+
+
+# Purpose: Provision or measure coverage without silently rebuilding the product.
+# Inputs: Optional provisioning-only flag. Outputs: Verified tool or measured report; unsupported hosts fail explicitly.
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--provision-only", action="store_true")
+    args = parser.parse_args()
+    if os.name != "nt":
+        raise ValueError("Native coverage uses the Windows MSVC/PDB collector")
+    output = owned_path(ROOT, ROOT / "out/coverage")
+    output.mkdir(parents=True, exist_ok=True)
+    lock = json.loads(LOCK.read_text(encoding="utf-8-sig"))
+    collector = provision(lock, output)
+    if args.provision_only:
+        print(f"Verified OpenCppCoverage {lock['version']}")
+    else:
+        collect(collector, lock, output)
+
+
+if __name__ == "__main__":
+    main()

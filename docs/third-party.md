@@ -234,3 +234,9 @@ not a shipped runtime dependency or a product scanner.
 Benchmark-tool execution and result-publication decisions are recorded
 separately in [Benchmark Permissions And Tool Selection](benchmark-permissions.md).
 They do not grant permission to redistribute comparator binaries with FlitzZip.
+
+Native CPU coverage uses development-only OpenCppCoverage 0.9.9.0 under GPL-3.0.
+The [coverage guide](code-coverage.md) records its official source, pinned
+installer/runtime identities, scope, and isolated installation. Its binaries
+are not included in FlitzZip packages. Codecov receives measured coverage
+reports through the pinned GitHub Action; neither tool is a product dependency.

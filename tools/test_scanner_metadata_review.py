@@ -197,6 +197,23 @@ class ScannerMetadataReviewTests(unittest.TestCase):
         with patch.object(Path, "is_junction", return_value=True), self.assertRaises(ValueError):
             review.read_policy(root)
 
+    def test_coverage_integrity_matches_exact_reviewed_bytes_only(self):
+        """Purpose: Bound public collector hashes. Inputs: Real lock and mutations. Outputs: Exact admission only."""
+        root = Path(__file__).resolve().parents[1]
+        name = "tools/native-coverage-toolchain.json"
+        payload = (root / name).read_bytes()
+        manifest = json.loads(payload)
+        values = {manifest["installer_sha256"], *manifest["files"].values()}
+        rows = [row for row in review.read_reviews(review.read_policy(root)) if row["path"] == name]
+        self.assertEqual({row["public_value"] for row in rows}, values)
+        for row in rows:
+            quoted = '"' + row["public_value"] + '"'
+            offset = payload.decode("utf-8").index(quoted)
+            region = {"charOffset": offset, "charLength": len(quoted)}
+            self.assertTrue(review.public_value_matches(row, payload, region))
+            self.assertFalse(review.public_value_matches(row, payload + b" ", region))
+            self.assertFalse(review.public_value_matches(row, payload, {**region, "charOffset": offset + 1}))
+
     def test_model_commit_requires_exact_official_metadata_role(self):
         """Purpose: Bind model provenance. Inputs: Typed roles and independent mutations. Outputs: Closed match."""
         value = hashlib.sha256(b"public model commit fixture").hexdigest()[:40]

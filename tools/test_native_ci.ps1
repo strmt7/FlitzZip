@@ -63,7 +63,9 @@ $paths = @($hipSources) + @('src/core/checksum.cpp', 'src/core/checksum.hpp', 's
     'tools/compile_hip_object.ps1', 'tools/process_environment.ps1', 'tools/build.ps1',
     'tools/native_build_provenance.py', 'tools/native_build_receipt.py', 'tools/bootstrap_rocm_sdk.py',
     'tools/rocm-sdk-lock.json', 'tools/native_ci.ps1', 'tools/gui_smoke.ps1', 'resources/design/fixture.svg',
-    'docs/design.md', '.github/workflows/windows-ci.yml', '.github/workflows/rocm-qualification.yml')
+    'docs/design.md', '.github/workflows/windows-ci.yml', '.github/workflows/rocm-qualification.yml',
+    'tools/native_coverage.py', 'tools/native_coverage_report.py', 'tools/native-coverage-toolchain.json',
+    'tools/test_native_coverage.py')
 foreach ($path in $paths) {
     $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path)
     Assert-NativeCi ((Test-NativeCiWorkflowPath windows-ci $path) -eq $selection.windows) "CPU planner/filter parity: $path"
@@ -76,14 +78,31 @@ foreach ($case in @(
     @{ path = 'src/zip/zip_adapter.cpp'; build = $true; mode = 'full'; matrix = $true },
     @{ path = 'tests/cpp/test_main.cpp'; build = $true; mode = 'none'; matrix = $false },
     @{ path = '.github/workflows/windows-ci.yml'; build = $false; mode = 'none'; matrix = $false },
+    @{ path = 'tools/native_coverage.py'; build = $false; mode = 'none'; matrix = $false },
+    @{ path = 'tools/native_coverage_report.py'; build = $false; mode = 'none'; matrix = $false },
+    @{ path = 'tools/native-coverage-toolchain.json'; build = $false; mode = 'none'; matrix = $false },
+    @{ path = 'tools/test_native_coverage.py'; build = $false; mode = 'none'; matrix = $false },
     @{ path = 'docs/design.md'; build = $false; mode = 'none'; matrix = $false }
 )) {
     $plan = Get-FlitzZipHostedNativePlan -Paths @($case.path)
     Assert-NativeCi ($plan.build -eq $case.build -and $plan.testMode -eq $case.mode -and
         $plan.formatMatrix -eq $case.matrix -and -not $plan.gpuExecutionQualified) "canonical native projection: $($case.path)"
+    Assert-NativeCi (-not $plan.coverage) "Release lane does not duplicate symbols-based coverage: $($case.path)"
+}
+foreach ($path in @('tools/native_coverage.py', 'tools/native_coverage_report.py', 'tools/native-coverage-toolchain.json')) {
+    $collector = Get-FlitzZipHostedNativePlan -Paths @($path) -Configuration RelWithDebInfo
+    Assert-NativeCi ($collector.build -and $collector.coverage -and $collector.testMode -eq 'none' -and
+        -not $collector.formatMatrix) "collector changes require one real hosted measurement: $path"
 }
 $full = Get-FlitzZipHostedNativePlan -Paths @('README.md') -Full
 Assert-NativeCi ($full.build -and $full.testMode -eq 'full' -and $full.formatMatrix -and $full.securityPolicy) 'explicit broad/manual qualification remains complete'
+foreach ($path in @('tests/cpp/test_dictionary_block.cpp', 'src/zip/zip_adapter.cpp')) {
+    $symbols = Get-FlitzZipHostedNativePlan -Paths @($path) -Configuration RelWithDebInfo
+    $position = [Array]::IndexOf($symbols.testCommand.arguments, '-Configuration')
+    Assert-NativeCi ($symbols.configuration -eq 'RelWithDebInfo' -and
+        $symbols.testCommand.arguments[$position + 1] -eq 'RelWithDebInfo' -and
+        $symbols.testCommand.command.Contains('-Configuration RelWithDebInfo')) 'symbols build and selected test command must agree'
+}
 $manual = Get-FlitzZipNativeCiEvent -EventName workflow_dispatch
 Assert-NativeCi $manual.full 'manual dispatch is explicit broad qualification'
 $initial = Get-FlitzZipNativeCiEvent -EventName push -PushBase ('0' * 40)
@@ -109,10 +128,13 @@ $rejected = $false
 try { Get-FlitzZipNativeCiEvent -EventName push -PushBase $base -DispatchBase $base | Out-Null } catch { $rejected = $true }
 Assert-NativeCi $rejected 'manual comparison metadata cannot replace a push event base'
 $workflow = Get-Content -LiteralPath (Join-Path $root '.github/workflows/windows-ci.yml') -Raw
-foreach ($output in @('native_build', 'native_tests', 'format_matrix', 'policy_scan')) {
+foreach ($output in @('native_build', 'native_tests', 'native_coverage', 'format_matrix', 'policy_scan')) {
     Assert-NativeCi ($workflow.Contains("steps.native_plan.outputs.$output == 'true'")) "actual workflow honors $output admission"
 }
 Assert-NativeCi ($workflow.Contains('fetch-depth: 0')) 'the event base must be available'
+Assert-NativeCi ($workflow.Contains('configuration: RelWithDebInfo') -and $workflow.Contains('configuration: Release') -and
+    [regex]::Matches($workflow, '-Configuration \$env:FLITZZIP_CONFIGURATION').Count -eq 4 -and
+    $workflow.Contains('--configuration $env:FLITZZIP_CONFIGURATION')) 'build, test, receipt and matrix use the selected configuration'
 Assert-NativeCi ([regex]::Matches($workflow, 'DISPATCH_BASE: \$\{\{ inputs\.comparison_base \}\}').Count -eq 2 -and
     [regex]::Matches($workflow, '-DispatchBase \$env:DISPATCH_BASE').Count -eq 2) 'planning and execution share the reviewed manual base'
 Assert-NativeCi ($workflow.Contains('tools/security_scan.ps1') -and $workflow.Contains("matrix.os == 'windows-2022'")) 'selected policy checks remain without duplicating compiler-independent scans'
@@ -129,7 +151,7 @@ try {
     $metadata = (& $entry -ChangedPath 'tests/cpp/test_dictionary_block.cpp' -GitHubOutput $outputPath | ConvertFrom-Json)
     Assert-NativeCi ($metadata.native_test_mode -eq 'component' -and -not $metadata.gpu_execution_qualified) 'real entry emits explicit CPU-only component metadata'
     $outputs = @(Get-Content -LiteralPath $outputPath)
-    Assert-NativeCi (($outputs -join '|') -eq 'native_build=true|native_tests=true|format_matrix=false|policy_scan=false') 'actual GitHub output values are fixed booleans'
+    Assert-NativeCi (($outputs -join '|') -eq 'native_build=true|native_tests=true|native_coverage=false|format_matrix=false|policy_scan=false') 'actual GitHub output values are fixed booleans'
 } finally {
     if (Test-Path -LiteralPath $outputPath) { Remove-Item -LiteralPath $outputPath }
     Remove-Item -LiteralPath $fixtureRoot
