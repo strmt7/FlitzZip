@@ -27,7 +27,7 @@ function Test-LicenseNoticeGeneration {
         "Lhasa 0.6.0",
         "wimlib 1.14.5",
         "wimlib dual-license terms",
-        "wimlib GPL alternative",
+        "wimlib LGPL alternative",
         "libdivsufsort-lite"
     )
     $titles = @($manifest.notices | ForEach-Object { [string]$_.title })
@@ -62,6 +62,10 @@ function Test-LicenseNoticeGeneration {
     $lzmaNotice = @($manifest.notices | Where-Object { $_.title -eq "LZMA SDK 26.03" } | Select-Object -First 1)
     if (-not $lzmaNotice -or [string]$lzmaNotice.source -ne "third_party/lzma_sdk/LICENSE") {
         throw "The LZMA SDK notice must use the checked-in upstream license text."
+    }
+    $wimNotice = @($manifest.notices | Where-Object { $_.title -eq "wimlib 1.14.5" })
+    if ($wimNotice.Count -ne 1 -or [string]$wimNotice[0].source -ne "third_party/wimlib/COPYING.GPLv3.txt") {
+        throw "The distributed wimlib notice must preserve the selected upstream GPLv3 license option."
     }
     $tempHeader = Join-Path $env:TEMP ("flitzzip-license-notices-" + [guid]::NewGuid().ToString("N") + ".hpp")
     try {

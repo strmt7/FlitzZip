@@ -55,10 +55,10 @@ inline std::filesystem::path test_temp_dir(const std::string& name) {
 namespace flitzzip_test {
 
 // Purpose: Create a Windows directory junction for reparse-point security tests.
-// Inputs: `junction` is the empty directory to convert and `target` is an existing directory target.
+// Inputs: `junction` is the empty directory to convert, `target` is its destination, and `sharing` admits live pins.
 // Outputs: Returns true when the junction was created; false when the host refuses the test setup.
 inline bool try_create_test_directory_junction(const std::filesystem::path& junction,
-                                               const std::filesystem::path& target) {
+                                               const std::filesystem::path& target, DWORD sharing = 0) {
     std::error_code ec;
     std::filesystem::create_directories(target, ec);
     if (ec) {
@@ -108,7 +108,7 @@ inline bool try_create_test_directory_junction(const std::filesystem::path& junc
     print_target[print_name.size()] = L'\0';
 
     const auto junction_text = junction.wstring();
-    HANDLE handle = CreateFileW(junction_text.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+    HANDLE handle = CreateFileW(junction_text.c_str(), GENERIC_WRITE, sharing, nullptr, OPEN_EXISTING,
                                 FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         RemoveDirectoryW(junction_text.c_str());

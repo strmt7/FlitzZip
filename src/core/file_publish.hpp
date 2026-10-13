@@ -31,7 +31,7 @@ void cleanup_file_publish_target(const ReservedFilePublishTarget& temporary);
 
 // Purpose: Publish a fully verified temporary file into its final path.
 // Inputs: `temporary` owns the verified payload and pinned parent, `target` is its reserved final path, and `overwrite`
-// controls replacement. Outputs: Atomically renames the exact payload handle relative to the pinned parent, or throws
+// controls replacement. Outputs: Atomically publishes the exact payload through the pinned parent chain, or throws
 // without deleting the caller-owned temporary tree.
 void commit_verified_file(const ReservedFilePublishTarget& temporary, const std::filesystem::path& target,
                           bool overwrite);

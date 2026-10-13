@@ -402,6 +402,7 @@ add_library(
   src/core/defender_scan.cpp
   src/core/file_manifest.cpp
   src/core/file_publish.cpp
+  src/core/windows_directory.cpp
   src/core/integrity.cpp
   src/core/host_memory_budget.cpp
   src/core/path_safety.cpp
@@ -838,6 +839,7 @@ if(WIN32)
     flitzzip_core
     PUBLIC advapi32
            bcrypt
+           ntdll
            cabinet
            ole32
            shell32
@@ -997,10 +999,18 @@ if(FLITZZIP_BUILD_FUZZERS)
 
   add_executable(
     flitzzip_iso_fuzzer
-    fuzz/iso_fuzzer.cpp src/iso/iso_adapter.cpp src/core/file_manifest.cpp
-    src/core/file_publish.cpp src/core/path_safety.cpp src/core/progress.cpp)
+    fuzz/iso_fuzzer.cpp
+    src/iso/iso_adapter.cpp
+    src/core/file_manifest.cpp
+    src/core/file_publish.cpp
+    src/core/windows_directory.cpp
+    src/core/path_safety.cpp
+    src/core/progress.cpp)
   target_include_directories(flitzzip_iso_fuzzer PRIVATE src)
   target_compile_definitions(flitzzip_iso_fuzzer PRIVATE FLITZZIP_ENABLE_HIP=0)
+  if(WIN32)
+    target_link_libraries(flitzzip_iso_fuzzer PRIVATE advapi32 bcrypt ntdll)
+  endif()
 
   add_executable(
     flitzzip_cab_header_fuzzer fuzz/cab_header_fuzzer.cpp
@@ -1124,8 +1134,7 @@ if(WIN32)
   install(FILES "${FLITZZIP_WIMLIB_RUNTIME_DLL}" DESTINATION bin)
 endif()
 install(DIRECTORY docs DESTINATION .)
-install(DIRECTORY resources/brand resources/benchmarks resources/design
-        DESTINATION resources)
+install(DIRECTORY resources/brand resources/benchmarks DESTINATION resources)
 if(FLITZZIP_ENABLE_HIP)
   install(TARGETS flitzzip_gpu_hip RUNTIME DESTINATION bin)
 endif()

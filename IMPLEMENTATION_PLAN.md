@@ -48,21 +48,20 @@ inputs and their tests, exact historical evidence, and verified build-cache
 migration. The previous release and its tag were deleted at the maintainer's
 request; this does not authorize publication of a replacement.
 
-1. **Retain current source-analysis acceptance.** The final audit of
-   `847e54719e650981d2432c05416271e1c6b783d0` passed with no unresolved
-   open or reproduced dismissed source findings. The authorized
+1. **Retain current source-analysis acceptance.** Qualify the exact pushed
+   revision against open and reproduced dismissed findings. The authorized
    [individual false positives](docs/security-reviews/current-source-findings.md)
    and two exact governance observations remain bound to their reviewed identities.
    Repeat the affected detectors and exact-commit audit after further production
-   changes; this checkpoint does not approve later source bytes.
+   changes; an earlier checkpoint does not approve later source bytes.
 2. **Complete the GPU incident investigation.** Trace bounded kernel progress,
    asynchronous ownership, failure cleanup and runtime admission against the
    retained incident evidence. The original watchdog dumps are unavailable, and
    retained event logs no longer cover the incident. Do not label the freeze
    resolved from successful later GPU tests.
 3. **Finish source and release qualification.** Complete the remaining parser,
-   extraction, codec, driver and kernel review, plus any
-   required authenticated scanner qualification. Qualify the final pushed SHA's
+   extraction, codec, driver and kernel review, plus the required current
+   source and dependency scanner audit. Qualify the final pushed SHA's
    workflows, audit, HIP-enabled ZIP/MSI, checksums and installer lifecycle before
    requesting release approval. Earlier successful artifacts cover their own
    source identities, not every later commit.
@@ -73,8 +72,9 @@ request; this does not authorize publication of a replacement.
   advisory for this round under the [current risk record](docs/security-reviews/dependency-risk-acceptance.md).
   Keep the upstream alert visible and reassess when the official fix or pinned
   environment changes. This accepted item does not block the current round.
-- **Neutron effectiveness:** complete the current-format Govdocs1 study using
-  the existing licensed corpus controller and RAM-only payload transport.
+- **Neutron effectiveness:** the complete version-eleven Govdocs1 study now
+  covers all 991 original files through the licensed RAM-only controller at
+  its recorded native source identity. The 6,060-byte aggregate gain is small.
   Follow with controlled, paired CPU/GPU measurements and multiple independent
   workload classes. Preserve complete archive sizes and byte-exact readback;
   current evidence does not establish broad size superiority or a GPU speedup.
@@ -96,10 +96,12 @@ request; this does not authorize publication of a replacement.
   consumers. Recheck frontend Neutron admission and interaction when their code
   changes. Preserve the existing AGPL-3.0 license, third-party notices and
   action-specific benchmark permissions.
-- **Benchmark presentation:** finish visual inspection of every remaining graph
-  in every document, including uncertainty/error bars, units, scales, legends
-  and source-data correspondence. Keep current evidence distinct from golden
-  renderer fixtures; archive obsolete narratives locally without removing tests.
+- **Benchmark presentation:** the current quantitative SVG fixture and all
+  31 Mermaid diagrams across seven documents have been rendered and visually
+  inspected. Repeat the affected visual and data checks when figures change,
+  including uncertainty/error bars, units, scales and legends. Keep current
+  measurements distinct from golden renderer fixtures; archive obsolete
+  narratives locally without removing tests.
 - **Development efficiency:** optimize measured build/workflow bottlenecks while
   retaining traced security analysis and release gates. Finish fresh-host and
   existing-installation tool qualification where evidence is missing. Keep

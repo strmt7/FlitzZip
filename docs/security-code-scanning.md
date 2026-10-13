@@ -424,6 +424,13 @@ Enable these in `strmt7/FlitzZip`:
 
 ## Greenbone/OpenVAS OIDC Broker
 
+This integration qualifies an explicitly authorized network service, when one
+is operated separately. The desktop application has no declared network-service
+release target, so an unconfigured live scanner is not a desktop package gate.
+The repository still requires its offline integration contracts and every product
+source, dependency and package scan. A live run requires the configuration below
+and fails when it is missing; it must never report an unperformed scan as passed.
+
 Greenbone/OpenVAS is a real network scanner. It needs an authorized target and
 a reachable Greenbone GMP endpoint. Do not point it at systems you do not own
 or have explicit permission to scan.

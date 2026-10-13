@@ -12,17 +12,21 @@ them into measurements of a later revision.
 | --- | ---: | ---: | ---: | --- |
 | Canterbury | 11 | 2,810,784 | 723,429 in each of three runs | [Study](benchmarks/data/neutron-canterbury.json) |
 | Pythia14M | 1 complete checkpoint | 28,143,920 | 24,162,233 in each of three runs | [Study](benchmarks/data/neutron-pythia14m.json) |
+| Govdocs1 thread0 | 991 | 593,182,383 | 331,328,681 in one complete pass | [Study](benchmarks/data/neutron-govdocs1.json) |
 
-Both studies use 1 MiB blocks and preserve every original file's preceding
-archive size. All observations have `memory_only=true`, `disk_write_bytes=0`
-and `timing_qualified=false`. The additional candidates did not reduce complete
-archive sizes on either corpus. These studies do not establish a comparative
-speed improvement; their Hyperfine and per-phase times remain descriptive.
+All studies use 1 MiB blocks. Canterbury and Pythia14M preserve every original
+file's preceding archive size. The complete Govdocs1 pass saves 6,060 bytes
+against the earlier pruning study: nine files are smaller, 982 are unchanged
+and none is larger. This is a small aggregate improvement, not a dramatic
+reduction. All observations have `memory_only=true`, `disk_write_bytes=0`
+and `timing_qualified=false`. These studies do not establish a comparative speed
+improvement; their Hyperfine and per-phase times remain descriptive.
 
-The earlier complete Govdocs1 pruning study covered 991 files, but it does not
-qualify the current version-eleven context implementation. That broader study
-remains an explicit gap. Current size and correctness evidence does not establish
-universal GPU stability or universal compression superiority.
+The Govdocs1 pass includes the complete 175,101,388-byte largest file, with
+no member exclusions. It qualifies version-eleven size and byte-exact readback
+at the recorded source identity. Size and correctness evidence does not establish
+universal GPU stability or compression superiority; subsequent filesystem and
+packaging repairs do not make these measurements evidence of later binaries.
 
 ## Standard-Format Size Reference
 

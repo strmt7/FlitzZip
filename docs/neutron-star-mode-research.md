@@ -59,8 +59,9 @@ match positions without dropping any admitted transition.
 
 Descending parse tiles contain at most 32 positions per segment. Search
 launches contain at most 4,096 source positions; output launches emit at most
-64 sequences per segment. Each launch synchronizes before a caller checkpoint
-can cancel. Windows driver timeout policy is unchanged. These are work bounds,
+64 sequences per segment. The parser queues at most eight ordered tile launches
+before synchronizing and checking cancellation; search and output batches also
+have explicit completion checkpoints. Windows driver timeout policy is unchanged. These are work bounds,
 not a guarantee of a particular runtime on every GPU.
 
 ## Resource And Correctness Contracts
@@ -194,9 +195,9 @@ representation and admits no heuristic omission of a competitive graph.
 
 ## Independent Entropy Contexts
 
-The version-eleven closed context frame trials two byte planes independently
-through the existing plain HIP portfolio. Its reader supports widths two,
-four and eight, derived plane extents and exact tail reconstruction. Mixed
+The version-eleven closed context frame trials two, four and eight byte planes
+through the existing plain HIP portfolio. Its reader supports those same widths,
+derived plane extents and exact tail reconstruction. Mixed
 raw/fill/pattern fixtures, malformed tables, version admission and independent
 CPU/HIP readers cover this boundary. Every context's framing participates in
 selection; the preceding winner remains when the complete candidate does not

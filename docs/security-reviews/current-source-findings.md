@@ -73,9 +73,16 @@ The flagged C allocator is enabled only by the combined `FLITZZIP_MINIZ_FUZZ_ALL
 
 ### Alert 822
 
-**Win32 rename request copy.** `DS121708` at `src/core/file_publish.cpp:487`.
+**Win32 rename request copy.** `DS121708` in `src/core/file_publish.cpp`;
+the ledger records the exact current coordinates.
 
 `windows_api_path` rejects embedded NULs and normalized paths of 32767 or more wchar_t elements before request geometry is calculated. Consequently byte multiplication, request addition and DWORD conversions are bounded on Windows x64. The request allocates the header offset, the complete path and a terminator; only the path bytes are copied into its variable-length filename region. Publication pins identities and checks the API result.
+
+This decision concerns the copy's bounds. The separate directory-creation race
+is repaired by opening each child relative to its pinned parent with reparse
+resolution rejected. The review context includes that helper and the executable
+live-handle junction, concurrent-publication and Unicode controls. An unchanged
+bounded copy does not establish that every operation in its source file is safe.
 
 ### Alert 823
 

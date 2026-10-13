@@ -159,10 +159,10 @@ extract-only standalone WIM compatibility.
 - Win64 runtime package SHA-256: `2f446d6fa3866582175f1a22a7be198eeee0aec7aba5b4e04ad25c99eae2d265`
 - Extracted DLL SHA-256: `ba853ee1e3fc5f5798581f02e8e066ba07a0a2375f0bf444fe981431fd508495`
 - Active header SHA-256: `76ff273fb0c89fd2fd084f0467b1146afb3228db9372d4193432f13c2871f67e`
-- License: LGPL-2.1-or-later for the Windows library, selected from the
-  dual-license terms preserved at `third_party/wimlib/COPYING.txt` and
-  `third_party/wimlib/COPYING.LGPL.txt`; the alternative GPL-3.0-or-later
-  terms are preserved at `third_party/wimlib/COPYING.GPLv3.txt`. The Windows
+- License: GPL-3.0-or-later, selected from the upstream dual-license terms
+  preserved at `third_party/wimlib/COPYING.txt` and
+  `third_party/wimlib/COPYING.GPLv3.txt`. The alternative LGPL-2.1-or-later
+  terms remain preserved at `third_party/wimlib/COPYING.LGPL.txt`. The Windows
   build does not link libntfs-3g, which would prohibit the LGPL option.
   The bundled libdivsufsort-lite notice is preserved at
   `third_party/wimlib/COPYING.libdivsufsort-lite.txt`.
@@ -189,18 +189,22 @@ Windows source build uses MinGW-w64 through MSYS2; it is not an MSVC build.
 This does not change FlitzZip's Windows-native MSVC/HIP product build and does
 not authorize WSL or installation of another toolchain during ordinary work.
 
-For distribution, use the source/rebuild route in LGPL-2.1 sections 6(a)/6(d),
-not a claim that the shipped executable permits every interface-compatible
-DLL to be substituted directly. Its runtime checksum pin deliberately rejects
-modified DLL bytes. The release's exact FlitzZip source must be available
-alongside the binary release, including this complete wimlib source tarball
-and application build scripts. A recipient rebuilding with a modified library
-must update that build's wimlib package and DLL hash pins in `CMakeLists.txt`
-and rebuild the application, preserving app-local loading and the library's
-ABI. Do not change the canonical upstream archives or disable integrity
-verification in distributed product builds. Final release validation must
-prove that the offered source snapshot contains these materials and document
-the rebuild check; adding this archive alone is not proof of that gate.
+The selected GPL-3.0-or-later option fits the application's existing AGPL-3.0
+license: [GPLv3 section 13](https://www.gnu.org/licenses/gpl-3.0.html#section13)
+explicitly permits their combination. FlitzZip's own license remains AGPL-3.0;
+wimlib retains its upstream license and attribution. Distribution follows
+[GPLv3 section 6(d)](https://www.gnu.org/licenses/gpl-3.0.html#section6): the exact
+application source and build scripts, this complete wimlib source tarball and
+all required notices accompany the binary release in a checksummed source ZIP.
+Release validation rejects a missing source member or changed wimlib archive,
+and publication requires the validated source ZIP as well as the binaries.
+
+Runtime checksum admission deliberately rejects changed DLL bytes. A recipient
+rebuilding with a modified library updates that build's wimlib package and DLL
+hash pins in `CMakeLists.txt` and rebuilds the application, preserving the ABI
+and app-local loading. Preserve the canonical upstream provenance archives and
+integrity checks in distributed builds. No modified-library rebuild is claimed
+by the ordinary qualification of the unmodified upstream runtime.
 
 ## AMD HIP SDK
 

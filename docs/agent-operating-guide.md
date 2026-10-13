@@ -650,6 +650,14 @@ obfuscate a useful test, exclude a path/detector, or change verification to
 manufacture a clean scan. Individual authorizations belong in review records.
 
 - Validate all archive entry names with `safe_join_archive_path` before extraction.
+- Open or create writable output directories relative to their already-open
+  parent handles, rejecting reparse resolution within that operation. Denying
+  delete sharing prevents renaming a pinned directory but does not prevent an
+  empty directory from being converted into a junction. Preserve live-handle
+  conversion tests and concurrent, Unicode publication controls when changing
+  this boundary; a path check followed by a full-path create is insufficient.
+  Give temporary components independent bounded names so a valid final filename
+  does not become invalid when staging overhead is appended.
 - Compatibility archive support must use in-process parsers/writers. Do not
   shell out to `tar`, 7-Zip, WinRAR, PowerShell compression cmdlets, or other
   host tools from product code.

@@ -56,8 +56,15 @@ Broad size superiority and comparative GPU speed remain research targets.
   for this round, so it is not a current blocker.
 - Exact candidate ZIP/MSI, checksums and installer install/repair/uninstall
   qualification must pass on the candidate's pushed SHA before release approval.
-- A full version-eleven Govdocs1 study, controlled paired timings and authenticated
-  live OpenVAS qualification remain outside the completed evidence.
+- The complete version-eleven Govdocs1 size/readback study is retained, but
+  controlled paired timings remain outside the completed evidence.
+
+Live OpenVAS qualification applies to a separately operated network service with
+an authorized target and configured scanner. FlitzZip is a desktop application
+and has no declared network-service release target. That optional infrastructure
+integration is not a desktop release blocker; its offline integration contracts
+and all product source, dependency and package security gates remain required.
+A missing broker is never reported as a successful live network scan.
 
 ## Candidate Qualification
 
