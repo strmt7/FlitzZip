@@ -104,9 +104,9 @@ request; this does not authorize publication of a replacement.
   existing-installation tool qualification where evidence is missing. Keep
   canonical agent rules concise, crawler installation portable and finding
   prevention executable; do not add recurring maintenance for unchanged tools.
-- **Coverage:** qualify the [native CPU Codecov integration](docs/code-coverage.md)
-  on the actual hosted build, then use uncovered behavior to choose root-cause
-  tests. Extend measurement to Python branches and currently unmeasured executable
+- **Coverage:** the [native CPU Codecov integration](docs/code-coverage.md) has
+  completed a real hosted collection and OIDC upload. Use uncovered behavior to
+  choose root-cause tests. Extend measurement to Python branches and currently unmeasured executable
   paths when their consumers are qualified. GPU device coverage remains a separate
   limitation; do not infer it from host line coverage or inflate percentages.
 

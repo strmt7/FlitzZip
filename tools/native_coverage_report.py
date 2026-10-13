@@ -7,6 +7,19 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
+# Purpose: Read the collector's bounded UTF-8 XML without accepting entity declarations or alternate encodings.
+# Inputs: Owned report path. Outputs: Parsed tree; oversized, encoded or entity-bearing documents fail closed.
+def read_report(source: Path) -> ET.Element:
+    with source.open("rb") as stream:
+        raw = stream.read(32 * 1024 * 1024 + 1)
+    if len(raw) > 32 * 1024 * 1024:
+        raise ValueError("Coverage XML exceeds the report contract")
+    text = raw.decode("utf-8-sig")
+    if "\x00" in text or "<!ENTITY" in text.upper():
+        raise ValueError("Coverage XML must be UTF-8 without entity declarations")
+    return ET.fromstring(text)
+
+
 # Purpose: Locate a reported source using Cobertura's sources roots and reject foreign or ambiguous files.
 # Inputs: Class filename, declared roots and checkout. Outputs: Existing first-party repository-relative source path.
 def source_path(filename: str, sources: list[str], root: Path) -> str:
@@ -32,11 +45,7 @@ def source_path(filename: str, sources: list[str], root: Path) -> str:
 # Purpose: Normalize portable report paths while preserving every measured class, line and hit.
 # Inputs: Collector XML, output path and checkout. Outputs: Cobertura and independently counted unique line coverage.
 def normalize_report(source: Path, destination: Path, root: Path) -> dict:
-    with source.open("rb") as stream:
-        raw = stream.read(32 * 1024 * 1024 + 1)
-    if len(raw) > 32 * 1024 * 1024 or b"<!ENTITY" in raw.upper():
-        raise ValueError("Coverage XML exceeds the report contract")
-    report = ET.fromstring(raw)
+    report = read_report(source)
     if report.tag != "coverage":
         raise ValueError("Expected a Cobertura coverage report")
     sources = [item.text for item in report.findall("./sources/source") if item.text] or [str(root)]

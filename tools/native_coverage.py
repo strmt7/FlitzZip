@@ -12,7 +12,8 @@ import stat
 import time
 import uuid
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, build_opener
 
 from tools.native_build_receipt import validate_current
 from tools.native_coverage_report import normalize_report
@@ -83,15 +84,52 @@ def run_checked(arguments: list[str], timeout: int, log: Path) -> None:
         raise RuntimeError(f"Coverage command failed; retained diagnostics: {log}")
 
 
+# Purpose: Keep installer acquisition on authenticated official release transports, including every redirect.
+# Inputs: URL supplied by the reviewed manifest or release server. Outputs: Refusal before foreign access.
+def validate_release_url(url: str) -> None:
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname
+        not in {"github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in (None, 443)
+        or parsed.fragment
+    ):
+        raise ValueError("Collector acquisition requires an official HTTPS release host")
+
+
+class ReleaseRedirects(HTTPRedirectHandler):
+    max_redirections = 3
+    max_repeats = 1
+
+    # Purpose: Validate every redirect before urllib opens it, without trusting the initial origin alone.
+    # Inputs: Native HTTP redirect metadata. Outputs: Standard redirect request or explicit refusal.
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_release_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 # Purpose: Install only the reviewed official collector bytes into the checkout's tool cache.
 # Inputs: Hash-locked manifest and owned cache. Outputs: Verified executable; altered caches remain rejected.
 def provision(lock: dict, output: Path) -> Path:
+    version = lock["version"]
+    if not re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}", version):
+        raise ValueError("Invalid collector version")
+    expected_url = (
+        f"https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-{version}/"
+        f"OpenCppCoverageSetup-x64-{version}.exe"
+    )
+    if lock["url"] != expected_url:
+        raise ValueError("Collector URL differs from its official versioned installer")
+    validate_release_url(lock["url"])
     directory = owned_path(ROOT, ROOT / "out/tools" / ("opencppcoverage-" + lock["version"]))
     if directory.exists():
         return verify_collector(directory, lock["files"])
     installer = owned_path(ROOT, output / f"OpenCppCoverageSetup-{uuid.uuid4().hex}.exe")
     started = time.monotonic()
-    with urlopen(lock["url"], timeout=30) as response, installer.open("xb") as stream:
+    with build_opener(ReleaseRedirects()).open(lock["url"], timeout=30) as response, installer.open("xb") as stream:
         remaining = lock["installer_bytes"]
         while remaining:
             if time.monotonic() - started > 120:
