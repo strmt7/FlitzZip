@@ -142,6 +142,15 @@ not implemented codecs or measured FlitzZip speedups:
   selection. A byte permutation alone leaves a pooled histogram unchanged;
   separate contexts must justify their tables and offsets. Add an independent
   decoder and malformed-frame checks before introducing a representation.
+- **Amortize model construction without weakening candidate selection.**
+  The [NeuralZip preprint abstract](https://arxiv.org/abs/2610.09916), submitted
+  October 7, 2026, describes grouping similar exponent distributions, reusing
+  Huffman codes and packing recurring exponent tuples. Its HTML full text was
+  unavailable during this review, so the abstract supports a hypothesis only.
+  For FlitzZip, trial operation-local table reuse only when the complete encoded
+  table and payload are smaller than independent contexts. Include setup cost,
+  all shared metadata and held-out workloads; no external model or cached state
+  may become necessary to decode an archive.
 - **Account for the decoder model.**
   [Nacrith](https://arxiv.org/html/2602.19626) combines predictors with arithmetic
   coding, but its reported text sizes exclude a large shared model and its paper

@@ -53,7 +53,14 @@ try {
             @($workflow, 'Validated candidate checksum mismatch', 'Unchecked candidate', 'Assert-ReleaseValidationIsolation'),
             @($workflow, 'Release creation failed', 'Ignored creation status', 'Assert-ReleaseValidationIsolation'),
             @($workflow, 'Validation-only runs cannot replace an existing release', 'Unchecked replacement mode', 'Assert-ReleaseValidationIsolation'),
-            @($workflow, '          name: release-candidate-${{ github.sha }}', '          name: release-candidate-main', 'Assert-ReleaseValidationIsolation'))) {
+            @($workflow, '          name: release-candidate-${{ github.sha }}', '          name: release-candidate-main', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, '-WorkRoot $env:RUNNER_TEMP -CliPath $cli', '-WorkRoot $env:RUNNER_TEMP', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, 'Packaged native compression failed.', 'Ignored compression failure.', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, 'Packaged native verification failed.', 'Ignored verification failure.', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, 'Packaged native extraction failed.', 'Ignored extraction failure.', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, 'Packaged native readback differs from the complete source.', 'Unchecked readback.', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, 'Remove-Item -LiteralPath $expectedCli -Force', 'Write-Output intact', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, 'MSI repair did not restore the exact staged CLI bytes.', 'Unchecked repair.', 'Assert-ReleaseValidationIsolation'))) {
         Assert-ReleasePolicyMutation -FixtureRoot $fixtureRoot -Path $mutation[0] -Original $mutation[1] `
             -Replacement $mutation[2] -Validator $mutation[3]
     }
@@ -67,6 +74,11 @@ try {
         if (-not $rejected) { throw "Missing release policy input was accepted: $relative" }
         Set-Content -LiteralPath $file -Value $text -Encoding UTF8
     }
+    $missingCli = Join-Path $fixtureRoot 'missing-package-cli.exe'
+    $missingRejected = $false
+    try { & (Join-Path $repoRoot 'tools/format_matrix_smoke.ps1') -CliPath $missingCli -WorkRoot $fixtureRoot }
+    catch { $missingRejected = $_.Exception.Message.StartsWith("CLI binary not found: $missingCli.") }
+    if (-not $missingRejected) { throw 'An absent packaged CLI must not substitute the development binary.' }
     Write-Output 'Release workflow identity, replacement, title and candidate-isolation contracts passed.'
 } finally {
     $resolved = [IO.Path]::GetFullPath($fixtureRoot)

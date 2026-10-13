@@ -102,4 +102,14 @@ function Assert-ReleaseValidationIsolation {
     if ([regex]::Matches($text, 'name: release-candidate-\$\{\{ github\.sha \}\}').Count -ne 2) {
         throw 'Upload and download must select the same exact-commit candidate artifact.'
     }
+    foreach ($required in @(
+            '& tools/format_matrix_smoke.ps1 -Configuration Release -WorkRoot $env:RUNNER_TEMP -CliPath $cli',
+            'Packaged native compression failed.', 'Packaged native verification failed.',
+            'Packaged native extraction failed.', 'Packaged native readback differs from the complete source.',
+            'Remove-Item -LiteralPath $expectedCli -Force',
+            'MSI repair did not restore the exact staged CLI bytes.')) {
+        if (-not $validationText.Contains($required)) {
+            throw "Release qualification lost its packaged-binary or repair consumer: $required"
+        }
+    }
 }
