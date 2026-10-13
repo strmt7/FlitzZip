@@ -57,8 +57,9 @@ request; this does not authorize publication of a replacement.
    changes; this checkpoint does not approve later source bytes.
 2. **Complete the GPU incident investigation.** Trace bounded kernel progress,
    asynchronous ownership, failure cleanup and runtime admission against the
-   retained incident evidence. The supplied empty watchdog dumps cannot establish
-   a cause. Do not label the freeze resolved from successful later GPU tests.
+   retained incident evidence. The original watchdog dumps are unavailable, and
+   retained event logs no longer cover the incident. Do not label the freeze
+   resolved from successful later GPU tests.
 3. **Finish source and release qualification.** Complete the remaining parser,
    extraction, codec, driver and kernel review, plus any
    required authenticated scanner qualification. Qualify the final pushed SHA's
