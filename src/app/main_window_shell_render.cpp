@@ -16,7 +16,7 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Paint the current frame through an off-screen buffer.
 // Inputs: None; uses the current window paint region.
@@ -156,7 +156,7 @@ std::array<RECT, 2> MainWindow::extract_overwrite_prompt_buttons(const RECT& mod
     return {allow, cancel};
 }
 
-// Purpose: Draw the SuperZip-owned extraction overwrite confirmation modal.
+// Purpose: Draw the FlitzZip-owned extraction overwrite confirmation modal.
 // Inputs: `dc` is the target, `rect` is the full client area, and `state` contains modal text.
 // Outputs: Renders no pixels unless the overwrite confirmation is active.
 void MainWindow::draw_extract_overwrite_prompt(HDC dc, const RECT& rect, const UiState& state) {
@@ -177,7 +177,7 @@ void MainWindow::draw_extract_overwrite_prompt(HDC dc, const RECT& rect, const U
     SelectObject(dc, tiny_font_);
     const RECT message{modal.left + scale(24), modal.top + scale(68), modal.right - scale(24), modal.top + scale(122)};
     draw_text(dc, message,
-              L"The extraction destination already contains items, or SuperZip cannot prove it is empty. Continue only "
+              L"The extraction destination already contains items, or FlitzZip cannot prove it is empty. Continue only "
               L"if archive entries may replace existing files when their paths conflict.",
               kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
@@ -238,7 +238,7 @@ void MainWindow::draw_top_bar(HDC dc, const RECT& rect) {
     RECT logo{scale(18), scale(14), scale(38), scale(36)};
     draw_logo(dc, logo, kAccent);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{scale(48), rect.top, rail_width + scale(76), rect.bottom}, L"SuperZip", kText,
+    draw_text(dc, RECT{scale(48), rect.top, rail_width + scale(76), rect.bottom}, L"FlitzZip", kText,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
@@ -366,4 +366,4 @@ void MainWindow::draw_content(HDC dc, const RECT& rect, const UiState& state) {
 // Inputs: `rect` is the content area in physical pixels.
 // Outputs: Returns DPI-scaled Queue page control rectangles.
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

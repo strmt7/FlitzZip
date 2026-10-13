@@ -8,7 +8,7 @@
 #include <span>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 struct EncodedChunk {
     std::vector<BlockDescriptor> blocks;
@@ -50,7 +50,7 @@ DecodeBlockWindow resolve_decode_block_window(std::span<const BlockDescriptor> b
 std::uint64_t count_decode_block_windows(std::span<const BlockDescriptor> blocks, std::uint64_t window_bytes);
 
 // Purpose: Identify block kinds that carry bytes in the encoded payload stream.
-// Inputs: `kind` is a native SUZIP block kind.
+// Inputs: `kind` is a native FLZIP block kind.
 // Outputs: Returns true for raw, CPU-compressed, and GPU-compressed payload blocks.
 bool block_kind_has_payload(BlockKind kind);
 
@@ -60,7 +60,7 @@ bool block_kind_has_payload(BlockKind kind);
 EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCodecOptions& options);
 
 // Purpose: Detect whether a block table contains a CPU-only compression kind.
-// Inputs: `blocks` is a validated or soon-to-be-validated native SUZIP block table.
+// Inputs: `blocks` is a validated or soon-to-be-validated native FLZIP block table.
 // Outputs: Returns true when any block uses Deflate or Zstandard.
 bool block_table_contains_cpu_only(std::span<const BlockDescriptor> blocks);
 
@@ -78,4 +78,4 @@ void decode_cpu_only_blocks_cpu(std::span<const std::byte> payload, std::span<co
 void decode_chunk_cpu(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                       std::span<std::byte> output, const ArchiveCodecOptions& options);
 
-}  // namespace superzip
+}  // namespace flitzzip

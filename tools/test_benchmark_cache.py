@@ -43,7 +43,7 @@ class BenchmarkCacheTests(unittest.TestCase):
             "archive_sha256": ["d" * 64] * 5,
         }
 
-    # Purpose: Invalidate every material input without coupling competitor measurements to SuperZip edits.
+    # Purpose: Invalidate every material input without coupling competitor measurements to FlitzZip edits.
     # Inputs: Identity variants and reordered equivalent dictionaries.
     # Outputs: Equivalent JSON keeps its key; changes to method, input, tool, settings or host change it.
     def test_identity_invalidation(self) -> None:
@@ -59,7 +59,7 @@ class BenchmarkCacheTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertNotEqual(key, cache.measurement_id(changed))
         with self.assertRaises(ValueError):
-            cache.measurement_id({**self.identity, "superzip_commit": "must-not-affect-competitors"})
+            cache.measurement_id({**self.identity, "flitzzip_commit": "must-not-affect-competitors"})
 
     # Purpose: Reject unreviewed, malformed and undersampled records without altering evidence.
     # Inputs: Result variants covering booleans, NaN, invalid dates and missing correctness/resources.

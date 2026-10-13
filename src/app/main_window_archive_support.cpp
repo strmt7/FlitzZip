@@ -43,11 +43,11 @@
 #include <knownfolders.h>
 #include <shlobj.h>
 
-namespace superzip::app {
+namespace flitzzip::app {
 namespace {
 
 constexpr std::array<std::string_view, 13> kSettingsV1CompressionFormatExtensions{
-    ".suzip", ".zip", ".tar", ".tar.gz", ".tar.bz2", ".tar.zst", ".gz", ".bz2", ".zst", ".Z", ".cpio", ".cpgz", ".ar",
+    ".flzip", ".zip", ".tar", ".tar.gz", ".tar.bz2", ".tar.zst", ".gz", ".bz2", ".zst", ".Z", ".cpio", ".cpgz", ".ar",
 };
 
 // Purpose: Normalize a mutable compression-format index into the current extension selector.
@@ -60,7 +60,7 @@ int normalize_compression_format_index(int index) {
 
 // Purpose: Resolve the extension metadata for a current compression selector row.
 // Inputs: `index` is a mutable UI/settings row.
-// Outputs: Returns the matching create-capable extension metadata, or the default `.suzip` row if corrupted.
+// Outputs: Returns the matching create-capable extension metadata, or the default `.flzip` row if corrupted.
 const ArchiveFormatExtensionInfo& compression_format_entry(int index) {
     const auto normalized = static_cast<std::size_t>(normalize_compression_format_index(index));
     const auto& entry = archive_format_extension_info_for_extension(kCompressionCreateFormatExtensions[normalized]);
@@ -73,7 +73,7 @@ const ArchiveFormatExtensionInfo& compression_format_entry(int index) {
 
 // Purpose: Find the current selector row for one exact extension.
 // Inputs: `extension` is a supported create extension including its leading dot.
-// Outputs: Returns the matching current row or the default `.suzip` row.
+// Outputs: Returns the matching current row or the default `.flzip` row.
 int compression_format_index_for_extension(std::string_view extension) {
     const auto requested = std::string_view(archive_format_extension_info_for_extension(extension).extension);
     for (int index = 0; index <= kCompressionFormatMaxIndex; ++index) {
@@ -100,7 +100,7 @@ int migrate_settings_v1_compression_format_index(int old_index) {
 // Inputs: `json` is the settings document being parsed.
 // Outputs: Returns true for schema v1 or schema-less early settings.
 bool settings_uses_v1_format_rows(std::string_view json) {
-    if (json.find("\"superzip.settings.v1\"") != std::string_view::npos) {
+    if (json.find("\"flitzzip.settings.v1\"") != std::string_view::npos) {
         return true;
     }
     return json.find("\"schema\"") == std::string_view::npos;
@@ -185,11 +185,11 @@ std::wstring compression_format_extension(int index) {
     return widen(compression_format_entry(index).extension);
 }
 
-// Purpose: Return whether a compression format uses native SUZIP tuning controls.
+// Purpose: Return whether a compression format uses native FLZIP tuning controls.
 // Inputs: `format` is a selected create format.
-// Outputs: Returns true only for the GPU-first `.suzip` format.
-bool compression_format_uses_suzip_tuning(ArchiveFormat format) {
-    return format == ArchiveFormat::SuperZip;
+// Outputs: Returns true only for the GPU-first `.flzip` format.
+bool compression_format_uses_flzip_tuning(ArchiveFormat format) {
+    return format == ArchiveFormat::FlitzZip;
 }
 
 // Purpose: Return whether the selected create format can honor the compression-level dropdown.
@@ -197,7 +197,7 @@ bool compression_format_uses_suzip_tuning(ArchiveFormat format) {
 // Outputs: Returns true for level-aware encoders and false for stored/text/container-only formats.
 bool compression_format_uses_level(ArchiveFormat format) {
     switch (format) {
-    case ArchiveFormat::SuperZip:
+    case ArchiveFormat::FlitzZip:
     case ArchiveFormat::Zip:
     case ArchiveFormat::TarGzip:
     case ArchiveFormat::TarBzip2:
@@ -216,7 +216,7 @@ bool compression_format_uses_level(ArchiveFormat format) {
 // Inputs: `state` is the copied UI state.
 // Outputs: Returns the default archive filename for the selected compression format.
 std::wstring compression_output_filename_for(const UiState& state) {
-    return L"SuperZip-output" + compression_format_extension(state.compression_format_index);
+    return L"FlitzZip-output" + compression_format_extension(state.compression_format_index);
 }
 
 // Purpose: Resolve the visible compression output path.
@@ -233,7 +233,7 @@ std::filesystem::path extraction_output_path_for(const UiState& state) {
     if (!state.destination_directory.empty()) {
         return state.destination_directory;
     }
-    return current_user_downloads_directory() / L"SuperZip-extracted";
+    return current_user_downloads_directory() / L"FlitzZip-extracted";
 }
 
 using CompatibilityExtractor = OperationStats (*)(const std::filesystem::path&, const std::filesystem::path&, bool,
@@ -245,7 +245,7 @@ struct CompatibilityExtractionRoute {
 };
 
 // Purpose: Find the compatibility extraction adapter for a detected archive format.
-// Inputs: `archive_format` is the detected non-SUZIP format to route.
+// Inputs: `archive_format` is the detected non-FLZIP format to route.
 // Outputs: Returns the matching adapter function, or null when the format has no extraction implementation.
 CompatibilityExtractor compatibility_extractor_for(ArchiveFormat archive_format) {
     static constexpr std::array<CompatibilityExtractionRoute, 33> routes{{
@@ -293,7 +293,7 @@ CompatibilityExtractor compatibility_extractor_for(ArchiveFormat archive_format)
 
 // Purpose: Dispatch one detected archive to the matching extraction adapter.
 // Inputs: `archive_format` is the already detected format, `archive` is the input file, `output` is the extraction
-// root, `gpu_required` controls only SUZIP, `overwrite` controls existing targets, and `progress_callback` receives
+// root, `gpu_required` controls only FLZIP, `overwrite` controls existing targets, and `progress_callback` receives
 // progress updates. Outputs: Returns extraction statistics, or throws when the format is unknown, unsupported, unsafe,
 // or corrupt.
 OperationStats extract_detected_archive(ArchiveFormat archive_format, const std::filesystem::path& archive,
@@ -313,11 +313,11 @@ OperationStats extract_detected_archive(ArchiveFormat archive_format, const std:
     default:
         break;
     }
-    if (archive_format == ArchiveFormat::SuperZip) {
+    if (archive_format == ArchiveFormat::FlitzZip) {
         ExtractOptions options;
         options.gpu_required = gpu_required;
         options.overwrite = overwrite;
-        return extract_suzip(archive, output, options, progress_callback);
+        return extract_flzip(archive, output, options, progress_callback);
     }
 
     if (archive_format == ArchiveFormat::Unknown) {
@@ -336,10 +336,10 @@ OperationStats extract_detected_archive(ArchiveFormat archive_format, const std:
 OperationStats validate_detected_archive(ArchiveFormat archive_format, const std::filesystem::path& archive,
                                          bool gpu_required, const ProgressCallback& progress_callback,
                                          ArchivePathEncoding name_encoding) {
-    if (archive_format == ArchiveFormat::SuperZip) {
+    if (archive_format == ArchiveFormat::FlitzZip) {
         ExtractOptions options;
         options.gpu_required = gpu_required;
-        return verify_suzip(archive, options, progress_callback);
+        return verify_flzip(archive, options, progress_callback);
     }
     if (archive_format == ArchiveFormat::Zip || archive_format == ArchiveFormat::Zipx) {
         return verify_zip(archive, progress_callback);
@@ -478,7 +478,7 @@ int compression_level_value(int index) {
 // Inputs: A synchronized UI snapshot; no GPU query or filesystem work occurs here.
 // Outputs: Returns whether the separate Neutron row can be displayed and selected.
 bool neutron_selection_available(const UiState& state) {
-    return neutron_mode_eligible(compression_format_value(state.compression_format_index) == ArchiveFormat::SuperZip,
+    return neutron_mode_eligible(compression_format_value(state.compression_format_index) == ArchiveFormat::FlitzZip,
                                  state.gpu_available, state.gpu_required);
 }
 
@@ -487,33 +487,33 @@ bool neutron_selection_available(const UiState& state) {
 // Outputs: Returns whether an unavailable Neutron choice was explicitly changed to ordinary level 9.
 bool normalize_compression_selection(UiState& state) {
     return normalize_neutron_selection(state, compression_format_value(state.compression_format_index) ==
-                                                  ArchiveFormat::SuperZip);
+                                                  ArchiveFormat::FlitzZip);
 }
 
 // Purpose: Run the selected create backend for a GUI compression job.
 // Inputs: `sources`, `output`, `archive_format`, GPU options, `verify_after_write`, `block_size`, `compression_level`,
 // `compression_mode`, and a synchronous progress callback describe the job. Read-back verification is supported by
-// SUZIP and ZIP. Outputs: Returns backend telemetry or throws when the selected format cannot be created.
+// FLZIP and ZIP. Outputs: Returns backend telemetry or throws when the selected format cannot be created.
 OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& sources,
                                     const std::filesystem::path& output, ArchiveFormat archive_format,
                                     bool gpu_required, bool verify_after_write, std::uint32_t block_size,
                                     int compression_level, NativeCompressionMode compression_mode,
                                     const ProgressCallback& progress_callback) {
-    if (compression_mode != NativeCompressionMode::Standard && archive_format != ArchiveFormat::SuperZip) {
-        throw ArchiveError("Neutron star mode is available only for SUZIP");
+    if (compression_mode != NativeCompressionMode::Standard && archive_format != ArchiveFormat::FlitzZip) {
+        throw ArchiveError("Neutron star mode is available only for FLZIP");
     }
-    if (verify_after_write && archive_format != ArchiveFormat::SuperZip && archive_format != ArchiveFormat::Zip) {
-        throw ArchiveError("verify-after-write is currently supported only for SUZIP and ZIP");
+    if (verify_after_write && archive_format != ArchiveFormat::FlitzZip && archive_format != ArchiveFormat::Zip) {
+        throw ArchiveError("verify-after-write is currently supported only for FLZIP and ZIP");
     }
     switch (archive_format) {
-    case ArchiveFormat::SuperZip: {
+    case ArchiveFormat::FlitzZip: {
         CompressOptions options;
         options.gpu_required = gpu_required;
         options.block_size = block_size;
         options.compression_level = compression_level;
         options.compression_mode = compression_mode;
         options.verify_after_write = verify_after_write;
-        return compress_suzip(sources, output, options, progress_callback);
+        return compress_flzip(sources, output, options, progress_callback);
     }
     case ArchiveFormat::Zip:
         return compress_zip(sources, output, compression_level, progress_callback, verify_after_write);
@@ -798,7 +798,7 @@ AppSettings parse_settings_json(std::string_view json) {
     settings.gpu_required = json_bool_setting(json, "gpuRequired", settings.gpu_required);
     if (json_bool_setting(json, "neutronStarMode", false) && persisted_effort == kMaxCompressionLevel &&
         settings.gpu_required &&
-        compression_format_value(settings.compression_format_index) == ArchiveFormat::SuperZip) {
+        compression_format_value(settings.compression_format_index) == ArchiveFormat::FlitzZip) {
         settings.compression_level_index = kNeutronCompressionLevelIndex;
     }
     settings.overwrite = json_bool_setting(json, "overwrite", settings.overwrite);
@@ -816,7 +816,7 @@ std::string settings_to_json(const AppSettings& settings) {
     auto bool_text = [](bool value) { return value ? "true" : "false"; };
     std::ostringstream out;
     out << "{\n"
-        << "  \"schema\": \"superzip.settings.v3\",\n"
+        << "  \"schema\": \"flitzzip.settings.v3\",\n"
         << "  \"compressionFormatIndex\": " << settings.compression_format_index << ",\n"
         << "  \"compressionLevel\": " << compression_level_value(settings.compression_level_index) << ",\n"
         << "  \"neutronStarMode\": " << bool_text(settings.compression_level_index == kNeutronCompressionLevelIndex)
@@ -838,16 +838,16 @@ std::string settings_to_json(const AppSettings& settings) {
     return out.str();
 }
 
-// Purpose: Resolve SuperZip's per-user application storage directory.
+// Purpose: Resolve FlitzZip's per-user application storage directory.
 // Inputs: None; uses Windows Known Folders, or a fixed temp directory when GUI smoke redirect is explicitly enabled.
 // Outputs: Returns a trusted user-scoped directory or throws on lookup failure.
 std::filesystem::path app_storage_directory() {
     wchar_t smoke_redirect[8]{};
     constexpr DWORD smoke_redirect_capacity = static_cast<DWORD>(sizeof(smoke_redirect) / sizeof(smoke_redirect[0]));
     const DWORD smoke_redirect_length =
-        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", smoke_redirect, smoke_redirect_capacity);
+        GetEnvironmentVariableW(L"FLITZZIP_GUI_SMOKE_SETTINGS_REDIRECT", smoke_redirect, smoke_redirect_capacity);
     if (smoke_redirect_length == 1 && smoke_redirect[0] == L'1') {
-        return std::filesystem::temp_directory_path() / L"SuperZip";
+        return std::filesystem::temp_directory_path() / L"FlitzZip";
     }
     PWSTR local_app_data = nullptr;
     const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &local_app_data);
@@ -856,32 +856,32 @@ std::filesystem::path app_storage_directory() {
     }
     std::filesystem::path path(local_app_data);
     CoTaskMemFree(local_app_data);
-    return path / L"SuperZip";
+    return path / L"FlitzZip";
 }
 
-// Purpose: Resolve the per-user SuperZip settings file path.
-// Inputs: None; uses SuperZip's current user-scoped storage directory.
+// Purpose: Resolve the per-user FlitzZip settings file path.
+// Inputs: None; uses FlitzZip's current user-scoped storage directory.
 // Outputs: Returns a trusted settings path or throws on lookup failure.
 std::filesystem::path settings_file_path() {
     const auto storage = app_storage_directory();
     wchar_t smoke_redirect[8]{};
     constexpr DWORD smoke_redirect_capacity = static_cast<DWORD>(sizeof(smoke_redirect) / sizeof(smoke_redirect[0]));
     const DWORD smoke_redirect_length =
-        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", smoke_redirect, smoke_redirect_capacity);
+        GetEnvironmentVariableW(L"FLITZZIP_GUI_SMOKE_SETTINGS_REDIRECT", smoke_redirect, smoke_redirect_capacity);
     if (smoke_redirect_length == 1 && smoke_redirect[0] == L'1') {
         return storage / L"gui-smoke-settings.json";
     }
     return storage / L"settings.json";
 }
 
-// Purpose: Resolve the per-user SuperZip log file path.
-// Inputs: None; uses SuperZip's current user-scoped storage directory.
+// Purpose: Resolve the per-user FlitzZip log file path.
+// Inputs: None; uses FlitzZip's current user-scoped storage directory.
 // Outputs: Returns the persistent log file path or throws on lookup failure.
 std::filesystem::path log_file_path() {
-    return app_storage_directory() / L"superzip.log";
+    return app_storage_directory() / L"flitzzip.log";
 }
 
-// Purpose: Create SuperZip's per-user storage directory and empty log file when missing.
+// Purpose: Create FlitzZip's per-user storage directory and empty log file when missing.
 // Inputs: None; resolves paths for the current Windows user.
 // Outputs: Creates the storage folder and log file or throws on filesystem failure.
 void ensure_app_storage() {
@@ -891,7 +891,7 @@ void ensure_app_storage() {
     if (!std::filesystem::exists(log_path)) {
         std::ofstream created(log_path, std::ios::binary | std::ios::app);
         if (!created) {
-            throw ArchiveError("could not create SuperZip log file");
+            throw ArchiveError("could not create FlitzZip log file");
         }
     }
 }
@@ -929,11 +929,11 @@ void append_log_file_entry(const std::filesystem::path& path, LogSeverity severi
     std::filesystem::create_directories(path.parent_path());
     std::ofstream output(path, std::ios::binary | std::ios::app);
     if (!output) {
-        throw ArchiveError("could not open SuperZip log file");
+        throw ArchiveError("could not open FlitzZip log file");
     }
     output << log_timestamp_text(timestamp) << " [" << log_severity_text(severity) << "] " << message << '\n';
     if (!output) {
-        throw ArchiveError("could not write SuperZip log file");
+        throw ArchiveError("could not write FlitzZip log file");
     }
 }
 
@@ -1107,4 +1107,4 @@ int dropdown_selected_index(const UiState& state, DropdownId id) {
     return 0;
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

@@ -62,7 +62,7 @@ that a newly pushed workflow or GitHub alert has passed its acceptance gate.
 Semgrep 1.179.0 still requires MCP exactly 1.29.0. This is above the
 patched minimum for the three MCP Dependabot advisories; upgrading to MCP 2.x
 would violate Semgrep's contract. The SDK belongs to scanner tooling, not
-SuperZip's native application runtime.
+FlitzZip's native application runtime.
 
 This release also requires `exceptiongroup~=1.2.0`,
 `jsonschema~=4.25.1`, `wcmatch~=8.3`, OpenTelemetry 1.37 / 0.58b0, and indirectly

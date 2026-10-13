@@ -25,7 +25,7 @@
 #include <objidl.h>
 #include <gdiplus.h>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 constexpr int kTopBar = 52;
 constexpr int kRailWidth = 86;
@@ -79,7 +79,7 @@ constexpr UINT_PTR kPerformanceTimer = 8;
 constexpr UINT kGpuMemorySampleMs = 1000;
 
 constexpr std::array<std::string_view, 19> kCompressionCreateFormatExtensions{
-    ".suzip",   ".zip",  ".tar.gz", ".tgz", ".tar",  ".gz",      ".zst",  ".zstd", ".tar.zst", ".tzst",
+    ".flzip",   ".zip",  ".tar.gz", ".tgz", ".tar",  ".gz",      ".zst",  ".zstd", ".tar.zst", ".tzst",
     ".tar.bz2", ".tbz2", ".tbz",    ".bz2", ".cpio", ".cpio.gz", ".cpgz", ".ar",   ".Z",
 };
 constexpr int kDefaultCompressionFormatIndex = 0;
@@ -92,10 +92,10 @@ constexpr std::array<std::uint32_t, 7> kCompressionBlockSizeOptions{
     2U * 1024U * 1024U,
     4U * 1024U * 1024U,
     8U * 1024U * 1024U,
-    superzip::kMaxArchiveBlockBytes,
+    flitzzip::kMaxArchiveBlockBytes,
 };
 constexpr int kCompressionBlockSizeMaxIndex = static_cast<int>(kCompressionBlockSizeOptions.size()) - 1;
-static_assert(kCompressionBlockSizeOptions[kDefaultCompressionBlockSizeIndex] == superzip::kDefaultArchiveBlockBytes);
+static_assert(kCompressionBlockSizeOptions[kDefaultCompressionBlockSizeIndex] == flitzzip::kDefaultArchiveBlockBytes);
 
 struct SystemMemoryUsage {
     double percent = 0.0;
@@ -109,12 +109,12 @@ struct SystemMemoryUsage {
 DWORD window_style();
 
 // Purpose: Read the optional GUI-smoke auto-close timeout.
-// Inputs: Uses SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS from the process environment.
+// Inputs: Uses FLITZZIP_GUI_SMOKE_AUTO_CLOSE_MS from the process environment.
 // Outputs: Returns a bounded timer interval in milliseconds, or zero when disabled.
 UINT smoke_auto_close_ms();
 
 // Purpose: Read the optional GUI-smoke close-marker file path.
-// Inputs: Uses SUPERZIP_GUI_SMOKE_CLOSE_FILE from the process environment.
+// Inputs: Uses FLITZZIP_GUI_SMOKE_CLOSE_FILE from the process environment.
 // Outputs: Returns the marker path, or an empty path when smoke close polling is disabled.
 std::filesystem::path smoke_close_marker_path();
 
@@ -152,7 +152,7 @@ std::filesystem::path destination_directory_or_default(const UiState& state);
 ArchiveFormat compression_format_value(int index);
 std::wstring compression_format_text(int index);
 std::wstring compression_format_extension(int index);
-bool compression_format_uses_suzip_tuning(ArchiveFormat format);
+bool compression_format_uses_flzip_tuning(ArchiveFormat format);
 bool compression_format_uses_level(ArchiveFormat format);
 std::wstring compression_output_filename_for(const UiState& state);
 std::filesystem::path compression_output_path_for(const UiState& state);
@@ -258,4 +258,4 @@ void draw_settings_nav_icon(Gdiplus::Graphics& graphics, float origin_x, float o
 void draw_nav_icon(HDC dc, Page page, const RECT& rect, COLORREF color);
 bool gpu_ready(const UiState& state);
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

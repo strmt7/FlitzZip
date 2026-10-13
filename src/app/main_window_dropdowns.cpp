@@ -16,7 +16,7 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Open a dropdown menu and initialize its keyboard selection.
 // Inputs: `id` identifies the dropdown to open.
@@ -211,4 +211,4 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
 // Inputs: `page` is the destination page.
 // Outputs: Mutates page state and restores the last applied Settings snapshot if needed.
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

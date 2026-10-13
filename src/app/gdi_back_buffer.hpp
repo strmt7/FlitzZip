@@ -4,7 +4,7 @@
 #include <utility>
 #include <windows.h>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Retain one bounded off-screen bitmap between UI-thread paints.
 // Inputs: A live destination DC, physical dimensions, monitor identity, and a synchronous drawing callback.
@@ -113,4 +113,4 @@ class GdiBackBuffer {
     std::uint64_t allocations_ = 0;
 };
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

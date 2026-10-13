@@ -18,7 +18,7 @@ The source archive contains the complete original Apache 2.0 `LICENSE.txt`,
 
 The standard setuptools build changes only `nltk/VERSION` to the explicitly
 identified downstream version and `setup.cfg` to include a prominent build
-notice. It also adds `SUPERZIP_BUILD_NOTICE.txt`. Upstream Python implementation
+notice. It also adds `FLITZZIP_BUILD_NOTICE.txt`. Upstream Python implementation
 files remain byte-exact. The wheel retains all original notices and that build
 notice. Canonical packaging normalizes generated metadata line endings,
 recomputes the standard wheel `RECORD`, fixes archive metadata to the upstream

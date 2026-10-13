@@ -2,10 +2,10 @@
 #include "test_util.hpp"
 
 TEST_CASE(operation_destination_uses_output_and_captured_preference_for_each_job_kind) {
-    using superzip::OperationKind;
-    using superzip::app::operation_destination_path;
+    using flitzzip::OperationKind;
+    using flitzzip::app::operation_destination_path;
     const auto directory = std::filesystem::path(u8"C:/output folder/\u03a9");
-    const auto archive = directory / L"archive.suzip";
+    const auto archive = directory / L"archive.flzip";
     for (const bool global : {false, true}) {
         for (const bool extraction : {false, true}) {
             REQUIRE_EQ(operation_destination_path(OperationKind::Compress, archive, global, extraction),
@@ -21,7 +21,7 @@ TEST_CASE(operation_destination_uses_output_and_captured_preference_for_each_job
 }
 
 TEST_CASE(operation_destination_is_success_only_and_consumed_once) {
-    superzip::app::OperationDestination completion;
+    flitzzip::app::OperationDestination completion;
     const auto folder = std::filesystem::path(u8"C:/output/\u03a9");
     REQUIRE_TRUE(completion.take().empty());
     completion.begin(folder);
@@ -42,7 +42,7 @@ TEST_CASE(operation_destination_is_success_only_and_consumed_once) {
 }
 
 TEST_CASE(operation_destination_new_job_drops_stale_output_and_owns_its_snapshot) {
-    superzip::app::OperationDestination completion;
+    flitzzip::app::OperationDestination completion;
     std::filesystem::path folder = L"C:/original";
     completion.begin(folder);
     folder = L"C:/changed";

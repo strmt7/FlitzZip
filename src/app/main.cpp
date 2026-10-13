@@ -7,6 +7,6 @@
 // ignored. Outputs: Returns the main window message-loop exit code.
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    superzip::app::MainWindow window;
+    flitzzip::app::MainWindow window;
     return window.run(instance, show_command);
 }

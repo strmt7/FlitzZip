@@ -183,10 +183,10 @@ TEST_CASE(cab_missing_unicode_source_has_actionable_error) {
     const auto archive = root / std::filesystem::path(u"missing-\U0001F9EA.cab");
     bool rejected = false;
     try {
-        (void)superzip::scan_cab_metadata(archive);
-    } catch (const superzip::ArchiveError& error) {
+        (void)flitzzip::scan_cab_metadata(archive);
+    } catch (const flitzzip::ArchiveError& error) {
         REQUIRE_EQ(std::string(error.what()),
-                   "cannot read CAB archive size: " + superzip::path_diagnostic_utf8(archive));
+                   "cannot read CAB archive size: " + flitzzip::path_diagnostic_utf8(archive));
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -201,21 +201,21 @@ TEST_CASE(cab_extraction_reads_uncompressed_payload) {
     const auto archive = root / "sample.cab";
     write_uncompressed_cab(archive, {{.name = "input\\alpha.txt", .payload = "cab payload\n"}});
 
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Cab);
-    const auto info = superzip::archive_format_info(superzip::ArchiveFormat::Cab);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Cab);
+    const auto info = flitzzip::archive_format_info(flitzzip::ArchiveFormat::Cab);
     REQUIRE_TRUE(!info.can_create);
     REQUIRE_TRUE(info.can_extract);
     REQUIRE_TRUE(info.bundled_native);
-    const auto metadata = superzip::scan_cab_metadata(archive);
+    const auto metadata = flitzzip::scan_cab_metadata(archive);
     REQUIRE_EQ(metadata.entries.size(), static_cast<std::size_t>(1));
     REQUIRE_EQ(metadata.entries.front().path, "input/alpha.txt");
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_cab(archive, output, false);
+    const auto stats = flitzzip::extract_cab(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(std::string_view("cab payload\n").size()));
     REQUIRE_EQ(read_text_file(output / "input" / "alpha.txt"), "cab payload\n");
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify CAB extraction rejects traversal paths before output.
@@ -228,8 +228,8 @@ TEST_CASE(cab_extraction_rejects_traversal_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_cab(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_cab(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -250,8 +250,8 @@ TEST_CASE(cab_extraction_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_cab(archive, output, false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_cab(archive, output, false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -268,8 +268,8 @@ TEST_CASE(cab_scanner_rejects_spanned_cabinet_sets) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::scan_cab_metadata(archive));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::scan_cab_metadata(archive));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -293,8 +293,8 @@ TEST_CASE(cab_scanner_rejects_data_block_extent_past_cabinet_boundary) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::scan_cab_metadata(archive));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::scan_cab_metadata(archive));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -313,8 +313,8 @@ TEST_CASE(cab_scanner_rejects_duplicate_normalized_paths) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::scan_cab_metadata(archive));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::scan_cab_metadata(archive));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -333,8 +333,8 @@ TEST_CASE(cab_scanner_rejects_file_child_path_conflicts) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::scan_cab_metadata(archive));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::scan_cab_metadata(archive));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

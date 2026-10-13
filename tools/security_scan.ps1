@@ -315,11 +315,11 @@ Assert-DevelopmentTransferDiagnostic
 # Outputs: Throws when the license badge depends on the shields GitHub license endpoint.
 function Test-ReadmeBadgePolicy {
     $readme = Get-Content -LiteralPath (Join-Path $repo "README.md") -Raw
-    if ($readme -match 'img\.shields\.io/github/license/strmt7/SuperZip') {
+    if ($readme -match 'img\.shields\.io/github/license/strmt7/FlitzZip') {
         throw "README license badge must use the static AGPL-3.0 badge to avoid shields GitHub API token-pool failures."
     }
-    if ($readme -notmatch 'resources/brand/superzip-logo\.svg') {
-        throw "README must render the product logo from resources/brand/superzip-logo.svg."
+    if ($readme -notmatch 'resources/brand/flitzzip-logo\.svg') {
+        throw "README must render the product logo from resources/brand/flitzzip-logo.svg."
     }
 }
 
@@ -358,17 +358,17 @@ function Test-ExternalComparisonNamePolicy {
 
 Test-ExternalComparisonNamePolicy
 
-# Purpose: Verify SuperZip-owned UI cannot expose copyable text surfaces or window-wide drop affordances.
+# Purpose: Verify FlitzZip-owned UI cannot expose copyable text surfaces or window-wide drop affordances.
 # Inputs: Reads native GUI source files.
 # Outputs: Throws when app-owned UI uses clipboard APIs, editable text controls, or full-window drop registration.
 function Test-GuiOwnedSurfacePolicy {
     $appSources = Get-ChildItem -LiteralPath (Join-Path $repo "src\app") -File -Recurse -Include *.cpp,*.hpp,*.h,*.rc
     $sourceText = ($appSources | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
     if ($sourceText.Contains('DragAcceptFiles(hwnd_, TRUE)') -or $sourceText.Contains('WS_EX_ACCEPTFILES')) {
-        throw "SuperZip-owned drag/drop must be accepted only by the Queue OLE drop target, not the full HWND."
+        throw "FlitzZip-owned drag/drop must be accepted only by the Queue OLE drop target, not the full HWND."
     }
     if ($sourceText.Contains('ChangeWindowMessageFilterEx')) {
-        throw "SuperZip must not weaken UIPI message filtering for drag/drop or legacy shell messages."
+        throw "FlitzZip must not weaken UIPI message filtering for drag/drop or legacy shell messages."
     }
     foreach ($requiredDropBoundary in @(
         'kMaxShellDropPayloadBytes',
@@ -382,10 +382,10 @@ function Test-GuiOwnedSurfacePolicy {
         }
     }
     if (-not $sourceText.Contains('is_copy_accelerator')) {
-        throw "SuperZip-owned UI must consume text-copy accelerators before page-specific key handling."
+        throw "FlitzZip-owned UI must consume text-copy accelerators before page-specific key handling."
     }
     if ($sourceText -match 'OpenClipboard|SetClipboardData|GetClipboardData|CreateWindowExW[^\r\n]*(EDIT|RICHEDIT)|CreateWindowW[^\r\n]*(EDIT|RICHEDIT)') {
-        throw "SuperZip-owned UI must not expose selectable text controls or clipboard APIs."
+        throw "FlitzZip-owned UI must not expose selectable text controls or clipboard APIs."
     }
 }
 
@@ -404,7 +404,7 @@ function Test-GuiSecurityResultPolicy {
     foreach ($requiredResultBoundary in @(
         'pin_source_file(source)',
         'validate_detected_archive(',
-        'verify_suzip(archive, options',
+        'verify_flzip(archive, options',
         'DirectoryPublishTransaction discard',
         'SecurityCheckState::Passed',
         'SecurityCheckState::Failed',
@@ -476,12 +476,12 @@ function Test-AppLocalRuntimeLoadPolicy {
 
     $zstdRuntime = Get-Content -LiteralPath (Join-Path $repo "src\zstd\zstd_runtime.cpp") -Raw
     if (-not $zstdRuntime.Contains(
-            'load_trusted_app_local_runtime(kZstdDllName, SUPERZIP_ZSTD_RUNTIME_DLL_SHA256)')) {
+            'load_trusted_app_local_runtime(kZstdDllName, FLITZZIP_ZSTD_RUNTIME_DLL_SHA256)')) {
         throw "Zstandard must use the checksum-pinned app-local runtime loader."
     }
     $wimAdapter = Get-Content -LiteralPath (Join-Path $repo "src\wim\wim_adapter.cpp") -Raw
     if (-not $wimAdapter.Contains(
-            'load_trusted_app_local_runtime(kWimlibDllName, SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256)')) {
+            'load_trusted_app_local_runtime(kWimlibDllName, FLITZZIP_WIMLIB_RUNTIME_DLL_SHA256)')) {
         throw "wimlib must use the checksum-pinned app-local runtime loader."
     }
 }
@@ -492,7 +492,7 @@ Test-AppLocalRuntimeLoadPolicy
 # Inputs: Reads the repository-local MCP implementation and verification selector.
 # Outputs: Throws when child execution can buffer unbounded streams or skip its containment regressions.
 function Test-McpChildExecutionPolicy {
-    $mcpSource = Get-Content -LiteralPath (Join-Path $repo "mcp\superzip_mcp.py") -Raw
+    $mcpSource = Get-Content -LiteralPath (Join-Path $repo "mcp\flitzzip_mcp.py") -Raw
     foreach ($requiredBoundary in @(
         'MAX_CHILD_OUTPUT_BYTES',
         'MAX_REQUEST_CHARACTERS',
@@ -510,7 +510,7 @@ function Test-McpChildExecutionPolicy {
     if ($mcpSource -match 'subprocess\.run\([^\)]*capture_output\s*=\s*True') {
         throw "Local MCP must not buffer complete child stdout/stderr with subprocess.run(capture_output=True)."
     }
-    $verificationSelector = Get-Content -LiteralPath (Join-Path $repo "tools\superzip_verification.psm1") -Raw
+    $verificationSelector = Get-Content -LiteralPath (Join-Path $repo "tools\flitzzip_verification.psm1") -Raw
     if (-not $verificationSelector.Contains('mcp-bounded-child-tests')) {
         throw "MCP changes must route through bounded child-output and descendant-containment tests."
     }
@@ -546,8 +546,8 @@ Test-GuiShellLaunchPolicy
 function Test-InstallerCMakePolicy {
     param([Parameter(Mandatory = $true)][string]$CMakeLists)
 
-    if ($cmakeLists -notmatch 'set\(SUPERZIP_MSI_INSTALL_SCOPE\s+"perMachine"') {
-        throw "CMakeLists.txt must default SUPERZIP_MSI_INSTALL_SCOPE to perMachine for product MSI releases."
+    if ($cmakeLists -notmatch 'set\(FLITZZIP_MSI_INSTALL_SCOPE\s+"perMachine"') {
+        throw "CMakeLists.txt must default FLITZZIP_MSI_INSTALL_SCOPE to perMachine for product MSI releases."
     }
     if ($cmakeLists -notmatch 'set\(CPACK_WIX_ROOT_FOLDER_ID\s+"ProgramFiles<64>Folder"\)') {
         throw "CMakeLists.txt must set CPACK_WIX_ROOT_FOLDER_ID to ProgramFiles<64>Folder for release MSIs."
@@ -555,19 +555,19 @@ function Test-InstallerCMakePolicy {
     if ($cmakeLists -notmatch 'set\(CPACK_PACKAGE_VENDOR\s+"Efstratios Mitridis"\)') {
         throw "CMakeLists.txt must set the release MSI publisher to Efstratios Mitridis."
     }
-    if ($cmakeLists -notmatch 'set\(SUPERZIP_WIX_UPGRADE_GUID\s+"8E0D80F6-859D-4FE9-B082-F0D8048A8B57"\)') {
-        throw "CMakeLists.txt must keep SuperZip's stable MSI UpgradeCode in one explicit variable."
+    if ($cmakeLists -notmatch 'set\(FLITZZIP_WIX_UPGRADE_GUID\s+"8E0D80F6-859D-4FE9-B082-F0D8048A8B57"\)') {
+        throw "CMakeLists.txt must keep FlitzZip's stable MSI UpgradeCode in one explicit variable."
     }
-    if ($cmakeLists -notmatch 'SUPERZIP_WIX_PRODUCT_CODE_SEED[\s\S]*SUPERZIP_PACKAGE_NUMERIC_VERSION[\s\S]*SUPERZIP_MSI_INSTALL_SCOPE[\s\S]*SUPERZIP_MSI_PRODUCT_IDENTITY') {
+    if ($cmakeLists -notmatch 'FLITZZIP_WIX_PRODUCT_CODE_SEED[\s\S]*FLITZZIP_PACKAGE_NUMERIC_VERSION[\s\S]*FLITZZIP_MSI_INSTALL_SCOPE[\s\S]*FLITZZIP_MSI_PRODUCT_IDENTITY') {
         throw "CMakeLists.txt must seed the MSI ProductCode from package numeric version, install scope, and package identity."
     }
-    if ($cmakeLists -notmatch 'string\(SHA256\s+SUPERZIP_WIX_PRODUCT_CODE_HASH[\s\S]*SUPERZIP_WIX_PRODUCT_CODE_SEED') {
+    if ($cmakeLists -notmatch 'string\(SHA256\s+FLITZZIP_WIX_PRODUCT_CODE_HASH[\s\S]*FLITZZIP_WIX_PRODUCT_CODE_SEED') {
         throw "CMakeLists.txt must derive the MSI ProductCode from a SHA-256 identity seed."
     }
-    if ($cmakeLists -notmatch 'string\(SUBSTRING\s+"\$\{SUPERZIP_WIX_PRODUCT_CODE_HASH\}"[\s\S]*string\(TOUPPER\s+"\$\{SUPERZIP_WIX_PRODUCT_GUID\}"') {
+    if ($cmakeLists -notmatch 'string\(SUBSTRING\s+"\$\{FLITZZIP_WIX_PRODUCT_CODE_HASH\}"[\s\S]*string\(TOUPPER\s+"\$\{FLITZZIP_WIX_PRODUCT_GUID\}"') {
         throw "CMakeLists.txt must format the SHA-256-derived MSI ProductCode as an uppercase GUID."
     }
-    if ($cmakeLists -notmatch 'set\(CPACK_WIX_PRODUCT_GUID\s+"\$\{SUPERZIP_WIX_PRODUCT_GUID\}"\)') {
+    if ($cmakeLists -notmatch 'set\(CPACK_WIX_PRODUCT_GUID\s+"\$\{FLITZZIP_WIX_PRODUCT_GUID\}"\)') {
         throw "CMakeLists.txt must pass the deterministic MSI ProductCode to CPack WiX."
     }
     if ($cmakeLists -match 'CPACK_CREATE_DESKTOP_LINKS') {
@@ -576,10 +576,10 @@ function Test-InstallerCMakePolicy {
     if ($cmakeLists -notmatch 'set\(CPACK_WIX_UI_REF\s+"WixUI_FeatureTree"\)') {
         throw "CMakeLists.txt must use the WiX feature tree so Create Desktop shortcut is user-selectable."
     }
-    if ($cmakeLists -notmatch 'set\(CPACK_WIX_PRODUCT_ICON\s+"\$\{CMAKE_CURRENT_SOURCE_DIR\}/resources/app/superzip\.ico"\)') {
-        throw "CMakeLists.txt must set CPACK_WIX_PRODUCT_ICON to the canonical SuperZip icon for Add/Remove Programs."
+    if ($cmakeLists -notmatch 'set\(CPACK_WIX_PRODUCT_ICON\s+"\$\{CMAKE_CURRENT_SOURCE_DIR\}/resources/app/flitzzip\.ico"\)') {
+        throw "CMakeLists.txt must set CPACK_WIX_PRODUCT_ICON to the canonical FlitzZip icon for Add/Remove Programs."
     }
-    if ($cmakeLists -notmatch 'superzip_desktop_shortcut\.wxs' -or $cmakeLists -notmatch 'superzip_wix_patch\.xml') {
+    if ($cmakeLists -notmatch 'flitzzip_desktop_shortcut\.wxs' -or $cmakeLists -notmatch 'flitzzip_wix_patch\.xml') {
         throw "CMakeLists.txt must include the optional shortcut WiX source and patch files."
     }
 }
@@ -596,10 +596,10 @@ function Test-InstallerShortcutPolicy {
     if ($desktopShortcut -notmatch 'CM_SHORTCUT_DESKTOP_OPTIONAL' -or $desktopShortcut -notmatch 'DesktopFolder') {
         throw "Optional desktop shortcut WiX source must define the MSI-owned DesktopFolder shortcut component."
     }
-    if ($desktopShortcut -notmatch 'CM_SHORTCUT_START_MENU_OPTIONAL' -or $desktopShortcut -notmatch 'ProgramMenuFolder' -or $desktopShortcut -notmatch 'CM_REMOVE_SUPERZIP_PROGRAM_MENU_FOLDER') {
+    if ($desktopShortcut -notmatch 'CM_SHORTCUT_START_MENU_OPTIONAL' -or $desktopShortcut -notmatch 'ProgramMenuFolder' -or $desktopShortcut -notmatch 'CM_REMOVE_FLITZZIP_PROGRAM_MENU_FOLDER') {
         throw "Optional Start Menu WiX source must define the MSI-owned ProgramMenuFolder shortcut component and uninstall cleanup."
     }
-    if ($desktopShortcut -notmatch 'Software\\Efstratios Mitridis\\SuperZip') {
+    if ($desktopShortcut -notmatch 'Software\\Efstratios Mitridis\\FlitzZip') {
         throw "Optional shortcut registry markers must use the Efstratios Mitridis publisher key."
     }
     if ($desktopPatch -notmatch 'Create Desktop shortcut' -or $desktopPatch -notmatch 'ComponentRef Id="CM_SHORTCUT_DESKTOP_OPTIONAL"') {
@@ -624,7 +624,7 @@ function Test-InstallerPackagingScriptPolicy {
     if ($buildScript -notmatch '\[string\]\$MsiInstallScope\s*=\s*"perMachine"') {
         throw "tools/build.ps1 must default -MsiInstallScope to perMachine. Use explicit perUser only for local non-admin tests."
     }
-    if ($buildScript -notmatch '\[string\]\$MsiProductIdentity\s*=' -or $buildScript -notmatch 'SUPERZIP_MSI_PRODUCT_IDENTITY=\$MsiProductIdentity') {
+    if ($buildScript -notmatch '\[string\]\$MsiProductIdentity\s*=' -or $buildScript -notmatch 'FLITZZIP_MSI_PRODUCT_IDENTITY=\$MsiProductIdentity') {
         throw "tools/build.ps1 must pass an explicit MSI product identity into CMake ProductCode derivation."
     }
 
@@ -679,7 +679,7 @@ function Test-InstallerReleaseActionPolicy {
     if ($releaseAction -notmatch 'MsiInstallScope\s*=\s*"perMachine"') {
         throw "Release workflow must pass MsiInstallScope=perMachine for published MSI artifacts."
     }
-    if ($releaseAction -notmatch '\$expectedCli\s*=\s*Join-Path\s+\$env:ProgramFiles\s+"SuperZip\\bin\\superzip_cli\.exe"') {
+    if ($releaseAction -notmatch '\$expectedCli\s*=\s*Join-Path\s+\$env:ProgramFiles\s+"FlitzZip\\bin\\flitzzip_cli\.exe"') {
         throw "Release workflow must validate the installed CLI under Program Files."
     }
     if ($releaseAction -match 'Start-Process\s+-FilePath\s+\$installer[^\r\n]*-Wait') {
@@ -695,7 +695,7 @@ function Test-InstallerReleaseActionPolicy {
     if ($releaseAction -notmatch 'installer or elevation prompt was left unanswered') {
         throw "Release installer timeout messages must explain that unanswered elevation prompts are a possible cause."
     }
-    if ($releaseAction -notmatch 'MSI repair' -or $releaseAction -notmatch 'superzip-msi-repair-dependency-check\.txt') {
+    if ($releaseAction -notmatch 'MSI repair' -or $releaseAction -notmatch 'flitzzip-msi-repair-dependency-check\.txt') {
         throw "Release MSI smoke tests must repair the just-installed MSI and run dependency-check after repair."
     }
 }
@@ -707,14 +707,14 @@ function Test-InstallerScopePolicy {
     $cmakeLists = Get-Content -LiteralPath (Join-Path $repo "CMakeLists.txt") -Raw
     Test-InstallerCMakePolicy -CMakeLists $cmakeLists
 
-    $desktopShortcut = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_desktop_shortcut.wxs") -Raw
-    $desktopPatch = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_wix_patch.xml") -Raw
+    $desktopShortcut = Get-Content -LiteralPath (Join-Path $repo "cmake\flitzzip_desktop_shortcut.wxs") -Raw
+    $desktopPatch = Get-Content -LiteralPath (Join-Path $repo "cmake\flitzzip_wix_patch.xml") -Raw
     Test-InstallerShortcutPolicy -DesktopShortcut $desktopShortcut -DesktopPatch $desktopPatch
 
     $buildScript = Get-Content -LiteralPath (Join-Path $repo "tools\build.ps1") -Raw
     $packageScript = Get-Content -LiteralPath (Join-Path $repo "tools\package.ps1") -Raw
     $msiIdentityTool = Get-Content -LiteralPath (Join-Path $repo "tools\test_msi_identity.ps1") -Raw
-    $verificationSelector = Get-Content -LiteralPath (Join-Path $repo "tools\superzip_verification.psm1") -Raw
+    $verificationSelector = Get-Content -LiteralPath (Join-Path $repo "tools\flitzzip_verification.psm1") -Raw
     Test-InstallerPackagingScriptPolicy `
         -BuildScript $buildScript `
         -PackageScript $packageScript `
@@ -738,8 +738,8 @@ function Test-FuzzHarnessPolicy {
         throw "The local fuzz driver must execute a mounted script, not pass script text through native quoting."
     }
     if ($fuzzScript -notmatch '--memory \$memoryLimit --memory-swap \$memoryLimit' -or
-        $fuzzScript -notmatch 'Resolve-SuperZipFuzzMemoryBudget' -or
-        $fuzzScript -notmatch 'SUPERZIP_FUZZ_MEMORY_MIB=\$memoryMiB' -or
+        $fuzzScript -notmatch 'Resolve-FlitzZipFuzzMemoryBudget' -or
+        $fuzzScript -notmatch 'FLITZZIP_FUZZ_MEMORY_MIB=\$memoryMiB' -or
         $fuzzScript -match '--(?:cpus|cpu-quota|cpuset-cpus|oom-kill-disable)\b') {
         throw 'Local fuzzing must enforce admitted RAM with no swap, CPU cap, or disabled OOM safeguards.'
     }
@@ -769,7 +769,7 @@ function Test-FuzzHarnessPolicy {
     }
     if ($clusterBuild -notmatch 'MINIZ_SOURCE="third_party/miniz"' -or
         $clusterBuild -match 'MINIZ_UPSTREAM_SOURCE|prepare_upstream_miniz' -or
-        $clusterBuild -notmatch '-DSUPERZIP_MINIZ_FUZZ_ALLOCATOR=1') {
+        $clusterBuild -notmatch '-DFLITZZIP_MINIZ_FUZZ_ALLOCATOR=1') {
         throw "Miniz sanitizer targets must exercise the patched production source with its test-only allocator."
     }
     $compileBlocks = [regex]::Matches($clusterBuild, '(?ms)^"\$CXX".*?(?=^"\$CXX"|\z)')
@@ -780,7 +780,7 @@ function Test-FuzzHarnessPolicy {
     }
 
     $cmakeLists = Get-Content -LiteralPath (Join-Path $repo "CMakeLists.txt") -Raw
-    if ($cmakeLists -notmatch '(?s)add_executable\(\s*superzip_iso_fuzzer.*?src/core/file_manifest\.cpp.*?\)') {
+    if ($cmakeLists -notmatch '(?s)add_executable\(\s*flitzzip_iso_fuzzer.*?src/core/file_manifest\.cpp.*?\)') {
         throw "The standalone CMake ISO fuzzer must link file_manifest.cpp with file_publish.cpp."
     }
     $sdkAccess = Get-Content -LiteralPath (Join-Path $repo "third_party\lzma_sdk\C\CpuArch.h") -Raw

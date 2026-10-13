@@ -12,7 +12,7 @@
 #include <vector>
 #include <hip/hip_runtime.h>
 
-namespace superzip::hip_detail {
+namespace flitzzip::hip_detail {
 namespace {
 
 struct AdaptiveCodebookEstimate {
@@ -774,4 +774,4 @@ auto encode_entropy_prefix_chunk_device(const std::byte* device_input, std::span
     return out;
 }
 
-}  // namespace superzip::hip_detail
+}  // namespace flitzzip::hip_detail

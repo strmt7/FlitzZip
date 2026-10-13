@@ -8,7 +8,7 @@
 #include <memory>
 #include <ostream>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Stream Gzip-compressed bytes to a file while writing a valid single-member wrapper.
 // Inputs: Construct with `output_path` and a 1-9 miniz `compression_level`; callers write uncompressed bytes through
@@ -84,4 +84,4 @@ class GzipInputStream final : public std::istream {
     std::unique_ptr<Buffer> buffer_;
 };
 
-}  // namespace superzip
+}  // namespace flitzzip

@@ -39,7 +39,7 @@ static int compute_typeBstar_ranks(int* sorted, int* ranks, int count) {
     return 1;
 }
 
-#ifdef SUPERZIP_ZSTD_SUFFIX_RANK_PROBES
+#ifdef FLITZZIP_ZSTD_SUFFIX_RANK_PROBES
 /* Purpose: Exercise the exact production rank boundary with independent bounded fixtures.
  * Inputs: Live partial-sort/rank regions and their exact count. Outputs: The production success/error result. */
 int sz_rank_partial_suffixes(int* sorted, int* ranks, int count) {

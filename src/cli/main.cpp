@@ -68,18 +68,18 @@ std::string encode_cli_argument(std::wstring_view argument) {
         return {};
     }
     if (argument.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        throw superzip::ArchiveError("command-line argument exceeds conversion limits");
+        throw flitzzip::ArchiveError("command-line argument exceeds conversion limits");
     }
     const auto length = static_cast<int>(argument.size());
     const auto size =
         WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argument.data(), length, nullptr, 0, nullptr, nullptr);
     if (size == 0) {
-        throw superzip::ArchiveError("command-line argument contains invalid Unicode");
+        throw flitzzip::ArchiveError("command-line argument contains invalid Unicode");
     }
     std::string encoded(static_cast<std::size_t>(size), '\0');
     if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argument.data(), length, encoded.data(), size, nullptr,
                             nullptr) != size) {
-        throw superzip::ArchiveError("command-line Unicode conversion failed");
+        throw flitzzip::ArchiveError("command-line Unicode conversion failed");
     }
     return encoded;
 }
@@ -91,54 +91,54 @@ std::filesystem::path cli_path_argument(const std::string& argument) {
     return std::filesystem::path(std::u8string(argument.begin(), argument.end()));
 }
 
-// Purpose: Print command-line help for supported SuperZip operations.
+// Purpose: Print command-line help for supported FlitzZip operations.
 // Inputs: None.
 // Outputs: Writes usage text to stdout.
 void usage() {
     std::cout
-        << "SuperZip CLI\n"
+        << "FlitzZip CLI\n"
         << "Usage:\n"
-        << "  superzip_cli --help\n"
-        << "  superzip_cli --version\n"
-        << "  superzip_cli gpu-info\n"
-        << "  superzip_cli gpu-diagnostic [--seconds <1-30>] [--buffer-mib <16-512>] [--inner-iterations <1-4096>]\n"
-        << "  superzip_cli dependency-check\n"
-        << "  superzip_cli formats\n"
-        << "  superzip_cli identify <archive>\n"
-        << "  superzip_cli memory-benchmark --size-mib <n> --profile "
+        << "  flitzzip_cli --help\n"
+        << "  flitzzip_cli --version\n"
+        << "  flitzzip_cli gpu-info\n"
+        << "  flitzzip_cli gpu-diagnostic [--seconds <1-30>] [--buffer-mib <16-512>] [--inner-iterations <1-4096>]\n"
+        << "  flitzzip_cli dependency-check\n"
+        << "  flitzzip_cli formats\n"
+        << "  flitzzip_cli identify <archive>\n"
+        << "  flitzzip_cli memory-benchmark --size-mib <n> --profile "
            "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord|LongSparseRecord|SegmentedRecords "
            "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
         << kBlockSizeUsage
         << ">] [--compression-level <1-9>] [--neutron-star] [--inflight <n>] [--decode-inflight <n>] [--plan-only]\n"
-        << "  superzip_cli memory-benchmark --source-file <file> --source-sha256 <lowercase-hex> [--plan-only] "
+        << "  flitzzip_cli memory-benchmark --source-file <file> --source-sha256 <lowercase-hex> [--plan-only] "
            "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
         << kBlockSizeUsage
         << ">] [--compression-level <1-9>] [--neutron-star] [--inflight <n>] [--decode-inflight <n>]\n"
-        << "  superzip_cli memory-benchmark --source-stdin --source-bytes <1-4294967295> "
+        << "  flitzzip_cli memory-benchmark --source-stdin --source-bytes <1-4294967295> "
            "--source-sha256 <lowercase-hex> [--neutron-star] [--plan-only] [the same corpus options]\n"
-        << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile "
+        << "  flitzzip_cli benchmark-suite [--size-mib <n>] [--profile "
            "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord|LongSparseRecord|SegmentedRecords] "
            "[--workers "
            "<n>] [--block-size-kib <"
         << kBlockSizeUsage << ">] [--compression-level <1-9>] [--tune] [--tune-levels]\n"
-        << "  superzip_cli compress --format suzip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] "
+        << "  flitzzip_cli compress --format flzip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] "
            "[--inflight <n>] [--block-size-kib <"
         << kBlockSizeUsage
         << ">] [--compression-level <1-9>] [--neutron-star] "
            "[--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
-        << "  superzip_cli compress --format "
+        << "  flitzzip_cli compress --format "
            "zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|cpio|cpio.gz|"
            "cpgz|ar --output <archive> [--compression-level <1-9>] "
            "[--verify-after-write] [--sha256] [--defender-scan] <path>... (ZIP only)\n"
-        << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] "
-           "[--inflight <n>] [--overwrite] [--validate-before-publish] [--sha256] [--defender-scan] <archive.suzip>\n"
-        << "  superzip_cli extract --format "
+        << "  flitzzip_cli extract --format flzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] "
+           "[--inflight <n>] [--overwrite] [--validate-before-publish] [--sha256] [--defender-scan] <archive.flzip>\n"
+        << "  flitzzip_cli extract --format "
            "auto|zip|zipx|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|tar.lz|tlz|tar.zst|tzst|gz|gzip|bz2|bzip2|xz|lzma|"
            "lz|lzip|zst|zstd|z|compress|b64|base64|hqx|binhex|xxe|xxencode|uue|uu|macbinary|macbin|cab|iso|cpio|cpio."
            "gz|cpgz|ar|arj|arc|ark|deb|rpm|7z|lha|lzh|wim|swm|xar --output <directory> [--overwrite] [--sha256] "
            "[--defender-scan] [--validate-before-publish] [--name-encoding utf8|system] <archive>\n"
-        << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] "
-           "[--defender-scan] <archive.suzip|archive.zip|archive.zipx> (GPU options: SUZIP only)\n";
+        << "  flitzzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] "
+           "[--defender-scan] <archive.flzip|archive.zip|archive.zipx> (GPU options: FLZIP only)\n";
 }
 
 // Purpose: Convert byte/second statistics to MiB/s for display.
@@ -158,7 +158,7 @@ double compression_ratio(std::uint64_t input_bytes, std::uint64_t output_bytes) 
 // Purpose: Print archive operation statistics in a stable key/value format.
 // Inputs: `stats` is the completed operation result.
 // Outputs: Writes one line to stdout; includes optional adapter phase timings only when measured.
-void print_stats(const superzip::OperationStats& stats) {
+void print_stats(const flitzzip::OperationStats& stats) {
     std::cout << "entries=" << stats.entries << " input_bytes=" << stats.input_bytes
               << " output_bytes=" << stats.output_bytes << " workers=" << stats.workers
               << " inflight_chunks=" << stats.inflight_chunks << " gpu_used=" << (stats.gpu_used ? "true" : "false")
@@ -185,12 +185,12 @@ void print_stats(const superzip::OperationStats& stats) {
     std::cout << '\n';
 }
 
-// Purpose: Print the archive formats that SuperZip recognizes and whether each is implemented.
+// Purpose: Print the archive formats that FlitzZip recognizes and whether each is implemented.
 // Inputs: None.
 // Outputs: Writes one parseable line per real archive format.
 void print_format_registry() {
-    for (const auto& info : superzip::archive_format_registry()) {
-        if (info.format == superzip::ArchiveFormat::Unknown || info.format == superzip::ArchiveFormat::Auto) {
+    for (const auto& info : flitzzip::archive_format_registry()) {
+        if (info.format == flitzzip::ArchiveFormat::Unknown || info.format == flitzzip::ArchiveFormat::Auto) {
             continue;
         }
         std::cout << "format=" << info.key << " display=\"" << info.display_name << "\""
@@ -206,34 +206,34 @@ void print_format_registry() {
 // Inputs: `format_token` is the user token, `archive_path` is used only for `auto`, and `allow_auto` gates
 // auto-detection. Outputs: Returns a concrete format; throws `ArchiveError` for unknown tokens or unsupported
 // auto-detection.
-superzip::ArchiveFormat resolve_cli_archive_format(const std::string& format_token,
+flitzzip::ArchiveFormat resolve_cli_archive_format(const std::string& format_token,
                                                    const std::filesystem::path& archive_path, bool allow_auto) {
-    const auto parsed = superzip::parse_archive_format_token(format_token);
+    const auto parsed = flitzzip::parse_archive_format_token(format_token);
     if (!parsed.has_value()) {
-        throw superzip::ArchiveError("unknown archive format: " + format_token);
+        throw flitzzip::ArchiveError("unknown archive format: " + format_token);
     }
-    if (*parsed != superzip::ArchiveFormat::Auto) {
+    if (*parsed != flitzzip::ArchiveFormat::Auto) {
         return *parsed;
     }
     if (!allow_auto) {
-        throw superzip::ArchiveError("archive format auto-detection is only supported for extraction and identify");
+        throw flitzzip::ArchiveError("archive format auto-detection is only supported for extraction and identify");
     }
-    const auto detected = superzip::detect_archive_format(archive_path);
-    if (detected == superzip::ArchiveFormat::Unknown) {
-        throw superzip::ArchiveError("unable to detect archive format: " +
-                                     superzip::path_diagnostic_utf8(archive_path));
+    const auto detected = flitzzip::detect_archive_format(archive_path);
+    if (detected == flitzzip::ArchiveFormat::Unknown) {
+        throw flitzzip::ArchiveError("unable to detect archive format: " +
+                                     flitzzip::path_diagnostic_utf8(archive_path));
     }
     return detected;
 }
 
-// Purpose: Reject recognized archive formats that SuperZip can identify but cannot yet process.
+// Purpose: Reject recognized archive formats that FlitzZip can identify but cannot yet process.
 // Inputs: `format` is a concrete archive format and `operation` is `create` or `extract`.
 // Outputs: Returns normally for implemented formats; throws a clear non-implementation error otherwise.
-void reject_unsupported_cli_format(superzip::ArchiveFormat format, std::string_view operation) {
-    const auto& info = superzip::archive_format_info(format);
+void reject_unsupported_cli_format(flitzzip::ArchiveFormat format, std::string_view operation) {
+    const auto& info = flitzzip::archive_format_info(format);
     const bool supported = operation == "create" ? info.can_create : info.can_extract;
     if (!supported) {
-        throw superzip::ArchiveError(std::string("archive format recognized but not yet implemented for ") +
+        throw flitzzip::ArchiveError(std::string("archive format recognized but not yet implemented for ") +
                                      std::string(operation) + ": " + info.key);
     }
 }
@@ -242,7 +242,7 @@ void reject_unsupported_cli_format(superzip::ArchiveFormat format, std::string_v
 // Inputs: `path` is an existing file or directory and `key_prefix` scopes the stable key/value names.
 // Outputs: Writes algorithm, target type, digest, and counter lines to stdout; throws if hashing fails.
 void print_integrity_hash(const std::filesystem::path& path, std::string_view key_prefix = "integrity") {
-    const auto hash = superzip::hash_path(path, superzip::IntegrityMode::Sha256);
+    const auto hash = flitzzip::hash_path(path, flitzzip::IntegrityMode::Sha256);
     std::cout << key_prefix << "_algorithm=" << hash.algorithm << "\n";
     std::cout << key_prefix << "_target=" << hash.target << "\n";
     std::cout << key_prefix << "_sha256=" << hash.hex_digest << "\n";
@@ -256,25 +256,25 @@ void print_integrity_hash(const std::filesystem::path& path, std::string_view ke
 // aborts the operation. Outputs: Writes scan state to stdout; throws `SecurityError` when Defender reports a scanned
 // target is not clean or times out and blocking is requested.
 void print_defender_scan(const std::filesystem::path& path, bool block_if_detected) {
-    const auto scan = superzip::scan_with_windows_defender(path, superzip::DefenderScanMode::FullPath);
+    const auto scan = flitzzip::scan_with_windows_defender(path, flitzzip::DefenderScanMode::FullPath);
     std::cout << "defender_attempted=" << (scan.attempted ? "true" : "false") << "\n";
     std::cout << "defender_clean=" << (scan.clean ? "true" : "false") << "\n";
     std::cout << "defender_timed_out=" << (scan.timed_out ? "true" : "false") << "\n";
     std::cout << "defender_exit_code=" << scan.exit_code << "\n";
     if (block_if_detected) {
-        superzip::require_clean_defender_scan(scan, path);
+        flitzzip::require_clean_defender_scan(scan, path);
     }
 }
 
 // Purpose: Print AMD HIP dependency state in a stable machine-readable format.
 // Inputs: `info` is the GPU/runtime status returned by the backend.
 // Outputs: Writes one key/value block to stdout.
-void print_gpu_info(const superzip::GpuInfo& info) {
+void print_gpu_info(const flitzzip::GpuInfo& info) {
     std::cout << "hip_compiled=" << (info.hip_compiled ? "true" : "false") << "\n";
     std::cout << "hip_runtime_loadable=" << (info.hip_runtime_loadable ? "true" : "false") << "\n";
     std::cout << "hip_kernel_loadable=" << (info.hip_kernel_loadable ? "true" : "false") << "\n";
     std::cout << "hip_runtime_name=" << info.runtime_name << "\n";
-    std::cout << "hip_runtime_version=" << superzip::hip_runtime_version_text(info.runtime_version) << "\n";
+    std::cout << "hip_runtime_version=" << flitzzip::hip_runtime_version_text(info.runtime_version) << "\n";
     std::cout << "hip_stream_ordered_allocator_supported="
               << (info.stream_ordered_allocator_supported ? "true" : "false") << "\n";
     std::cout << "available=" << (info.available ? "true" : "false") << "\n";
@@ -290,11 +290,11 @@ void print_gpu_info(const superzip::GpuInfo& info) {
 // Purpose: Print HIP-only diagnostic results in a stable machine-readable format.
 // Inputs: `result` is the completed diagnostic output.
 // Outputs: Writes one key/value block to stdout.
-void print_gpu_diagnostic(const superzip::GpuDiagnosticResult& result) {
+void print_gpu_diagnostic(const flitzzip::GpuDiagnosticResult& result) {
     std::cout << "hip_compiled=" << (result.info.hip_compiled ? "true" : "false") << "\n";
     std::cout << "hip_runtime_loadable=" << (result.info.hip_runtime_loadable ? "true" : "false") << "\n";
     std::cout << "hip_runtime_name=" << result.info.runtime_name << "\n";
-    std::cout << "hip_runtime_version=" << superzip::hip_runtime_version_text(result.info.runtime_version) << "\n";
+    std::cout << "hip_runtime_version=" << flitzzip::hip_runtime_version_text(result.info.runtime_version) << "\n";
     std::cout << "available=" << (result.info.available ? "true" : "false") << "\n";
     std::cout << "device_name=" << result.info.device_name << "\n";
     std::cout << "gcn_arch=" << result.info.gcn_arch << "\n";
@@ -311,7 +311,7 @@ void print_gpu_diagnostic(const superzip::GpuDiagnosticResult& result) {
 // Purpose: Convert AMD HIP dependency status into deterministic installer-friendly process codes.
 // Inputs: `info` is the GPU/runtime status returned by the backend.
 // Outputs: Returns 0 when a HIP build, runtime, and AMD device are available; otherwise returns a stable nonzero code.
-int dependency_exit_code(const superzip::GpuInfo& info) {
+int dependency_exit_code(const flitzzip::GpuInfo& info) {
     if (!info.hip_compiled) {
         return 10;
     }
@@ -330,7 +330,7 @@ int dependency_exit_code(const superzip::GpuInfo& info) {
 // missing.
 std::string require_arg(const std::vector<std::string>& args, std::size_t& index, const char* name) {
     if (index + 1 >= args.size()) {
-        throw superzip::ArchiveError(std::string("missing value for ") + name);
+        throw flitzzip::ArchiveError(std::string("missing value for ") + name);
     }
     ++index;
     return args[index];
@@ -346,7 +346,7 @@ std::uint32_t require_u32_arg(const std::vector<std::string>& args, std::size_t&
     const auto* end = begin + text.size();
     const auto parsed = std::from_chars(begin, end, value, 10);
     if (parsed.ec != std::errc{} || parsed.ptr != end || value > std::numeric_limits<std::uint32_t>::max()) {
-        throw superzip::ArchiveError(std::string("invalid value for ") + name + ": " + text);
+        throw flitzzip::ArchiveError(std::string("invalid value for ") + name + ": " + text);
     }
     return static_cast<std::uint32_t>(value);
 }
@@ -363,12 +363,12 @@ int require_int_arg(const std::vector<std::string>& args, std::size_t& index, co
     const auto* end = begin + text.size();
     const auto parsed = std::from_chars(begin, end, value, 10);
     if (parsed.ec != std::errc{} || parsed.ptr != end || value < minimum || value > maximum) {
-        throw superzip::ArchiveError(std::string("invalid value for ") + name + ": " + text);
+        throw flitzzip::ArchiveError(std::string("invalid value for ") + name + ": " + text);
     }
     return value;
 }
 
-// Purpose: Parse a supported SUZIP block size in KiB for compression and benchmarking.
+// Purpose: Parse a supported FLZIP block size in KiB for compression and benchmarking.
 // Inputs: `args` is the full argument vector, `index` is the current flag index and is advanced, and `name` labels
 // diagnostics. Outputs: Returns a production-supported block size in bytes; throws `ArchiveError` for unsupported
 // values.
@@ -384,19 +384,19 @@ std::uint32_t require_block_size_kib_arg(const std::vector<std::string>& args, s
     case 16384U:
         return kib * 1024U;
     default:
-        throw superzip::ArchiveError("unsupported block size; use 256, 512, 1024, 2048, 4096, 8192, or 16384 KiB");
+        throw flitzzip::ArchiveError("unsupported block size; use 256, 512, 1024, 2048, 4096, 8192, or 16384 KiB");
     }
 }
 
 struct CliCompressCommand {
-    std::string format = "suzip";
+    std::string format = "flzip";
     bool require_gpu = false;
     bool force_cpu = false;
     std::uint32_t workers = 0;
     std::uint32_t inflight = 0;
-    std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
-    bool suzip_tuning_requested = false;
-    int compression_level = superzip::kDefaultCompressionLevel;
+    std::uint32_t block_size = flitzzip::kDefaultArchiveBlockBytes;
+    bool flzip_tuning_requested = false;
+    int compression_level = flitzzip::kDefaultCompressionLevel;
     bool compression_level_requested = false;
     bool neutron_star = false;
     bool verify_after_write = false;
@@ -408,13 +408,13 @@ struct CliCompressCommand {
 
 struct CliExtractCommand {
     std::string format = "auto";
-    superzip::ArchivePathEncoding name_encoding = superzip::ArchivePathEncoding::Utf8;
+    flitzzip::ArchivePathEncoding name_encoding = flitzzip::ArchivePathEncoding::Utf8;
     bool name_encoding_requested = false;
     bool require_gpu = false;
     bool force_cpu = false;
     std::uint32_t workers = 0;
     std::uint32_t inflight = 0;
-    bool suzip_tuning_requested = false;
+    bool flzip_tuning_requested = false;
     bool overwrite = false;
     bool sha256 = false;
     bool defender_scan = false;
@@ -428,19 +428,19 @@ struct CliVerifyCommand {
     bool force_cpu = false;
     std::uint32_t workers = 0;
     std::uint32_t inflight = 0;
-    bool suzip_tuning_requested = false;
+    bool flzip_tuning_requested = false;
     bool sha256 = false;
     bool defender_scan = false;
     std::filesystem::path archive;
 };
 
-// Purpose: Reject SUZIP-only tuning flags for compatibility create backends.
+// Purpose: Reject FLZIP-only tuning flags for compatibility create backends.
 // Inputs: `label` names the compatibility backend and the booleans are parsed command flags.
-// Outputs: Returns normally when no SUZIP-only flags were used; throws `ArchiveError` otherwise.
+// Outputs: Returns normally when no FLZIP-only flags were used; throws `ArchiveError` otherwise.
 void reject_compat_create_tuning(std::string_view label, bool require_gpu, bool force_cpu,
-                                 bool suzip_tuning_requested) {
-    if (require_gpu || force_cpu || suzip_tuning_requested) {
-        throw superzip::ArchiveError(std::string(label) + " compatibility does not support SUZIP GPU, worker, "
+                                 bool flzip_tuning_requested) {
+    if (require_gpu || force_cpu || flzip_tuning_requested) {
+        throw flitzzip::ArchiveError(std::string(label) + " compatibility does not support FLZIP GPU, worker, "
                                                           "or block-size flags");
     }
 }
@@ -450,18 +450,18 @@ void reject_compat_create_tuning(std::string_view label, bool require_gpu, bool 
 // Outputs: Returns normally when no level was requested; throws `ArchiveError` otherwise.
 void reject_compat_compression_level(std::string_view label, bool compression_level_requested) {
     if (compression_level_requested) {
-        throw superzip::ArchiveError(std::string(label) + " compatibility does not support compression-level flags");
+        throw flitzzip::ArchiveError(std::string(label) + " compatibility does not support compression-level flags");
     }
 }
 
-// Purpose: Reject SUZIP-only tuning flags for compatibility extract backends.
+// Purpose: Reject FLZIP-only tuning flags for compatibility extract backends.
 // Inputs: `label` names the compatibility backend and the booleans are parsed command flags.
-// Outputs: Returns normally when no SUZIP-only flags were used; throws `ArchiveError` otherwise.
+// Outputs: Returns normally when no FLZIP-only flags were used; throws `ArchiveError` otherwise.
 void reject_compat_extract_tuning(std::string_view label, bool require_gpu, bool force_cpu,
-                                  bool suzip_tuning_requested) {
-    if (require_gpu || force_cpu || suzip_tuning_requested) {
-        throw superzip::ArchiveError(std::string(label) +
-                                     " compatibility does not support SUZIP GPU, worker, or in-flight flags");
+                                  bool flzip_tuning_requested) {
+    if (require_gpu || force_cpu || flzip_tuning_requested) {
+        throw flitzzip::ArchiveError(std::string(label) +
+                                     " compatibility does not support FLZIP GPU, worker, or in-flight flags");
     }
 }
 
@@ -481,16 +481,16 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
             command.force_cpu = true;
         } else if (args[i] == "--workers") {
             command.workers = require_u32_arg(args, i, "--workers");
-            command.suzip_tuning_requested = true;
+            command.flzip_tuning_requested = true;
         } else if (args[i] == "--inflight") {
             command.inflight = require_u32_arg(args, i, "--inflight");
-            command.suzip_tuning_requested = true;
+            command.flzip_tuning_requested = true;
         } else if (args[i] == "--block-size-kib") {
             command.block_size = require_block_size_kib_arg(args, i, "--block-size-kib");
-            command.suzip_tuning_requested = true;
+            command.flzip_tuning_requested = true;
         } else if (args[i] == "--compression-level") {
-            command.compression_level = require_int_arg(args, i, "--compression-level", superzip::kMinCompressionLevel,
-                                                        superzip::kMaxCompressionLevel);
+            command.compression_level = require_int_arg(args, i, "--compression-level", flitzzip::kMinCompressionLevel,
+                                                        flitzzip::kMaxCompressionLevel);
             command.compression_level_requested = true;
         } else if (args[i] == "--verify-after-write") {
             command.verify_after_write = true;
@@ -506,11 +506,11 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
     }
     if (command.neutron_star) {
         if (command.force_cpu ||
-            (command.compression_level_requested && command.compression_level != superzip::kMaxCompressionLevel)) {
-            throw superzip::ArchiveError("--neutron-star excludes --force-cpu and requires compression level 9");
+            (command.compression_level_requested && command.compression_level != flitzzip::kMaxCompressionLevel)) {
+            throw flitzzip::ArchiveError("--neutron-star excludes --force-cpu and requires compression level 9");
         }
         command.require_gpu = true;
-        command.compression_level = superzip::kMaxCompressionLevel;
+        command.compression_level = flitzzip::kMaxCompressionLevel;
     }
     return command;
 }
@@ -518,74 +518,74 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
 // Purpose: Run the selected create backend after command-line validation.
 // Inputs: `archive_format` is concrete and `command` contains parsed compression options, including optional read-back.
 // Outputs: Returns operation statistics; throws for unsupported formats or backend errors.
-superzip::OperationStats compress_by_format(superzip::ArchiveFormat archive_format, const CliCompressCommand& command) {
-    if (command.neutron_star && archive_format != superzip::ArchiveFormat::SuperZip) {
-        throw superzip::ArchiveError("Neutron star mode is available only for native SUZIP creation");
+flitzzip::OperationStats compress_by_format(flitzzip::ArchiveFormat archive_format, const CliCompressCommand& command) {
+    if (command.neutron_star && archive_format != flitzzip::ArchiveFormat::FlitzZip) {
+        throw flitzzip::ArchiveError("Neutron star mode is available only for native FLZIP creation");
     }
-    if (command.verify_after_write && archive_format != superzip::ArchiveFormat::SuperZip &&
-        archive_format != superzip::ArchiveFormat::Zip) {
-        throw superzip::ArchiveError("verify-after-write is currently supported only for SUZIP and ZIP");
+    if (command.verify_after_write && archive_format != flitzzip::ArchiveFormat::FlitzZip &&
+        archive_format != flitzzip::ArchiveFormat::Zip) {
+        throw flitzzip::ArchiveError("verify-after-write is currently supported only for FLZIP and ZIP");
     }
     switch (archive_format) {
-    case superzip::ArchiveFormat::SuperZip: {
-        superzip::CompressOptions options;
+    case flitzzip::ArchiveFormat::FlitzZip: {
+        flitzzip::CompressOptions options;
         options.gpu_required = command.require_gpu;
         options.force_cpu = command.force_cpu;
         options.worker_count = command.workers;
         options.max_inflight_chunks = command.inflight;
         options.block_size = command.block_size;
         options.compression_level = command.compression_level;
-        options.compression_mode = command.neutron_star ? superzip::NativeCompressionMode::NeutronStar
-                                                        : superzip::NativeCompressionMode::Standard;
+        options.compression_mode = command.neutron_star ? flitzzip::NativeCompressionMode::NeutronStar
+                                                        : flitzzip::NativeCompressionMode::Standard;
         options.verify_after_write = command.verify_after_write;
-        return superzip::compress_suzip(command.sources, command.output, options);
+        return flitzzip::compress_flzip(command.sources, command.output, options);
     }
-    case superzip::ArchiveFormat::Zip:
-        reject_compat_create_tuning("ZIP", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_zip(command.sources, command.output, command.compression_level, {},
+    case flitzzip::ArchiveFormat::Zip:
+        reject_compat_create_tuning("ZIP", command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
+        return flitzzip::compress_zip(command.sources, command.output, command.compression_level, {},
                                       command.verify_after_write);
-    case superzip::ArchiveFormat::Tar:
-        reject_compat_create_tuning("TAR", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+    case flitzzip::ArchiveFormat::Tar:
+        reject_compat_create_tuning("TAR", command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
         reject_compat_compression_level("TAR", command.compression_level_requested);
-        return superzip::compress_tar(command.sources, command.output);
-    case superzip::ArchiveFormat::TarGzip:
-        reject_compat_create_tuning("TAR.GZ", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_tar_gzip(command.sources, command.output, command.compression_level);
-    case superzip::ArchiveFormat::TarBzip2:
-        reject_compat_create_tuning("TAR.BZ2", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_tar_bzip2(command.sources, command.output, command.compression_level);
-    case superzip::ArchiveFormat::TarZstd:
-        reject_compat_create_tuning("TAR.ZST", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_tar_zstd(command.sources, command.output, command.compression_level);
-    case superzip::ArchiveFormat::Gzip:
-        reject_compat_create_tuning("Gzip", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_gzip(command.sources, command.output, command.compression_level);
-    case superzip::ArchiveFormat::Bzip2:
-        reject_compat_create_tuning("Bzip2", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_bzip2(command.sources, command.output, command.compression_level);
-    case superzip::ArchiveFormat::Zstd:
+        return flitzzip::compress_tar(command.sources, command.output);
+    case flitzzip::ArchiveFormat::TarGzip:
+        reject_compat_create_tuning("TAR.GZ", command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
+        return flitzzip::compress_tar_gzip(command.sources, command.output, command.compression_level);
+    case flitzzip::ArchiveFormat::TarBzip2:
+        reject_compat_create_tuning("TAR.BZ2", command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
+        return flitzzip::compress_tar_bzip2(command.sources, command.output, command.compression_level);
+    case flitzzip::ArchiveFormat::TarZstd:
+        reject_compat_create_tuning("TAR.ZST", command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
+        return flitzzip::compress_tar_zstd(command.sources, command.output, command.compression_level);
+    case flitzzip::ArchiveFormat::Gzip:
+        reject_compat_create_tuning("Gzip", command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
+        return flitzzip::compress_gzip(command.sources, command.output, command.compression_level);
+    case flitzzip::ArchiveFormat::Bzip2:
+        reject_compat_create_tuning("Bzip2", command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
+        return flitzzip::compress_bzip2(command.sources, command.output, command.compression_level);
+    case flitzzip::ArchiveFormat::Zstd:
         reject_compat_create_tuning("Zstandard", command.require_gpu, command.force_cpu,
-                                    command.suzip_tuning_requested);
-        return superzip::compress_zstd(command.sources, command.output, command.compression_level);
-    case superzip::ArchiveFormat::UnixCompress:
+                                    command.flzip_tuning_requested);
+        return flitzzip::compress_zstd(command.sources, command.output, command.compression_level);
+    case flitzzip::ArchiveFormat::UnixCompress:
         reject_compat_create_tuning("Unix Compress", command.require_gpu, command.force_cpu,
-                                    command.suzip_tuning_requested);
+                                    command.flzip_tuning_requested);
         reject_compat_compression_level("Unix Compress", command.compression_level_requested);
-        return superzip::compress_unix_compress(command.sources, command.output);
-    case superzip::ArchiveFormat::Cpio:
-        reject_compat_create_tuning("CPIO", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+        return flitzzip::compress_unix_compress(command.sources, command.output);
+    case flitzzip::ArchiveFormat::Cpio:
+        reject_compat_create_tuning("CPIO", command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
         reject_compat_compression_level("CPIO", command.compression_level_requested);
-        return superzip::compress_cpio(command.sources, command.output);
-    case superzip::ArchiveFormat::CpioGzip:
-        reject_compat_create_tuning("CPIO.GZ", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_cpio_gzip(command.sources, command.output, command.compression_level);
-    case superzip::ArchiveFormat::Ar:
-        reject_compat_create_tuning("AR", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+        return flitzzip::compress_cpio(command.sources, command.output);
+    case flitzzip::ArchiveFormat::CpioGzip:
+        reject_compat_create_tuning("CPIO.GZ", command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
+        return flitzzip::compress_cpio_gzip(command.sources, command.output, command.compression_level);
+    case flitzzip::ArchiveFormat::Ar:
+        reject_compat_create_tuning("AR", command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
         reject_compat_compression_level("AR", command.compression_level_requested);
-        return superzip::compress_ar(command.sources, command.output);
+        return flitzzip::compress_ar(command.sources, command.output);
     default:
-        throw superzip::ArchiveError(std::string("archive format recognized but not implemented for compression: ") +
-                                     superzip::archive_format_info(archive_format).key);
+        throw flitzzip::ArchiveError(std::string("archive format recognized but not implemented for compression: ") +
+                                     flitzzip::archive_format_info(archive_format).key);
     }
 }
 
@@ -600,7 +600,7 @@ int run_compress_command(const std::vector<std::string>& args) {
         return 2;
     }
     if (command.require_gpu && command.force_cpu) {
-        throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
+        throw flitzzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
     }
     const auto archive_format = resolve_cli_archive_format(command.format, command.output, false);
     reject_unsupported_cli_format(archive_format, "create");
@@ -624,7 +624,7 @@ CliExtractCommand parse_extract_command(const std::vector<std::string>& args) {
         if (args[i] == "--format") {
             command.format = require_arg(args, i, "--format");
         } else if (args[i] == "--name-encoding") {
-            command.name_encoding = superzip::parse_archive_name_encoding(require_arg(args, i, "--name-encoding"));
+            command.name_encoding = flitzzip::parse_archive_name_encoding(require_arg(args, i, "--name-encoding"));
             command.name_encoding_requested = true;
         } else if (args[i] == "--output") {
             command.output = cli_path_argument(require_arg(args, i, "--output"));
@@ -634,10 +634,10 @@ CliExtractCommand parse_extract_command(const std::vector<std::string>& args) {
             command.force_cpu = true;
         } else if (args[i] == "--workers") {
             command.workers = require_u32_arg(args, i, "--workers");
-            command.suzip_tuning_requested = true;
+            command.flzip_tuning_requested = true;
         } else if (args[i] == "--inflight") {
             command.inflight = require_u32_arg(args, i, "--inflight");
-            command.suzip_tuning_requested = true;
+            command.flzip_tuning_requested = true;
         } else if (args[i] == "--overwrite") {
             command.overwrite = true;
         } else if (args[i] == "--validate-before-publish") {
@@ -648,10 +648,10 @@ CliExtractCommand parse_extract_command(const std::vector<std::string>& args) {
             command.defender_scan = true;
         } else {
             if (args[i].starts_with("--")) {
-                throw superzip::ArchiveError("unknown extract argument: " + args[i]);
+                throw flitzzip::ArchiveError("unknown extract argument: " + args[i]);
             }
             if (!command.archive.empty()) {
-                throw superzip::ArchiveError("extract accepts exactly one archive");
+                throw flitzzip::ArchiveError("extract accepts exactly one archive");
             }
             command.archive = cli_path_argument(args[i]);
         }
@@ -659,93 +659,93 @@ CliExtractCommand parse_extract_command(const std::vector<std::string>& args) {
     return command;
 }
 
-// Purpose: Reject SUZIP-only extraction tuning on a compatibility backend.
+// Purpose: Reject FLZIP-only extraction tuning on a compatibility backend.
 // Inputs: `label` names the backend family and `command` carries parsed GPU/tuning flags.
 // Outputs: Returns normally when compatibility extraction is untuned; throws `ArchiveError` otherwise.
 void reject_extract_tuning(std::string_view label, const CliExtractCommand& command) {
-    reject_compat_extract_tuning(label, command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+    reject_compat_extract_tuning(label, command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
 }
 
-// Purpose: Run native SUZIP extraction from parsed CLI options.
-// Inputs: `command` contains archive path, output directory, overwrite policy, and SUZIP tuning flags.
-// Outputs: Returns operation statistics from `extract_suzip`.
-superzip::OperationStats extract_native_suzip(const CliExtractCommand& command) {
-    superzip::ExtractOptions options;
+// Purpose: Run native FLZIP extraction from parsed CLI options.
+// Inputs: `command` contains archive path, output directory, overwrite policy, and FLZIP tuning flags.
+// Outputs: Returns operation statistics from `extract_flzip`.
+flitzzip::OperationStats extract_native_flzip(const CliExtractCommand& command) {
+    flitzzip::ExtractOptions options;
     options.gpu_required = command.require_gpu;
     options.force_cpu = command.force_cpu;
     options.overwrite = command.overwrite;
     options.worker_count = command.workers;
     options.max_inflight_chunks = command.inflight;
-    return superzip::extract_suzip(command.archive, command.output, options);
+    return flitzzip::extract_flzip(command.archive, command.output, options);
 }
 
 // Purpose: Run ZIP, TAR, and single-stream compatibility extraction routes.
 // Inputs: `archive_format` is concrete and `command` contains paths plus overwrite policy.
 // Outputs: Returns operation statistics when the format belongs to this group; otherwise returns empty.
-std::optional<superzip::OperationStats> extract_stream_or_tar_format(superzip::ArchiveFormat archive_format,
+std::optional<flitzzip::OperationStats> extract_stream_or_tar_format(flitzzip::ArchiveFormat archive_format,
                                                                      const CliExtractCommand& command) {
     switch (archive_format) {
-    case superzip::ArchiveFormat::Zip:
-    case superzip::ArchiveFormat::Zipx:
+    case flitzzip::ArchiveFormat::Zip:
+    case flitzzip::ArchiveFormat::Zipx:
         reject_extract_tuning("ZIP/ZIPX", command);
-        return superzip::extract_zip(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::SevenZip:
+        return flitzzip::extract_zip(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::SevenZip:
         reject_extract_tuning("7z", command);
-        return superzip::extract_7z(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Tar:
+        return flitzzip::extract_7z(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Tar:
         reject_extract_tuning("TAR", command);
-        return superzip::extract_tar(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::TarGzip:
+        return flitzzip::extract_tar(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::TarGzip:
         reject_extract_tuning("TAR.GZ", command);
-        return superzip::extract_tar_gzip(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::TarBzip2:
+        return flitzzip::extract_tar_gzip(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::TarBzip2:
         reject_extract_tuning("TAR.BZ2", command);
-        return superzip::extract_tar_bzip2(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::TarXz:
+        return flitzzip::extract_tar_bzip2(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::TarXz:
         reject_extract_tuning("TAR.XZ", command);
-        return superzip::extract_tar_xz(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::TarLzip:
+        return flitzzip::extract_tar_xz(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::TarLzip:
         reject_extract_tuning("TAR.LZ", command);
-        return superzip::extract_tar_lzip(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::TarZstd:
+        return flitzzip::extract_tar_lzip(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::TarZstd:
         reject_extract_tuning("TAR.ZST", command);
-        return superzip::extract_tar_zstd(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Gzip:
+        return flitzzip::extract_tar_zstd(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Gzip:
         reject_extract_tuning("Gzip", command);
-        return superzip::extract_gzip_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Bzip2:
+        return flitzzip::extract_gzip_file(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Bzip2:
         reject_extract_tuning("Bzip2", command);
-        return superzip::extract_bzip2_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Xz:
+        return flitzzip::extract_bzip2_file(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Xz:
         reject_extract_tuning("XZ", command);
-        return superzip::extract_xz_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Lzma:
+        return flitzzip::extract_xz_file(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Lzma:
         reject_extract_tuning("LZMA", command);
-        return superzip::extract_lzma_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Lzip:
+        return flitzzip::extract_lzma_file(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Lzip:
         reject_extract_tuning("lzip", command);
-        return superzip::extract_lzip_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Zstd:
+        return flitzzip::extract_lzip_file(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Zstd:
         reject_extract_tuning("Zstandard", command);
-        return superzip::extract_zstd_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::UnixCompress:
+        return flitzzip::extract_zstd_file(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::UnixCompress:
         reject_extract_tuning("Unix Compress", command);
-        return superzip::extract_unix_compress_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Base64:
+        return flitzzip::extract_unix_compress_file(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Base64:
         reject_extract_tuning("Base64", command);
-        return superzip::extract_base64_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Hqx:
+        return flitzzip::extract_base64_file(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Hqx:
         reject_extract_tuning("HQX", command);
-        return superzip::extract_hqx_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::MacBinary:
+        return flitzzip::extract_hqx_file(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::MacBinary:
         reject_extract_tuning("MacBinary", command);
-        return superzip::extract_macbinary_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Xxe:
+        return flitzzip::extract_macbinary_file(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Xxe:
         reject_extract_tuning("XXE", command);
-        return superzip::extract_xxe_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Uue:
+        return flitzzip::extract_xxe_file(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Uue:
         reject_extract_tuning("UUE", command);
-        return superzip::extract_uue_file(command.archive, command.output, command.overwrite);
+        return flitzzip::extract_uue_file(command.archive, command.output, command.overwrite);
     default:
         return std::nullopt;
     }
@@ -754,44 +754,44 @@ std::optional<superzip::OperationStats> extract_stream_or_tar_format(superzip::A
 // Purpose: Run package/container compatibility extraction routes.
 // Inputs: `archive_format` is concrete and `command` contains paths plus overwrite policy.
 // Outputs: Returns operation statistics when the format belongs to this group; otherwise returns empty.
-std::optional<superzip::OperationStats> extract_container_format(superzip::ArchiveFormat archive_format,
+std::optional<flitzzip::OperationStats> extract_container_format(flitzzip::ArchiveFormat archive_format,
                                                                  const CliExtractCommand& command) {
     switch (archive_format) {
-    case superzip::ArchiveFormat::Cab:
+    case flitzzip::ArchiveFormat::Cab:
         reject_extract_tuning("CAB", command);
-        return superzip::extract_cab(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Iso:
+        return flitzzip::extract_cab(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Iso:
         reject_extract_tuning("ISO", command);
-        return superzip::extract_iso(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Cpio:
+        return flitzzip::extract_iso(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Cpio:
         reject_extract_tuning("CPIO", command);
-        return superzip::extract_cpio(command.archive, command.output, command.overwrite, {}, command.name_encoding);
-    case superzip::ArchiveFormat::CpioGzip:
+        return flitzzip::extract_cpio(command.archive, command.output, command.overwrite, {}, command.name_encoding);
+    case flitzzip::ArchiveFormat::CpioGzip:
         reject_extract_tuning("CPIO.GZ", command);
-        return superzip::extract_cpio_gzip(command.archive, command.output, command.overwrite, {},
+        return flitzzip::extract_cpio_gzip(command.archive, command.output, command.overwrite, {},
                                            command.name_encoding);
-    case superzip::ArchiveFormat::Ar:
-    case superzip::ArchiveFormat::Deb:
+    case flitzzip::ArchiveFormat::Ar:
+    case flitzzip::ArchiveFormat::Deb:
         reject_extract_tuning("AR/DEB", command);
-        return superzip::extract_ar(command.archive, command.output, command.overwrite, {}, command.name_encoding);
-    case superzip::ArchiveFormat::Arj:
+        return flitzzip::extract_ar(command.archive, command.output, command.overwrite, {}, command.name_encoding);
+    case flitzzip::ArchiveFormat::Arj:
         reject_extract_tuning("ARJ", command);
-        return superzip::extract_arj(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Arc:
+        return flitzzip::extract_arj(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Arc:
         reject_extract_tuning("ARC", command);
-        return superzip::extract_arc(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Rpm:
+        return flitzzip::extract_arc(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Rpm:
         reject_extract_tuning("RPM", command);
-        return superzip::extract_rpm(command.archive, command.output, command.overwrite, {}, command.name_encoding);
-    case superzip::ArchiveFormat::Lha:
+        return flitzzip::extract_rpm(command.archive, command.output, command.overwrite, {}, command.name_encoding);
+    case flitzzip::ArchiveFormat::Lha:
         reject_extract_tuning("LHA", command);
-        return superzip::extract_lha(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Wim:
+        return flitzzip::extract_lha(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Wim:
         reject_extract_tuning("WIM", command);
-        return superzip::extract_wim(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Xar:
+        return flitzzip::extract_wim(command.archive, command.output, command.overwrite);
+    case flitzzip::ArchiveFormat::Xar:
         reject_extract_tuning("XAR", command);
-        return superzip::extract_xar(command.archive, command.output, command.overwrite);
+        return flitzzip::extract_xar(command.archive, command.output, command.overwrite);
     default:
         return std::nullopt;
     }
@@ -800,9 +800,9 @@ std::optional<superzip::OperationStats> extract_container_format(superzip::Archi
 // Purpose: Run the selected extract backend after command-line validation.
 // Inputs: `archive_format` is concrete and `command` contains parsed extraction options.
 // Outputs: Returns operation statistics; throws for unsupported formats or backend errors.
-superzip::OperationStats extract_by_format(superzip::ArchiveFormat archive_format, const CliExtractCommand& command) {
-    if (archive_format == superzip::ArchiveFormat::SuperZip) {
-        return extract_native_suzip(command);
+flitzzip::OperationStats extract_by_format(flitzzip::ArchiveFormat archive_format, const CliExtractCommand& command) {
+    if (archive_format == flitzzip::ArchiveFormat::FlitzZip) {
+        return extract_native_flzip(command);
     }
     if (auto result = extract_stream_or_tar_format(archive_format, command); result.has_value()) {
         return *result;
@@ -810,8 +810,8 @@ superzip::OperationStats extract_by_format(superzip::ArchiveFormat archive_forma
     if (auto result = extract_container_format(archive_format, command); result.has_value()) {
         return *result;
     }
-    throw superzip::ArchiveError(std::string("archive format recognized but not implemented for extraction: ") +
-                                 superzip::archive_format_info(archive_format).key);
+    throw flitzzip::ArchiveError(std::string("archive format recognized but not implemented for extraction: ") +
+                                 flitzzip::archive_format_info(archive_format).key);
 }
 
 // Purpose: Execute the `extract` CLI command.
@@ -824,9 +824,9 @@ int run_extract_command(const std::vector<std::string>& args) {
         return 2;
     }
     if (command.require_gpu && command.force_cpu) {
-        throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
+        throw flitzzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
     }
-    const auto archive_source = superzip::pin_source_file(command.archive);
+    const auto archive_source = flitzzip::pin_source_file(command.archive);
     command.archive = archive_source.path();
     if (command.sha256) {
         print_integrity_hash(archive_source.path());
@@ -836,15 +836,15 @@ int run_extract_command(const std::vector<std::string>& args) {
     }
     const auto archive_format = resolve_cli_archive_format(command.format, archive_source.path(), true);
     reject_unsupported_cli_format(archive_format, "extract");
-    if (command.name_encoding_requested && !superzip::archive_format_info(archive_format).supports_name_encoding) {
-        throw superzip::ArchiveError("--name-encoding is supported only for CPIO, CPIO.GZ, AR, DEB, and RPM");
+    if (command.name_encoding_requested && !flitzzip::archive_format_info(archive_format).supports_name_encoding) {
+        throw flitzzip::ArchiveError("--name-encoding is supported only for CPIO, CPIO.GZ, AR, DEB, and RPM");
     }
-    superzip::OperationStats stats;
+    flitzzip::OperationStats stats;
     const auto extraction_start = std::chrono::steady_clock::now();
     std::function<void(const std::filesystem::path&)> inspect_output;
     if (command.defender_scan)
         inspect_output = [](const auto& directory) { print_defender_scan(directory, true); };
-    superzip::extract_with_publication(
+    flitzzip::extract_with_publication(
         {.destination = command.output,
          .overwrite = command.overwrite,
          .validate_before_publish = command.validate_before_publish},
@@ -868,12 +868,12 @@ int run_extract_command(const std::vector<std::string>& args) {
 // Outputs: Returns checked metadata bytes or throws; this does not verify the source SHA-256.
 std::size_t memory_benchmark_corpus_size(const std::filesystem::path& path) {
     if (!std::filesystem::is_regular_file(path)) {
-        throw superzip::ArchiveError("benchmark source must be a regular file");
+        throw flitzzip::ArchiveError("benchmark source must be a regular file");
     }
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     const auto length = input.tellg();
-    if (!input || length <= 0 || length > static_cast<std::streamoff>(superzip::cli::kMemoryBenchmarkCorpusMaxBytes)) {
-        throw superzip::ArchiveError("benchmark corpus must contain 1..4294967295 bytes within current host headroom");
+    if (!input || length <= 0 || length > static_cast<std::streamoff>(flitzzip::cli::kMemoryBenchmarkCorpusMaxBytes)) {
+        throw flitzzip::ArchiveError("benchmark corpus must contain 1..4294967295 bytes within current host headroom");
     }
     return static_cast<std::size_t>(length);
 }
@@ -883,7 +883,7 @@ std::size_t memory_benchmark_corpus_size(const std::filesystem::path& path) {
 // Outputs: Owns exact bytes or throws on invalid size/read; no payload is written to storage.
 std::vector<std::byte> load_memory_benchmark_corpus(const std::filesystem::path& path, std::size_t size) {
     std::ifstream input(path, std::ios::binary);
-    return superzip::cli::load_memory_benchmark_stream(input, size);
+    return flitzzip::cli::load_memory_benchmark_stream(input, size);
 }
 
 struct MemoryBenchmarkSourceArguments {
@@ -897,21 +897,21 @@ struct MemoryBenchmarkSourceArguments {
 // Outputs: Consumes a recognized source option; rejects duplicate declarations; leaves other options untouched.
 bool parse_memory_benchmark_source_argument(const std::vector<std::string>& args, std::size_t& i,
                                             MemoryBenchmarkSourceArguments& source,
-                                            superzip::cli::MemoryBenchmarkOptions& options) {
+                                            flitzzip::cli::MemoryBenchmarkOptions& options) {
     if (args[i] == "--source-file") {
         if (source.file) {
-            throw superzip::ArchiveError("duplicate --source-file");
+            throw flitzzip::ArchiveError("duplicate --source-file");
         }
         const auto value = require_arg(args, i, "--source-file");
         source.file = std::filesystem::path(std::u8string(value.begin(), value.end()));
     } else if (args[i] == "--source-stdin") {
         if (source.stdin_requested) {
-            throw superzip::ArchiveError("duplicate --source-stdin");
+            throw flitzzip::ArchiveError("duplicate --source-stdin");
         }
         source.stdin_requested = true;
     } else if (args[i] == "--source-bytes") {
         if (source.bytes) {
-            throw superzip::ArchiveError("duplicate --source-bytes");
+            throw flitzzip::ArchiveError("duplicate --source-bytes");
         }
         source.bytes = require_u32_arg(args, i, "--source-bytes");
     } else if (args[i] == "--source-sha256") {
@@ -926,7 +926,7 @@ bool parse_memory_benchmark_source_argument(const std::vector<std::string>& args
 // Inputs: `args` is the full argument vector beginning with `memory-benchmark`.
 // Outputs: Returns measured telemetry or a generated allocation-free plan; throws on invalid identity/admission.
 int run_memory_benchmark_command(const std::vector<std::string>& args) {
-    superzip::cli::MemoryBenchmarkOptions options;
+    flitzzip::cli::MemoryBenchmarkOptions options;
     bool plan_only = false;
     bool level_requested = false;
     bool generated_geometry = false;
@@ -956,57 +956,57 @@ int run_memory_benchmark_command(const std::vector<std::string>& args) {
         } else if (args[i] == "--block-size-kib") {
             options.block_size = require_block_size_kib_arg(args, i, "--block-size-kib");
         } else if (args[i] == "--compression-level") {
-            options.compression_level = require_int_arg(args, i, "--compression-level", superzip::kMinCompressionLevel,
-                                                        superzip::kMaxCompressionLevel);
+            options.compression_level = require_int_arg(args, i, "--compression-level", flitzzip::kMinCompressionLevel,
+                                                        flitzzip::kMaxCompressionLevel);
             level_requested = true;
         } else if (args[i] == "--neutron-star") {
-            options.compression_mode = superzip::NativeCompressionMode::NeutronStar;
+            options.compression_mode = flitzzip::NativeCompressionMode::NeutronStar;
         } else {
-            throw superzip::ArchiveError("unknown memory-benchmark argument: " + args[i]);
+            throw flitzzip::ArchiveError("unknown memory-benchmark argument: " + args[i]);
         }
     }
-    if (options.compression_mode == superzip::NativeCompressionMode::NeutronStar) {
-        if (options.force_cpu || (level_requested && options.compression_level != superzip::kMaxCompressionLevel)) {
-            throw superzip::ArchiveError("--neutron-star excludes --force-cpu and requires compression level 9");
+    if (options.compression_mode == flitzzip::NativeCompressionMode::NeutronStar) {
+        if (options.force_cpu || (level_requested && options.compression_level != flitzzip::kMaxCompressionLevel)) {
+            throw flitzzip::ArchiveError("--neutron-star excludes --force-cpu and requires compression level 9");
         }
         options.require_gpu = true;
-        options.compression_level = superzip::kMaxCompressionLevel;
+        options.compression_level = flitzzip::kMaxCompressionLevel;
     }
     // Ownership: the snapshot outlives every codec and bytewise-readback worker.
     std::vector<std::byte> source;
     if (source_arguments.stdin_requested) {
         if (source_arguments.file || generated_geometry || !source_arguments.bytes ||
             options.expected_source_sha256.empty()) {
-            throw superzip::ArchiveError(
+            throw flitzzip::ArchiveError(
                 "--source-stdin requires --source-bytes and --source-sha256; excludes file/generated input");
         }
         if (*source_arguments.bytes == 0U) {
-            throw superzip::ArchiveError(
+            throw flitzzip::ArchiveError(
                 "benchmark corpus must contain 1..4294967295 bytes within current host headroom");
         }
         options.corpus_bytes = *source_arguments.bytes;
         options.profile = "Corpus";
         if (!plan_only) {
-            (void)superzip::cli::plan_memory_benchmark(options);
+            (void)flitzzip::cli::plan_memory_benchmark(options);
             // Binary mode preserves CRLF, NUL and Ctrl-Z in this dedicated CLI process.
             if (_setmode(_fileno(stdin), _O_BINARY) == -1) {
-                throw superzip::ArchiveError("could not select binary benchmark stdin");
+                throw flitzzip::ArchiveError("could not select binary benchmark stdin");
             }
-            source = superzip::cli::load_memory_benchmark_stream(std::cin, *source_arguments.bytes);
+            source = flitzzip::cli::load_memory_benchmark_stream(std::cin, *source_arguments.bytes);
             options.source = source;
         }
     } else if (source_arguments.bytes) {
-        throw superzip::ArchiveError("--source-bytes requires --source-stdin");
+        throw flitzzip::ArchiveError("--source-bytes requires --source-stdin");
     }
     if (source_arguments.file) {
         if (generated_geometry || options.expected_source_sha256.empty()) {
-            throw superzip::ArchiveError(
+            throw flitzzip::ArchiveError(
                 "--source-file requires --source-sha256 and excludes --size-mib and --profile");
         }
         options.corpus_bytes = memory_benchmark_corpus_size(*source_arguments.file);
         options.profile = "Corpus";
         if (!plan_only) {
-            (void)superzip::cli::plan_memory_benchmark(options);
+            (void)flitzzip::cli::plan_memory_benchmark(options);
             source =
                 load_memory_benchmark_corpus(*source_arguments.file, static_cast<std::size_t>(options.corpus_bytes));
             options.source = source;
@@ -1014,9 +1014,9 @@ int run_memory_benchmark_command(const std::vector<std::string>& args) {
         options.profile = "Corpus";
     }
     if (plan_only) {
-        superzip::cli::print_memory_benchmark_plan(superzip::cli::plan_memory_benchmark(options));
+        flitzzip::cli::print_memory_benchmark_plan(flitzzip::cli::plan_memory_benchmark(options));
     } else {
-        superzip::cli::print_memory_benchmark_stats(superzip::cli::run_memory_benchmark(options));
+        flitzzip::cli::print_memory_benchmark_stats(flitzzip::cli::run_memory_benchmark(options));
     }
     return 0;
 }
@@ -1025,7 +1025,7 @@ int run_memory_benchmark_command(const std::vector<std::string>& args) {
 // Inputs: `args` is the full argument vector beginning with `benchmark-suite`.
 // Outputs: Returns zero and prints benchmark-suite telemetry.
 int run_benchmark_suite_command(const std::vector<std::string>& args) {
-    superzip::cli::BenchmarkSuiteOptions options;
+    flitzzip::cli::BenchmarkSuiteOptions options;
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--size-mib") {
             options.size_mib = require_u32_arg(args, i, "--size-mib");
@@ -1036,18 +1036,18 @@ int run_benchmark_suite_command(const std::vector<std::string>& args) {
         } else if (args[i] == "--block-size-kib") {
             options.block_size = require_block_size_kib_arg(args, i, "--block-size-kib");
         } else if (args[i] == "--compression-level") {
-            options.compression_level = require_int_arg(args, i, "--compression-level", superzip::kMinCompressionLevel,
-                                                        superzip::kMaxCompressionLevel);
+            options.compression_level = require_int_arg(args, i, "--compression-level", flitzzip::kMinCompressionLevel,
+                                                        flitzzip::kMaxCompressionLevel);
         } else if (args[i] == "--tune") {
             options.tune = true;
         } else if (args[i] == "--tune-levels") {
             options.tune = true;
             options.tune_levels = true;
         } else {
-            throw superzip::ArchiveError("unknown benchmark-suite argument: " + args[i]);
+            throw flitzzip::ArchiveError("unknown benchmark-suite argument: " + args[i]);
         }
     }
-    superzip::cli::run_benchmark_suite(options);
+    flitzzip::cli::run_benchmark_suite(options);
     return 0;
 }
 
@@ -1063,19 +1063,19 @@ CliVerifyCommand parse_verify_command(const std::vector<std::string>& args) {
             command.force_cpu = true;
         } else if (args[i] == "--workers") {
             command.workers = require_u32_arg(args, i, "--workers");
-            command.suzip_tuning_requested = true;
+            command.flzip_tuning_requested = true;
         } else if (args[i] == "--inflight") {
             command.inflight = require_u32_arg(args, i, "--inflight");
-            command.suzip_tuning_requested = true;
+            command.flzip_tuning_requested = true;
         } else if (args[i] == "--sha256") {
             command.sha256 = true;
         } else if (args[i] == "--defender-scan") {
             command.defender_scan = true;
         } else if (args[i].starts_with("--")) {
-            throw superzip::ArchiveError("unknown verify argument: " + args[i]);
+            throw flitzzip::ArchiveError("unknown verify argument: " + args[i]);
         } else {
             if (!command.archive.empty()) {
-                throw superzip::ArchiveError("verify accepts exactly one archive");
+                throw flitzzip::ArchiveError("verify accepts exactly one archive");
             }
             command.archive = cli_path_argument(args[i]);
         }
@@ -1083,8 +1083,8 @@ CliVerifyCommand parse_verify_command(const std::vector<std::string>& args) {
     return command;
 }
 
-// Purpose: Execute read-only verification for native SUZIP and supported ZIP archives.
-// Inputs: `args` is the full argument vector beginning with `verify`; GPU/worker flags apply only to SUZIP.
+// Purpose: Execute read-only verification for native FLZIP and supported ZIP archives.
+// Inputs: `args` is the full argument vector beginning with `verify`; GPU/worker flags apply only to FLZIP.
 // Outputs: Returns an exit code and telemetry, or throws on unsupported formats, flags, or archive validation errors.
 int run_verify_command(const std::vector<std::string>& args) {
     const auto command = parse_verify_command(args);
@@ -1093,21 +1093,21 @@ int run_verify_command(const std::vector<std::string>& args) {
         return 2;
     }
     if (command.require_gpu && command.force_cpu) {
-        throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
+        throw flitzzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
     }
-    const auto format = superzip::detect_archive_format(command.archive);
-    if (format == superzip::ArchiveFormat::Zip || format == superzip::ArchiveFormat::Zipx) {
-        reject_compat_extract_tuning("ZIP", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        print_stats(superzip::verify_zip(command.archive));
-    } else if (format == superzip::ArchiveFormat::SuperZip) {
-        superzip::ExtractOptions options;
+    const auto format = flitzzip::detect_archive_format(command.archive);
+    if (format == flitzzip::ArchiveFormat::Zip || format == flitzzip::ArchiveFormat::Zipx) {
+        reject_compat_extract_tuning("ZIP", command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
+        print_stats(flitzzip::verify_zip(command.archive));
+    } else if (format == flitzzip::ArchiveFormat::FlitzZip) {
+        flitzzip::ExtractOptions options;
         options.gpu_required = command.require_gpu;
         options.force_cpu = command.force_cpu;
         options.worker_count = command.workers;
         options.max_inflight_chunks = command.inflight;
-        print_stats(superzip::verify_suzip(command.archive, options));
+        print_stats(flitzzip::verify_flzip(command.archive, options));
     } else {
-        throw superzip::ArchiveError("read-only verify is currently supported only for SUZIP and ZIP");
+        throw flitzzip::ArchiveError("read-only verify is currently supported only for FLZIP and ZIP");
     }
     if (command.sha256) {
         print_integrity_hash(command.archive);
@@ -1130,17 +1130,17 @@ std::optional<int> run_info_command(const std::vector<std::string>& args) {
         if (args[0] == "--help") {
             usage();
         } else {
-            std::cout << "SuperZip " << SUPERZIP_VERSION << "\n";
+            std::cout << "FlitzZip " << FLITZZIP_VERSION << "\n";
         }
         return 0;
     }
     if (args[0] == "gpu-info") {
-        const auto info = superzip::query_gpu_info();
+        const auto info = flitzzip::query_gpu_info();
         print_gpu_info(info);
         return info.available ? 0 : 1;
     }
     if (args[0] == "dependency-check") {
-        const auto info = superzip::query_gpu_info();
+        const auto info = flitzzip::query_gpu_info();
         print_gpu_info(info);
         const int code = dependency_exit_code(info);
         std::cout << "dependency_status="
@@ -1166,7 +1166,7 @@ std::optional<int> run_info_command(const std::vector<std::string>& args) {
             return 2;
         }
         const auto format = resolve_cli_archive_format("auto", cli_path_argument(args[1]), true);
-        const auto& info = superzip::archive_format_info(format);
+        const auto& info = flitzzip::archive_format_info(format);
         std::cout << "format=" << info.key << " display=\"" << info.display_name << "\""
                   << " can_create=" << (info.can_create ? "true" : "false")
                   << " can_extract=" << (info.can_extract ? "true" : "false")
@@ -1181,7 +1181,7 @@ std::optional<int> run_info_command(const std::vector<std::string>& args) {
 // Inputs: `args` is the full argument vector beginning with `gpu-diagnostic`.
 // Outputs: Returns zero and prints diagnostic telemetry.
 int run_gpu_diagnostic_command(const std::vector<std::string>& args) {
-    superzip::GpuDiagnosticOptions options;
+    flitzzip::GpuDiagnosticOptions options;
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--seconds") {
             const auto seconds = require_int_arg(args, i, "--seconds", 1, 30);
@@ -1191,10 +1191,10 @@ int run_gpu_diagnostic_command(const std::vector<std::string>& args) {
         } else if (args[i] == "--inner-iterations") {
             options.inner_iterations = require_u32_arg(args, i, "--inner-iterations");
         } else {
-            throw superzip::ArchiveError("unknown gpu-diagnostic argument: " + args[i]);
+            throw flitzzip::ArchiveError("unknown gpu-diagnostic argument: " + args[i]);
         }
     }
-    print_gpu_diagnostic(superzip::run_gpu_diagnostic(options));
+    print_gpu_diagnostic(flitzzip::run_gpu_diagnostic(options));
     return 0;
 }
 
@@ -1229,7 +1229,7 @@ int run_cli_command(const std::vector<std::string>& args) {
 
 }  // namespace
 
-// Purpose: Execute the SuperZip command-line interface.
+// Purpose: Execute the FlitzZip command-line interface.
 // Inputs: `argc`/`argv` are process command-line arguments supplied as UTF-16 by the Windows CRT.
 // Outputs: Returns 0 on success, 1 on operation failure, and 2 on invalid usage.
 int wmain(int argc, wchar_t** argv) {

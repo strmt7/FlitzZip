@@ -546,8 +546,8 @@ void require_stable_stream(std::span<const unsigned char> frame, std::span<const
 // Inputs: version selects an upstream golden frame; its complete input remains live through all stream calls.
 // Outputs: Requires a positive hint until every byte is flushed, unchanged public pointers and exact read-back.
 void require_legacy_public_output_backpressure(unsigned version) {
-    const auto extent = superzip_test::kLegacyFrames[version - 4U];
-    const auto frame = std::span(superzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
+    const auto extent = flitzzip_test::kLegacyFrames[version - 4U];
+    const auto frame = std::span(flitzzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
     DecompressionOwner decoder(ZSTD_createDCtx(), ZSTD_freeDCtx);
     REQUIRE_TRUE(decoder != nullptr);
     ZSTD_inBuffer input{frame.data(), frame.size(), 0U};
@@ -559,7 +559,7 @@ void require_legacy_public_output_backpressure(unsigned version) {
     REQUIRE_TRUE(hint > 0U);
     REQUIRE_TRUE(input.src == frame.data());
     REQUIRE_TRUE(input.pos <= input.size);
-    GuardedBuffer restored(superzip_test::kLegacyExpected.size());
+    GuardedBuffer restored(flitzzip_test::kLegacyExpected.size());
     output = {restored.bytes().data(), restored.bytes().size(), 0U};
     for (unsigned call = 0; hint != 0U && call < 16U; ++call) {
         ZSTD_inBuffer remaining{input.pos != input.size ? frame.data() + input.pos : nullptr, input.size - input.pos,
@@ -575,7 +575,7 @@ void require_legacy_public_output_backpressure(unsigned version) {
     REQUIRE_EQ(hint, 0U);
     REQUIRE_EQ(input.pos, input.size);
     REQUIRE_EQ(output.pos, restored.bytes().size());
-    REQUIRE_TRUE(std::ranges::equal(restored.bytes(), superzip_test::kLegacyExpected));
+    REQUIRE_TRUE(std::ranges::equal(restored.bytes(), flitzzip_test::kLegacyExpected));
 }
 
 // Purpose: Check v0.5 public output backpressure; no inputs, requires preserved buffer identity and complete output.
@@ -1145,9 +1145,9 @@ TEST_CASE(zstd_legacy_v07_short_raw_dictionary) {
 // Inputs: Exact upstream version 4-8 frames and expected bytes; a guarded raw dictionary remains live per call.
 // Outputs: Requires supported frame/read-back contracts and retains version-four rejection.
 TEST_CASE(zstd_legacy_golden_frame_contracts) {
-    const auto expected = std::span(superzip_test::kLegacyExpected);
-    for (const auto& extent : superzip_test::kLegacyFrames) {
-        const auto frame = std::span(superzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
+    const auto expected = std::span(flitzzip_test::kLegacyExpected);
+    for (const auto& extent : flitzzip_test::kLegacyFrames) {
+        const auto frame = std::span(flitzzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
         if (extent.version == 4U) {
             GuardedBuffer output(expected.size());
             REQUIRE_TRUE(ZSTD_isError(

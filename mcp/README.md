@@ -1,11 +1,13 @@
-# SuperZip Local MCP
+# FlitzZip Local MCP
 
-Run `py -3 mcp/superzip_mcp.py` from a stdio-capable MCP client. Python 3.12+
+Run `py -3 mcp/flitzzip_mcp.py` from a stdio-capable MCP client. Python 3.12+
 is sufficient; the server has no third-party Python runtime dependencies.
 Commands resolve the repository from the script location, not the client CWD.
 The `mcp` directory contains standalone integration scripts, not a Python package
 named `mcp`. This preserves the installed MCP SDK's import namespace when other
-repository tools use it. The existing client launch path is unchanged.
+repository tools use it. Client registrations must launch the current
+`mcp/flitzzip_mcp.py` filename from their actual checkout location; do not keep a
+second compatibility launcher or overwrite a registration owned by another project.
 
 ## Protocol
 
@@ -81,7 +83,7 @@ audits cannot be skipped. See [targeted verification](../docs/targeted-verificat
 ## Verification
 
 ```powershell
-py -3 -m unittest discover -s mcp -p test_superzip_mcp.py -v
+py -3 -m unittest discover -s mcp -p test_flitzzip_mcp.py -v
 ```
 
 Tests exercise current discovery, legacy initialization, schemas, result/error

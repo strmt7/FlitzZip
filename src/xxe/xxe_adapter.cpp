@@ -19,7 +19,7 @@
 #include <string_view>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kXxePayloadBytesPerLine = 45U;
@@ -109,7 +109,7 @@ XxeHeader read_xxe_header(std::ifstream& input) {
             };
         }
     }
-    throw ArchiveError("XXEncoded stream preamble exceeds SuperZip metadata limit");
+    throw ArchiveError("XXEncoded stream preamble exceeds FlitzZip metadata limit");
 }
 
 // Purpose: Build one encoded XXEncode payload line from up to 45 input bytes.
@@ -388,4 +388,4 @@ OperationStats extract_xxe_file(const std::filesystem::path& archive_path, const
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

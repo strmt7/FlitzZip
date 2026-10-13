@@ -2,8 +2,8 @@
 # implementation. Inputs: Verified complete decoder and test output path.
 # Outputs: A private bridge with full-source and imported-region identity
 # evidence.
-function(superzip_generate_zstd_huffman_probe source output)
-  include("${SUPERZIP_SOURCE_ROOT}/cmake/ZstdTableGeometry.cmake")
+function(flitzzip_generate_zstd_huffman_probe source output)
+  include("${FLITZZIP_SOURCE_ROOT}/cmake/ZstdTableGeometry.cmake")
   file(SHA256 "${source}" actual)
   if(NOT actual STREQUAL _zstd_table_geometry_huffman_patched)
     message(FATAL_ERROR "Huffman table probe source identity mismatch")

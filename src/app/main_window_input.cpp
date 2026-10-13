@@ -18,7 +18,7 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Track pointer hover state and arm native leave notifications.
 // Inputs: `lparam` contains client-coordinate mouse position from `WM_MOUSEMOVE`.
@@ -557,4 +557,4 @@ LRESULT MainWindow::handle_mouse_wheel(WPARAM wparam, LPARAM lparam) {
     return DefWindowProcW(hwnd_, WM_MOUSEWHEEL, wparam, lparam);
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

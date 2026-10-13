@@ -1,6 +1,6 @@
 # Beta Readiness
 
-The configured candidate is SuperZip 0.8.0 for Windows 11 x64, built with HIP.
+The configured candidate is FlitzZip 0.8.0 for Windows 11 x64, built with HIP.
 A candidate build and its validation are separate from permission to publish.
 
 **Not ready for release approval:** remaining acceptance work is explicitly

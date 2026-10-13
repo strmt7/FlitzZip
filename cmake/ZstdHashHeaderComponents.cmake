@@ -2,7 +2,7 @@
 # implementation into guarded components. Inputs: Exact predecessor text.
 # Outputs: Proposed components and dispatcher; retains late namespace changes
 # and the original implementation opt-in sequence.
-function(superzip_split_zstd_hash_header content key)
+function(flitzzip_split_zstd_hash_header content key)
   string(FIND "${content}" "#ifndef ${${key}_public_guard}" public_begin)
   string(FIND "${content}" "#endif${${key}_public_end}" public_end)
   string(LENGTH "#endif${${key}_public_end}" public_end_length)
@@ -92,7 +92,7 @@ set(_zstd_header_component_xxhash_implementation_original
 # Inputs: The exact original generated implementation, including its inactive
 # XXH3 region. Outputs: Same XXH32/XXH64 source and outer long-long guard;
 # preserves upstream provenance and closes C++ linkage when XXH64 is omitted.
-function(superzip_specialize_zstd_hash_implementation content output)
+function(flitzzip_specialize_zstd_hash_implementation content output)
   string(SHA256 actual "${content}")
   if(NOT actual STREQUAL
      "${_zstd_header_component_xxhash_implementation_original}")
@@ -132,14 +132,14 @@ endfunction()
 # Purpose: Upgrade only the exact previously published implementation component.
 # Inputs: Component path and its observed digest. Outputs: Atomically publishes
 # the classic implementation; unknown, interrupted and altered sources reject.
-function(superzip_migrate_zstd_hash_implementation path actual)
+function(flitzzip_migrate_zstd_hash_implementation path actual)
   if(NOT actual STREQUAL
      "${_zstd_header_component_xxhash_implementation_original}")
     return()
   endif()
   file(READ "${path}" content)
-  superzip_specialize_zstd_hash_implementation("${content}" content)
-  superzip_write_verified_zstd_patch(
+  flitzzip_specialize_zstd_hash_implementation("${content}" content)
+  flitzzip_write_verified_zstd_patch(
     "${path}" "${actual}"
     "${_zstd_header_component_xxhash_implementation_hash}" "${content}")
 endfunction()

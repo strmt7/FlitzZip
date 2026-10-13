@@ -1,6 +1,6 @@
 #include "gpu/hip_kernel_api.hpp"
 
-namespace superzip::sparse_pattern {
+namespace flitzzip::sparse_pattern {
 namespace {
 
 using namespace hip_detail;
@@ -73,4 +73,4 @@ void bind_sparse_kernels(HipKernelApi& api) noexcept {
     api.gather_sparse_positions_kernel = gather_sparse_positions_kernel;
 }
 
-}  // namespace superzip::sparse_pattern
+}  // namespace flitzzip::sparse_pattern

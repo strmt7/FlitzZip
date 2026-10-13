@@ -10,7 +10,7 @@ param(
 # Outputs: Verifies compress/verify/extract correctness and deletes temporary files; throws on any failure.
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
+$cli = Join-Path $repo "build\$Configuration\flitzzip_cli.exe"
 if (-not (Test-Path $cli)) {
     throw "CLI binary not found. Run tools/build.ps1 first."
 }
@@ -49,17 +49,17 @@ if (-not $ForceCpu) {
 }
 
 New-Item -ItemType Directory -Force -Path $WorkRoot | Out-Null
-$work = Join-Path $WorkRoot ("superzip-storage-smoke-" + [guid]::NewGuid().ToString("N"))
+$work = Join-Path $WorkRoot ("flitzzip-storage-smoke-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 try {
     $inputRoot = Join-Path $work "input"
     $outputRoot = Join-Path $work "out"
     New-Item -ItemType Directory -Force -Path $inputRoot | Out-Null
     $inputFile = Join-Path $inputRoot "payload.bin"
-    $archive = Join-Path $work "smoke.suzip"
+    $archive = Join-Path $work "smoke.flzip"
     Write-SmokePayload -Path $inputFile -Bytes ([int64]$SizeMiB * 1MB)
 
-    & $cli compress --format suzip $modeFlag --workers ([Math]::Min([Environment]::ProcessorCount, 64)) --output $archive $inputRoot | Out-Host
+    & $cli compress --format flzip $modeFlag --workers ([Math]::Min([Environment]::ProcessorCount, 64)) --output $archive $inputRoot | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "storage smoke compression failed"
     }
@@ -67,7 +67,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "storage smoke verification failed"
     }
-    & $cli extract --format suzip $modeFlag --workers ([Math]::Min([Environment]::ProcessorCount, 64)) --output $outputRoot $archive | Out-Host
+    & $cli extract --format flzip $modeFlag --workers ([Math]::Min([Environment]::ProcessorCount, 64)) --output $outputRoot $archive | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "storage smoke extraction failed"
     }

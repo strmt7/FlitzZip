@@ -116,7 +116,7 @@ function cmd {
     'simulated compiler diagnostic'
 }
 
-$temporary = Join-Path ([IO.Path]::GetTempPath()) ("superzip-hip-" + [guid]::NewGuid().ToString('N'))
+$temporary = Join-Path ([IO.Path]::GetTempPath()) ("flitzzip-hip-" + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $temporary
 $script:Arch = 'release'
 $script:Source = 'unused-source'
@@ -165,7 +165,7 @@ try {
                     throw 'Each requested GPU architecture must have one dependency pass.'
                 }
             }
-            $common = '-std=c++20 -O3 -fms-runtime-lib=static -DSUPERZIP_ENABLE_HIP=1 -I"unused-include"'
+            $common = '-std=c++20 -O3 -fms-runtime-lib=static -DFLITZZIP_ENABLE_HIP=1 -I"unused-include"'
             foreach ($command in @($script:CompileCommand) + $script:DeviceCommands) {
                 if (-not $command.Contains($common)) { throw 'Host and device dependency passes must share compiler policy.' }
             }

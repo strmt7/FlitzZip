@@ -214,15 +214,15 @@ TEST_CASE(hqx_extracts_data_fork_and_discards_resource_fork) {
     const std::vector<unsigned char> resource{'R', 'S', 'R', 'C'};
     write_text_file(archive, make_hqx_fixture("payload.bin", payload, resource));
 
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Hqx);
     const auto output = root / "out";
-    const auto stats = superzip::extract_hqx_file(archive, output, false);
+    const auto stats = flitzzip::extract_hqx_file(archive, output, false);
 
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(payload.size()));
     REQUIRE_EQ(read_binary_file(output / "payload.bin"), payload);
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(1));
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 
@@ -237,8 +237,8 @@ TEST_CASE(hqx_extract_rejects_unsafe_header_path) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_hqx_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_hqx_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -258,8 +258,8 @@ TEST_CASE(hqx_extract_rejects_bad_header_crc_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_hqx_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_hqx_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -279,8 +279,8 @@ TEST_CASE(hqx_extract_rejects_bad_data_crc_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_hqx_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_hqx_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -300,8 +300,8 @@ TEST_CASE(hqx_extract_rejects_bad_resource_crc_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_hqx_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_hqx_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -321,8 +321,8 @@ TEST_CASE(hqx_extract_rejects_invalid_hqx_character_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_hqx_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_hqx_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -345,8 +345,8 @@ TEST_CASE(hqx_extract_rejects_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_hqx_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_hqx_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

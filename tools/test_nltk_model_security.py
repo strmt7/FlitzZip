@@ -43,7 +43,7 @@ class ModelSecurityTests(unittest.TestCase):
         import nltk.data
         from nltk import pathsec
 
-        directory = tempfile.TemporaryDirectory(prefix="superzip-nltk-model-")
+        directory = tempfile.TemporaryDirectory(prefix="flitzzip-nltk-model-")
         self.addCleanup(directory.cleanup)
         self.allowed = Path(directory.name, "allowed").resolve()
         self.outside = Path(directory.name, "outside").resolve()

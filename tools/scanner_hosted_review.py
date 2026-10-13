@@ -176,6 +176,45 @@ def current_context_matches(row: dict[str, str], read_blob) -> bool:
     )
 
 
+# Purpose: Apply the same exact-source contract to frozen pre-publication DevSkim results.
+# Inputs: Validated current decisions, complete SARIF, actual repository and an immutable bounded file reader.
+# Outputs: Matching raw result coordinates and reviewed IDs; nothing is removed from the original report.
+def match_snapshot_false_positives(rows: list[dict[str, str]], report: dict, repository: str, read_blob) -> list[dict]:
+    candidates = [row for row in rows if row["repository"] == repository and row["tool"] == "devskim"]
+    accepted = []
+    context_matches = {}
+    for run_index, run in enumerate(report["runs"]):
+        driver = run.get("tool", {}).get("driver", {})
+        for result_index, finding in enumerate(run["results"]):
+            locations = finding.get("locations", [])
+            if len(locations) != 1:
+                continue
+            physical = locations[0].get("physicalLocation", {})
+            path = physical.get("artifactLocation", {}).get("uri", "").replace("\\", "/")
+            region = physical.get("region", {})
+            for row in candidates:
+                if (driver.get("name"), driver.get("version"), finding.get("ruleId"), path) != tuple(
+                    row[key] for key in ("tool", "version", "rule", "path")
+                ) or row["category"] != "devskim":
+                    continue
+                if any(
+                    type(region.get(sarif)) is not int or region[sarif] != int(row[column])
+                    for sarif, column in (
+                        ("startLine", "start_line"),
+                        ("startColumn", "start_column"),
+                        ("endLine", "end_line"),
+                        ("endColumn", "end_column"),
+                    )
+                ):
+                    continue
+                if row["alert"] not in context_matches:
+                    context_matches[row["alert"]] = current_context_matches(row, read_blob)
+                if context_matches[row["alert"]]:
+                    accepted.append({"run_index": run_index, "result_index": result_index, "alert": int(row["alert"])})
+                    break
+    return accepted
+
+
 # Purpose: Admit only individually proven false positives authorized in the current committed ledger.
 # Inputs: Raw hosted alerts, repository and qualified commit; all dependencies are read from Git.
 # Outputs: Exact reviewed IDs without altering reports; changed identities and all other findings remain unresolved.

@@ -25,7 +25,7 @@ extern "C" {
 #include "LzmaDec.h"
 }
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kLzmaHeaderBytes = LZMA_PROPS_SIZE + 8U;
@@ -50,11 +50,11 @@ void checked_add_lzma_output_bytes(std::uint64_t& total, std::uint64_t bytes) {
     }
     total += bytes;
     if (total > kMaxPipelineMemoryBytes) {
-        throw ArchiveError("LZMA decoded output exceeds SuperZip resource limit");
+        throw ArchiveError("LZMA decoded output exceeds FlitzZip resource limit");
     }
 }
 
-// Purpose: Convert an LZMA SDK result code to a stable SuperZip diagnostic.
+// Purpose: Convert an LZMA SDK result code to a stable FlitzZip diagnostic.
 // Inputs: `result` is returned by the LZMA SDK C API.
 // Outputs: Returns human-readable text without throwing.
 std::string lzma_result_message(SRes result) {
@@ -94,7 +94,7 @@ std::string lzma_result_message(SRes result) {
     }
 }
 
-// Purpose: Throw the SuperZip error that corresponds to an SDK result.
+// Purpose: Throw the FlitzZip error that corresponds to an SDK result.
 // Inputs: `result` is the SDK status and `context` names the operation.
 // Outputs: Throws `ArchiveError` unless `result` is `SZ_OK`.
 void throw_on_lzma_error(SRes result, const char* context) {
@@ -161,7 +161,7 @@ LzmaAloneHeader read_lzma_alone_header(std::ifstream& input) {
                         "LZMA properties are invalid");
     parsed.dictionary_size = properties.dicSize;
     if (parsed.dictionary_size > kMaxLzmaDictionaryBytes) {
-        throw ArchiveError("LZMA dictionary exceeds SuperZip resource limit");
+        throw ArchiveError("LZMA dictionary exceeds FlitzZip resource limit");
     }
 
     std::uint64_t declared = 0;
@@ -170,7 +170,7 @@ LzmaAloneHeader read_lzma_alone_header(std::ifstream& input) {
     }
     parsed.declared_size = declared;
     if (declared != kUnknownLzmaUncompressedSize && declared > kMaxPipelineMemoryBytes) {
-        throw ArchiveError("LZMA declared output size exceeds SuperZip resource limit");
+        throw ArchiveError("LZMA declared output size exceeds FlitzZip resource limit");
     }
     return parsed;
 }
@@ -359,4 +359,4 @@ OperationStats extract_lzma_file(const std::filesystem::path& archive_path, cons
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

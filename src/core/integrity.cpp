@@ -21,7 +21,7 @@
 #include <bcrypt.h>
 #endif
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kIntegrityBufferBytes = 1024U * 1024U;
@@ -248,7 +248,7 @@ struct IntegrityBudget {
     void charge_entry(std::size_t path_size) {
         if (++entries > kMaxArchiveEntries || path_size > kMaxArchivePathBytes ||
             path_bytes > kMaxArchivePathMetadataBytes - path_size) {
-            throw ArchiveError("SHA-256 tree metadata exceeds SuperZip resource limits");
+            throw ArchiveError("SHA-256 tree metadata exceeds FlitzZip resource limits");
         }
         path_bytes += path_size;
         check_time();
@@ -259,7 +259,7 @@ struct IntegrityBudget {
     // Outputs: Updates cumulative content work or throws above the global output budget.
     void charge_content(std::uint64_t bytes) {
         if (bytes > kMaxExtractedOutputBytes || content_bytes > kMaxExtractedOutputBytes - bytes) {
-            throw ArchiveError("SHA-256 content work exceeds SuperZip resource limits");
+            throw ArchiveError("SHA-256 content work exceeds FlitzZip resource limits");
         }
         content_bytes += bytes;
         check_time();
@@ -270,7 +270,7 @@ struct IntegrityBudget {
     // Outputs: Throws when hashing exceeds the fixed product time limit.
     void check_time() const {
         if (std::chrono::steady_clock::now() - started > kIntegrityTimeLimit) {
-            throw ArchiveError("SHA-256 hashing exceeded the SuperZip time limit");
+            throw ArchiveError("SHA-256 hashing exceeded the FlitzZip time limit");
         }
     }
 };
@@ -351,7 +351,7 @@ std::vector<IntegrityChild> enumerate_integrity_children(const std::filesystem::
     for (std::filesystem::directory_iterator iterator(directory, error), end; !error && iterator != end;
          iterator.increment(error)) {
         if (children.size() >= kMaxArchiveEntries) {
-            throw ArchiveError("SHA-256 directory fanout exceeds SuperZip resource limits");
+            throw ArchiveError("SHA-256 directory fanout exceeds FlitzZip resource limits");
         }
         auto relative = relative_integrity_key(root, iterator->path());
         budget.charge_entry(relative.size());
@@ -403,7 +403,7 @@ void hash_directory_tree(Sha256Hasher& hasher, const std::filesystem::path& root
         if (directory) {
             const auto depth = frame.depth + 1U;
             if (depth > kMaxArchivePathComponents) {
-                throw ArchiveError("SHA-256 directory depth exceeds SuperZip resource limits");
+                throw ArchiveError("SHA-256 directory depth exceeds FlitzZip resource limits");
             }
             update_tree_record(hasher, "D", child.relative_path);
             ++result.directories_hashed;
@@ -437,14 +437,14 @@ IntegrityResult hash_regular_file(IntegrityObject object) {
     return result;
 }
 
-// Purpose: Hash one directory tree with SuperZip's deterministic SHA-256 tree contract.
+// Purpose: Hash one directory tree with FlitzZip's deterministic SHA-256 tree contract.
 // Inputs: `path` is an existing directory.
 // Outputs: Returns digest and counters; throws when any entry is unsafe, unreadable, or unsupported.
 IntegrityResult hash_directory(const std::filesystem::path& path, IntegrityObject object) {
     Sha256Hasher hasher;
     IntegrityBudget budget;
     IntegrityResult result{.attempted = true, .algorithm = "SHA-256", .target = "directory"};
-    update_text(hasher, "SUPERZIP-DIRECTORY-SHA256");
+    update_text(hasher, "FLITZZIP-DIRECTORY-SHA256");
     update_text(hasher, std::string_view{"\0v1\0", 4});
     result.directories_hashed = 1;
     hash_directory_tree(hasher, path, std::move(object), result, budget);
@@ -514,4 +514,4 @@ IntegrityResult hash_path(const std::filesystem::path& path, IntegrityMode mode)
 #endif
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

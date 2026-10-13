@@ -2,7 +2,7 @@
 
 #include <limits>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Return a resource-bounded display size for one Queue entry.
 // Inputs: `path` is a queued file or folder path that may be inaccessible.
@@ -157,4 +157,4 @@ std::optional<std::uintmax_t> MainWindow::calculate_folder_size(const FolderSize
     return total;
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

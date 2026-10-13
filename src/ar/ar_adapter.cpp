@@ -18,7 +18,7 @@
 #include <string>
 #include <string_view>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::string_view kArGlobalMagic = "!<arch>\n";
@@ -263,7 +263,7 @@ std::string resolve_gnu_long_name(const std::string& string_table, std::uint64_t
         end = string_table.size();
     }
     if ((end - start) > kMaxArNameBytes + 1U) {
-        throw ArchiveError("AR GNU long name exceeds SuperZip path length limit");
+        throw ArchiveError("AR GNU long name exceeds FlitzZip path length limit");
     }
     auto name = string_table.substr(start, end - start);
     if (!name.empty() && name.back() == '/') {
@@ -273,7 +273,7 @@ std::string resolve_gnu_long_name(const std::string& string_table, std::uint64_t
         throw ArchiveError("AR GNU long-name entry is empty");
     }
     if (name.size() > kMaxArNameBytes) {
-        throw ArchiveError("AR GNU long name exceeds SuperZip path length limit");
+        throw ArchiveError("AR GNU long name exceeds FlitzZip path length limit");
     }
     return name;
 }
@@ -331,7 +331,7 @@ std::optional<ArEntryMetadata> parse_member_name_and_payload(std::ifstream& inpu
 // Outputs: Returns table bytes or throws when the metadata is unreasonably large/truncated.
 std::string read_string_table(std::ifstream& input, std::uint64_t size) {
     if (size > kMaxArStringTableBytes) {
-        throw ArchiveError("AR GNU string table exceeds SuperZip resource limits");
+        throw ArchiveError("AR GNU string table exceeds FlitzZip resource limits");
     }
     std::string table(static_cast<std::size_t>(size), '\0');
     if (!table.empty()) {
@@ -541,4 +541,4 @@ OperationStats extract_ar(const std::filesystem::path& archive_path, const std::
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

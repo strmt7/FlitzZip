@@ -16,7 +16,7 @@
 #include <windows.h>
 #endif
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr unsigned int kExpectedZstdVersionNumber = 10507;
@@ -37,7 +37,10 @@ template <typename Function> Function load_required_symbol(void* module, const c
 
 }  // namespace
 
-ZstdRuntime::ZstdRuntime() : module_(load_trusted_app_local_runtime(kZstdDllName, SUPERZIP_ZSTD_RUNTIME_DLL_SHA256)) {
+// Purpose: Admit the pinned application-local runtime and resolve every required codec operation.
+// Inputs: The trusted runtime manifest and immutable expected version/export contract.
+// Outputs: Publishes a complete function table or throws before any caller can use a partial runtime.
+ZstdRuntime::ZstdRuntime() : module_(load_trusted_app_local_runtime(kZstdDllName, FLITZZIP_ZSTD_RUNTIME_DLL_SHA256)) {
 #if defined(_WIN32)
     const auto module = module_.native_handle();
     create_compression_context_ = load_required_symbol<CreateCompressionContextFn>(module, "ZSTD_createCCtx");
@@ -53,6 +56,7 @@ ZstdRuntime::ZstdRuntime() : module_(load_trusted_app_local_runtime(kZstdDllName
     compress_block_with_context_ = load_required_symbol<CompressBlockWithContextFn>(module, "ZSTD_compressCCtx");
     block_compress_bound_ = load_required_symbol<CompressBoundFn>(module, "ZSTD_compressBound");
     decompress_block_ = load_required_symbol<DecompressBlockFn>(module, "ZSTD_decompress");
+    decompress_block_with_context_ = load_required_symbol<DecompressBlockWithContextFn>(module, "ZSTD_decompressDCtx");
     first_frame_size_ = load_required_symbol<FirstFrameSizeFn>(module, "ZSTD_findFrameCompressedSize");
     frame_content_size_ = load_required_symbol<FrameContentSizeFn>(module, "ZSTD_getFrameContentSize");
     create_decompression_stream_ = load_required_symbol<CreateDecompressionStreamFn>(module, "ZSTD_createDStream");
@@ -158,6 +162,15 @@ std::size_t ZstdRuntime::decompress_block(void* destination, std::size_t capacit
     return decompress_block_(destination, capacity, source, source_size);
 }
 
+// Purpose: Decode independent frames without creating and freeing a decoder for every native block.
+// Inputs: One exclusively owned decoder context and exact caller-owned input/output extents.
+// Outputs: Returns decoded bytes or the pinned runtime's error code, resetting frame state on each call.
+std::size_t ZstdRuntime::decompress_block_with_context(ZstdDecompressionStream* context, void* destination,
+                                                       std::size_t capacity, const void* source,
+                                                       std::size_t source_size) const {
+    return decompress_block_with_context_(context, destination, capacity, source, source_size);
+}
+
 // Purpose: Find a frame boundary before accepting any untrusted trailing payload bytes.
 // Inputs: A bounded encoded source and its byte length.
 // Outputs: Returns first-frame bytes or a runtime error code.
@@ -214,4 +227,4 @@ const ZstdRuntime& zstd_runtime() {
     return runtime;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

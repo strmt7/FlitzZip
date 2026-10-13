@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 $auditScript = Join-Path $PSScriptRoot "refactor_audit.ps1"
 $shell = (Get-Process -Id $PID).Path
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-$fixture = Join-Path $temporaryRoot ("superzip-refactor-audit-" + [Guid]::NewGuid().ToString("N"))
+$fixture = Join-Path $temporaryRoot ("flitzzip-refactor-audit-" + [Guid]::NewGuid().ToString("N"))
 $script:CaseCount = 0
 $script:Failures = [System.Collections.Generic.List[string]]::new()
 
@@ -23,7 +23,7 @@ function Write-AuditFixture {
 function Invoke-FixtureGit {
     param([string[]]$GitArguments)
 
-    $output = & git -C $fixture -c user.name=SuperZip-Test -c user.email=tests@users.noreply.github.com -c commit.gpgsign=false -c core.hooksPath=NUL @GitArguments 2>&1
+    $output = & git -C $fixture -c user.name=FlitzZip-Test -c user.email=tests@users.noreply.github.com -c commit.gpgsign=false -c core.hooksPath=NUL @GitArguments 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Fixture Git operation failed."
     }
@@ -132,6 +132,22 @@ try {
     Test-AuditCase -Name 'edited vendor C and next-line braces require contracts' -Options '-ChangedOnly' -Expected @($vendorPath)
     Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('static int parse(', '    int value)', '{', '    return value;', '}'))
     Test-AuditCase -Name 'complete vendor C contracts are admitted' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('/* Purpose: Decode bounded input.',
+        '   Inputs: No borrowed resources.', '   Outputs: Returns a result. */',
+        'static int parse(void)', '{', '    return 0;', '}')
+    Test-AuditCase -Name 'block comments need no decorative leading asterisks' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('void parse(int count,',
+        '           const std::function<void()>& callback) {', '    callback();', '}'))
+    Test-AuditCase -Name 'nested parameter parentheses preserve the complete declaration' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('void parse(int count,',
+        '           const std::function<void()>& callback) {', '    callback();', '}')
+    Test-AuditCase -Name 'nested parameter parentheses still require contracts' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('template <typename Stream>',
+        'void parse(Stream& input) {', '    input.read();', '}'))
+    Test-AuditCase -Name 'template declaration retains its adjacent contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('TEST_CASE(registered_test) {',
+        '    if (first_call() ||', '        second_call()) {', '        return;', '    }', '}')
+    Test-AuditCase -Name 'multiline test conditions are not function definitions' -Options '-ChangedOnly'
     Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('extern "C"', 'int parse(int first,',
         '          int second) {', '    return first + second;', '}'))
     Test-AuditCase -Name 'multiline attached-brace signatures keep their preceding contract' -Options '-ChangedOnly'
@@ -193,7 +209,7 @@ try {
 } finally {
     if (Test-Path -LiteralPath $fixture) {
         $resolved = [IO.Path]::GetFullPath((Get-Item -LiteralPath $fixture).FullName)
-        $prefix = $temporaryRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar + "superzip-refactor-audit-"
+        $prefix = $temporaryRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar + "flitzzip-refactor-audit-"
         if (-not $resolved.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -or $resolved -cne $fixture) {
             throw "Refusing cleanup outside the exact test-owned fixture."
         }

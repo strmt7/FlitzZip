@@ -57,7 +57,7 @@ void append_c_string(std::vector<unsigned char>& bytes, const std::string& value
 // Inputs: `bytes` is the fixture payload.
 // Outputs: Returns the finalized CRC-32 value.
 std::uint32_t fixture_crc32(std::span<const unsigned char> bytes) {
-    return superzip::crc32(std::as_bytes(bytes));
+    return flitzzip::crc32(std::as_bytes(bytes));
 }
 
 // Purpose: Append an ARJ basic header with a zero extended-header terminator.
@@ -172,18 +172,18 @@ TEST_CASE(arj_extracts_stored_files_and_directories) {
                                    ArjFixtureEntry{.name = "root.txt", .payload = {'r', 'o', 'o', 't'}},
                                }));
 
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Arj);
-    const auto info = superzip::archive_format_info(superzip::ArchiveFormat::Arj);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Arj);
+    const auto info = flitzzip::archive_format_info(flitzzip::ArchiveFormat::Arj);
     REQUIRE_TRUE(info.can_extract);
     REQUIRE_TRUE(!info.can_create);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_arj(archive, output, false);
+    const auto stats = flitzzip::extract_arj(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(3));
     REQUIRE_TRUE(std::filesystem::is_directory(output / "nested"));
     REQUIRE_EQ(read_text_file(output / "nested" / "hello.txt"), std::string("hello"));
     REQUIRE_EQ(read_text_file(output / "root.txt"), std::string("root"));
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 
@@ -200,8 +200,8 @@ TEST_CASE(arj_extract_rejects_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_arj(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_arj(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -220,8 +220,8 @@ TEST_CASE(arj_extract_rejects_unsafe_paths) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_arj(archive, output, true);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_arj(archive, output, true);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -242,8 +242,8 @@ TEST_CASE(arj_extract_rejects_compressed_methods_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_arj(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_arj(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -263,8 +263,8 @@ TEST_CASE(arj_extract_rejects_payload_crc_mismatch_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_arj(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_arj(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

@@ -68,15 +68,15 @@ TEST_CASE(uue_compat_roundtrip) {
     write_binary_file(input, payload);
 
     const auto archive = root / "payload.uue";
-    const auto compress_stats = superzip::compress_uue_file(input, archive);
+    const auto compress_stats = flitzzip::compress_uue_file(input, archive);
     REQUIRE_TRUE(compress_stats.output_bytes > payload.size());
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Uue);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Uue);
 
     const auto output = root / "out";
-    const auto extract_stats = superzip::extract_uue_file(archive, output, false);
+    const auto extract_stats = flitzzip::extract_uue_file(archive, output, false);
     REQUIRE_EQ(extract_stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_binary_file(output / "payload.bin"), payload);
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 
@@ -92,8 +92,8 @@ TEST_CASE(uue_compress_rejects_multiple_sources) {
 
     bool rejected = false;
     try {
-        (void)superzip::compress_uue({first, second}, root / "multi.uue");
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::compress_uue({first, second}, root / "multi.uue");
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -111,8 +111,8 @@ TEST_CASE(uue_extract_rejects_unsafe_header_path) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_uue_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_uue_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -132,8 +132,8 @@ TEST_CASE(uue_extract_rejects_malformed_payload_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_uue_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_uue_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -157,8 +157,8 @@ TEST_CASE(uue_extract_rejects_zero_length_terminator_trailing_data) {
         write_binary_file(output / "payload.txt", original);
         bool rejected = false;
         try {
-            (void)superzip::extract_uue_file(archive, output, true);
-        } catch (const superzip::ArchiveError& error) {
+            (void)flitzzip::extract_uue_file(archive, output, true);
+        } catch (const flitzzip::ArchiveError& error) {
             rejected = std::string(error.what()) == "UUencoded zero-length line contains trailing data";
         }
         REQUIRE_TRUE(rejected);
@@ -176,7 +176,7 @@ TEST_CASE(uue_extract_accepts_valid_zero_length_terminators) {
     const auto archive = root / "empty.uue";
     for (const std::string terminator : {"`", " ", "` \t", " \t "}) {
         write_text_file(archive, "begin 644 payload.txt\r\n" + terminator + "\r\nend\r\n");
-        const auto stats = superzip::extract_uue_file(archive, root / "out", true);
+        const auto stats = flitzzip::extract_uue_file(archive, root / "out", true);
         REQUIRE_EQ(stats.output_bytes, 0U);
         REQUIRE_EQ(read_binary_file(root / "out" / "payload.txt"), std::vector<unsigned char>{});
     }
@@ -191,7 +191,7 @@ TEST_CASE(uue_extract_rejects_overwrite_by_default) {
     const auto input = root / "sample.txt";
     write_text_file(input, "new payload");
     const auto archive = root / "sample.uue";
-    (void)superzip::compress_uue_file(input, archive);
+    (void)flitzzip::compress_uue_file(input, archive);
 
     const auto output = root / "out";
     std::filesystem::create_directories(output);
@@ -199,8 +199,8 @@ TEST_CASE(uue_extract_rejects_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_uue_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_uue_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

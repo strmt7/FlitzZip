@@ -213,7 +213,7 @@ function Invoke-HipCompile {
 
     $offloadArguments = Get-HipOffloadArgument -Architecture $Arch
     $prefix = "call `"$VcvarsAll`" $vcvarsArgs >nul && `"$HipccPath`""
-    $compilerArguments = "-std=c++20 -O3 -fms-runtime-lib=static -DSUPERZIP_ENABLE_HIP=1 -I`"$IncludePath`""
+    $compilerArguments = "-std=c++20 -O3 -fms-runtime-lib=static -DFLITZZIP_ENABLE_HIP=1 -I`"$IncludePath`""
     $cmd = "$prefix $offloadArguments $dependencyArguments $compilerArguments -c `"$Source`" -o `"$Output`""
     try {
         cmd /c $cmd | ForEach-Object { Write-Information ([string]$_) -InformationAction Continue }

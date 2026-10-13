@@ -76,7 +76,7 @@ def fixture() -> dict:
         "methodology": "docs/comparative-benchmark-methodology.md",
         "source_commit": "c" * 40,
         "source_dirty": False,
-        "superzip_binary_sha256": "d" * 64,
+        "flitzzip_binary_sha256": "d" * 64,
         "build": {
             "configuration": "Release",
             "platform": "x64",
@@ -102,7 +102,7 @@ def fixture() -> dict:
         },
         "tools": [
             {"name": name, "version": "test", "binary_sha256": "d" * 64, "source_url": "https://example.invalid/tool"}
-            for name in ("SuperZip", "7-Zip", "Zstd")
+            for name in ("FlitzZip", "7-Zip", "Zstd")
         ],
         "corpus": {"source_url": "https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia", "files": files},
         "settings": {"level": 5, "warmups_per_command": 1, "order": "alternating AB/BA", "cache": "warm", "runs": 5},

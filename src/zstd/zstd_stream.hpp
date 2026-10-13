@@ -9,7 +9,7 @@
 #include <ostream>
 #include <optional>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Bound asynchronous compression workers for sufficiently large, known-size streams.
 // Inputs: Optional exact byte count, product effort 1-9, and the available logical processor count.
@@ -99,4 +99,4 @@ class ZstdInputStream final : public std::istream {
     std::unique_ptr<Buffer> buffer_;
 };
 
-}  // namespace superzip
+}  // namespace flitzzip

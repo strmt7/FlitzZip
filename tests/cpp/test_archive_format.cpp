@@ -32,22 +32,22 @@ void write_text_fixture(const std::filesystem::path& path, const std::string& te
 
 // Purpose: Write a minimal native archive shell for format-detection tests.
 // Inputs: `path` is the fixture location, `version` is readable, and `prefix` mimics encoded payload bytes.
-// Outputs: Creates a zero-entry SUZIP-shaped file with valid index/footer magic.
-void write_minimal_suzip_fixture(const std::filesystem::path& path, std::uint32_t version = superzip::kSuperZipVersion,
+// Outputs: Creates a zero-entry FLZIP-shaped file with valid index/footer magic.
+void write_minimal_flzip_fixture(const std::filesystem::path& path, std::uint32_t version = flitzzip::kFlitzZipVersion,
                                  std::span<const unsigned char> prefix = {}) {
     std::ofstream output(path, std::ios::binary);
     if (!prefix.empty()) {
         output.write(reinterpret_cast<const char*>(prefix.data()), static_cast<std::streamsize>(prefix.size()));
     }
     const auto index_offset = static_cast<std::uint64_t>(output.tellp());
-    superzip::write_u32(output, superzip::kSuperZipMagic);
-    superzip::write_u32(output, version);
-    superzip::write_u32(output, 0U);
+    flitzzip::write_u32(output, flitzzip::kFlitzZipMagic);
+    flitzzip::write_u32(output, version);
+    flitzzip::write_u32(output, 0U);
     const auto index_size = static_cast<std::uint64_t>(output.tellp()) - index_offset;
-    superzip::write_u32(output, superzip::kSuperZipFooterMagic);
-    superzip::write_u32(output, version);
-    superzip::write_u64(output, index_offset);
-    superzip::write_u64(output, index_size);
+    flitzzip::write_u32(output, flitzzip::kFlitzZipFooterMagic);
+    flitzzip::write_u32(output, version);
+    flitzzip::write_u64(output, index_offset);
+    flitzzip::write_u64(output, index_size);
 }
 
 // Purpose: Update a CRC-16/XMODEM register for MacBinary format-detection fixtures.
@@ -97,11 +97,33 @@ std::string lowercase_ascii(std::string_view text) {
 
 }  // namespace
 
+// Purpose: Keep the renamed native format byte-compatible with an independently specified predecessor archive.
+// Inputs: Literal version-one index/footer bytes, tested under both filename extensions.
+// Outputs: Fails if detection, parsing, the public token, or default extension changes the compatibility contract.
+TEST_CASE(flzip_rename_preserves_existing_archive_bytes) {
+    constexpr std::array<unsigned char, 36> legacy_empty_archive{'S', 'U', 'Z', 'P', 1,  0, 0, 0, 0, 0, 0, 0,
+                                                                 'S', 'U', 'Z', 'F', 1,  0, 0, 0, 0, 0, 0, 0,
+                                                                 0,   0,   0,   0,   12, 0, 0, 0, 0, 0, 0, 0};
+    const auto root = test_temp_dir("flzip_rename");
+    for (const auto* filename : {"existing.suzip", "renamed.flzip"}) {
+        const auto path = root / filename;
+        write_fixture(path, legacy_empty_archive);
+        REQUIRE_EQ(flitzzip::detect_archive_format(path), flitzzip::ArchiveFormat::FlitzZip);
+        std::ifstream input(path, std::ios::binary);
+        const auto index = flitzzip::read_archive_index(input);
+        REQUIRE_EQ(index.version, 1U);
+        REQUIRE_TRUE(index.entries.empty());
+    }
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("flzip").value(), flitzzip::ArchiveFormat::FlitzZip);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("FLZIP").value(), flitzzip::ArchiveFormat::FlitzZip);
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Recognize registered extensions without converting a Unicode basename through the ANSI code page.
 // Inputs: Every extension row in lowercase and uppercase below a CJK/supplementary-plane filename.
 // Outputs: Requires identical extension/display handling for both spellings; generic .bin still needs magic.
 TEST_CASE(archive_format_unicode_filename_extensions) {
-    for (const auto& row : superzip::archive_format_extension_registry()) {
+    for (const auto& row : flitzzip::archive_format_extension_registry()) {
         std::string extension(row.extension);
         for (const bool uppercase : {false, true}) {
             if (uppercase) {
@@ -113,9 +135,9 @@ TEST_CASE(archive_format_unicode_filename_extensions) {
                 std::u8string(u8"\u65e5\u672c-\U0001f4c1") + std::u8string(extension.begin(), extension.end());
             const std::filesystem::path path(name);
             const auto expected =
-                std::string_view(row.extension) == ".bin" ? superzip::ArchiveFormat::Unknown : row.format;
-            REQUIRE_EQ(superzip::detect_archive_format_by_extension(path), expected);
-            REQUIRE_EQ(std::string_view(superzip::archive_format_extension_info_for_path(row.format, path).extension),
+                std::string_view(row.extension) == ".bin" ? flitzzip::ArchiveFormat::Unknown : row.format;
+            REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(path), expected);
+            REQUIRE_EQ(std::string_view(flitzzip::archive_format_extension_info_for_path(row.format, path).extension),
                        std::string_view(row.extension));
         }
     }
@@ -123,42 +145,42 @@ TEST_CASE(archive_format_unicode_filename_extensions) {
 
 TEST_CASE(archive_format_detects_real_archive_extensions) {
     const auto root = test_temp_dir("archive-format-extensions");
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.suzip"), superzip::ArchiveFormat::SuperZip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.zip"), superzip::ArchiveFormat::Zip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.zipx"), superzip::ArchiveFormat::Zipx);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.7z"), superzip::ArchiveFormat::SevenZip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.rar"), superzip::ArchiveFormat::Rar);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar"), superzip::ArchiveFormat::Tar);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar.gz"), superzip::ArchiveFormat::TarGzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tgz"), superzip::ArchiveFormat::TarGzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar.bz2"), superzip::ArchiveFormat::TarBzip2);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tbz"), superzip::ArchiveFormat::TarBzip2);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar.xz"), superzip::ArchiveFormat::TarXz);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.txz"), superzip::ArchiveFormat::TarXz);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar.lz"), superzip::ArchiveFormat::TarLzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tlz"), superzip::ArchiveFormat::TarLzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.cpio.gz"), superzip::ArchiveFormat::CpioGzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.cpgz"), superzip::ArchiveFormat::CpioGzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.lzma"), superzip::ArchiveFormat::Lzma);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.lz"), superzip::ArchiveFormat::Lzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.Z"), superzip::ArchiveFormat::UnixCompress);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.b64"), superzip::ArchiveFormat::Base64);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.cab"), superzip::ArchiveFormat::Cab);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.iso"), superzip::ArchiveFormat::Iso);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.ar"), superzip::ArchiveFormat::Ar);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.arj"), superzip::ArchiveFormat::Arj);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.arc"), superzip::ArchiveFormat::Arc);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.ark"), superzip::ArchiveFormat::Arc);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.hqx"), superzip::ArchiveFormat::Hqx);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.macbin"), superzip::ArchiveFormat::MacBinary);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.xxe"), superzip::ArchiveFormat::Xxe);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.uue"), superzip::ArchiveFormat::Uue);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.uu"), superzip::ArchiveFormat::Uue);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.lzh"), superzip::ArchiveFormat::Lha);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.wim"), superzip::ArchiveFormat::Wim);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.swm"), superzip::ArchiveFormat::SplitWim);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.xar"), superzip::ArchiveFormat::Xar);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.deb"), superzip::ArchiveFormat::Deb);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.flzip"), flitzzip::ArchiveFormat::FlitzZip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.zip"), flitzzip::ArchiveFormat::Zip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.zipx"), flitzzip::ArchiveFormat::Zipx);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.7z"), flitzzip::ArchiveFormat::SevenZip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.rar"), flitzzip::ArchiveFormat::Rar);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.tar"), flitzzip::ArchiveFormat::Tar);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.tar.gz"), flitzzip::ArchiveFormat::TarGzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.tgz"), flitzzip::ArchiveFormat::TarGzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.tar.bz2"), flitzzip::ArchiveFormat::TarBzip2);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.tbz"), flitzzip::ArchiveFormat::TarBzip2);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.tar.xz"), flitzzip::ArchiveFormat::TarXz);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.txz"), flitzzip::ArchiveFormat::TarXz);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.tar.lz"), flitzzip::ArchiveFormat::TarLzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.tlz"), flitzzip::ArchiveFormat::TarLzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.cpio.gz"), flitzzip::ArchiveFormat::CpioGzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.cpgz"), flitzzip::ArchiveFormat::CpioGzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.lzma"), flitzzip::ArchiveFormat::Lzma);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.lz"), flitzzip::ArchiveFormat::Lzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.Z"), flitzzip::ArchiveFormat::UnixCompress);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.b64"), flitzzip::ArchiveFormat::Base64);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.cab"), flitzzip::ArchiveFormat::Cab);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.iso"), flitzzip::ArchiveFormat::Iso);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.ar"), flitzzip::ArchiveFormat::Ar);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.arj"), flitzzip::ArchiveFormat::Arj);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.arc"), flitzzip::ArchiveFormat::Arc);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.ark"), flitzzip::ArchiveFormat::Arc);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.hqx"), flitzzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.macbin"), flitzzip::ArchiveFormat::MacBinary);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.xxe"), flitzzip::ArchiveFormat::Xxe);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.uue"), flitzzip::ArchiveFormat::Uue);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.uu"), flitzzip::ArchiveFormat::Uue);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.lzh"), flitzzip::ArchiveFormat::Lha);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.wim"), flitzzip::ArchiveFormat::Wim);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.swm"), flitzzip::ArchiveFormat::SplitWim);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.xar"), flitzzip::ArchiveFormat::Xar);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "sample.deb"), flitzzip::ArchiveFormat::Deb);
 }
 
 TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
@@ -188,13 +210,13 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     write_fixture(root / "rpm.bin", std::array<unsigned char, 4>{0xED, 0xAB, 0xEE, 0xDB});
     write_fixture(root / "wim.bin", std::array<unsigned char, 8>{'M', 'S', 'W', 'I', 'M', 0x00, 0x00, 0x00});
     write_fixture(root / "xar.bin", std::array<unsigned char, 4>{'x', 'a', 'r', '!'});
-    write_minimal_suzip_fixture(root / "renamed-native.bin");
-    write_minimal_suzip_fixture(root / "renamed-native-v4.bin", 4U);
-    write_minimal_suzip_fixture(root / "renamed-native-v5.bin", 5U);
+    write_minimal_flzip_fixture(root / "renamed-native.bin");
+    write_minimal_flzip_fixture(root / "renamed-native-v4.bin", 4U);
+    write_minimal_flzip_fixture(root / "renamed-native-v5.bin", 5U);
     const std::array<unsigned char, 4> zstd_magic{0x28, 0xB5, 0x2F, 0xFD};
-    write_minimal_suzip_fixture(root / "native-zstd.suzip", 6U, zstd_magic);
-    write_minimal_suzip_fixture(root / "renamed-native-zstd.bin", 6U, zstd_magic);
-    write_minimal_suzip_fixture(root / "renamed-native-zstd.zst", 6U, zstd_magic);
+    write_minimal_flzip_fixture(root / "native-zstd.flzip", 6U, zstd_magic);
+    write_minimal_flzip_fixture(root / "renamed-native-zstd.bin", 6U, zstd_magic);
+    write_minimal_flzip_fixture(root / "renamed-native-zstd.zst", 6U, zstd_magic);
     const auto uue_begin = std::array<unsigned char, 24>{'b', 'e', 'g', 'i', 'n', ' ', '6', '4', '4', ' ',  'p', 'a',
                                                          'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n', '`', '\n'};
     write_fixture(root / "uue.bin", uue_begin);
@@ -202,87 +224,87 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
                                                          'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n', '+', '\n'};
     write_fixture(root / "xxe.bin", xxe_begin);
 
-    REQUIRE_EQ(superzip::detect_archive_format(root / "zip.bin"), superzip::ArchiveFormat::Zip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "zipx.zipx"), superzip::ArchiveFormat::Zipx);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "seven.bin"), superzip::ArchiveFormat::SevenZip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "rar.bin"), superzip::ArchiveFormat::Rar);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "gz.bin"), superzip::ArchiveFormat::Gzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "package.cpgz"), superzip::ArchiveFormat::CpioGzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "unix-compress.bin"), superzip::ArchiveFormat::UnixCompress);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "base64.bin"), superzip::ArchiveFormat::Base64);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "bz2.bin"), superzip::ArchiveFormat::Bzip2);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "xz.bin"), superzip::ArchiveFormat::Xz);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "lz.bin"), superzip::ArchiveFormat::Lzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "logs.tar.lz"), superzip::ArchiveFormat::TarLzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "zst.bin"), superzip::ArchiveFormat::Zstd);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "cab.bin"), superzip::ArchiveFormat::Cab);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "ar.bin"), superzip::ArchiveFormat::Ar);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "arj.bin"), superzip::ArchiveFormat::Arj);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "arc.arc"), superzip::ArchiveFormat::Arc);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "hqx.bin"), superzip::ArchiveFormat::Hqx);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "macbinary.bin"), superzip::ArchiveFormat::MacBinary);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "rpm.bin"), superzip::ArchiveFormat::Rpm);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "wim.bin"), superzip::ArchiveFormat::Wim);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "xar.bin"), superzip::ArchiveFormat::Xar);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native.bin"), superzip::ArchiveFormat::SuperZip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native-v4.bin"), superzip::ArchiveFormat::SuperZip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native-v5.bin"), superzip::ArchiveFormat::SuperZip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "native-zstd.suzip"), superzip::ArchiveFormat::SuperZip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native-zstd.bin"), superzip::ArchiveFormat::SuperZip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native-zstd.zst"), superzip::ArchiveFormat::SuperZip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "xxe.bin"), superzip::ArchiveFormat::Xxe);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "uue.bin"), superzip::ArchiveFormat::Uue);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "zip.bin"), flitzzip::ArchiveFormat::Zip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "zipx.zipx"), flitzzip::ArchiveFormat::Zipx);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "seven.bin"), flitzzip::ArchiveFormat::SevenZip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "rar.bin"), flitzzip::ArchiveFormat::Rar);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "gz.bin"), flitzzip::ArchiveFormat::Gzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "package.cpgz"), flitzzip::ArchiveFormat::CpioGzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "unix-compress.bin"), flitzzip::ArchiveFormat::UnixCompress);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "base64.bin"), flitzzip::ArchiveFormat::Base64);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "bz2.bin"), flitzzip::ArchiveFormat::Bzip2);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "xz.bin"), flitzzip::ArchiveFormat::Xz);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "lz.bin"), flitzzip::ArchiveFormat::Lzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "logs.tar.lz"), flitzzip::ArchiveFormat::TarLzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "zst.bin"), flitzzip::ArchiveFormat::Zstd);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "cab.bin"), flitzzip::ArchiveFormat::Cab);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "ar.bin"), flitzzip::ArchiveFormat::Ar);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "arj.bin"), flitzzip::ArchiveFormat::Arj);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "arc.arc"), flitzzip::ArchiveFormat::Arc);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "hqx.bin"), flitzzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "macbinary.bin"), flitzzip::ArchiveFormat::MacBinary);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "rpm.bin"), flitzzip::ArchiveFormat::Rpm);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "wim.bin"), flitzzip::ArchiveFormat::Wim);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "xar.bin"), flitzzip::ArchiveFormat::Xar);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "renamed-native.bin"), flitzzip::ArchiveFormat::FlitzZip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "renamed-native-v4.bin"), flitzzip::ArchiveFormat::FlitzZip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "renamed-native-v5.bin"), flitzzip::ArchiveFormat::FlitzZip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "native-zstd.flzip"), flitzzip::ArchiveFormat::FlitzZip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "renamed-native-zstd.bin"), flitzzip::ArchiveFormat::FlitzZip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "renamed-native-zstd.zst"), flitzzip::ArchiveFormat::FlitzZip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "xxe.bin"), flitzzip::ArchiveFormat::Xxe);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "uue.bin"), flitzzip::ArchiveFormat::Uue);
 
     write_fixture(root / "package.deb", std::array<unsigned char, 8>{'!', '<', 'a', 'r', 'c', 'h', '>', '\n'});
-    REQUIRE_EQ(superzip::detect_archive_format(root / "package.deb"), superzip::ArchiveFormat::Deb);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "package.deb"), flitzzip::ArchiveFormat::Deb);
 }
 
 TEST_CASE(archive_format_does_not_false_positive_zip_based_containers) {
     const auto root = test_temp_dir("archive-format-excluded-aliases");
-    // Guardrail: ZIP-magic document containers are not archive formats in SuperZip.
+    // Guardrail: ZIP-magic document containers are not archive formats in FlitzZip.
     write_fixture(root / "document.docx", std::array<unsigned char, 4>{'P', 'K', 0x03, 0x04});
 
-    REQUIRE_TRUE(!superzip::parse_archive_format_token("docx").has_value());
-    REQUIRE_TRUE(!superzip::parse_archive_format_token("pptx").has_value());
-    REQUIRE_TRUE(!superzip::parse_archive_format_token("xlsx").has_value());
-    REQUIRE_EQ(superzip::detect_archive_format(root / "document.docx"), superzip::ArchiveFormat::Unknown);
-    REQUIRE_EQ(superzip::parse_archive_format_token("tar").value(), superzip::ArchiveFormat::Tar);
-    REQUIRE_EQ(superzip::parse_archive_format_token("tgz").value(), superzip::ArchiveFormat::TarGzip);
-    REQUIRE_EQ(superzip::parse_archive_format_token("tbz").value(), superzip::ArchiveFormat::TarBzip2);
-    REQUIRE_EQ(superzip::parse_archive_format_token("txz").value(), superzip::ArchiveFormat::TarXz);
-    REQUIRE_EQ(superzip::parse_archive_format_token("tlz").value(), superzip::ArchiveFormat::TarLzip);
-    REQUIRE_EQ(superzip::parse_archive_format_token("tzst").value(), superzip::ArchiveFormat::TarZstd);
-    REQUIRE_EQ(superzip::parse_archive_format_token("cpio.gz").value(), superzip::ArchiveFormat::CpioGzip);
-    REQUIRE_EQ(superzip::parse_archive_format_token("cpgz").value(), superzip::ArchiveFormat::CpioGzip);
-    REQUIRE_EQ(superzip::parse_archive_format_token("gzip").value(), superzip::ArchiveFormat::Gzip);
-    REQUIRE_EQ(superzip::parse_archive_format_token("bzip2").value(), superzip::ArchiveFormat::Bzip2);
-    REQUIRE_EQ(superzip::parse_archive_format_token("lzma").value(), superzip::ArchiveFormat::Lzma);
-    REQUIRE_EQ(superzip::parse_archive_format_token("lzip").value(), superzip::ArchiveFormat::Lzip);
-    REQUIRE_EQ(superzip::parse_archive_format_token("lz").value(), superzip::ArchiveFormat::Lzip);
-    REQUIRE_EQ(superzip::parse_archive_format_token("zstd").value(), superzip::ArchiveFormat::Zstd);
-    REQUIRE_EQ(superzip::parse_archive_format_token("zipx").value(), superzip::ArchiveFormat::Zipx);
-    REQUIRE_EQ(superzip::parse_archive_format_token("compress").value(), superzip::ArchiveFormat::UnixCompress);
-    REQUIRE_EQ(superzip::parse_archive_format_token("unix-compress").value(), superzip::ArchiveFormat::UnixCompress);
-    REQUIRE_EQ(superzip::parse_archive_format_token("b64").value(), superzip::ArchiveFormat::Base64);
-    REQUIRE_EQ(superzip::parse_archive_format_token("base64").value(), superzip::ArchiveFormat::Base64);
-    REQUIRE_EQ(superzip::parse_archive_format_token("xxe").value(), superzip::ArchiveFormat::Xxe);
-    REQUIRE_EQ(superzip::parse_archive_format_token("xxencode").value(), superzip::ArchiveFormat::Xxe);
-    REQUIRE_EQ(superzip::parse_archive_format_token("uu").value(), superzip::ArchiveFormat::Uue);
-    REQUIRE_EQ(superzip::parse_archive_format_token("uuencode").value(), superzip::ArchiveFormat::Uue);
-    REQUIRE_EQ(superzip::parse_archive_format_token("arj").value(), superzip::ArchiveFormat::Arj);
-    REQUIRE_EQ(superzip::parse_archive_format_token("arc").value(), superzip::ArchiveFormat::Arc);
-    REQUIRE_EQ(superzip::parse_archive_format_token("ark").value(), superzip::ArchiveFormat::Arc);
-    REQUIRE_EQ(superzip::parse_archive_format_token("hqx").value(), superzip::ArchiveFormat::Hqx);
-    REQUIRE_EQ(superzip::parse_archive_format_token("binhex").value(), superzip::ArchiveFormat::Hqx);
-    REQUIRE_EQ(superzip::parse_archive_format_token("binhex4").value(), superzip::ArchiveFormat::Hqx);
-    REQUIRE_EQ(superzip::parse_archive_format_token("binhex40").value(), superzip::ArchiveFormat::Hqx);
-    REQUIRE_EQ(superzip::parse_archive_format_token("macbinary").value(), superzip::ArchiveFormat::MacBinary);
-    REQUIRE_EQ(superzip::parse_archive_format_token("macbin").value(), superzip::ArchiveFormat::MacBinary);
-    REQUIRE_EQ(superzip::parse_archive_format_token("swm").value(), superzip::ArchiveFormat::SplitWim);
+    REQUIRE_TRUE(!flitzzip::parse_archive_format_token("docx").has_value());
+    REQUIRE_TRUE(!flitzzip::parse_archive_format_token("pptx").has_value());
+    REQUIRE_TRUE(!flitzzip::parse_archive_format_token("xlsx").has_value());
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "document.docx"), flitzzip::ArchiveFormat::Unknown);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("tar").value(), flitzzip::ArchiveFormat::Tar);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("tgz").value(), flitzzip::ArchiveFormat::TarGzip);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("tbz").value(), flitzzip::ArchiveFormat::TarBzip2);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("txz").value(), flitzzip::ArchiveFormat::TarXz);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("tlz").value(), flitzzip::ArchiveFormat::TarLzip);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("tzst").value(), flitzzip::ArchiveFormat::TarZstd);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("cpio.gz").value(), flitzzip::ArchiveFormat::CpioGzip);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("cpgz").value(), flitzzip::ArchiveFormat::CpioGzip);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("gzip").value(), flitzzip::ArchiveFormat::Gzip);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("bzip2").value(), flitzzip::ArchiveFormat::Bzip2);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("lzma").value(), flitzzip::ArchiveFormat::Lzma);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("lzip").value(), flitzzip::ArchiveFormat::Lzip);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("lz").value(), flitzzip::ArchiveFormat::Lzip);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("zstd").value(), flitzzip::ArchiveFormat::Zstd);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("zipx").value(), flitzzip::ArchiveFormat::Zipx);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("compress").value(), flitzzip::ArchiveFormat::UnixCompress);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("unix-compress").value(), flitzzip::ArchiveFormat::UnixCompress);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("b64").value(), flitzzip::ArchiveFormat::Base64);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("base64").value(), flitzzip::ArchiveFormat::Base64);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("xxe").value(), flitzzip::ArchiveFormat::Xxe);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("xxencode").value(), flitzzip::ArchiveFormat::Xxe);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("uu").value(), flitzzip::ArchiveFormat::Uue);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("uuencode").value(), flitzzip::ArchiveFormat::Uue);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("arj").value(), flitzzip::ArchiveFormat::Arj);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("arc").value(), flitzzip::ArchiveFormat::Arc);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("ark").value(), flitzzip::ArchiveFormat::Arc);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("hqx").value(), flitzzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("binhex").value(), flitzzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("binhex4").value(), flitzzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("binhex40").value(), flitzzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("macbinary").value(), flitzzip::ArchiveFormat::MacBinary);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("macbin").value(), flitzzip::ArchiveFormat::MacBinary);
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("swm").value(), flitzzip::ArchiveFormat::SplitWim);
 }
 
 TEST_CASE(archive_format_display_names_are_precise_user_facing_format_names) {
-    for (const auto& info : superzip::archive_format_registry()) {
+    for (const auto& info : flitzzip::archive_format_registry()) {
         const auto display_name = lowercase_ascii(info.display_name);
         REQUIRE_TRUE(display_name.find("compatibility") == std::string::npos);
         REQUIRE_TRUE(display_name.find("single file") == std::string::npos);
@@ -292,52 +314,52 @@ TEST_CASE(archive_format_display_names_are_precise_user_facing_format_names) {
         REQUIRE_TRUE(display_name.find(" files") == std::string::npos);
         REQUIRE_TRUE(display_name.find(", .") == std::string::npos);
     }
-    REQUIRE_EQ(std::string(superzip::archive_format_info(superzip::ArchiveFormat::SuperZip).display_name),
-               std::string("SuperZip (.suzip)"));
-    REQUIRE_EQ(std::string(superzip::archive_format_info(superzip::ArchiveFormat::TarGzip).display_name),
+    REQUIRE_EQ(std::string(flitzzip::archive_format_info(flitzzip::ArchiveFormat::FlitzZip).display_name),
+               std::string("FlitzZip (.flzip)"));
+    REQUIRE_EQ(std::string(flitzzip::archive_format_info(flitzzip::ArchiveFormat::TarGzip).display_name),
                std::string("TAR.GZ (.tar.gz)"));
-    REQUIRE_EQ(std::string(superzip::archive_format_info(superzip::ArchiveFormat::Base64).display_name),
+    REQUIRE_EQ(std::string(flitzzip::archive_format_info(flitzzip::ArchiveFormat::Base64).display_name),
                std::string("Base64 (.b64)"));
-    REQUIRE_EQ(std::string(superzip::archive_format_info(superzip::ArchiveFormat::Uue).display_name),
+    REQUIRE_EQ(std::string(flitzzip::archive_format_info(flitzzip::ArchiveFormat::Uue).display_name),
                std::string("UUencode (.uue)"));
 }
 
 TEST_CASE(archive_format_extension_display_names_are_exact_per_extension) {
-    for (const auto& info : superzip::archive_format_extension_registry()) {
+    for (const auto& info : flitzzip::archive_format_extension_registry()) {
         REQUIRE_TRUE(std::string_view(info.extension).starts_with("."));
         REQUIRE_TRUE(std::string_view(info.display_name).find(", .") == std::string_view::npos);
     }
-    REQUIRE_EQ(std::string(superzip::archive_format_extension_info_for_extension(".tgz").display_name),
+    REQUIRE_EQ(std::string(flitzzip::archive_format_extension_info_for_extension(".tgz").display_name),
                std::string("TAR.GZ (.tgz)"));
-    REQUIRE_EQ(std::string(superzip::archive_format_extension_info_for_extension(".zstd").display_name),
+    REQUIRE_EQ(std::string(flitzzip::archive_format_extension_info_for_extension(".zstd").display_name),
                std::string("Zstandard (.zstd)"));
-    REQUIRE_EQ(std::string(superzip::archive_format_extension_info_for_extension(".ark").display_name),
+    REQUIRE_EQ(std::string(flitzzip::archive_format_extension_info_for_extension(".ark").display_name),
                std::string("SEA ARC/ARK (.ark)"));
-    REQUIRE_EQ(std::string(superzip::archive_format_extension_info_for_extension(".uu").display_name),
+    REQUIRE_EQ(std::string(flitzzip::archive_format_extension_info_for_extension(".uu").display_name),
                std::string("UUencode (.uu)"));
     REQUIRE_EQ(
-        std::string(superzip::archive_format_extension_info_for_path(superzip::ArchiveFormat::MacBinary, "payload.bin")
+        std::string(flitzzip::archive_format_extension_info_for_path(flitzzip::ArchiveFormat::MacBinary, "payload.bin")
                         .display_name),
         std::string("MacBinary (.bin)"));
     REQUIRE_EQ(
-        std::string(superzip::archive_format_extension_info_for_path(superzip::ArchiveFormat::Zstd, "payload.data")
+        std::string(flitzzip::archive_format_extension_info_for_path(flitzzip::ArchiveFormat::Zstd, "payload.data")
                         .display_name),
         std::string("Zstandard (.zst)"));
 }
 
 TEST_CASE(archive_format_extension_only_detection_uses_registry_without_magic_probe) {
     const auto root = test_temp_dir("archive-format-extension-only");
-    REQUIRE_EQ(superzip::detect_archive_format_by_extension(root / "logs.tar.gz"), superzip::ArchiveFormat::TarGzip);
-    REQUIRE_EQ(superzip::detect_archive_format_by_extension(root / "logs.tgz"), superzip::ArchiveFormat::TarGzip);
-    REQUIRE_EQ(superzip::detect_archive_format_by_extension(root / "payload.Z"), superzip::ArchiveFormat::UnixCompress);
-    REQUIRE_EQ(superzip::detect_archive_format_by_extension(root / "sample.docx"), superzip::ArchiveFormat::Unknown);
-    REQUIRE_EQ(superzip::detect_archive_format_by_extension(root / "folder"), superzip::ArchiveFormat::Unknown);
+    REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(root / "logs.tar.gz"), flitzzip::ArchiveFormat::TarGzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(root / "logs.tgz"), flitzzip::ArchiveFormat::TarGzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(root / "payload.Z"), flitzzip::ArchiveFormat::UnixCompress);
+    REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(root / "sample.docx"), flitzzip::ArchiveFormat::Unknown);
+    REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(root / "folder"), flitzzip::ArchiveFormat::Unknown);
 }
 
 TEST_CASE(archive_format_transfer_encodings_are_extract_only) {
-    const auto& base64 = superzip::archive_format_info(superzip::ArchiveFormat::Base64);
-    const auto& xxe = superzip::archive_format_info(superzip::ArchiveFormat::Xxe);
-    const auto& uue = superzip::archive_format_info(superzip::ArchiveFormat::Uue);
+    const auto& base64 = flitzzip::archive_format_info(flitzzip::ArchiveFormat::Base64);
+    const auto& xxe = flitzzip::archive_format_info(flitzzip::ArchiveFormat::Xxe);
+    const auto& uue = flitzzip::archive_format_info(flitzzip::ArchiveFormat::Uue);
 
     REQUIRE_TRUE(!base64.can_create);
     REQUIRE_TRUE(base64.can_extract);
@@ -355,9 +377,9 @@ TEST_CASE(archive_format_prefers_compound_tar_extensions_over_stream_magic) {
     write_fixture(root / "logs.cpio.gz", std::array<unsigned char, 2>{0x1F, 0x8B});
     write_fixture(root / "logs.cpgz", std::array<unsigned char, 2>{0x1F, 0x8B});
 
-    REQUIRE_EQ(superzip::detect_archive_format(root / "logs.tar.gz"), superzip::ArchiveFormat::TarGzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "logs.tar.xz"), superzip::ArchiveFormat::TarXz);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "logs.tar.lz"), superzip::ArchiveFormat::TarLzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "logs.cpio.gz"), superzip::ArchiveFormat::CpioGzip);
-    REQUIRE_EQ(superzip::detect_archive_format(root / "logs.cpgz"), superzip::ArchiveFormat::CpioGzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "logs.tar.gz"), flitzzip::ArchiveFormat::TarGzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "logs.tar.xz"), flitzzip::ArchiveFormat::TarXz);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "logs.tar.lz"), flitzzip::ArchiveFormat::TarLzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "logs.cpio.gz"), flitzzip::ArchiveFormat::CpioGzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(root / "logs.cpgz"), flitzzip::ArchiveFormat::CpioGzip);
 }

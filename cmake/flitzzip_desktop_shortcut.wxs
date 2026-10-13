@@ -1,0 +1,19 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="CM_SHORTCUT_DESKTOP_OPTIONAL" Guid="*">
+        <Shortcut Id="CM_DSP_OPTIONAL_bin.FlitzZip.exe" Name="FlitzZip" Target="[#CM_FP_bin.FlitzZip.exe]" WorkingDirectory="CM_DP_bin"/>
+        <RegistryValue Root="HKCU" Key="Software\Efstratios Mitridis\FlitzZip" Name="desktop_shortcut" Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="FLITZZIP_PROGRAM_MENU_FOLDER" Name="FlitzZip">
+        <Component Id="CM_SHORTCUT_START_MENU_OPTIONAL" Guid="*">
+          <Shortcut Id="CM_SM_OPTIONAL_bin.FlitzZip.exe" Name="FlitzZip" Target="[#CM_FP_bin.FlitzZip.exe]" WorkingDirectory="CM_DP_bin"/>
+          <RemoveFolder Id="CM_REMOVE_FLITZZIP_PROGRAM_MENU_FOLDER" On="uninstall"/>
+          <RegistryValue Root="HKCU" Key="Software\Efstratios Mitridis\FlitzZip" Name="start_menu_entry" Type="integer" Value="1" KeyPath="yes"/>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+  </Fragment>
+</Wix>

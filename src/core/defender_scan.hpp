@@ -2,7 +2,7 @@
 
 #include <filesystem>
 
-namespace superzip {
+namespace flitzzip {
 
 enum class DefenderScanMode {
     Disabled,
@@ -36,4 +36,4 @@ DefenderScanResult scan_with_windows_defender(const std::filesystem::path& path,
 // Outputs: Returns normally only for a positive clean result; otherwise throws `SecurityError`.
 void require_clean_defender_scan(const DefenderScanResult& result, const std::filesystem::path& path);
 
-}  // namespace superzip
+}  // namespace flitzzip

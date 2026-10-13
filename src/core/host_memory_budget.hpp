@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Carry one volatile physical-memory snapshot, not a reservation against other processes.
 // Inputs: Total and currently available physical bytes reported by the OS.
@@ -40,4 +40,4 @@ std::uint32_t resolve_host_pipeline_inflight_limit(HostMemorySnapshot memory, st
                                                    std::uint64_t reserve_bytes = 0,
                                                    HostPipelineWorkspace workspace = {});
 
-}  // namespace superzip
+}  // namespace flitzzip

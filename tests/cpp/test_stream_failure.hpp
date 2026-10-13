@@ -14,7 +14,7 @@ template <typename Stream> void require_sticky_decoder_failure(const std::filesy
     std::array<char, 4096> bytes{};
     try {
         input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-    } catch (const superzip::Error&) {
+    } catch (const flitzzip::Error&) {
     }
     REQUIRE_TRUE(input.bad());
     for (int attempt = 0; attempt < 2; ++attempt) {
@@ -22,7 +22,7 @@ template <typename Stream> void require_sticky_decoder_failure(const std::filesy
         bool finish_rejected = false;
         try {
             input.finish();
-        } catch (const superzip::Error&) {
+        } catch (const flitzzip::Error&) {
             finish_rejected = true;
         }
         REQUIRE_TRUE(finish_rejected);
@@ -30,7 +30,7 @@ template <typename Stream> void require_sticky_decoder_failure(const std::filesy
         input.exceptions(std::ios::goodbit);
         try {
             input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-        } catch (const superzip::Error&) {
+        } catch (const flitzzip::Error&) {
         }
         REQUIRE_TRUE(input.bad());
     }
@@ -39,7 +39,7 @@ template <typename Stream> void require_sticky_decoder_failure(const std::filesy
         bool rejected = false;
         try {
             finish_only.finish();
-        } catch (const superzip::Error&) {
+        } catch (const flitzzip::Error&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);

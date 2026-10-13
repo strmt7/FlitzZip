@@ -6,7 +6,7 @@
 #include <optional>
 #include <string_view>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Keep a checksum-verified app-local DLL and its parent chain pinned for the complete module lifetime.
 // Inputs: Constructed only by `load_trusted_app_local_runtime` from a verified regular file and loaded module handle.
@@ -56,4 +56,4 @@ class TrustedRuntimeModule final {
 [[nodiscard]] TrustedRuntimeModule load_trusted_app_local_runtime(std::wstring_view dll_name,
                                                                   std::string_view expected_sha256);
 
-}  // namespace superzip
+}  // namespace flitzzip

@@ -5,7 +5,7 @@
 # boundary. Inputs: Known complete source, ordered signature/end markers and
 # reviewed replacement. Outputs: Proposed text or a boundary error, without
 # writing the compiled source cache.
-function(superzip_zstd_replace_owned_region content begin end replacement
+function(flitzzip_zstd_replace_owned_region content begin end replacement
          output)
   string(FIND "${content}" "${begin}" first REVERSE)
   if(first LESS 0)
@@ -27,7 +27,7 @@ endfunction()
 # the active call. Inputs: Complete component-replaced source and a shipped
 # version. Outputs: Proposed ownership and prefix contracts without retaining
 # caller addresses.
-function(superzip_zstd_owned_decoder_geometry content version output)
+function(flitzzip_zstd_owned_decoder_geometry content version output)
   if(version STREQUAL v05)
     set(window_log 26)
   else()
@@ -129,7 +129,7 @@ endfunction()
 # decoder output. Inputs: Known component-replaced source and historical wire
 # version. Outputs: Guards before local pointer formation and explicit contracts
 # on every altered function.
-function(superzip_zstd_owned_decoder_guards content version output)
+function(flitzzip_zstd_owned_decoder_guards content version output)
   if(version STREQUAL v05)
     set(frame decompress_continueDCtx)
     set(header decodeFrameHeader_Part2)
@@ -182,7 +182,7 @@ function(superzip_zstd_owned_decoder_guards content version output)
   string(REPLACE "return op-ostart;"
                  "return op == NULL ? 0 : (size_t)(op-ostart);" content
                  "${content}")
-  superzip_zstd_owned_empty_geometry("${content}" "${version}" content)
+  flitzzip_zstd_owned_empty_geometry("${content}" "${version}" content)
   if(version STREQUAL v07)
     set(context dctx)
   else()
@@ -223,7 +223,7 @@ endfunction()
 # Purpose: Preserve nullable empty extents without pointer arithmetic on null.
 # Inputs: Reviewed decoder source with complete entry geometry guards. Outputs:
 # Local remainder and input endpoints that preserve ordinary nonempty semantics.
-function(superzip_zstd_owned_empty_geometry content version output)
+function(flitzzip_zstd_owned_empty_geometry content version output)
   string(REPLACE "oend-op" "ZSTD${version}_remaining(oend, op)" content
                  "${content}")
   string(REPLACE "ip + seqSize;" "seqSize != 0 ? ip + seqSize : ip;" content
@@ -240,7 +240,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/ZstdLegacyOwnedDecoderHashes.cmake")
 # Purpose: Instantiate the canonical ownership components for one historical
 # wire version. Inputs: Known source and a shipped version. Outputs: Proposed
 # complete implementation regions.
-function(superzip_zstd_owned_decoder_components content version output)
+function(flitzzip_zstd_owned_decoder_components content version output)
   string(SUBSTRING "${version}" 1 2 number)
   string(REGEX REPLACE "^0" "" number "${number}")
   string(TOUPPER "${version}" upper)
@@ -259,8 +259,8 @@ function(superzip_zstd_owned_decoder_components content version output)
     file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/${file}" ${component})
     string(REPLACE vXX "${version}" ${component} "${${component}}")
   endforeach()
-  string(CONCAT owner "#define SUPERZIP_LEGACY_DECODER_VERSION ${number}\n"
-                "${owner}\n#undef SUPERZIP_LEGACY_DECODER_VERSION\n")
+  string(CONCAT owner "#define FLITZZIP_LEGACY_DECODER_VERSION ${number}\n"
+                "${owner}\n#undef FLITZZIP_LEGACY_DECODER_VERSION\n")
   file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedDictionary.c"
        dictionary)
   string(REPLACE vXX "${version}" dictionary "${dictionary}")
@@ -277,14 +277,14 @@ function(superzip_zstd_owned_decoder_components content version output)
   endif()
   string(
     CONCAT continue
-           "#define SUPERZIP_LEGACY_DECODER_VERSION ${number}\n"
-           "#define SUPERZIP_LEGACY_BLOCK_STAGE ${stage}\n${header}\n"
-           "${data_block}\n${continue}\n#undef SUPERZIP_LEGACY_BLOCK_STAGE\n"
-           "#undef SUPERZIP_LEGACY_DECODER_VERSION\n")
+           "#define FLITZZIP_LEGACY_DECODER_VERSION ${number}\n"
+           "#define FLITZZIP_LEGACY_BLOCK_STAGE ${stage}\n${header}\n"
+           "${data_block}\n${continue}\n#undef FLITZZIP_LEGACY_BLOCK_STAGE\n"
+           "#undef FLITZZIP_LEGACY_DECODER_VERSION\n")
   if(NOT version MATCHES "^v0[567]$")
     message(FATAL_ERROR "Unsupported owned legacy decoder version")
   endif()
-  superzip_zstd_owned_component_regions("${content}" "${version}" content)
+  flitzzip_zstd_owned_component_regions("${content}" "${version}" content)
   set(${output}
       "${content}"
       PARENT_SCOPE)
@@ -294,7 +294,7 @@ endfunction()
 # boundaries. Inputs: Admitted source, shipped version and instantiated
 # parent-scope fragments. Outputs: Complete proposed source; full output
 # identity is checked before publication.
-function(superzip_zstd_owned_component_regions content version output)
+function(flitzzip_zstd_owned_component_regions content version output)
   if(version STREQUAL v07)
     set(factory createDCtx_advanced)
     set(section "\n\n/*-************************")
@@ -311,25 +311,25 @@ function(superzip_zstd_owned_component_regions content version output)
       set(frame "\n\n\n/*! ZSTDv06_decompressFrame()")
     endif()
   endif()
-  superzip_zstd_replace_owned_region(
+  flitzzip_zstd_replace_owned_region(
     "${content}" "\nZSTD${version}_DCtx* ZSTD${version}_${factory}"
     "${section}" "\n${owner}" content)
-  superzip_zstd_replace_owned_region(
+  flitzzip_zstd_replace_owned_region(
     "${content}" "${sequence_begin}"
     "static size_t ZSTD${version}_decompressSequences(" "${sequence}" content)
-  superzip_zstd_replace_owned_region(
+  flitzzip_zstd_replace_owned_region(
     "${content}" "\nsize_t ZSTD${version}_decompressContinue("
     "\n\n\nstatic size_t ZSTD${version}_loadEntropy(" "\n${continue}" content)
-  superzip_zstd_replace_owned_region(
+  flitzzip_zstd_replace_owned_region(
     "${content}" "\nsize_t ZSTD${version}_decompressBlock(" "${frame}"
     "\n${block}" content)
-  superzip_zstd_replace_owned_region(
+  flitzzip_zstd_replace_owned_region(
     "${content}" "\nsize_t ZSTD${version}_decompress("
     "\n\n/* ZSTD_errorFrameSizeInfoLegacy" "\n${one_shot}" content)
   if(version STREQUAL v07)
     file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedInsertV07.c"
          insert)
-    superzip_zstd_replace_owned_region(
+    flitzzip_zstd_replace_owned_region(
       "${content}" "\nZSTDLIBv07_API size_t ZSTDv07_insertBlock("
       "\n\nstatic size_t ZSTDv07_generateNxBytes(" "\n${insert}" content)
   endif()

@@ -130,7 +130,7 @@ def download(spec: dict, *, deadline: float) -> bytes:
     redirect = PinnedCorpusRedirects(domains) if domains is not None else NoReleaseRedirects()
     if domains is not None:
         redirect.validate_target(spec["url"])
-    request = Request(spec["url"], headers={"User-Agent": "Mozilla/5.0 SuperZip-public-corpus-research"})
+    request = Request(spec["url"], headers={"User-Agent": "Mozilla/5.0 FlitzZip-public-corpus-research"})
     payload = io.BytesIO()
     with build_opener(redirect).open(request, timeout=30) as response:
         if response.status != 200:
@@ -293,7 +293,7 @@ def read_bounded(stream) -> bytes:
 # Inputs: Exact repository module path; no user-controlled import source is accepted.
 # Outputs: The canonical process ownership implementation, or an explicit import failure.
 def process_owner():
-    spec = importlib.util.spec_from_file_location("superzip_neutron_owned_child", ROOT / "mcp/superzip_mcp.py")
+    spec = importlib.util.spec_from_file_location("flitzzip_neutron_owned_child", ROOT / "mcp/flitzzip_mcp.py")
     if spec is None or spec.loader is None:
         raise ValueError("Repository process ownership contract is unavailable")
     owner = importlib.util.module_from_spec(spec)
@@ -472,7 +472,7 @@ def hold_build(stack: ExitStack, receipt: dict) -> None:
         "tools/neutron_corpus_ipc.py",
         COMPARISON_BOOTSTRAP.relative_to(ROOT).as_posix(),
         HYPERFINE.relative_to(ROOT).as_posix(),
-        "mcp/superzip_mcp.py",
+        "mcp/flitzzip_mcp.py",
         "tools/benchmark_permissions.json",
         "docs/benchmarks/corpora/neutron-public-corpora.json",
     ]
@@ -674,15 +674,29 @@ def main() -> None:
     parser.add_argument("--configuration", choices=("Release", "Debug", "RelWithDebInfo"), default="Release")
     parser.add_argument("--runs", type=int, choices=range(1, 11), default=3)
     parser.add_argument("--block-size-kib", type=int, choices=(256, 512, 1024, 2048, 4096, 8192, 16384), default=256)
-    parser.add_argument("--file-timeout", type=int, choices=range(1, 3601), default=300)
-    parser.add_argument("--suite-timeout", type=int, choices=range(1, 7201), default=3600)
+    parser.add_argument(
+        "--file-timeout",
+        type=int,
+        choices=range(1, 3601),
+        metavar="SECONDS",
+        default=300,
+        help="Per-file timeout in seconds (1-3600; default: 300)",
+    )
+    parser.add_argument(
+        "--suite-timeout",
+        type=int,
+        choices=range(1, 7201),
+        metavar="SECONDS",
+        default=3600,
+        help="Complete-study timeout in seconds (1-7200; default: 3600)",
+    )
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.worker:
         descriptor = json.loads(os.environ[ipc.SESSION_ENV])
         worker(
             descriptor,
-            ROOT / f"build/{args.configuration}/superzip_cli.exe",
+            ROOT / f"build/{args.configuration}/flitzzip_cli.exe",
             args.block_size_kib,
             args.file_timeout,
         )

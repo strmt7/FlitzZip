@@ -8,9 +8,9 @@
 #include <string>
 #include <string_view>
 
-namespace superzip {
+namespace flitzzip {
 
-// Purpose: Add extracted-output bytes while enforcing SuperZip's decoded output policy.
+// Purpose: Add extracted-output bytes while enforcing FlitzZip's decoded output policy.
 // Inputs: `total` is the current decoded byte count, `bytes` is the next decoded span, and `context` labels errors.
 // Outputs: Returns the updated total; throws `ArchiveError` on overflow or policy-limit excess.
 inline std::uint64_t checked_add_extracted_output_bytes(std::uint64_t total, std::uint64_t bytes,
@@ -20,7 +20,7 @@ inline std::uint64_t checked_add_extracted_output_bytes(std::uint64_t total, std
     }
     const auto updated = total + bytes;
     if (updated > kMaxExtractedOutputBytes) {
-        throw ArchiveError(std::string(context) + " exceeds SuperZip resource limit");
+        throw ArchiveError(std::string(context) + " exceeds FlitzZip resource limit");
     }
     return updated;
 }
@@ -35,9 +35,9 @@ inline std::uint64_t checked_add_archive_path_metadata_bytes(std::uint64_t total
     }
     const auto updated = total + bytes;
     if (updated > kMaxArchivePathMetadataBytes) {
-        throw ArchiveError(std::string(context) + " exceeds SuperZip path metadata limit");
+        throw ArchiveError(std::string(context) + " exceeds FlitzZip path metadata limit");
     }
     return updated;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

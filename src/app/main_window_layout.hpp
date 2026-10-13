@@ -8,7 +8,7 @@
 
 #include <windows.h>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 struct QueueLayout {
     RECT area{};
@@ -118,4 +118,4 @@ struct SettingsLayout {
     RECT show_operation_summary{};
 };
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

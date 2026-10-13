@@ -1,5 +1,5 @@
-#ifndef SUPERZIP_HUFFMAN_TABLE_PROBE_H
-#define SUPERZIP_HUFFMAN_TABLE_PROBE_H
+#ifndef FLITZZIP_HUFFMAN_TABLE_PROBE_H
+#define FLITZZIP_HUFFMAN_TABLE_PROBE_H
 #include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus

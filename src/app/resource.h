@@ -1,3 +1,3 @@
 #pragma once
 
-#define IDI_SUPERZIP_APP 101
+#define IDI_FLITZZIP_APP 101

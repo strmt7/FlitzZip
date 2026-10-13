@@ -11,11 +11,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'superzip_verification.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'flitzzip_verification.psm1') -Force
 
 # Purpose: Select a new branch's changes against its default-branch ancestor, without scanning inherited files again.
 # Inputs: Checkout root, GitHub's default branch, and initial-push head. Outputs: Changed paths; fails on missing history.
-function Get-SuperZipInitialPushPath {
+function Get-FlitzZipInitialPushPath {
     param([string]$Root, [string]$DefaultBranch, [string]$HeadRef = 'HEAD')
     if (-not $DefaultBranch -or $DefaultBranch.StartsWith('-')) { throw 'Missing or invalid default branch.' }
     $reference = "refs/remotes/origin/$DefaultBranch"
@@ -32,22 +32,22 @@ function Get-SuperZipInitialPushPath {
 
 if ($InitialPush.IsPresent) {
     if ($BaseRef -or $ChangedPath.Count) { throw 'Initial push cannot also supply a comparison range or paths.' }
-    $ChangedPath = @(Get-SuperZipInitialPushPath -Root (Split-Path -Parent $PSScriptRoot) -DefaultBranch $DefaultBranch -HeadRef $HeadRef)
+    $ChangedPath = @(Get-FlitzZipInitialPushPath -Root (Split-Path -Parent $PSScriptRoot) -DefaultBranch $DefaultBranch -HeadRef $HeadRef)
     if ($ChangedPath.Count -eq 0) {
         if ($PlanOnly.IsPresent) { Write-Output '[]' } else { Write-Output 'Initial branch contains no changes relative to its default-branch ancestor.' }
         return
     }
 }
-$plan = Get-SuperZipVerificationPlan -ChangedPath $ChangedPath -BaseRef $BaseRef -HeadRef $HeadRef -Checkpoint intermediate
+$plan = Get-FlitzZipVerificationPlan -ChangedPath $ChangedPath -BaseRef $BaseRef -HeadRef $HeadRef -Checkpoint intermediate
 # The dedicated lint/security lanes own their policy scans. This lane runs
 # actual offline mechanism contracts, never product builds or measurements.
-$contracts = @($plan.requiredLocalCommands | Where-Object { Test-SuperZipToolContractCommand -Command $_ })
+$contracts = @($plan.requiredLocalCommands | Where-Object { Test-FlitzZipToolContractCommand -Command $_ })
 if ($PlanOnly.IsPresent) {
     ConvertTo-Json -InputObject $contracts -Depth 5
     return
 }
 Write-Output "Tool contract plan: $($contracts.id -join ', ')"
 foreach ($command in $contracts) {
-    Invoke-SuperZipVerificationCommand -Command $command
+    Invoke-FlitzZipVerificationCommand -Command $command
 }
 Write-Output "Tool contracts passed. Commands executed: $($contracts.Count)."

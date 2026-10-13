@@ -5,7 +5,7 @@
 #include <mutex>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Validate the trusted HIP runtime and the calling thread's current device without gathering diagnostics.
 // Inputs: None; preserves the thread-local device selection and does not cache device availability or free memory.
@@ -83,4 +83,4 @@ bool hip_stream_ordered_allocator_supported();
 // Outputs: Returns diagnostic status in-band; memory values are not an allocation reservation.
 GpuInfo query_hip_gpu_info();
 
-}  // namespace superzip
+}  // namespace flitzzip

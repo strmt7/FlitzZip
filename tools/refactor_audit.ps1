@@ -8,7 +8,7 @@ param(
     [switch]$FailOnFindings
 )
 
-# Purpose: Audit SuperZip source files for refactoring candidates without modifying the tree.
+# Purpose: Audit FlitzZip source files for refactoring candidates without modifying the tree.
 # Inputs: Threshold parameters define large-file, large-function, and complexity-marker limits; `ChangedOnly` limits hard gates to edited line ranges; `CheckContracts` enables the noisy contract-comment heuristic.
 # Outputs: Prints parseable findings and exits nonzero only when `FailOnFindings` is set and findings exist.
 $ErrorActionPreference = "Stop"
@@ -304,19 +304,20 @@ function Measure-ComplexityMarker {
     return $count
 }
 
-# Purpose: Check whether a function has a nearby SuperZip contract comment.
+# Purpose: Check whether a function has a nearby FlitzZip contract comment.
 # Inputs: `Lines` is the full file and `Index` is the zero-based function start line.
 # Outputs: Requires all three nonempty fields in the immediately preceding comment block.
 function Test-NearbyContractComment {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines,
-        [Parameter(Mandatory = $true)][int]$Index
+        [Parameter(Mandatory = $true)][int]$Index,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.HashSet[int]]$CommentLines
     )
 
     $comments = [System.Collections.Generic.List[string]]::new()
     for ($i = $Index - 1; $i -ge [Math]::Max(0, $Index - 16); --$i) {
         if ([string]::IsNullOrWhiteSpace($Lines[$i])) { continue }
-        if ($Lines[$i] -notmatch '^\s*(//|/\*|\*|#)') { break }
+        if (-not $CommentLines.Contains($i)) { break }
         $comments.Add($Lines[$i])
     }
     $text = $comments -join "`n"
@@ -355,14 +356,16 @@ function Get-CppFunctionStart {
     $candidate = $Lines[$Index].Trim()
     if ($candidate -notmatch '\{\s*$') { return -1 }
     $start = $Index
+    $balance = ([regex]::Matches($candidate, '\(')).Count - ([regex]::Matches($candidate, '\)')).Count
     # An initializer call is part of its constructor, not a separate function declaration.
-    if ($candidate -eq '{' -or $candidate -match '^:(?!:)' -or $candidate -notmatch '\b[A-Za-z_]\w*\s*\(') {
+    if ($balance -lt 0 -or $candidate -eq '{' -or $candidate -match '^:(?!:)' -or $candidate -notmatch '\b[A-Za-z_]\w*\s*\(') {
         for ($i = $Index - 1; $i -ge [Math]::Max(0, $Index - 12); --$i) {
             $line = $Lines[$i].Trim()
             if (-not $line) { continue }
             if ($line -match '[;{}]') { break }
             $start = $i
-            if ($line -match '\b[A-Za-z_]\w*\s*\(') { break }
+            $balance += ([regex]::Matches($line, '\(')).Count - ([regex]::Matches($line, '\)')).Count
+            if ($balance -eq 0 -and $line -match '\b[A-Za-z_]\w*\s*\(') { break }
         }
     }
     if ($start -gt 0 -and $Lines[$start - 1].Trim() -eq 'extern') {
@@ -376,6 +379,7 @@ function Get-CppFunctionStart {
         $signature -notmatch '\b[A-Za-z_]\w*\s*\([^;{}]*\)\s*(const\s*)?(noexcept\s*)?(->[^{}]*)?\{\s*$') {
         return -1
     }
+    if ($start -gt 0 -and $Lines[$start - 1].Trim() -match '^template\s*<.*>\s*$') { --$start }
     return $start
 }
 
@@ -454,7 +458,7 @@ function Test-CppFile {
         if ($markers -gt $script:AuditMaxComplexityMarkers) {
             Add-RefactorFinding -Findings $Findings -Category "complex-function" -Path $Path -Line $findingStart -EndLine ($j + 1) -Detail "$markers markers"
         }
-        if ($script:AuditCheckContracts -and -not (Test-NearbyContractComment -Lines $lines -Index $signatureStart)) {
+        if ($script:AuditCheckContracts -and -not (Test-NearbyContractComment -Lines $lines -Index $signatureStart -CommentLines $projection.CommentLines)) {
             Add-RefactorFinding -Findings $Findings -Category "missing-contract" -Path $Path -Line $findingStart -EndLine ($j + 1) -Detail "No nearby Purpose/Input/Output contract comment"
         }
         if ($script:AuditCheckContracts -and $lineCount -ge 100) {

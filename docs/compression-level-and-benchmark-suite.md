@@ -1,6 +1,6 @@
 # Compression Levels And Benchmark Suite
 
-This document defines SuperZip's compression-level UI, CPU/GPU comparison
+This document defines FlitzZip's compression-level UI, CPU/GPU comparison
 rules, numerical benchmark score, and autotuning behavior.
 
 ## References Checked
@@ -12,7 +12,7 @@ Checked on 2026-06-15:
 
 The common pattern is a 0-9 compression scale where 0 means store/no
 compression, 1 means fastest, 5 is a normal/default balance in several tools,
-and 9 is maximum compression. SuperZip's native GPU archive path is not a store
+and 9 is maximum compression. FlitzZip's native GPU archive path is not a store
 mode, so the product exposes the non-store levels.
 
 ## Product Levels
@@ -27,9 +27,9 @@ mode, so the product exposes the non-store levels.
 | 6 | `--compression-level 6` | Intermediate ratio-biased tier. |
 | 7 | `--compression-level 7` | Ratio-biased compression with a larger GPU entropy sample. |
 | 8 | `--compression-level 8` | Additional high-effort search. |
-| 9 | `--compression-level 9` | Highest miniz effort for Deflate; required-HIP `.suzip` evaluates full-block entropy samples. |
+| 9 | `--compression-level 9` | Highest miniz effort for Deflate; required-HIP `.flzip` evaluates full-block entropy samples. |
 
-Native SUZIP additionally offers the separate experimental
+Native FLZIP additionally offers the separate experimental
 [Neutron star mode](neutron-star-mode-research.md), selected by `--neutron-star`
 and shown below 9 only when actual HIP capability and the required-GPU setting
 permit it. Its persisted intent and benchmark `compression_mode=neutron_star`
@@ -96,7 +96,7 @@ budgets and a codec regression with nine strictly improving payloads
 on a matching record fixture. The shared level scale also controls CPU and
 compatibility codecs, whose mappings and source-dependent outcomes differ.
 Equal output sizes are legitimate when a stronger candidate cannot improve a
-block; SuperZip does not add padding or weaken low levels to manufacture a
+block; FlitzZip does not add padding or weaken low levels to manufacture a
 difference. Distinct search budgets do not establish nine distinct sizes on
 every corpus or a universal speedup. Broader ratio strategies remain open.
 
@@ -157,16 +157,16 @@ pack both candidates. Explicit fixed/raw strategies and the existing tiny-block
 fixed fast path remain intact; dynamic wins ties and raw remains available.
 
 Independent before/after checks covered 300 real archives across native CPU
-SUZIP, ZIP, Gzip, TAR.GZ, and CPIO.GZ, with periodic, low-alphabet, random, and
+FLZIP, ZIP, Gzip, TAR.GZ, and CPIO.GZ, with periodic, low-alphabet, random, and
 repeated-record inputs. All decoded exactly; 57 became smaller and none grew.
-The previous SuperZip executable also verified every new native archive.
+The previous FlitzZip executable also verified every new native archive.
 Fixture/archive writes totaled 11,587,837 bytes, below the 64 MiB smoke cap.
 Selected level-9 results for the 511-byte period-three fixture are complete
 archive/stream sizes, measured after the separate native cutoff fix above:
 
 | Format | Before Bytes | After Bytes |
 | --- | ---: | ---: |
-| Native SUZIP, CPU | 124 | 114 |
+| Native FLZIP, CPU | 124 | 114 |
 | ZIP | 152 | 142 |
 | Gzip | 38 | 28 |
 | TAR.GZ | 110 | 99 |
@@ -284,8 +284,8 @@ retains the immutable source until all tasks have joined.
 ```powershell
 $corpus = 'corpus.bin'
 $sha = (Get-FileHash -LiteralPath $corpus -Algorithm SHA256).Hash.ToLowerInvariant()
-build/Release/superzip_cli.exe memory-benchmark --source-file $corpus --source-sha256 $sha --force-cpu --compression-level 5 --block-size-kib 8192
-build/Release/superzip_cli.exe memory-benchmark --source-file $corpus --source-sha256 $sha --require-gpu --compression-level 5 --block-size-kib 8192
+build/Release/flitzzip_cli.exe memory-benchmark --source-file $corpus --source-sha256 $sha --force-cpu --compression-level 5 --block-size-kib 8192
+build/Release/flitzzip_cli.exe memory-benchmark --source-file $corpus --source-sha256 $sha --require-gpu --compression-level 5 --block-size-kib 8192
 ```
 
 Corpus loading and SHA-256 authentication occur outside product phase timings.
@@ -376,7 +376,7 @@ variability. A single-pass score or selected candidate is insufficient
 evidence for a published performance improvement.
 
 ```powershell
-build\Release\superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
+build\Release\flitzzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
 ```
 
 The score is:

@@ -4,7 +4,7 @@
 
 #include <array>
 
-namespace superzip {
+namespace flitzzip {
 
 inline constexpr std::size_t kGpuBytePlaneHeaderBytes = 4U;
 inline constexpr std::size_t kGpuBytePlaneContextRecordBytes = 6U;
@@ -144,4 +144,4 @@ inline GpuBytePlaneContextStages parse_gpu_byte_plane_stages(std::span<const std
     return parse_gpu_byte_plane_contexts(encoded, outer);
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

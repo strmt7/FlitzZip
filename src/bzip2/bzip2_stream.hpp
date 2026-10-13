@@ -8,7 +8,7 @@
 #include <memory>
 #include <ostream>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Stream Bzip2-compressed bytes to a file with libbzip2-managed framing.
 // Inputs: Construct with `output_path` and a 1-9 libbzip2 block-size `compression_level`; callers write uncompressed
@@ -74,4 +74,4 @@ class Bzip2InputStream final : public std::istream {
     std::unique_ptr<Buffer> buffer_;
 };
 
-}  // namespace superzip
+}  // namespace flitzzip

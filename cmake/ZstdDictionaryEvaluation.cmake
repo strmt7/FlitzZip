@@ -1,7 +1,7 @@
 # Purpose: Remove the superseded C evaluator after its C++ owner is linked.
 # Inputs: Complete known predecessor text. Outputs: Preserves all adjacent
 # helpers and declarations; rejects a missing implementation boundary.
-function(superzip_rewrite_zstd_dictionary_evaluation content output)
+function(flitzzip_rewrite_zstd_dictionary_evaluation content output)
   string(CONCAT marker "/* Purpose: Measure sample compression using "
                 "the candidate dictionary.")
   string(FIND "${content}" "${marker}" begin)
@@ -28,13 +28,13 @@ endfunction()
 # Inputs: Extracted pinned COVER source after preceding repairs. Outputs:
 # Applies once or rejects unknown drift; provenance and public APIs remain
 # intact.
-function(superzip_patch_zstd_dictionary_evaluation source_dir)
+function(flitzzip_patch_zstd_dictionary_evaluation source_dir)
   set(source "${source_dir}/lib/dictBuilder/cover.c")
   file(SHA256 "${source}" actual)
   if(actual STREQUAL _zstd_dictionary_evaluation_patched)
     return()
   endif()
-  superzip_zstd_patch_is_superseded(
+  flitzzip_zstd_patch_is_superseded(
     "${actual}" "${_zstd_dictionary_evaluation_patched}" superseded)
   if(superseded)
     return()
@@ -43,8 +43,8 @@ function(superzip_patch_zstd_dictionary_evaluation source_dir)
     message(FATAL_ERROR "Zstandard patch source identity mismatch: ${source}")
   endif()
   file(READ "${source}" content)
-  superzip_rewrite_zstd_dictionary_evaluation("${content}" content)
-  superzip_write_verified_zstd_patch(
+  flitzzip_rewrite_zstd_dictionary_evaluation("${content}" content)
+  flitzzip_write_verified_zstd_patch(
     "${source}" "${actual}" "${_zstd_dictionary_evaluation_patched}"
     "${content}")
 endfunction()

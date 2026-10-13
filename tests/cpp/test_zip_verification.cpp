@@ -66,10 +66,10 @@ void corrupt_verification_zip(const std::filesystem::path& path, std::streamoff 
 void require_zip_verification_rejected(const std::filesystem::path& archive) {
     bool rejected = false;
     try {
-        static_cast<void>(superzip::verify_zip(archive));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::verify_zip(archive));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
-    } catch (const superzip::SecurityError&) {
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -94,11 +94,11 @@ TEST_CASE(zip_write_verification_precedes_publication) {
             if (existing) {
                 std::ofstream(archive, std::ios::binary) << "existing ZIP bytes";
             }
-            std::vector<superzip::ProgressSnapshot> snapshots;
-            const auto created = superzip::compress_zip(
+            std::vector<flitzzip::ProgressSnapshot> snapshots;
+            const auto created = flitzzip::compress_zip(
                 {source}, archive, 5,
                 [&](const auto& snapshot) {
-                    if (snapshot.operation == superzip::OperationKind::Verify) {
+                    if (snapshot.operation == flitzzip::OperationKind::Verify) {
                         REQUIRE_EQ(std::filesystem::exists(archive), existing);
                         if (existing) {
                             REQUIRE_EQ(read_zip_verification_file(archive), "existing ZIP bytes");
@@ -115,12 +115,12 @@ TEST_CASE(zip_write_verification_precedes_publication) {
                 REQUIRE_EQ(snapshots.back().processed_bytes, payload.size());
                 REQUIRE_EQ(snapshots.back().completed_entries, 1U);
             }
-            const auto verified = superzip::verify_zip(archive);
+            const auto verified = flitzzip::verify_zip(archive);
             REQUIRE_EQ(verified.output_bytes, payload.size());
             REQUIRE_TRUE(!verified.gpu_used);
             REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(root), std::filesystem::directory_iterator{}),
                        2);
-            static_cast<void>(superzip::extract_zip(archive, root / "extracted", false));
+            static_cast<void>(flitzzip::extract_zip(archive, root / "extracted", false));
             REQUIRE_EQ(read_zip_verification_file(root / "extracted" / source.filename()), payload);
             std::filesystem::remove_all(root);
         }
@@ -142,10 +142,10 @@ TEST_CASE(zip_write_verification_cancellation_preserves_destination) {
             }
             bool cancelled = false;
             try {
-                static_cast<void>(superzip::compress_zip(
+                static_cast<void>(flitzzip::compress_zip(
                     {source}, archive, 5,
                     [&](const auto& snapshot) {
-                        if (snapshot.operation != superzip::OperationKind::Verify) {
+                        if (snapshot.operation != flitzzip::OperationKind::Verify) {
                             return;
                         }
                         const bool at_start = snapshot.processed_bytes == 0;
@@ -153,11 +153,11 @@ TEST_CASE(zip_write_verification_cancellation_preserves_destination) {
                             snapshot.processed_bytes > 0 && snapshot.processed_bytes < snapshot.total_bytes;
                         const bool at_end = snapshot.completed_entries == snapshot.total_entries;
                         if ((phase == 0 && at_start) || (phase == 1 && in_file) || (phase == 2 && at_end)) {
-                            throw superzip::ArchiveError("ZIP verification cancelled");
+                            throw flitzzip::ArchiveError("ZIP verification cancelled");
                         }
                     },
                     true));
-            } catch (const superzip::ArchiveError& error) {
+            } catch (const flitzzip::ArchiveError& error) {
                 REQUIRE_EQ(std::string(error.what()), "ZIP verification cancelled");
                 cancelled = true;
             }
@@ -200,13 +200,13 @@ TEST_CASE(zip_verification_preserves_long_member_names) {
     name += "payload.txt";
     REQUIRE_TRUE(name.size() > 511U);
     write_verification_zip(archive, {{name, "long member payload"}});
-    const auto verified = superzip::verify_zip(archive);
+    const auto verified = flitzzip::verify_zip(archive);
     REQUIRE_EQ(verified.entries, 1U);
-    static_cast<void>(superzip::extract_zip(archive, root / "extracted", false));
+    static_cast<void>(flitzzip::extract_zip(archive, root / "extracted", false));
     const auto target =
-        std::filesystem::path(superzip::windows_api_path(root / "extracted" / std::filesystem::path(name)));
+        std::filesystem::path(flitzzip::windows_api_path(root / "extracted" / std::filesystem::path(name)));
     REQUIRE_EQ(read_zip_verification_file(target), "long member payload");
-    std::filesystem::remove_all(std::filesystem::path(superzip::windows_api_path(root)));
+    std::filesystem::remove_all(std::filesystem::path(flitzzip::windows_api_path(root)));
 }
 
 // Purpose: Detect stored payload corruption without writing a decompressed copy.
@@ -248,8 +248,8 @@ TEST_CASE(zip_verification_empty_archives_report_progress) {
         const auto root = test_temp_dir("zip-verification-empty-progress");
         const auto archive = root / "empty.zip";
         write_verification_zip(archive, entries);
-        std::vector<superzip::ProgressSnapshot> snapshots;
-        const auto stats = superzip::verify_zip(archive, [&](const auto& snapshot) { snapshots.push_back(snapshot); });
+        std::vector<flitzzip::ProgressSnapshot> snapshots;
+        const auto stats = flitzzip::verify_zip(archive, [&](const auto& snapshot) { snapshots.push_back(snapshot); });
         REQUIRE_TRUE(!snapshots.empty());
         REQUIRE_EQ(snapshots.back().completed_entries, entries.size());
         REQUIRE_EQ(stats.entries, entries.size());

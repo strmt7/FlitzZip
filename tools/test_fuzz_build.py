@@ -90,9 +90,9 @@ class FuzzBuildTests(unittest.TestCase):
                     self.assertEqual(len(instances), 2, name)
                     self.assertEqual(sum("-Ithird_party/miniz" in args for args in instances), 1, name)
                 links = {Path(args[args.index("-o") + 1]).name: args for args in commands if "-c" not in args}
-                self.assertEqual(set(links), {f"superzip_{name}_fuzzer" for name in TARGETS})
+                self.assertEqual(set(links), {f"flitzzip_{name}_fuzzer" for name in TARGETS})
                 for name, expected_core in TARGETS.items():
-                    args = links[f"superzip_{name}_fuzzer"]
+                    args = links[f"flitzzip_{name}_fuzzer"]
                     self.assertIn("-fsanitize=fuzzer", args)
                     objects = [Path(arg) for arg in args if Path(arg).stem in CORE and arg.endswith(".o")]
                     self.assertEqual({obj.stem for obj in objects}, set(expected_core), name)
@@ -105,7 +105,7 @@ class FuzzBuildTests(unittest.TestCase):
                     self.assertIn(f"-fsanitize={sanitizer}", args)
                     if any(arg.endswith(".cpp") for arg in args):
                         self.assertIn("-std=c++20", args)
-                        self.assertIn("-DSUPERZIP_ENABLE_HIP=0", args)
+                        self.assertIn("-DFLITZZIP_ENABLE_HIP=0", args)
                         self.assertIn("-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION=1", args)
                     if sanitizer == "undefined":
                         self.assertIn("-fsanitize=alignment", args)
@@ -127,7 +127,7 @@ class FuzzBuildTests(unittest.TestCase):
             self.assertEqual(result.returncode, 7, result.stderr)
             links = {Path(args[args.index("-o") + 1]).name for args in commands if "-c" not in args}
             self.assertTrue(
-                links.isdisjoint({"superzip_sevenzip_fuzzer", "superzip_lzma_fuzzer", "superzip_lzip_fuzzer"})
+                links.isdisjoint({"flitzzip_sevenzip_fuzzer", "flitzzip_lzma_fuzzer", "flitzzip_lzip_fuzzer"})
             )
 
 

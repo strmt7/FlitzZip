@@ -1,7 +1,7 @@
 # Purpose: Build the canonical pinned Windows Zstandard library for product or
 # isolated validation. Inputs: source_root owns the identity-verified patched
 # dependency. Outputs: Declares libzstd_shared and returns its include root.
-function(superzip_add_zstd_library source_root)
+function(flitzzip_add_zstd_library source_root)
   # Build the upstream C library without its CLI/test/assembler project. MSVC
   # uses the portable decoder; upstream disables its GNU assembly here.
   set(library_directory "${source_root}/lib")
@@ -40,7 +40,7 @@ function(superzip_add_zstd_library source_root)
             XXH_NAMESPACE=ZSTD_
             _CRT_SECURE_NO_WARNINGS)
   set_target_properties(libzstd_shared PROPERTIES OUTPUT_NAME libzstd)
-  set(SUPERZIP_ZSTD_LIBRARY_DIR
+  set(FLITZZIP_ZSTD_LIBRARY_DIR
       "${library_directory}"
       PARENT_SCOPE)
 endfunction()

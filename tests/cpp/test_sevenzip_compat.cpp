@@ -63,7 +63,7 @@ void append_le64(std::vector<unsigned char>& bytes, std::uint64_t value) {
 // Inputs: `bytes` is the exact serialized header region.
 // Outputs: Returns its CRC-32.
 std::uint32_t sevenzip_crc32(std::span<const unsigned char> bytes) {
-    return superzip::crc32(std::as_bytes(bytes));
+    return flitzzip::crc32(std::as_bytes(bytes));
 }
 
 // Purpose: Wrap an unencoded next-header body in a complete 7z signature header.
@@ -116,20 +116,20 @@ TEST_CASE(sevenzip_extraction_reads_nested_payload) {
     const auto archive = root / "sample.7z";
     write_7z_fixture(archive);
 
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::SevenZip);
-    const auto info = superzip::archive_format_info(superzip::ArchiveFormat::SevenZip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::SevenZip);
+    const auto info = flitzzip::archive_format_info(flitzzip::ArchiveFormat::SevenZip);
     REQUIRE_TRUE(!info.can_create);
     REQUIRE_TRUE(info.can_extract);
     REQUIRE_TRUE(info.bundled_native);
     REQUIRE_TRUE(!info.gpu_native);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_7z(archive, output, false);
+    const auto stats = flitzzip::extract_7z(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(std::string_view("sevenzip payload").size()));
     REQUIRE_TRUE(!stats.gpu_used);
     REQUIRE_EQ(read_text_file(output / "nested" / "payload.txt"), "sevenzip payload");
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Preserve UTF-16 archive names through extraction and explicit replacement.
@@ -141,8 +141,8 @@ TEST_CASE(sevenzip_unicode_names_extract_and_overwrite) {
     const auto archive = root / L"archive-\u03a9.7z";
     const auto output = root / L"output-\u00e9";
     const auto relative = std::filesystem::path(L"caf\u00e9") / L"\u65e5\u672c-\U0001f680.txt";
-    write_7z_fixture(archive, superzip_test::kUnicodeSevenZipFixture);
-    const auto stats = superzip::extract_7z(archive, output, false);
+    write_7z_fixture(archive, flitzzip_test::kUnicodeSevenZipFixture);
+    const auto stats = flitzzip::extract_7z(archive, output, false);
     REQUIRE_EQ(stats.entries, 4U);
     REQUIRE_EQ(stats.output_bytes, std::string_view("sevenzip unicode payload\n").size());
     REQUIRE_EQ(read_text_file(output / relative), "sevenzip unicode payload\n");
@@ -152,15 +152,15 @@ TEST_CASE(sevenzip_unicode_names_extract_and_overwrite) {
     std::ofstream(output / relative, std::ios::binary | std::ios::trunc) << "old";
     bool refused = false;
     try {
-        (void)superzip::extract_7z(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_7z(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         refused = true;
     }
     REQUIRE_TRUE(refused);
     REQUIRE_EQ(read_text_file(output / relative), "old");
-    (void)superzip::extract_7z(archive, output, true);
+    (void)flitzzip::extract_7z(archive, output, true);
     REQUIRE_EQ(read_text_file(output / relative), "sevenzip unicode payload\n");
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 
@@ -177,8 +177,8 @@ TEST_CASE(sevenzip_extraction_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_7z(archive, output, false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_7z(archive, output, false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -195,8 +195,8 @@ TEST_CASE(sevenzip_extraction_rejects_truncated_archive_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_7z(archive, root / "out", false));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_7z(archive, root / "out", false));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -215,8 +215,8 @@ TEST_CASE(sevenzip_extraction_rejects_corrupt_payload_crc_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_7z(archive, root / "out", false));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_7z(archive, root / "out", false));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -245,8 +245,8 @@ TEST_CASE(sevenzip_extraction_rejects_malformed_filesinfo_singletons) {
 
         bool rejected = false;
         try {
-            static_cast<void>(superzip::extract_7z(archive, root / "out", false));
-        } catch (const superzip::Error&) {
+            static_cast<void>(flitzzip::extract_7z(archive, root / "out", false));
+        } catch (const flitzzip::Error&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -256,7 +256,7 @@ TEST_CASE(sevenzip_extraction_rejects_malformed_filesinfo_singletons) {
 
 // Purpose: Verify a 7z archive with no Name property receives a defined empty SDK name instead of a null dereference.
 // Inputs: One empty-stream entry with no FilesInfo Name record.
-// Outputs: SuperZip rejects the empty path through normal path validation and creates no output.
+// Outputs: FlitzZip rejects the empty path through normal path validation and creates no output.
 TEST_CASE(sevenzip_extraction_rejects_missing_name_property_without_crash) {
     constexpr std::array<unsigned char, 8> next_header{0x01, 0x05, 0x01, 0x0E, 0x01, 0x80, 0x00, 0x00};
     const auto root = test_temp_dir("sevenzip-missing-name");
@@ -266,8 +266,8 @@ TEST_CASE(sevenzip_extraction_rejects_missing_name_property_without_crash) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_7z(archive, root / "out", false));
-    } catch (const superzip::Error&) {
+        static_cast<void>(flitzzip::extract_7z(archive, root / "out", false));
+    } catch (const flitzzip::Error&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -308,14 +308,14 @@ TEST_CASE(sevenzip_folder_scanner_preserves_descriptor_and_binding_bounds) {
         const auto archive = root / "folder.7z";
         write_7z_fixture(archive, make_unencoded_7z(header));
         if (index == 0) {
-            static_cast<void>(superzip::extract_7z(archive, root / "out", false));
+            static_cast<void>(flitzzip::extract_7z(archive, root / "out", false));
             REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(1));
             REQUIRE_EQ(std::filesystem::file_size(root / "out" / "x"), static_cast<std::uintmax_t>(0));
         } else {
             bool rejected = false;
             try {
-                static_cast<void>(superzip::extract_7z(archive, root / "out", false));
-            } catch (const superzip::ArchiveError&) {
+                static_cast<void>(flitzzip::extract_7z(archive, root / "out", false));
+            } catch (const flitzzip::ArchiveError&) {
                 rejected = true;
             }
             REQUIRE_TRUE(rejected);
@@ -340,7 +340,7 @@ TEST_CASE(sevenzip_header_maps_empty_entries_across_bitmap_boundary) {
     const auto root = test_temp_dir("sevenzip-header-bitmap-boundary");
     const auto archive = root / "empty-entries.7z";
     write_7z_fixture(archive, make_unencoded_7z(header));
-    static_cast<void>(superzip::extract_7z(archive, root / "out", false));
+    static_cast<void>(flitzzip::extract_7z(archive, root / "out", false));
     REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(5));
     for (unsigned int index = 0; index < 9; ++index) {
         const auto path = root / "out" / std::string(1, static_cast<char>('a' + index));

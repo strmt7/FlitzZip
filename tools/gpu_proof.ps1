@@ -4,17 +4,17 @@ param(
     [string]$WorkRoot = $env:TEMP
 )
 
-# Purpose: Prove that the required-GPU SUZIP filesystem path submits AMD HIP work and preserves data with a tiny bounded write workload.
+# Purpose: Prove that the required-GPU FLZIP filesystem path submits AMD HIP work and preserves data with a tiny bounded write workload.
 # Inputs: `Configuration` selects the built CLI, `SizeMiB` controls the small temporary proof workload, and `WorkRoot` controls temporary storage.
 # Outputs: Prints operation statistics and throws unless HIP kernel launches, HIP event time, transfer bytes, and restore hashes all validate.
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
+$cli = Join-Path $repo "build\$Configuration\flitzzip_cli.exe"
 if (-not (Test-Path $cli)) {
     throw "CLI binary not found. Run tools/build.ps1 first."
 }
 
-# Purpose: Parse one stable `superzip_cli` key/value statistics line.
+# Purpose: Parse one stable `flitzzip_cli` key/value statistics line.
 # Inputs: `Line` is one CLI output line containing `entries=... seconds=...`.
 # Outputs: Returns a dictionary of parsed keys and values.
 function ConvertFrom-StatsLine {
@@ -119,7 +119,7 @@ function Invoke-StatsCommand {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     $output = & $cli @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "superzip_cli failed with exit code $LASTEXITCODE while running: $($Arguments -join ' ')"
+        throw "flitzzip_cli failed with exit code $LASTEXITCODE while running: $($Arguments -join ' ')"
     }
     $output | ForEach-Object { Write-Information -MessageData $_ -InformationAction Continue }
     $statsLine = $output | Where-Object { $_ -match '^entries=' } | Select-Object -Last 1
@@ -157,7 +157,7 @@ function Write-ProofFile {
     )
     $buffer = New-Object byte[] (1MB)
     if ($Kind -eq "Text") {
-        $line = [Text.Encoding]::UTF8.GetBytes("SuperZip AMD HIP proof line with repeated fields and deterministic payload.`n")
+        $line = [Text.Encoding]::UTF8.GetBytes("FlitzZip AMD HIP proof line with repeated fields and deterministic payload.`n")
         for ($i = 0; $i -lt $buffer.Length; ++$i) {
             $buffer[$i] = $line[$i % $line.Length]
         }
@@ -186,7 +186,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 New-Item -ItemType Directory -Force -Path $WorkRoot | Out-Null
-$work = Join-Path $WorkRoot ("superzip-gpu-proof-" + [guid]::NewGuid().ToString("N"))
+$work = Join-Path $WorkRoot ("flitzzip-gpu-proof-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 try {
     $sourceRoot = Join-Path $work "source"
@@ -196,17 +196,17 @@ try {
     Write-ProofFile -Path (Join-Path $sourceRoot "text.log") -Bytes $textBytes -Kind Text
     Write-ProofFile -Path (Join-Path $sourceRoot "random.bin") -Bytes $randomBytes -Kind Random
 
-    $archive = Join-Path $work "proof.suzip"
-    $archiveVerified = Join-Path $work "proof-verified.suzip"
-    $invalidArchive = Join-Path $work "invalid.suzip"
+    $archive = Join-Path $work "proof.flzip"
+    $archiveVerified = Join-Path $work "proof-verified.flzip"
+    $invalidArchive = Join-Path $work "invalid.flzip"
     $outRoot = Join-Path $work "out"
 
-    Invoke-ExpectedFailure -Arguments @("compress", "--format", "suzip", "--require-gpu", "--force-cpu", "--output", $invalidArchive, $sourceRoot)
+    Invoke-ExpectedFailure -Arguments @("compress", "--format", "flzip", "--require-gpu", "--force-cpu", "--output", $invalidArchive, $sourceRoot)
 
-    $compress = Invoke-StatsCommand -Arguments @("compress", "--format", "suzip", "--require-gpu", "--workers", "16", "--compression-level", "1", "--output", $archive, $sourceRoot)
-    $compressVerified = Invoke-StatsCommand -Arguments @("compress", "--format", "suzip", "--require-gpu", "--workers", "16", "--compression-level", "1", "--verify-after-write", "--output", $archiveVerified, $sourceRoot)
+    $compress = Invoke-StatsCommand -Arguments @("compress", "--format", "flzip", "--require-gpu", "--workers", "16", "--compression-level", "1", "--output", $archive, $sourceRoot)
+    $compressVerified = Invoke-StatsCommand -Arguments @("compress", "--format", "flzip", "--require-gpu", "--workers", "16", "--compression-level", "1", "--verify-after-write", "--output", $archiveVerified, $sourceRoot)
     $verify = Invoke-StatsCommand -Arguments @("verify", "--require-gpu", "--workers", "16", $archive)
-    $extract = Invoke-StatsCommand -Arguments @("extract", "--format", "suzip", "--require-gpu", "--workers", "16", "--overwrite", "--output", $outRoot, $archive)
+    $extract = Invoke-StatsCommand -Arguments @("extract", "--format", "flzip", "--require-gpu", "--workers", "16", "--overwrite", "--output", $outRoot, $archive)
 
     Assert-GpuProofStat -Stats $compress -Label "compress" -RequireNativeCompressedBlocks $true
     Assert-GpuProofStat -Stats $compressVerified -Label "compress --verify-after-write" -RequireNativeCompressedBlocks $true

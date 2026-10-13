@@ -10,13 +10,13 @@
 
 // Exact fixture bytes imported from the pinned archive tests/legacy.c.
 // Version four remains a rejection control; product compatibility begins at version five.
-#ifndef SUPERZIP_TEST_ZSTD_LEGACY_FIXTURE_HPP
-#define SUPERZIP_TEST_ZSTD_LEGACY_FIXTURE_HPP
+#ifndef FLITZZIP_TEST_ZSTD_LEGACY_FIXTURE_HPP
+#define FLITZZIP_TEST_ZSTD_LEGACY_FIXTURE_HPP
 
 #include <array>
 #include <cstddef>
 
-namespace superzip_test {
+namespace flitzzip_test {
 
 inline constexpr std::array<unsigned char, 917> kLegacyCompressed{
     0x24U, 0xB5U, 0x2FU, 0xFDU, 0x00U, 0x00U, 0x00U, 0xBBU, 0xB0U, 0x02U, 0xC0U, 0x10U, 0x00U, 0x1EU, 0xB0U, 0x01U,
@@ -111,6 +111,6 @@ inline constexpr std::array<LegacyFixtureExtent, 5> kLegacyFrames{{
     {8U, 738U, 179U},
 }};
 
-}  // namespace superzip_test
+}  // namespace flitzzip_test
 
 #endif

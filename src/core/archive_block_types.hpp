@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace superzip {
+namespace flitzzip {
 
 enum class BlockKind : std::uint8_t {
     Raw = 0,
@@ -40,4 +40,4 @@ struct BlockDescriptor {
     std::uint32_t encoded_len = 0;
 };
 
-}  // namespace superzip
+}  // namespace flitzzip

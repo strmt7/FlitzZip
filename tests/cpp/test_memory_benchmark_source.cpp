@@ -25,8 +25,8 @@ bool validation_rejected(std::span<const std::byte> bytes, std::uint64_t offset,
                          std::string_view profile, std::span<const std::byte> source = {}) {
     std::vector<std::byte> scratch;
     try {
-        superzip::cli::validate_memory_benchmark_bytes(bytes, offset, total, profile, scratch, source);
-    } catch (const superzip::ArchiveError&) {
+        flitzzip::cli::validate_memory_benchmark_bytes(bytes, offset, total, profile, scratch, source);
+    } catch (const flitzzip::ArchiveError&) {
         return true;
     }
     return false;
@@ -39,8 +39,8 @@ std::string parallel_validation_error(std::span<const std::byte> bytes, std::uin
                                       std::string_view profile, std::uint32_t workers,
                                       std::span<const std::byte> source = {}) {
     try {
-        superzip::cli::validate_memory_benchmark_bytes_parallel(bytes, offset, total, profile, workers, source);
-    } catch (const superzip::ArchiveError& error) {
+        flitzzip::cli::validate_memory_benchmark_bytes_parallel(bytes, offset, total, profile, workers, source);
+    } catch (const flitzzip::ArchiveError& error) {
         return error.what();
     }
     return {};
@@ -56,7 +56,7 @@ TEST_CASE(memory_benchmark_stream_preserves_binary_bytes) {
         source.push_back(static_cast<char>(value));
     }
     std::istringstream input(source, std::ios::binary);
-    const auto bytes = superzip::cli::load_memory_benchmark_stream(input, source.size());
+    const auto bytes = flitzzip::cli::load_memory_benchmark_stream(input, source.size());
     REQUIRE_EQ(bytes.size(), source.size());
     for (std::size_t index = 0U; index < bytes.size(); ++index) {
         REQUIRE_EQ(std::to_integer<unsigned int>(bytes[index]), static_cast<unsigned int>(index));
@@ -68,12 +68,12 @@ TEST_CASE(memory_benchmark_stream_preserves_binary_bytes) {
 // Outputs: Every invalid source raises ArchiveError; no oversized fixture allocation is needed.
 TEST_CASE(memory_benchmark_stream_rejects_invalid_extents_and_reads) {
     for (const auto size :
-         {std::size_t{0}, std::size_t{1}, std::size_t{3}, superzip::cli::kMemoryBenchmarkCorpusMaxBytes + 1U}) {
+         {std::size_t{0}, std::size_t{1}, std::size_t{3}, flitzzip::cli::kMemoryBenchmarkCorpusMaxBytes + 1U}) {
         std::istringstream input("ab", std::ios::binary);
         bool rejected = false;
         try {
-            (void)superzip::cli::load_memory_benchmark_stream(input, size);
-        } catch (const superzip::ArchiveError&) {
+            (void)flitzzip::cli::load_memory_benchmark_stream(input, size);
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -82,8 +82,8 @@ TEST_CASE(memory_benchmark_stream_rejects_invalid_extents_and_reads) {
     failed.setstate(std::ios::badbit);
     bool rejected = false;
     try {
-        (void)superzip::cli::load_memory_benchmark_stream(failed, 2U);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::cli::load_memory_benchmark_stream(failed, 2U);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -96,16 +96,16 @@ TEST_CASE(memory_benchmark_source_offsets_and_tails) {
     constexpr std::size_t total = 2U * 1024U * 1024U + 123U;
     std::vector<std::byte> full(total), scratch;
     for (const auto profile : profiles) {
-        superzip::cli::fill_memory_benchmark_chunk(full, 0, total, profile);
+        flitzzip::cli::fill_memory_benchmark_chunk(full, 0, total, profile);
         for (const auto offset : {0U, 1023U, 16381U, 65533U, 1048573U}) {
             const auto view = std::span(full).subspan(offset, 65537U);
-            superzip::cli::validate_memory_benchmark_bytes(view, offset, total, profile, scratch);
-            REQUIRE_TRUE(scratch.capacity() <= superzip::cli::kMemoryBenchmarkReferenceBytes);
+            flitzzip::cli::validate_memory_benchmark_bytes(view, offset, total, profile, scratch);
+            REQUIRE_TRUE(scratch.capacity() <= flitzzip::cli::kMemoryBenchmarkReferenceBytes);
             std::vector<std::byte> slice(view.begin(), view.end());
             slice.back() ^= std::byte{1};
             REQUIRE_TRUE(validation_rejected(slice, offset, total, profile));
         }
-        superzip::cli::validate_memory_benchmark_bytes(std::span(full).last(123U), total - 123U, total, profile,
+        flitzzip::cli::validate_memory_benchmark_bytes(std::span(full).last(123U), total - 123U, total, profile,
                                                        scratch);
     }
     REQUIRE_TRUE(validation_rejected(std::span(full).first(2U), total - 1U, total, "Mixed"));
@@ -122,10 +122,10 @@ TEST_CASE(memory_benchmark_source_rejects_crc_collision) {
     collision[61] = std::byte{0x8e};
     collision[62] = std::byte{0xd3};
     collision[63] = std::byte{0xca};
-    REQUIRE_EQ(superzip::crc32(original), 0x758d6336U);
-    REQUIRE_EQ(superzip::crc32(collision), superzip::crc32(original));
+    REQUIRE_EQ(flitzzip::crc32(original), 0x758d6336U);
+    REQUIRE_EQ(flitzzip::crc32(collision), flitzzip::crc32(original));
     std::vector<std::byte> scratch;
-    superzip::cli::validate_memory_benchmark_bytes(original, 0, 640U, "Compressible", scratch);
+    flitzzip::cli::validate_memory_benchmark_bytes(original, 0, 640U, "Compressible", scratch);
     REQUIRE_TRUE(validation_rejected(collision, 0, 640U, "Compressible"));
     REQUIRE_TRUE(!parallel_validation_error(collision, 0, 640U, "Compressible", 64U).empty());
 }
@@ -140,7 +140,7 @@ TEST_CASE(memory_benchmark_source_parallel_partitions) {
     const auto stride = extent / 3U;
     std::vector<std::byte> bytes(extent);
     for (const auto profile : profiles) {
-        superzip::cli::fill_memory_benchmark_chunk(bytes, offset, total, profile);
+        flitzzip::cli::fill_memory_benchmark_chunk(bytes, offset, total, profile);
         for (const auto workers : {1U, 2U, 64U}) {
             REQUIRE_TRUE(parallel_validation_error(bytes, offset, total, profile, workers).empty());
         }
@@ -178,17 +178,17 @@ TEST_CASE(memory_benchmark_source_parallel_admission) {
 // Inputs: Small unaligned virtual windows encoded with the production CPU policy.
 // Outputs: Requires full decoded equality, exact lengths and CPU backend identity without filesystem payloads.
 TEST_CASE(memory_benchmark_source_owned_cpu_roundtrip) {
-    const superzip::GpuCodecOptions options{
+    const flitzzip::GpuCodecOptions options{
         .require_gpu = false, .force_cpu = true, .block_size = 256U * 1024U, .worker_count = 2};
     std::vector<std::byte> scratch;
     for (const auto profile : profiles) {
         std::vector<std::byte> input(256U * 1024U + 37U);
-        superzip::cli::fill_memory_benchmark_chunk(input, 1048559U, 4U * 1024U * 1024U, profile);
-        auto encoded = superzip::encode_owned_chunk(std::move(input), options);
-        auto decoded = superzip::decode_owned_chunk(encoded.payload, encoded.blocks, 256U * 1024U + 37U, options);
+        flitzzip::cli::fill_memory_benchmark_chunk(input, 1048559U, 4U * 1024U * 1024U, profile);
+        auto encoded = flitzzip::encode_owned_chunk(std::move(input), options);
+        auto decoded = flitzzip::decode_owned_chunk(encoded.payload, encoded.blocks, 256U * 1024U + 37U, options);
         REQUIRE_TRUE(!decoded.gpu_used);
         REQUIRE_EQ(decoded.bytes().size(), 256U * 1024U + 37U);
-        superzip::cli::validate_memory_benchmark_bytes(decoded.bytes(), 1048559U, 4U * 1024U * 1024U, profile, scratch);
+        flitzzip::cli::validate_memory_benchmark_bytes(decoded.bytes(), 1048559U, 4U * 1024U * 1024U, profile, scratch);
     }
 }
 
@@ -196,21 +196,21 @@ TEST_CASE(memory_benchmark_source_owned_cpu_roundtrip) {
 // Inputs: Small virtual windows on a HIP-capable host; hosted CPU-only validation reports explicit absence.
 // Outputs: Requires GPU encode/decode identity and full byte equality; unavailable HIP is visibly untested.
 TEST_CASE(memory_benchmark_source_owned_hip_roundtrip) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         std::cout << "HIP bytewise source roundtrip not exercised: HIP unavailable\n";
         return;
     }
-    const superzip::GpuCodecOptions options{.require_gpu = true, .block_size = 256U * 1024U, .worker_count = 2};
+    const flitzzip::GpuCodecOptions options{.require_gpu = true, .block_size = 256U * 1024U, .worker_count = 2};
     std::vector<std::byte> scratch;
     for (const auto profile : profiles) {
         std::vector<std::byte> input(256U * 1024U + 37U);
-        superzip::cli::fill_memory_benchmark_chunk(input, 1048559U, 4U * 1024U * 1024U, profile);
-        auto encoded = superzip::encode_owned_chunk(std::move(input), options);
+        flitzzip::cli::fill_memory_benchmark_chunk(input, 1048559U, 4U * 1024U * 1024U, profile);
+        auto encoded = flitzzip::encode_owned_chunk(std::move(input), options);
         REQUIRE_TRUE(encoded.gpu_used);
-        auto decoded = superzip::decode_owned_chunk(encoded.payload, encoded.blocks, 256U * 1024U + 37U, options);
+        auto decoded = flitzzip::decode_owned_chunk(encoded.payload, encoded.blocks, 256U * 1024U + 37U, options);
         REQUIRE_TRUE(decoded.gpu_used);
         REQUIRE_EQ(decoded.bytes().size(), 256U * 1024U + 37U);
-        superzip::cli::validate_memory_benchmark_bytes(decoded.bytes(), 1048559U, 4U * 1024U * 1024U, profile, scratch);
+        flitzzip::cli::validate_memory_benchmark_bytes(decoded.bytes(), 1048559U, 4U * 1024U * 1024U, profile, scratch);
     }
 }
 
@@ -219,12 +219,12 @@ TEST_CASE(memory_benchmark_source_owned_hip_roundtrip) {
 // Outputs: Requires exact fill/comparison, zero reference scratch and deterministic parallel corruption rejection.
 TEST_CASE(memory_benchmark_preloaded_source_ranges_and_corruption) {
     std::vector<std::byte> source(17U * 1024U * 1024U + 37U), scratch;
-    superzip::cli::fill_memory_benchmark_chunk(source, 0, source.size(), "Mixed");
+    flitzzip::cli::fill_memory_benchmark_chunk(source, 0, source.size(), "Mixed");
     for (const auto offset : {0U, 65533U, 8388607U}) {
         std::vector<std::byte> copy(65537U);
-        superzip::cli::fill_memory_benchmark_chunk(copy, offset, source.size(), "Corpus", source);
+        flitzzip::cli::fill_memory_benchmark_chunk(copy, offset, source.size(), "Corpus", source);
         REQUIRE_TRUE(std::equal(copy.begin(), copy.end(), source.begin() + offset));
-        superzip::cli::validate_memory_benchmark_bytes(copy, offset, source.size(), "Corpus", scratch, source);
+        flitzzip::cli::validate_memory_benchmark_bytes(copy, offset, source.size(), "Corpus", scratch, source);
     }
     REQUIRE_TRUE(scratch.empty());
     REQUIRE_TRUE(parallel_validation_error(source, 0, source.size(), "Corpus", 4U, source).empty());
@@ -239,8 +239,8 @@ TEST_CASE(memory_benchmark_preloaded_source_ranges_and_corruption) {
     std::vector<std::byte> too_long(2U);
     bool rejected = false;
     try {
-        superzip::cli::fill_memory_benchmark_chunk(too_long, source.size() - 1U, source.size(), "Corpus", source);
-    } catch (const superzip::ArchiveError&) {
+        flitzzip::cli::fill_memory_benchmark_chunk(too_long, source.size() - 1U, source.size(), "Corpus", source);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

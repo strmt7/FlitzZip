@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <string>
 
-namespace superzip {
+namespace flitzzip {
 
 struct ZstdCompressionContext;
 struct ZstdDecompressionStream;
@@ -111,6 +111,13 @@ class ZstdRuntime final {
     [[nodiscard]] std::size_t decompress_block(void* destination, std::size_t capacity, const void* source,
                                                std::size_t source_size) const;
 
+    // Purpose: Decode independent native frames while reusing one worker-owned decoder workspace.
+    // Inputs: A non-null exclusive decoder context and bounded caller-owned input/output buffers.
+    // Outputs: Returns decoded bytes or an error code; no preceding frame or dictionary is inherited.
+    [[nodiscard]] std::size_t decompress_block_with_context(ZstdDecompressionStream* context, void* destination,
+                                                            std::size_t capacity, const void* source,
+                                                            std::size_t source_size) const;
+
     // Purpose: Locate the end of the first untrusted Zstandard frame.
     // Inputs: A bounded encoded block span.
     // Outputs: Returns the first frame's byte length or an error code for invalid framing.
@@ -167,6 +174,8 @@ class ZstdRuntime final {
                                                        std::size_t, int);
     using CompressBoundFn = std::size_t (*)(std::size_t);
     using DecompressBlockFn = std::size_t (*)(void*, std::size_t, const void*, std::size_t);
+    using DecompressBlockWithContextFn = std::size_t (*)(ZstdDecompressionStream*, void*, std::size_t, const void*,
+                                                         std::size_t);
     using FirstFrameSizeFn = std::size_t (*)(const void*, std::size_t);
     using FrameContentSizeFn = unsigned long long (*)(const void*, std::size_t);
     using CreateDecompressionStreamFn = ZstdDecompressionStream* (*)();
@@ -189,6 +198,7 @@ class ZstdRuntime final {
     CompressBlockWithContextFn compress_block_with_context_ = nullptr;
     CompressBoundFn block_compress_bound_ = nullptr;
     DecompressBlockFn decompress_block_ = nullptr;
+    DecompressBlockWithContextFn decompress_block_with_context_ = nullptr;
     FirstFrameSizeFn first_frame_size_ = nullptr;
     FrameContentSizeFn frame_content_size_ = nullptr;
     CreateDecompressionStreamFn create_decompression_stream_ = nullptr;
@@ -205,4 +215,4 @@ class ZstdRuntime final {
 // Outputs: Returns a validated runtime object or throws if the app-local DLL is unavailable.
 [[nodiscard]] const ZstdRuntime& zstd_runtime();
 
-}  // namespace superzip
+}  // namespace flitzzip

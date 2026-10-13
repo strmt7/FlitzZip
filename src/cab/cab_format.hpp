@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 struct CabEntryInfo {
     std::string path;
@@ -28,4 +28,4 @@ std::string normalize_cab_entry_path(std::string raw_path);
 // resource-limit violations.
 CabMetadata scan_cab_metadata(const std::filesystem::path& archive_path);
 
-}  // namespace superzip
+}  // namespace flitzzip

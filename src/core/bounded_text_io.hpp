@@ -8,7 +8,7 @@
 #include <string>
 #include <string_view>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Read one archive text line without allocating beyond its format's metadata limit.
 // Inputs: `input` supplies bytes, `line` receives CR/LF-stripped content, and `limit`/`format` define
@@ -25,7 +25,7 @@ inline bool read_bounded_text_line(std::istream& input, std::string& line, std::
             return true;
         }
         if (line.size() >= limit) {
-            throw ArchiveError(std::string(format) + " line exceeds SuperZip metadata limit");
+            throw ArchiveError(std::string(format) + " line exceeds FlitzZip metadata limit");
         }
         line.push_back(static_cast<char>(byte));
     }
@@ -52,4 +52,4 @@ inline void write_archive_text_line(std::ostream& output, std::string_view line,
     }
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

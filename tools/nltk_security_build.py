@@ -45,7 +45,7 @@ def recipe() -> dict:
         data.get("schema") != 1
         or data.get("project") != "nltk"
         or not re.fullmatch(r"[a-f0-9]{40}", data.get("commit", ""))
-        or not re.fullmatch(r"3\.10\.3\+superzip\.security[0-9]+\.g[a-f0-9]+", data.get("version", ""))
+        or not re.fullmatch(r"3\.10\.3\+flitzzip\.security[0-9]+\.g[a-f0-9]+", data.get("version", ""))
         or data.get("source") != "nltk-source.zip"
         or type(data.get("source_date_epoch")) is not int
     ):
@@ -200,25 +200,25 @@ def identify_build(source: Path, data: dict) -> None:
         raise ValueError("Unexpected upstream NLTK version")
     version.write_text(data["version"] + "\n", encoding="ascii", newline="\n")
     notice = (
-        "SuperZip development-tool security build\n\n"
+        "FlitzZip development-tool security build\n\n"
         "Upstream: NLTK, https://github.com/nltk/nltk\n"
         f"Exact upstream commit: {data['commit']}\n"
         f"Upstream version file: {data['upstream_version']}\n"
         f"Downstream version: {data['version']}\n\n"
         "This is a separately identified downstream build, not a published NLTK release.\n"
-        "Upstream Python runtime source is unchanged. SuperZip changed nltk/VERSION to\n"
+        "Upstream Python runtime source is unchanged. FlitzZip changed nltk/VERSION to\n"
         "identify this build and setup.cfg to retain this notice in the wheel.\n"
         "The original Apache 2.0 license, authors and project README remain included.\n"
         "This commit contains the merged source repairs for GHSA-8mgp-746c-j5xp.\n"
     )
-    (source / "SUPERZIP_BUILD_NOTICE.txt").write_text(notice, encoding="utf-8", newline="\n")
+    (source / "FLITZZIP_BUILD_NOTICE.txt").write_text(notice, encoding="utf-8", newline="\n")
     config = source / "setup.cfg"
     original = config.read_text(encoding="utf-8")
     if original.count("    LICENSE.txt") != 1:
         raise ValueError("Upstream NLTK license packaging changed")
     config.write_text(
-        "# SuperZip change: retain the downstream source/build notice with upstream licenses.\n"
-        + original.replace("    LICENSE.txt", "    SUPERZIP_BUILD_NOTICE.txt\n    LICENSE.txt"),
+        "# FlitzZip change: retain the downstream source/build notice with upstream licenses.\n"
+        + original.replace("    LICENSE.txt", "    FLITZZIP_BUILD_NOTICE.txt\n    LICENSE.txt"),
         encoding="utf-8",
         newline="\n",
     )

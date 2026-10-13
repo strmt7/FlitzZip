@@ -3,10 +3,10 @@
 Research checked on 2026-06-17. Format-ordering research was refreshed on
 2026-06-20.
 
-SuperZip is first a native AMD HIP `.suzip` application. Compatibility formats
+FlitzZip is first a native AMD HIP `.flzip` application. Compatibility formats
 must not change that boundary. A compatibility format is accepted only when it
 has a direct in-process parser/writer path, clear resource limits, and the same
-pre-write path validation used by SUZIP.
+pre-write path validation used by FLZIP.
 
 ## Sources
 
@@ -83,7 +83,7 @@ resulting engineering implications are kept in `docs/product-behavior-audit.md`.
 
 These tools consistently cluster around real archive/container formats:
 ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, lzip, Zstandard, CAB, ISO, AR, CPIO, CPIO.GZ, ARJ, ARC,
-LHA/LZH, WIM, XAR, DEB, RPM, Base64, BinHex, MacBinary, XXEncode, UUencode, and legacy Unix Compress `.Z`. SuperZip's
+LHA/LZH, WIM, XAR, DEB, RPM, Base64, BinHex, MacBinary, XXEncode, UUencode, and legacy Unix Compress `.Z`. FlitzZip's
 compatibility scope is limited to real archive/container formats with explicit
 product behavior.
 
@@ -92,14 +92,14 @@ implemented as product support: full RAR, broader ZIPX method coverage, DMG/UDF
 and virtual-disk readers, MSI/NSIS/CHM package readers, StuffIt-family readers,
 ZOO/ACE/SQX/BH/EGG/ALZ/B1/PAQ/ZPAQ families, split-volume discovery, and
 MIME multipart handling. Each remains a backend-by-backend implementation item;
-SuperZip must not expose those names as supported until there is an in-process
+FlitzZip must not expose those names as supported until there is an in-process
 parser, a security contract, and tests.
 
 ## Format Ordering Method
 
 There is no defensible public source that gives a precise universal popularity
 ranking for archive extensions across Windows desktop users, Linux/Unix package
-users, enterprise file exchange, and scientific datasets. SuperZip therefore
+users, enterprise file exchange, and scientific datasets. FlitzZip therefore
 uses a stable weighted proxy instead of pretending to know an exact count:
 
 1. Native operating-system exposure and default user familiarity.
@@ -107,7 +107,7 @@ uses a stable weighted proxy instead of pretending to know an exact count:
    applicable.
 3. Breadth of maintained in-process open-source tooling support.
 4. Recurrence in mature archive applications and platform package workflows.
-5. SuperZip product-native relevance: `.suzip` is pinned first because it is the
+5. FlitzZip product-native relevance: `.flzip` is pinned first because it is the
    AMD HIP product path; the proxy order applies to every remaining standard
    format row.
 6. Alias clarity inside a family: canonical extension first, then common short
@@ -117,7 +117,7 @@ The Compress selector is extension-specific and ordered by that proxy:
 
 | Rank | Visible entry | Backend family |
 | ---: | --- | --- |
-| 1 | `SuperZip (.suzip)` | Native AMD HIP SUZIP |
+| 1 | `FlitzZip (.flzip)` | Native AMD HIP FLZIP |
 | 2 | `ZIP (.zip)` | ZIP |
 | 3 | `TAR.GZ (.tar.gz)` | TAR over Gzip |
 | 4 | `TAR.GZ (.tgz)` | TAR over Gzip |
@@ -137,7 +137,7 @@ The Compress selector is extension-specific and ordered by that proxy:
 | 18 | `Unix AR (.ar)` | AR |
 | 19 | `Unix Compress (.Z)` | Unix Compress |
 
-The startup default remains `SuperZip (.suzip)` because SuperZip is primarily a
+The startup default remains `FlitzZip (.flzip)` because FlitzZip is primarily a
 native GPU archive application. Existing settings written before the
 extension-specific selector are migrated by exact old default extension, so a
 saved `.cpgz` row remains `.cpgz` after migration instead of becoming
@@ -153,28 +153,28 @@ engineering documentation that describes backend support.
 
 This matrix records what the reviewed tools expose at a product level. Package
 and application-container aliases are intentionally omitted unless they are
-already real archive/package formats in SuperZip's matrix.
+already real archive/package formats in FlitzZip's matrix.
 
-| Tool | Write/create formats observed | Read/extract formats observed | SuperZip implication |
+| Tool | Write/create formats observed | Read/extract formats observed | FlitzZip implication |
 | --- | --- | --- | --- |
 | 7-Zip | 7z, XZ, BZIP2, GZIP, TAR, ZIP, WIM | Adds AR, ARJ, CAB, CPIO, DMG, ISO, LHA/LZH, LZMA, RAR, RPM, UDF, VHD/VHDX, VMDK, XAR, Z and others | Strong baseline for ZIP/TAR/GZIP/XZ/BZIP2/LZMA/WIM recognition; RAR remains read-only candidate |
 | NanaZip | 7-Zip-derived Windows app; use 7-Zip's core families as the baseline | 7-Zip-derived Windows app; format surface tracks the 7-Zip lineage plus NanaZip-specific codecs over time | Treat as a modern Windows UX reference, not a separate backend source |
 | WinRAR | RAR and ZIP | RAR, ZIP, CAB, ARJ, LZH, TAR, GZ/TGZ, XZ, BZ2/TBZ, UUE, 7Z, Z, ISO | RAR write is not planned; read-only RAR needs licensing/security review |
 | WinZip | ZIP/ZIPX, LHA/LZH, UUE | ZIP/ZIPX plus RAR, 7z, TAR, GZIP, VHD, XZ and other common formats | ZIPX is a compatibility target only after a vetted backend exists |
 | PeaZip | 7Z, ARC, Brotli, BZ2, GZ, PEA, TAR, WIM, XZ, ZIP, Zstandard and others | Very broad read matrix including 7Z, ACE, ARJ, Brotli, BZ2, CAB, CPIO, DEB, GZ, ISO, LHA/LZH, RAR, RPM, TAR, WIM, XZ, ZIP, ZIPX, Zstandard | Confirms that broad recognition should be separate from implementation claims |
-| Keka | 7Z, ZIP, TAR, Zstandard, GZIP, BZIP2 | 7Z, ZIP, RAR, TAR, GZIP, BZIP2, XZ, Zstandard, ISO, LZMA, CAB, MSI, CPIO and others | Single-stream formats are common create targets but must stay single-file in SuperZip |
+| Keka | 7Z, ZIP, TAR, Zstandard, GZIP, BZIP2 | 7Z, ZIP, RAR, TAR, GZIP, BZIP2, XZ, Zstandard, ISO, LZMA, CAB, MSI, CPIO and others | Single-stream formats are common create targets but must stay single-file in FlitzZip |
 | The Unarchiver | Extract-only product | ZIP, ZIPX, RAR, TAR variants, 7z, LHA/LZH, StuffIt-family and many legacy formats | Read-only UX reference; not a write-support model |
 | libarchive/bsdtar | TAR, PAX, CPIO, ZIP, XAR, AR, ISO, mtree, shar with compression filters | TAR, PAX, CPIO, ZIP, XAR, LHA/LZH, AR, CAB, RAR, ISO and filters including gzip, bzip2, lzip, xz, lzma, compress | Best candidate family for future broad in-process compatibility after license/build review |
-| GNOME File Roller | Depends on installed backends; common set includes TAR variants, ZIP, XZ | Broad backend-driven extraction including TAR variants, ZIP, XZ and many package/archive formats | Backend-wrapper model is not acceptable for SuperZip production paths |
+| GNOME File Roller | Depends on installed backends; common set includes TAR variants, ZIP, XZ | Broad backend-driven extraction including TAR variants, ZIP, XZ and many package/archive formats | Backend-wrapper model is not acceptable for FlitzZip production paths |
 | KDE Ark | Backend-driven create/modify/extract for common formats | TAR, GZIP, BZIP2, RAR, ZIP, 7z, CD images and more when backends exist | Useful UX reference; backend dependency model is not acceptable |
-| PowerArchiver | ZIP and 7Z highlighted; product advertises 60+ formats | 60+ formats including ZIP, 7Z, RAR, TAR, ISO, CAB and legacy/proprietary formats | Enterprise comparison point; broad claims need explicit backend proof in SuperZip |
+| PowerArchiver | ZIP and 7Z highlighted; product advertises 60+ formats | 60+ formats including ZIP, 7Z, RAR, TAR, ISO, CAB and legacy/proprietary formats | Enterprise comparison point; broad claims need explicit backend proof in FlitzZip |
 | IZArc | ZIP/RAR/7Z/ISO-focused product surface with 40+ format claim | 40+ formats including ZIP, RAR, 7Z, ISO and legacy formats | Legacy breadth does not justify unsupported parser risk |
 | B1 Free Archiver | B1 and ZIP | B1, ZIP, RAR, 7z, GZIP, TAR.GZ, TAR.BZ2, ISO and other popular formats | B1 is low-priority until an open, maintained backend exists |
 | Zipware | ZIP-focused creation | Major archive formats including ZIP, RAR and 7z | Confirms ZIP/RAR/7z expectations for Windows users |
 | ALZip | EGG and other advertised archive outputs | 40+ formats including EGG, 7z and RAR | Proprietary EGG/ALZ formats stay recognition-only unless a vetted parser exists |
-| BetterZip | ZIP, TAR, TGZ, TBZ, TXZ, 7-ZIP, DMG, Zstandard, Brotli, optional external RAR | Adds ARJ, LHA/LZH, ISO, CHM, CAB, CPIO/CPGZ, DEB, RPM, StuffIt-family, BinHex, MacBinary, GZip, BZip2, WIM | Confirms Zstandard/Brotli interest, but external RAR is not a SuperZip model |
+| BetterZip | ZIP, TAR, TGZ, TBZ, TXZ, 7-ZIP, DMG, Zstandard, Brotli, optional external RAR | Adds ARJ, LHA/LZH, ISO, CHM, CAB, CPIO/CPGZ, DEB, RPM, StuffIt-family, BinHex, MacBinary, GZip, BZip2, WIM | Confirms Zstandard/Brotli interest, but external RAR is not a FlitzZip model |
 | Xarchiver | Frontend over installed tools for common archive formats | 7z, ARJ, BZIP2, GZIP, RAR, LHA/LZH, LZMA, LZOP, DEB, RPM, TAR, ZIP | Wrapper design is explicitly rejected for production support |
-| Windows 11 Explorer | Built-in shell compression/decompression for selected formats; encrypted archive handling is limited | ZIP and newer built-in support for additional formats such as 7z, with encryption limitations | SuperZip must be clearer and safer than shell support, especially for encrypted/unsupported cases |
+| Windows 11 Explorer | Built-in shell compression/decompression for selected formats; encrypted archive handling is limited | ZIP and newer built-in support for additional formats such as 7z, with encryption limitations | FlitzZip must be clearer and safer than shell support, especially for encrypted/unsupported cases |
 | Express Zip | ZIP-focused creation with compression-level controls | ZIP, RAR, CAB, TAR, 7Z, ISO, GZIP, ZIPX, LZH, ARJ and related formats | Confirms that compression-level UX must not be confused with unsupported format methods |
 | Ashampoo ZIP Free | ZIP, 7-ZIP, CAB, TAR variants, LHA/LZH | Broad extraction set including RAR, ZIPX, ARJ, ARC, ACE, MSI, NSIS, CHM, DMG, RPM, CPIO, VHD, XAR, LZMA, LZH, SquashFS, CramFS, Z, ZOO, WIM, ISO/UDF | Confirms that broad legacy claims require backend-by-backend proof and recognition-only honesty |
 | jZip | 7Z, BZ2, GZ, TAR, ZIP | 7Z, ARJ, BZ2, CAB, CPIO, DEB, GZ, ISO, LHA/LZH, RAR, RPM, TAR, WIM, Z, ZIP and more | Legacy reference only; no backend or UX copying |
@@ -183,7 +183,7 @@ already real archive/package formats in SuperZip's matrix.
 
 | Format | Create | Extract | Status | Backend |
 | --- | --- | --- | --- | --- |
-| `.suzip` | Yes | Yes | Native GPU-first product format | SuperZip AMD HIP codec |
+| `.flzip` | Yes | Yes | Native GPU-first product format | FlitzZip AMD HIP codec |
 | `.zip` | Yes | Yes | Compatibility format | vendored miniz 3.1.2 |
 | `.zipx` | No | Yes | Extract-only for ZIP-compatible records and supported methods | vendored miniz 3.1.2 ZIP reader; unsupported ZIPX methods fail explicitly |
 | `.tar` | Yes | Yes | Compatibility format | native bounded TAR adapter |
@@ -194,7 +194,7 @@ already real archive/package formats in SuperZip's matrix.
 | `.gz` | Yes | Yes | Single-file compatibility stream | vendored miniz 3.1.2 raw deflate |
 | `.bz2` | Yes | Yes | Single-file compatibility stream | vendored libbzip2 1.0.8 |
 | `.xz` | No | Yes | Extract-only single-file compatibility stream | vendored XZ Embedded |
-| `.lzma` | No | Yes | Extract-only single-file legacy LZMA-Alone stream | vendored LZMA SDK 26.03 decoder with SuperZip path/publish pipeline |
+| `.lzma` | No | Yes | Extract-only single-file legacy LZMA-Alone stream | vendored LZMA SDK 26.03 decoder with FlitzZip path/publish pipeline |
 | `.lz` | No | Yes | Extract-only single-file lzip stream | native lzip wrapper checks over vendored LZMA SDK 26.03 decoder |
 | `.Z` | Yes | Yes | Single-file compatibility stream | native bounded Unix Compress LZW adapter |
 | `.b64` | No | Yes | Extract-only single-file legacy transfer stream | native bounded Base64 adapter with strict padding and optional wrapper-header validation |
@@ -210,8 +210,8 @@ already real archive/package formats in SuperZip's matrix.
 | `.rpm` | No | Yes | Extract-only compatibility format | native RPM package adapter over CPIO payloads |
 | `.cab` | No | Yes | Extract-only compatibility format | native CAB metadata scanner plus Windows FDI |
 | `.7z` | No | Yes | Extract-only compatibility format | vendored LZMA SDK 26.03 ANSI-C decoder |
-| `.lha`, `.lzh` | No | Yes | Extract-only compatibility format | vendored Lhasa 0.6.0 decoder with SuperZip path/publish pipeline |
-| `.wim` | No | Yes | Extract-only standalone WIM compatibility format | bundled app-local wimlib 1.14.5 runtime with SuperZip path/publish pipeline |
+| `.lha`, `.lzh` | No | Yes | Extract-only compatibility format | vendored Lhasa 0.6.0 decoder with FlitzZip path/publish pipeline |
+| `.wim` | No | Yes | Extract-only standalone WIM compatibility format | bundled app-local wimlib 1.14.5 runtime with FlitzZip path/publish pipeline |
 | `.swm` | No | No | Recognized split-WIM part | rejected until multipart reference handling is implemented and tested |
 | `.xar` | No | Yes | Extract-only compatibility format | native bounded XAR subset parser over vendored miniz 3.1.2 zlib inflate |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
@@ -223,12 +223,12 @@ already real archive/package formats in SuperZip's matrix.
 The CLI exposes this matrix with:
 
 ```powershell
-build\Release\superzip_cli.exe formats
-build\Release\superzip_cli.exe identify archive.tar
+build\Release\flitzzip_cli.exe formats
+build\Release\flitzzip_cli.exe identify archive.tar
 ```
 
 `extract` defaults to format auto-detection. Unsupported recognized formats fail
-with a clear "recognized but not yet implemented" error. SuperZip does not
+with a clear "recognized but not yet implemented" error. FlitzZip does not
 silently shell out to external archive utilities and does not fall back between
 formats.
 
@@ -237,18 +237,18 @@ The `.zipx` extension is detected separately because users see it as a distinct
 archive family, but the current implementation routes only ZIP-compatible
 container records through the miniz ZIP reader. ZIPX archives that require
 compression methods outside the vendored backend fail explicitly instead of
-being reinterpreted as native SUZIP or silently decoded by a host utility.
+being reinterpreted as native FLZIP or silently decoded by a host utility.
 
 Gzip support is intentionally single-file when used as `.gz`. It does not
 represent a multi-entry archive, and extraction derives the output filename
 from the `.gz` archive path rather than trusting optional embedded original-name
 metadata. TAR+Gzip support is multi-entry because the TAR stream supplies the
-entry table; SuperZip validates that TAR stream in one decompression pass before
+entry table; FlitzZip validates that TAR stream in one decompression pass before
 extracting in a second pass.
 
 Bzip2 support is intentionally single-file when used as `.bz2`. TAR+Bzip2
 support is multi-entry because the TAR stream supplies the entry table.
-SuperZip validates the decompressed TAR metadata in one Bzip2 pass before
+FlitzZip validates the decompressed TAR metadata in one Bzip2 pass before
 extracting in a second pass. Single-member `.bz2` extraction rejects trailing
 compressed data; concatenated `.bz2` members require a deliberate future product
 decision and tests.
@@ -257,13 +257,13 @@ XZ support is extract-only in this increment. Single-file `.xz` extraction uses
 the archive filename to derive one safe output path and supports concatenated XZ
 streams with CRC64 verification. `.tar.xz`/`.txz` routes the decoded stream
 through the native TAR scanner, so all TAR paths are validated before output is
-published. XZ creation remains disabled until SuperZip has a vetted in-process
+published. XZ creation remains disabled until FlitzZip has a vetted in-process
 encoder path that passes the same dependency and scanner gates.
 
 LZMA support is extract-only for legacy LZMA-Alone `.lzma` streams. It is a
 single-file stream format, not a multi-entry archive, so extraction derives the
 output filename from the `.lzma` archive path. The LZMA-Alone format has no
-embedded checksum; SuperZip verifies the decoder state, declared output size
+embedded checksum; FlitzZip verifies the decoder state, declared output size
 when present, dictionary/resource limits, and final output publication, while
 the optional SHA-256 integrity mode remains the strong end-to-end archive-file
 check.
@@ -277,21 +277,21 @@ single-file streams and exposed as one continuous output. `.tar.lz`/`.tlz`
 routes the decoded stream through the native TAR scanner, so TAR paths are
 validated in a full first pass before destination writes.
 
-Zstandard support is single-file when used as `.zst` or `.zstd`. SuperZip loads
-the SuperZip-built libzstd 1.5.7 DLL from the executable directory, validates
+Zstandard support is single-file when used as `.zst` or `.zstd`. FlitzZip loads
+the FlitzZip-built libzstd 1.5.7 DLL from the executable directory, validates
 the runtime version, creates frames with the libzstd content checksum enabled,
 and extracts through a bounded-window streaming decoder. `.tar.zst`/`.tzst` is
-multi-entry because the TAR stream supplies the entry table; SuperZip validates
+multi-entry because the TAR stream supplies the entry table; FlitzZip validates
 the decompressed TAR metadata in one Zstandard pass before extracting in a
 second pass.
 
 Unix Compress support is intentionally single-file when used as `.Z`.
-SuperZip writes block-mode 16-bit `.Z` streams and extracts valid block-mode or
+FlitzZip writes block-mode 16-bit `.Z` streams and extracts valid block-mode or
 non-block-mode streams with declared widths from 9 through 16 bits. Extraction
 derives the output filename from the `.Z` archive path and never treats `.Z` as a
 directory archive.
 
-Base64 support is extract-only when used as `.b64`. SuperZip accepts a bounded
+Base64 support is extract-only when used as `.b64`. FlitzZip accepts a bounded
 `begin-base64` wrapper so the original file name can be validated on extraction,
 and it also accepts raw RFC-style `.b64` payloads by deriving the output filename
 from the archive path. It rejects invalid alphabet characters,
@@ -311,7 +311,7 @@ path-safety validation used by archive entries before a private temporary output
 file is opened. Segmented mail-style multipart handling and BinHex creation are
 not exposed until their exact product contract and tests are deliberately added.
 
-MacBinary support is extract-only and data-fork-only. SuperZip recognizes
+MacBinary support is extract-only and data-fork-only. FlitzZip recognizes
 `.macbin` by extension and recognizes ambiguous `.bin` files only when the
 128-byte header carries a valid MacBinary II/III version or `mBIN` marker plus a
 matching header CRC. Extraction validates the header zero fields, path-safe
@@ -323,7 +323,7 @@ the source stream. MacBinary I streams without a header CRC remain accepted only
 when explicitly selected by `.macbin` extension or `--format macbinary`, not by
 generic `.bin` extension alone.
 
-XXEncode support is extract-only when used as `.xxe`. SuperZip extracts one file
+XXEncode support is extract-only when used as `.xxe`. FlitzZip extracts one file
 from the begin-line filename only after that name passes the same
 path-safety validation used by archive entries. Extension-based `.xxe` detection
 is authoritative for short streams because short non-empty XXEncode payloads are
@@ -338,7 +338,7 @@ not accepted until the exact trailer syntax and checksum contract are added with
 tests. For the common stream form, optional SHA-256 remains the strong
 end-to-end archive-file integrity check.
 
-UUencode support is extract-only when used as `.uue` or `.uu`. SuperZip extracts
+UUencode support is extract-only when used as `.uue` or `.uu`. FlitzZip extracts
 one file from the begin-line filename only after that name passes the same
 path-safety validation used by archive entries. The adapter tolerates a bounded
 mail-style preamble, rejects overlong lines, malformed payload data, missing end
@@ -351,7 +351,7 @@ CPIO support covers the SVR4 new ASCII formats with magic values `070701` and
 `070702`. Creation writes `070701`. Extraction accepts both variants and verifies
 the simple payload checksum for `070702` before output. The adapter supports
 regular files and directories only; symbolic links, hard-link metadata, devices,
-FIFOs, and other special entries are rejected until SuperZip has a dedicated
+FIFOs, and other special entries are rejected until FlitzZip has a dedicated
 policy and UI for those objects.
 
 CPIO.GZ support treats `.cpio.gz` and `.cpgz` as Gzip-filtered CPIO streams.
@@ -359,7 +359,7 @@ The extension receives compound-format priority over generic `.gz` detection so
 the CLI and GUI route it to the archive adapter instead of the single-file Gzip
 path. Extraction performs one decompression pass to validate the complete inner
 CPIO entry set and Gzip trailer, then a second decompression pass to publish only
-the validated entries. SuperZip does not stage a full decoded CPIO archive on
+the validated entries. FlitzZip does not stage a full decoded CPIO archive on
 disk.
 
 AR support covers Unix archive files with the global `!<arch>` magic. Creation
@@ -370,7 +370,7 @@ than extracted. The adapter supports regular-file members only because AR has no
 portable directory entry model.
 
 CPIO, CPIO.GZ, AR, and the DEB/RPM wrapper routes default to strict UTF-8
-member names, matching SuperZip's CPIO and AR writers. These containers do not
+member names, matching FlitzZip's CPIO and AR writers. These containers do not
 provide a per-member encoding declaration in the supported layouts. For legacy
 archives, select **Windows ANSI** in Extract's **Member name encoding** field,
 or pass `extract --name-encoding system`; this explicitly uses the current
@@ -389,12 +389,12 @@ encoded lengths; both CPIO.GZ passes use the same selected decoder. Portable
 test builds support UTF-8; Windows ANSI mode is unavailable off Windows.
 
 DEB support is intentionally extract-only. Debian package files are AR
-containers, so SuperZip extracts the outer package members through the same
+containers, so FlitzZip extracts the outer package members through the same
 bounded AR adapter. It does not install packages, execute maintainer scripts, or
 silently unpack nested `control.tar.*` or `data.tar.*` members into the
 destination. Nested package inspection needs a separate UI and security policy.
 
-RPM support is intentionally extract-only. SuperZip parses the RPM lead,
+RPM support is intentionally extract-only. FlitzZip parses the RPM lead,
 signature header, package header, and payload metadata in process, accepts only
 CPIO payload format, and supports `none`, Gzip, Bzip2, XZ, and Zstandard payload
 compression through existing bounded stream adapters. It never installs
@@ -402,13 +402,13 @@ packages, executes scripts, or trusts package metadata as an extraction path;
 the decoded CPIO payload is passed through the native CPIO adapter before files
 are published.
 
-CAB support is intentionally extract-only. SuperZip parses the cabinet header,
+CAB support is intentionally extract-only. FlitzZip parses the cabinet header,
 folder table, file records, and declared data-block extents before invoking the
 Windows Cabinet FDI engine. Spanned cabinet sets are rejected, every CAB member
 path is normalized and validated before output, and FDI may only publish files
 whose names and sizes match the prevalidated metadata table.
 
-7z support is intentionally extract-only. SuperZip embeds the public-domain
+7z support is intentionally extract-only. FlitzZip embeds the public-domain
 LZMA SDK 26.03 ANSI-C decoder and does not call `7z.exe`, PowerShell,
 or other host archive tools from product code. Archive filenames are converted
 from SDK UTF-16 metadata, normalized, validated archive-wide, and decoded twice:
@@ -433,25 +433,25 @@ checksum, archive-wide path set, and final `0x1A 0x00` end marker before
 destination writes. Compressed ARC methods 3 through 9 fail explicitly until a
 later increment adds a vetted decoder path and tests.
 
-LHA/LZH support is intentionally extract-only. SuperZip embeds Lhasa 0.6.0 and
+LHA/LZH support is intentionally extract-only. FlitzZip embeds Lhasa 0.6.0 and
 does not call `lha.exe`, shell archive handlers, or other host tools. Lhasa is
 used for header decoding, payload decompression, and CRC/size verification
-only; SuperZip performs the path validation and verified output publication.
+only; FlitzZip performs the path validation and verified output publication.
 Symlinks are rejected, and decoded parent-directory path components are
-preserved so the SuperZip validator can reject malicious entries instead of
+preserved so the FlitzZip validator can reject malicious entries instead of
 accepting rewritten paths.
 
 XAR support is intentionally extract-only and limited to the verified subset
 implemented in `src/xar/`: archives with header checksum algorithm `none`,
 zlib-compressed TOCs, directory entries, regular files, and stored or
-zlib-compressed file payloads. SuperZip does not call `xar`, `libarchive`,
+zlib-compressed file payloads. FlitzZip does not call `xar`, `libarchive`,
 PowerShell, or host shell handlers. Archives declaring TOC checksum modes,
 signatures, symlinks, hard links, special files, Bzip2/LZMA/XZ heap encodings,
 or arbitrary digest styles fail closed until the adapter implements and tests
 those exact variants.
 
 WIM support is intentionally extract-only and limited to standalone `.wim`
-images through the bundled app-local wimlib 1.14.5 runtime. SuperZip does not
+images through the bundled app-local wimlib 1.14.5 runtime. FlitzZip does not
 call `wimlib-imagex.exe`, DISM, PowerShell, Explorer, or host-installed WIM
 tools. `.swm` split-WIM parts are recognized for diagnostics but rejected by the
 standalone-open path until multipart reference handling is implemented with
@@ -459,12 +459,12 @@ tests. The adapter validates every image tree first, rejects reparse points,
 hard links, alternate data streams, device entries, encrypted/offline/virtual
 files, excessive image counts, excessive entries, and excessive decoded bytes,
 then stages each image in a private temporary directory and publishes only the
-validated regular files and directories through SuperZip's verified output
+validated regular files and directories through FlitzZip's verified output
 path.
 
 ## ZIP-Container Alias Policy
 
-Several non-archive file types use ZIP internally. SuperZip does not expose
+Several non-archive file types use ZIP internally. FlitzZip does not expose
 those aliases as archive formats, does not market them as compatibility
 coverage, and only keeps an internal deny-list to prevent false ZIP detection.
 Package inspection needs a separate product requirement, security review, and
@@ -559,7 +559,7 @@ subset:
 3. Normalize member names and validate the full archive path set before output.
 4. Verify every stored regular-file payload CRC during the validation pass.
 5. Reopen the archive and publish only validated directories and stored files
-   through SuperZip's temporary-file commit path.
+   through FlitzZip's temporary-file commit path.
 
 ```mermaid
 flowchart TD
@@ -644,7 +644,7 @@ flowchart TD
 
 ## CAB Security Contract
 
-The CAB path combines a SuperZip metadata scanner with Windows FDI streaming
+The CAB path combines a FlitzZip metadata scanner with Windows FDI streaming
 decompression:
 
 1. Validate the CAB magic, version, declared cabinet size, folder records, file
@@ -672,7 +672,7 @@ flowchart TD
 
 The 7z path uses the official LZMA SDK 26.03 decoder in process:
 
-1. Open the archive through a bounded SDK input buffer and a SuperZip allocator
+1. Open the archive through a bounded SDK input buffer and a FlitzZip allocator
    budget.
 2. Parse metadata, reject excessive entry counts, excessive names, unsafe
    paths, duplicate normalized paths, file/child conflicts, reparse points,
@@ -698,7 +698,7 @@ flowchart TD
 
 The LHA/LZH path uses the ISC-licensed Lhasa 0.6.0 decoder in process:
 
-1. Open the archive through a SuperZip-owned C++ stream adapter and Lhasa reader.
+1. Open the archive through a FlitzZip-owned C++ stream adapter and Lhasa reader.
 2. Parse every entry with Lhasa using the plain directory policy so synthetic
    duplicate directory entries are not surfaced as product entries.
 3. Reject excessive entry counts, excessive total decoded bytes, symlinks,
@@ -765,12 +765,12 @@ directory:
 3. Archives are opened read-only with integrity checking enabled and split-WIM
    rejection enabled.
 4. Every image tree is scanned before extraction. Paths are normalized through
-   SuperZip path-safety logic and multi-image archives are isolated under
+   FlitzZip path-safety logic and multi-image archives are isolated under
    `image-N/` output prefixes.
 5. Reparse points, hard links, alternate data streams, device entries,
    encrypted/offline/virtual files, missing resources, excessive image counts,
    excessive entry counts, and excessive decoded byte totals are rejected.
-6. wimlib extracts only into a private SuperZip staging directory. Final output
+6. wimlib extracts only into a private FlitzZip staging directory. Final output
    publication rechecks staged files for regular-file type, reparse-point
    absence, and exact size, then uses the standard temporary-file commit path.
 
@@ -919,7 +919,7 @@ flowchart TD
 
 The Base64 path is an in-process single-file text decoder:
 
-1. Extraction accepts either the SuperZip wrapper or a raw `.b64` payload. Raw
+1. Extraction accepts either the FlitzZip wrapper or a raw `.b64` payload. Raw
    payloads derive one safe output filename from the archive path.
 2. Optional wrapper filenames are normalized through `safe_join_archive_path`
    before any destination file is reserved.
@@ -975,7 +975,7 @@ publication rules as the other stream adapters:
    validated before any extraction output is published.
 3. The decoder supports CRC64 and concatenated streams, but rejects unsupported
    filters and check types instead of skipping verification.
-4. The LZMA2 dictionary is capped at the SuperZip wrapper boundary to prevent
+4. The LZMA2 dictionary is capped at the FlitzZip wrapper boundary to prevent
    untrusted streams from exhausting host RAM.
 5. XZ creation is not implemented or advertised in this release.
 
@@ -997,7 +997,7 @@ follows the same publication rules as other single-file stream adapters:
 1. `.lzma` accepts exactly one LZMA-Alone stream and derives one output file
    from the archive filename.
 2. The fixed LZMA-Alone header is parsed before decoder allocation.
-3. Dictionary declarations above 512 MiB and decoded output above the SuperZip
+3. Dictionary declarations above 512 MiB and decoded output above the FlitzZip
    pipeline limit are rejected before final publication.
 4. SDK allocations are routed through a bounded allocator.
 5. Unknown-size streams must reach an LZMA end marker; known-size streams must
@@ -1019,7 +1019,7 @@ flowchart TD
 
 ## Lzip Security Contract
 
-The lzip path is in-process through SuperZip's lzip wrapper decoder over the
+The lzip path is in-process through FlitzZip's lzip wrapper decoder over the
 vendored LZMA SDK 26.03 decoder:
 
 1. `.lz` derives one safe output file from the archive filename.
@@ -1032,7 +1032,7 @@ vendored LZMA SDK 26.03 decoder:
 5. Concatenated members are supported; trailing non-member data and empty
    members before another member are rejected.
 6. SDK allocations are routed through a bounded allocator, and decoded output is
-   capped by the SuperZip pipeline limit.
+   capped by the FlitzZip pipeline limit.
 
 ```mermaid
 flowchart TD
@@ -1048,14 +1048,14 @@ flowchart TD
 
 ## Zstandard Security Contract
 
-The Zstandard path is in-process through the SuperZip-built libzstd 1.5.7 DLL
+The Zstandard path is in-process through the FlitzZip-built libzstd 1.5.7 DLL
 and follows the same publication rules as the other stream adapters:
 
 1. `.zst`/`.zstd` accepts exactly one source file and derives one safe output
    filename from the archive path.
 2. `.tar.zst`/`.tzst` routes through the native TAR scanner, so all TAR paths
    are validated before any extraction output is published.
-3. SuperZip-created frames enable the Zstandard content checksum flag.
+3. FlitzZip-created frames enable the Zstandard content checksum flag.
 4. Extraction caps the frame window log at the wrapper boundary before
    decompression starts.
 5. Malformed streams and trailing garbage are rejected before final file
@@ -1078,7 +1078,7 @@ The ISO path is a native, read-only parser for basic ISO 9660 directory records:
 1. `.iso` extraction reads the Primary Volume Descriptor and root directory from
    the image; it does not shell out to system tools.
 2. Directory records are scanned and validated before any output is written.
-3. Every extracted path goes through the same SuperZip path-safety and
+3. Every extracted path goes through the same FlitzZip path-safety and
    archive-wide collision checks as ZIP, TAR, CPIO, and AR.
 4. Interleaved and multi-extent records are rejected until an explicit policy
    and tests exist for them.
@@ -1113,7 +1113,7 @@ count/CRC trailer support, additional single-file legacy transfer encodings,
 lzip creation only after a vetted in-process
 encoder exists, and the remaining recognized-only legacy/container formats after
 backend selection and licensing review. XAR checksum/signature validation is
-also a future hardening increment before SuperZip can claim broad XAR
+also a future hardening increment before FlitzZip can claim broad XAR
 compatibility. Write support for RAR is not planned because the common RAR
 creation tooling is not a permissive open format writer suitable for this repo.
 7z creation also remains disabled until a vetted in-process writer path passes

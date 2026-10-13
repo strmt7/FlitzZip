@@ -6,12 +6,12 @@
 #include <string>
 #include <string_view>
 
-namespace superzip {
+namespace flitzzip {
 
 enum class ArchiveFormat {
     Unknown,
     Auto,
-    SuperZip,
+    FlitzZip,
     Zip,
     Zipx,
     SevenZip,
@@ -69,7 +69,7 @@ struct ArchiveFormatExtensionInfo {
     bool can_extract = false;
 };
 
-// Purpose: Return the static registry of real archive/container formats known to SuperZip.
+// Purpose: Return the static registry of real archive/container formats known to FlitzZip.
 // Inputs: None.
 // Outputs: Returns immutable metadata for CLI, GUI, and documentation-oriented format listing.
 std::span<const ArchiveFormatInfo> archive_format_registry();
@@ -96,7 +96,7 @@ const ArchiveFormatExtensionInfo& archive_format_extension_info_for_path(Archive
                                                                          const std::filesystem::path& archive_path);
 
 // Purpose: Parse a CLI/user format token without inspecting a file.
-// Inputs: `token` is a case-insensitive value such as `suzip`, `zip`, `tar`, or `auto`.
+// Inputs: `token` is a case-insensitive value such as `flzip`, `zip`, `tar`, or `auto`.
 // Outputs: Returns the matching format or empty when the token is not a known archive format.
 std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token);
 
@@ -115,4 +115,4 @@ ArchiveFormat detect_archive_format_by_extension(const std::filesystem::path& ar
 // Outputs: Returns a comma-separated token list.
 std::string archive_format_key_list(bool include_auto);
 
-}  // namespace superzip
+}  // namespace flitzzip

@@ -11,7 +11,7 @@
 #include <string_view>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kArchiveProbeBytes = 0x8806U;
@@ -24,7 +24,7 @@ struct ExtensionFormatMapping {
 constexpr std::array<ArchiveFormatInfo, 38> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
-    {ArchiveFormat::SuperZip, "suzip", "SuperZip (.suzip)", ".suzip", true, true, true, true},
+    {ArchiveFormat::FlitzZip, "flzip", "FlitzZip (.flzip)", ".flzip", true, true, true, true},
     {ArchiveFormat::Zip, "zip", "ZIP (.zip)", ".zip", true, true, false, true},
     {ArchiveFormat::Zipx, "zipx", "ZIPX (.zipx)", ".zipx", false, true, false, true},
     {ArchiveFormat::SevenZip, "7z", "7z (.7z)", ".7z", false, true, false, true},
@@ -65,7 +65,7 @@ constexpr std::array<ArchiveFormatInfo, 38> kFormatRegistry{{
 constexpr ArchiveFormatExtensionInfo kUnknownExtensionInfo{};
 
 constexpr std::array<ArchiveFormatExtensionInfo, 48> kFormatExtensionRegistry{{
-    {ArchiveFormat::SuperZip, ".suzip", "SuperZip (.suzip)", true, true},
+    {ArchiveFormat::FlitzZip, ".flzip", "FlitzZip (.flzip)", true, true},
     {ArchiveFormat::Zip, ".zip", "ZIP (.zip)", true, true},
     {ArchiveFormat::Zipx, ".zipx", "ZIPX (.zipx)", false, true},
     {ArchiveFormat::SevenZip, ".7z", "7z (.7z)", false, true},
@@ -116,7 +116,7 @@ constexpr std::array<ArchiveFormatExtensionInfo, 48> kFormatExtensionRegistry{{
 }};
 
 constexpr std::array<ExtensionFormatMapping, 47> kExtensionFormats{{
-    {".suzip", ArchiveFormat::SuperZip},   {".zip", ArchiveFormat::Zip},
+    {".flzip", ArchiveFormat::FlitzZip},   {".zip", ArchiveFormat::Zip},
     {".zipx", ArchiveFormat::Zipx},        {".7z", ArchiveFormat::SevenZip},
     {".rar", ArchiveFormat::Rar},          {".tar.gz", ArchiveFormat::TarGzip},
     {".tgz", ArchiveFormat::TarGzip},      {".tar.bz2", ArchiveFormat::TarBzip2},
@@ -169,7 +169,7 @@ bool ends_with_lower(const std::string& value, std::string_view suffix) {
 
 // Purpose: Detect ZIP-based application/document containers that must not be treated as archives.
 // Inputs: `path` is the candidate archive path.
-// Outputs: Returns true when a ZIP-magic file uses an extension outside SuperZip archive support.
+// Outputs: Returns true when a ZIP-magic file uses an extension outside FlitzZip archive support.
 bool has_excluded_zip_container_extension(const std::filesystem::path& path) {
     const auto name = archive_filename_key(path);
     constexpr std::array excluded = {
@@ -192,10 +192,10 @@ std::vector<unsigned char> read_probe_bytes(const std::filesystem::path& path) {
     return bytes;
 }
 
-// Purpose: Probe the native SUZIP footer and index magic without depending on the `.suzip` extension.
+// Purpose: Probe the native FLZIP footer and index magic without depending on the `.flzip` extension.
 // Inputs: `path` is the candidate archive file.
 // Outputs: Returns true only when the footer, version, index bounds, and index magic match the native format.
-bool has_suzip_footer_signature(const std::filesystem::path& path) {
+bool has_flzip_footer_signature(const std::filesystem::path& path) {
     try {
         std::ifstream input(path, std::ios::binary);
         if (!input) {
@@ -204,15 +204,15 @@ bool has_suzip_footer_signature(const std::filesystem::path& path) {
         input.seekg(0, std::ios::end);
         const auto end_position = input.tellg();
         if (end_position == std::ifstream::pos_type(-1) ||
-            static_cast<std::uint64_t>(end_position) < kSuperZipFooterBytes) {
+            static_cast<std::uint64_t>(end_position) < kFlitzZipFooterBytes) {
             return false;
         }
         const auto file_size = static_cast<std::uint64_t>(end_position);
-        input.seekg(-static_cast<std::streamoff>(kSuperZipFooterBytes), std::ios::end);
+        input.seekg(-static_cast<std::streamoff>(kFlitzZipFooterBytes), std::ios::end);
         const auto footer_magic = read_u32(input);
         const auto footer_version = read_u32(input);
-        if (footer_magic != kSuperZipFooterMagic || footer_version < kSuperZipMinReadableVersion ||
-            footer_version > kSuperZipMaxReadableVersion) {
+        if (footer_magic != kFlitzZipFooterMagic || footer_version < kFlitzZipMinReadableVersion ||
+            footer_version > kFlitzZipMaxReadableVersion) {
             return false;
         }
         const auto index_offset = read_u64(input);
@@ -220,12 +220,12 @@ bool has_suzip_footer_signature(const std::filesystem::path& path) {
         if (index_size < 12U || index_size > kMaxArchiveIndexBytes || index_offset > file_size) {
             return false;
         }
-        if (index_size > file_size - kSuperZipFooterBytes ||
-            index_offset > file_size - kSuperZipFooterBytes - index_size) {
+        if (index_size > file_size - kFlitzZipFooterBytes ||
+            index_offset > file_size - kFlitzZipFooterBytes - index_size) {
             return false;
         }
         input.seekg(static_cast<std::streamoff>(index_offset), std::ios::beg);
-        return read_u32(input) == kSuperZipMagic;
+        return read_u32(input) == kFlitzZipMagic;
     } catch (const std::exception&) {
         return false;
     }
@@ -568,7 +568,7 @@ ArchiveFormat detect_by_extension(const std::filesystem::path& path) {
 
 }  // namespace
 
-// Purpose: Return the static registry of real archive/container formats known to SuperZip.
+// Purpose: Return the static registry of real archive/container formats known to FlitzZip.
 // Inputs: None.
 // Outputs: Returns immutable metadata shared by CLI, GUI, and tests.
 std::span<const ArchiveFormatInfo> archive_format_registry() {
@@ -626,7 +626,7 @@ const ArchiveFormatExtensionInfo& archive_format_extension_info_for_path(Archive
 }
 
 // Purpose: Parse a CLI/user format token without inspecting a file.
-// Inputs: `token` is a case-insensitive value such as `suzip`, `zip`, `zipx`, or `auto`.
+// Inputs: `token` is a case-insensitive value such as `flzip`, `zip`, `zipx`, or `auto`.
 // Outputs: Returns the matching format or empty when the token is not a known archive format.
 std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) {
     auto lowered = ascii_lower(std::string(token));
@@ -675,15 +675,15 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
     return it->format;
 }
 
-// Purpose: Detect a real archive format from path hints, leading magic, and native SUZIP footer/index magic.
+// Purpose: Detect a real archive format from path hints, leading magic, and native FLZIP footer/index magic.
 // Inputs: `archive_path` is the candidate file to classify without mutating it.
 // Outputs: Returns the detected format or `ArchiveFormat::Unknown` when no supported signature or extension matches.
 ArchiveFormat detect_archive_format(const std::filesystem::path& archive_path) {
     if (has_excluded_zip_container_extension(archive_path)) {
         return ArchiveFormat::Unknown;
     }
-    if (has_suzip_footer_signature(archive_path)) {
-        return ArchiveFormat::SuperZip;
+    if (has_flzip_footer_signature(archive_path)) {
+        return ArchiveFormat::FlitzZip;
     }
     const auto by_extension = detect_by_extension(archive_path);
     if (by_extension == ArchiveFormat::TarGzip || by_extension == ArchiveFormat::TarBzip2 ||
@@ -724,4 +724,4 @@ std::string archive_format_key_list(bool include_auto) {
     return out.str();
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

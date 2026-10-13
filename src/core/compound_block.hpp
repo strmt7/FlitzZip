@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <span>
 
-namespace superzip {
+namespace flitzzip {
 
 inline constexpr std::size_t kGpuCompoundHeaderBytes = 8U;
 
@@ -62,4 +62,4 @@ inline GpuCompoundStages parse_gpu_compound_block(std::span<const std::byte> enc
     };
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

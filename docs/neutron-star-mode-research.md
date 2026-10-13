@@ -2,15 +2,15 @@
 
 ## Scope And Status
 
-Neutron star mode is a lossless native SUZIP compression research feature.
+Neutron star mode is a lossless native FLZIP compression research feature.
 The implementation is a bounded HIP dictionary primitive with separate
 application, CLI and benchmark mode routing. Its GUI row follows the nine
-numeric efforts and requires native SUZIP, actual cached HIP availability and
+numeric efforts and requires native FLZIP, actual cached HIP availability and
 the required-GPU preference. Settings store the mode separately from the
 numeric effort. Its minimum-byte dictionary primitive retains the independent
 LZ4 block representation. Neutron additionally evaluates a closed second GPU
 encoding stage over the selected payload; a strictly smaller complete result
-uses the [version-nine compound representation](native-suzip-format.md).
+uses the [version-nine compound representation](native-flzip-format.md).
 Neutron also evaluates exact byte-plane permutations at widths two, four and
 eight against that winner, using the closed version-ten representation only
 for a smaller complete result. Transform and inverse execute through HIP.
@@ -125,7 +125,7 @@ costs, not kernel activity, unframed entropy estimates or a paper's headline.
 The self-hosted Crawl4AI research batch retrieved twenty primary-source pages;
 selected method and limitation passages informed these hypotheses. The full
 page captures and access metadata remain local. These are research directions,
-not implemented codecs or measured SuperZip speedups:
+not implemented codecs or measured FlitzZip speedups:
 
 - **Separate predictable fields from residual bits.**
   [DFloat11](https://arxiv.org/html/2504.11651),
@@ -197,7 +197,7 @@ The [current complete-checkpoint study](benchmarks/data/neutron-pythia14m.json)
 records Pythia14M sizes and byte-exact required-HIP readback. More contexts may
 reduce unframed entropy yet lose after extra tables and offsets. Bit-field
 contexts remain prospective; neither histogram estimates nor an upstream
-inference benchmark is an encoded SuperZip archive.
+inference benchmark is an encoded FlitzZip archive.
 
 ## Prospective Match-Sequence Bound
 

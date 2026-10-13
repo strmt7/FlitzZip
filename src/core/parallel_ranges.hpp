@@ -6,7 +6,7 @@
 #include <future>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Run balanced, nonempty, disjoint ranges within a total worker budget, including the calling thread.
 // Inputs: count is the item count; worker_count bounds workers; fn accepts [begin,end) and permits concurrent calls.
@@ -36,4 +36,4 @@ template <typename Fn> void run_parallel_ranges(std::size_t count, std::uint32_t
     }
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

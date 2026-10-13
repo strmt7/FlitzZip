@@ -5,9 +5,9 @@
 
 #include <filesystem>
 
-namespace superzip {
+namespace flitzzip {
 
-// Purpose: Extract the CPIO payload from an RPM package with SuperZip path-safety checks.
+// Purpose: Extract the CPIO payload from an RPM package with FlitzZip path-safety checks.
 // Inputs: `archive_path` is an RPM package, `destination` is the extraction root, `overwrite` allows existing targets
 // only when true, and `progress_callback` receives CPIO extraction progress snapshots. Outputs: Returns operation
 // statistics; throws on malformed RPM metadata, unsupported payload compression, unsafe CPIO paths, refused overwrite,
@@ -21,4 +21,4 @@ OperationStats extract_rpm(const std::filesystem::path& archive_path, const std:
 OperationStats extract_rpm(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                            bool overwrite, const ProgressCallback& progress_callback, ArchivePathEncoding encoding);
 
-}  // namespace superzip
+}  // namespace flitzzip

@@ -165,14 +165,14 @@ TEST_CASE(cpio_numeric_fields_have_exact_full_range_encoding) {
                                                                     {0x12345678U, "12345678"},
                                                                     {0x80000000U, "80000000"},
                                                                     {0xFFFFFFFFU, "FFFFFFFF"}}}) {
-        const auto encoded = superzip::detail::encode_cpio_hex_field(value);
+        const auto encoded = flitzzip::detail::encode_cpio_hex_field(value);
         REQUIRE_EQ(std::string_view(encoded.data(), encoded.size()), expected);
     }
     // Purpose: Compare independent encoders; inputs: full-width integer; outputs: requires byte identity.
     auto check_value = [](std::uint32_t value) {
         std::string reference;
         append_test_cpio_hex(reference, value);
-        const auto encoded = superzip::detail::encode_cpio_hex_field(value);
+        const auto encoded = flitzzip::detail::encode_cpio_hex_field(value);
         REQUIRE_EQ(std::string_view(encoded.data(), encoded.size()), std::string_view(reference));
     };
     for (unsigned bit = 0; bit < 32U; ++bit) {
@@ -202,19 +202,19 @@ TEST_CASE(cpio_legacy_member_names_both_passes) {
         write_cpio_trailer(stream);
     }
     const auto gzip = root / "fixture.cpio.gz";
-    (void)superzip::compress_gzip_file({archive}, gzip);
+    (void)flitzzip::compress_gzip_file({archive}, gzip);
     for (const bool compressed : {false, true}) {
         const auto output = root / (compressed ? "gzip" : "plain");
         const auto stats =
             compressed
-                ? superzip::extract_cpio_gzip(gzip, output, false, {}, superzip::ArchivePathEncoding::HostCodePage)
-                : superzip::extract_cpio(archive, output, false, {}, superzip::ArchivePathEncoding::HostCodePage);
+                ? flitzzip::extract_cpio_gzip(gzip, output, false, {}, flitzzip::ArchivePathEncoding::HostCodePage)
+                : flitzzip::extract_cpio(archive, output, false, {}, flitzzip::ArchivePathEncoding::HostCodePage);
         REQUIRE_EQ(stats.entries, 2U);
         REQUIRE_EQ(read_text_file(output / expected), "legacy");
         REQUIRE_EQ(read_text_file(output / "sibling.txt"), "next payload");
         REQUIRE_EQ(count_regular_files(output), 2U);
         if (!compressed) {
-            superzip_test::export_compat_fixture(archive, output);
+            flitzzip_test::export_compat_fixture(archive, output);
         }
     }
 }
@@ -232,17 +232,17 @@ TEST_CASE(cpio_invalid_member_encoding_prevents_all_output) {
         write_cpio_trailer(stream);
     }
     const auto gzip = root / "fixture.cpio.gz";
-    (void)superzip::compress_gzip_file({archive}, gzip);
+    (void)flitzzip::compress_gzip_file({archive}, gzip);
     for (const bool compressed : {false, true}) {
         const auto output = root / (compressed ? "gzip" : "plain");
         bool rejected = false;
         try {
             if (compressed) {
-                (void)superzip::extract_cpio_gzip(gzip, output, false);
+                (void)flitzzip::extract_cpio_gzip(gzip, output, false);
             } else {
-                (void)superzip::extract_cpio(archive, output, false);
+                (void)flitzzip::extract_cpio(archive, output, false);
             }
-        } catch (const superzip::ArchiveError&) {
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -263,13 +263,13 @@ TEST_CASE(cpio_roundtrip_extracts_files_and_directories) {
     }
 
     const auto archive = root / "sample.cpio";
-    const auto compress_stats = superzip::compress_cpio({input}, archive);
+    const auto compress_stats = flitzzip::compress_cpio({input}, archive);
     REQUIRE_TRUE(compress_stats.entries >= 3);
     REQUIRE_TRUE(compress_stats.output_bytes > compress_stats.input_bytes);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Cpio);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Cpio);
 
     const auto output = root / "output";
-    const auto extract_stats = superzip::extract_cpio(archive, output, false);
+    const auto extract_stats = flitzzip::extract_cpio(archive, output, false);
     REQUIRE_EQ(extract_stats.output_bytes, compress_stats.input_bytes);
     REQUIRE_EQ(read_text_file(output / "input" / "dir" / "hello.txt"), read_text_file(input / "dir" / "hello.txt"));
     REQUIRE_EQ(read_text_file(output / "input" / "root.txt"), read_text_file(input / "root.txt"));
@@ -288,13 +288,13 @@ TEST_CASE(cpio_gzip_roundtrip_extracts_files_and_directories) {
     }
 
     const auto archive = root / "sample.cpgz";
-    const auto compress_stats = superzip::compress_cpio_gzip({input}, archive);
+    const auto compress_stats = flitzzip::compress_cpio_gzip({input}, archive);
     REQUIRE_TRUE(compress_stats.entries >= 3);
     REQUIRE_TRUE(compress_stats.output_bytes > 0);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::CpioGzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::CpioGzip);
 
     const auto output = root / "output";
-    const auto extract_stats = superzip::extract_cpio_gzip(archive, output, false);
+    const auto extract_stats = flitzzip::extract_cpio_gzip(archive, output, false);
     REQUIRE_EQ(extract_stats.output_bytes, compress_stats.input_bytes);
     REQUIRE_EQ(read_text_file(output / "input" / "dir" / "hello.txt"), read_text_file(input / "dir" / "hello.txt"));
     REQUIRE_EQ(read_text_file(output / "input" / "root.txt"), read_text_file(input / "root.txt"));
@@ -310,8 +310,8 @@ TEST_CASE(cpio_extraction_rejects_traversal_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_cpio(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_cpio(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -327,12 +327,12 @@ TEST_CASE(cpio_gzip_extraction_rejects_traversal_before_output) {
     const auto plain = root / "bad.cpio";
     const auto archive = root / "bad.cpgz";
     write_one_entry_cpio(plain, "070701", "../escape.txt", kTestCpioRegularMode, 1, "bad", 0);
-    (void)superzip::compress_gzip_file(plain, archive);
+    (void)flitzzip::compress_gzip_file(plain, archive);
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_cpio_gzip(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_cpio_gzip(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -350,8 +350,8 @@ TEST_CASE(cpio_extraction_rejects_special_entries) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_cpio(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_cpio(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -371,8 +371,8 @@ TEST_CASE(cpio_extraction_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_cpio(archive, output, false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_cpio(archive, output, false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -387,15 +387,15 @@ TEST_CASE(cpio_gzip_extraction_refuses_overwrite_by_default) {
     const auto plain = root / "overwrite.cpio";
     const auto archive = root / "overwrite.cpgz";
     write_one_entry_cpio(plain, "070701", "file.txt", kTestCpioRegularMode, 1, "new", 0);
-    (void)superzip::compress_gzip_file(plain, archive);
+    (void)flitzzip::compress_gzip_file(plain, archive);
     const auto output = root / "out";
     std::filesystem::create_directories(output);
     std::ofstream(output / "file.txt") << "old";
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_cpio_gzip(archive, output, false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_cpio_gzip(archive, output, false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -410,7 +410,7 @@ TEST_CASE(cpio_unicode_destination_preserves_overwrite_diagnostic) {
     const auto plain = root / "fixture.cpio";
     const auto compressed = root / "fixture.cpio.gz";
     write_one_entry_cpio(plain, "070701", "file.txt", kTestCpioRegularMode, 1, "new", 0);
-    (void)superzip::compress_gzip_file(plain, compressed);
+    (void)flitzzip::compress_gzip_file(plain, compressed);
     for (const bool gzip : {false, true}) {
         const auto output = root / (gzip ? "gzip" : "plain") / L"\u65e5\u672c-\U0001f680" / ".";
         const auto target = output / "file.txt";
@@ -419,13 +419,13 @@ TEST_CASE(cpio_unicode_destination_preserves_overwrite_diagnostic) {
         const auto expected_path = (std::filesystem::weakly_canonical(output) / target.filename()).u8string();
         const std::string expected(reinterpret_cast<const char*>(expected_path.data()), expected_path.size());
         const auto extract = [&](bool overwrite) {
-            return gzip ? superzip::extract_cpio_gzip(compressed, output, overwrite)
-                        : superzip::extract_cpio(plain, output, overwrite);
+            return gzip ? flitzzip::extract_cpio_gzip(compressed, output, overwrite)
+                        : flitzzip::extract_cpio(plain, output, overwrite);
         };
         bool rejected = false;
         try {
             (void)extract(false);
-        } catch (const superzip::SecurityError& error) {
+        } catch (const flitzzip::SecurityError& error) {
             const std::string message = error.what();
             REQUIRE_TRUE(message.find("refusing to overwrite") != std::string::npos);
             if (message.find(expected) == std::string::npos) {
@@ -458,11 +458,11 @@ TEST_CASE(cpio_unicode_member_names_roundtrip) {
         const auto archive = root / (gzip ? "fixture.cpio.gz" : "fixture.cpio");
         const auto output = root / (gzip ? "gzip" : "plain");
         if (gzip) {
-            (void)superzip::compress_cpio_gzip({source}, archive);
-            (void)superzip::extract_cpio_gzip(archive, output, false);
+            (void)flitzzip::compress_cpio_gzip({source}, archive);
+            (void)flitzzip::extract_cpio_gzip(archive, output, false);
         } else {
-            (void)superzip::compress_cpio({source}, archive);
-            (void)superzip::extract_cpio(archive, output, false);
+            (void)flitzzip::compress_cpio({source}, archive);
+            (void)flitzzip::extract_cpio(archive, output, false);
         }
         REQUIRE_EQ(read_text_file(output / "source" / relative), "unicode payload");
         REQUIRE_TRUE(std::filesystem::is_empty(output / "source" / empty));
@@ -480,7 +480,7 @@ TEST_CASE(cpio_crc_format_extracts_when_checksum_matches) {
     write_one_entry_cpio(archive, "070702", "payload.txt", kTestCpioRegularMode, 1, payload, cpio_payload_sum(payload));
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_cpio(archive, output, false);
+    const auto stats = flitzzip::extract_cpio(archive, output, false);
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(payload.size()));
     REQUIRE_EQ(read_text_file(output / "payload.txt"), payload);
 }
@@ -497,8 +497,8 @@ TEST_CASE(cpio_crc_format_rejects_checksum_mismatch_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_cpio(archive, root / "out", false));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_cpio(archive, root / "out", false));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -515,12 +515,12 @@ TEST_CASE(cpio_gzip_crc_format_rejects_checksum_mismatch_before_output) {
     const std::string payload = "payload";
     write_one_entry_cpio(plain, "070702", "payload.txt", kTestCpioRegularMode, 1, payload,
                          cpio_payload_sum(payload) + 1U);
-    (void)superzip::compress_gzip_file(plain, archive);
+    (void)flitzzip::compress_gzip_file(plain, archive);
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_cpio_gzip(archive, root / "out", false));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_cpio_gzip(archive, root / "out", false));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -536,7 +536,7 @@ TEST_CASE(cpio_gzip_rejects_gzip_crc_mismatch_before_output) {
     std::filesystem::create_directories(input);
     std::ofstream(input / "payload.txt") << "payload";
     const auto archive = root / "payload.cpgz";
-    (void)superzip::compress_cpio_gzip({input}, archive);
+    (void)flitzzip::compress_cpio_gzip({input}, archive);
 
     auto bytes = read_binary_file(archive);
     REQUIRE_TRUE(bytes.size() > 18U);
@@ -546,8 +546,8 @@ TEST_CASE(cpio_gzip_rejects_gzip_crc_mismatch_before_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_cpio_gzip(archive, output, false));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_cpio_gzip(archive, output, false));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

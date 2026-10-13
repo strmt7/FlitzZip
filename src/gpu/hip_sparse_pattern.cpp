@@ -10,7 +10,7 @@
 #include <span>
 #include <vector>
 
-namespace superzip::sparse_pattern {
+namespace flitzzip::sparse_pattern {
 namespace {
 
 using namespace hip_detail;
@@ -148,4 +148,4 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
     return result;
 }
 
-}  // namespace superzip::sparse_pattern
+}  // namespace flitzzip::sparse_pattern

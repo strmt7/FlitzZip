@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <limits>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Bound active codec windows by the aggregate worker budget and available work.
 // Inputs: workers/inflight are upper bounds; windows is available work, with zero normalized to one for empty entries.
@@ -25,4 +25,4 @@ inline std::uint32_t resolve_codec_worker_count(std::uint32_t workers, std::uint
     return workers / resolve_worker_inflight_limit(workers, inflight, windows);
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

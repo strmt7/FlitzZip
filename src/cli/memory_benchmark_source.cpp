@@ -9,7 +9,7 @@
 #include <istream>
 #include <string>
 
-namespace superzip::cli {
+namespace flitzzip::cli {
 namespace {
 // Purpose: Generate a deterministic random-looking byte from a virtual workload offset.
 // Inputs: `index` is the zero-based virtual byte offset.
@@ -176,11 +176,11 @@ void fill_memory_benchmark_chunk(std::vector<std::byte>& buffer, std::uint64_t g
         text_limit = zero_limit + (total_bytes / 4U);
         low_entropy_limit = text_limit + (total_bytes / 4U);
     } else if (profile != "Incompressible") {
-        throw superzip::ArchiveError("unknown memory benchmark profile: " + std::string(profile));
+        throw flitzzip::ArchiveError("unknown memory benchmark profile: " + std::string(profile));
     }
 
     constexpr char text[] =
-        "SuperZip memory benchmark line: AMD HIP native archive codec, metadata, and verification.\n";
+        "FlitzZip memory benchmark line: AMD HIP native archive codec, metadata, and verification.\n";
     constexpr auto text_len = sizeof(text) - 1U;
     for (std::size_t i = 0; i < buffer.size(); ++i) {
         const auto pos = global_offset + i;
@@ -261,4 +261,4 @@ void validate_memory_benchmark_bytes_parallel(std::span<const std::byte> decoded
     }
 }
 
-}  // namespace superzip::cli
+}  // namespace flitzzip::cli

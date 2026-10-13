@@ -17,7 +17,7 @@ on:
       - tools/build.ps1
       - tools/test.ps1
       - tools/gui_smoke.ps1
-      - tools/SuperZip.GuiSmoke.*.psm1
+      - tools/FlitzZip.GuiSmoke.*.psm1
       - tools/generate_app_icon.ps1
       - tools/verify_brand_assets.ps1
       - tools/compile_hip_object.ps1
@@ -31,7 +31,7 @@ on:
       - tools/local_resources.ps1
       - tools/version.ps1
       - tools/generate_brand_logo_header.ps1
-      - tools/superzip_brand_logo.psm1
+      - tools/flitzzip_brand_logo.psm1
       - tools/generate_license_notices_header.ps1
       - tools/native_build_provenance.py
       - tools/native_build_receipt.py
@@ -71,8 +71,8 @@ jobs:
             generator: Visual Studio 18 2026
             disable_pch: false
     env:
-      SUPERZIP_CMAKE_GENERATOR: ${{ matrix.generator }}
-      SUPERZIP_DISABLE_PCH: ${{ matrix.disable_pch }}
+      FLITZZIP_CMAKE_GENERATOR: ${{ matrix.generator }}
+      FLITZZIP_DISABLE_PCH: ${{ matrix.disable_pch }}
       # Shared build scheduling is derived from available RAM and logical CPUs.
     steps:
       - name: Checkout
@@ -107,8 +107,8 @@ jobs:
         # One existing compiler lane proves complete source/header independence;
         # the other uses the same PCH strategy as ordinary local/product builds.
         run: >-
-          tools/build.ps1 -CpuOnlyValidation -Generator $env:SUPERZIP_CMAKE_GENERATOR
-          -DisablePrecompiledHeaders:($env:SUPERZIP_DISABLE_PCH -eq 'true')
+          tools/build.ps1 -CpuOnlyValidation -Generator $env:FLITZZIP_CMAKE_GENERATOR
+          -DisablePrecompiledHeaders:($env:FLITZZIP_DISABLE_PCH -eq 'true')
       - name: Validate actual native invocation receipt
         if: steps.native_plan.outputs.native_build == 'true'
         # Mechanism regressions run in the component-contracts lane when changed.

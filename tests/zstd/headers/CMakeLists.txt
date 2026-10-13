@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 4.4)
-project(SuperZipZstdHeaderContracts LANGUAGES C CXX)
+project(FlitzZipZstdHeaderContracts LANGUAGES C CXX)
 
 if(NOT DEFINED REPO_ROOT OR NOT DEFINED SOURCE_ROOT)
   message(FATAL_ERROR "REPO_ROOT and SOURCE_ROOT are required")
@@ -18,7 +18,7 @@ function(require_header_compilation name extension repeat expected_success)
     NO_CACHE
     CMAKE_FLAGS "-DINCLUDE_DIRECTORIES:STRING=${SOURCE_ROOT}/lib"
     COMPILE_DEFINITIONS
-      -DZSTD_MULTITHREAD "-DSUPERZIP_REPEAT_PRIVATE_HEADERS=${repeat}"
+      -DZSTD_MULTITHREAD "-DFLITZZIP_REPEAT_PRIVATE_HEADERS=${repeat}"
       CXX_STANDARD 20 C_STANDARD 11
     OUTPUT_VARIABLE diagnostic LOG_DESCRIPTION "Zstandard ${name}")
   if(expected_success AND NOT compiled)
@@ -83,20 +83,20 @@ foreach(index RANGE 0 ${LAST_HASH_COMMENT} 1)
                  "${_zstd_comment_2_${index}_new}" HASH_CONTENT
                  "${HASH_CONTENT}")
 endforeach()
-superzip_write_verified_zstd_patch(
+flitzzip_write_verified_zstd_patch(
   "${HASH_SOURCE}" "${_zstd_comment_2_original}" "${_zstd_comment_2_patched}"
   "${HASH_CONTENT}")
-superzip_split_zstd_hash_header("${HASH_CONTENT}"
+flitzzip_split_zstd_hash_header("${HASH_CONTENT}"
                                 "_zstd_header_component_xxhash")
 foreach(part IN ITEMS public static implementation)
   set(EXPECTED "${_zstd_header_component_xxhash_${part}_hash}")
   if(part STREQUAL "implementation")
     set(EXPECTED "${_zstd_header_component_xxhash_implementation_original}")
   endif()
-  superzip_publish_zstd_header_component(
+  flitzzip_publish_zstd_header_component(
     "${SOURCE_ROOT}/lib/common/xxhash_${part}.h" "${EXPECTED}" "${${part}}")
 endforeach()
-superzip_write_verified_zstd_patch(
+flitzzip_write_verified_zstd_patch(
   "${HASH_SOURCE}" "${_zstd_header_component_xxhash_original}"
   "${_zstd_header_component_xxhash_patched}" "${dispatch}")
 
@@ -124,7 +124,7 @@ function(require_hash_preprocessing phase extension mode)
         /nologo
         /EP
         "/I${SOURCE_ROOT}/lib"
-        "/DSUPERZIP_HASH_MODE=${mode}"
+        "/DFLITZZIP_HASH_MODE=${mode}"
         /DNDEBUG
         ${language_flag}
         ${standard_option})
@@ -136,7 +136,7 @@ function(require_hash_preprocessing phase extension mode)
         -E
         -P
         "-I${SOURCE_ROOT}/lib"
-        "-DSUPERZIP_HASH_MODE=${mode}"
+        "-DFLITZZIP_HASH_MODE=${mode}"
         -DNDEBUG
         -x
         "${language}"
@@ -189,7 +189,7 @@ endfunction()
 # Outputs: Requires successful linkage and 98,328 agreeing runtime cases; test
 # instances allocate only a small fixed stack buffer.
 function(require_hash_runtime phase extension mode)
-  set(definitions "-DSUPERZIP_HASH_MODE=${mode}")
+  set(definitions "-DFLITZZIP_HASH_MODE=${mode}")
   if(MSVC)
     list(APPEND definitions /showIncludes)
   endif()
@@ -269,7 +269,7 @@ function(require_classic_hash_contracts phase)
 endfunction()
 
 require_classic_hash_contracts(original)
-superzip_patch_zstd_legacy("${SOURCE_ROOT}")
+flitzzip_patch_zstd_legacy("${SOURCE_ROOT}")
 require_classic_hash_contracts(patched)
 require_default_allocator_sharing(TRUE)
 foreach(extension IN ITEMS c cpp)

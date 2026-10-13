@@ -1,4 +1,4 @@
-"""Install and invoke SuperZip's isolated, self-hosted development crawler.
+"""Install and invoke FlitzZip's isolated, self-hosted development crawler.
 
 This product includes software developed by UncleCode (https://x.com/unclecode)
 as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai).
@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if not __package__:
     sys.path.insert(0, str(ROOT))
 LOCK = ROOT / "tools/requirements/crawl4ai.txt"
-VERSION = "0.9.4+superzip.portable2"
+VERSION = "0.9.4+flitzzip.portable2"
 ATTRIBUTION = (
     "This product includes software developed by UncleCode (https://x.com/unclecode) "
     "as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai)."
@@ -38,17 +38,17 @@ ATTRIBUTION = (
 
 def cache_home(override: str | None = None) -> Path:
     """Purpose: Locate a portable tool cache. Inputs: Optional absolute override. Outputs: Absolute path."""
-    selected = override or os.environ.get("SUPERZIP_CRAWL4AI_HOME")
+    selected = override or os.environ.get("FLITZZIP_CRAWL4AI_HOME")
     if selected:
         result = Path(selected).expanduser()
         if not result.is_absolute():
             raise ValueError("Crawler home must be an absolute path")
     elif sys.platform == "win32":
-        result = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local"))) / "SuperZip/crawl4ai"
+        result = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local"))) / "FlitzZip/crawl4ai"
     elif sys.platform == "darwin":
-        result = Path.home() / "Library/Caches/SuperZip/crawl4ai"
+        result = Path.home() / "Library/Caches/FlitzZip/crawl4ai"
     else:
-        result = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "superzip/crawl4ai"
+        result = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "flitzzip/crawl4ai"
     result = result.resolve()
     if result == ROOT or ROOT in result.parents:
         raise ValueError("Crawler environment must stay outside the source checkout")
@@ -106,7 +106,7 @@ def run_owned(command: list[str], env: dict[str, str], timeout: float = 900, *, 
     options = {"start_new_session": True}
     if os.name == "nt":
         # Load the repository's tested process contract, never an installed MCP SDK with the same package name.
-        spec = importlib.util.spec_from_file_location("superzip_owned_child", ROOT / "mcp/superzip_mcp.py")
+        spec = importlib.util.spec_from_file_location("flitzzip_owned_child", ROOT / "mcp/flitzzip_mcp.py")
         if spec is None or spec.loader is None:
             raise ValueError("Repository process ownership contract is unavailable")
         owner = importlib.util.module_from_spec(spec)
@@ -176,7 +176,7 @@ def run_source_python(command: list[str], env: dict[str, str], timeout: float = 
     if not command:
         raise ValueError("Source-only Python requires an interpreter command")
     temporary_root = Path(tempfile.gettempdir()).resolve()
-    with tempfile.TemporaryDirectory(prefix="superzip-crawl4ai-bytecode-", dir=temporary_root) as temporary:
+    with tempfile.TemporaryDirectory(prefix="flitzzip-crawl4ai-bytecode-", dir=temporary_root) as temporary:
         directory = Path(temporary)
         if directory.resolve().parent != temporary_root:
             raise ValueError("Source-only import cache escaped its owned temporary root")
@@ -269,7 +269,7 @@ def write_install_receipt(receipt: Path, recorded: dict) -> None:
 def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
     """Purpose: Set up an owned environment. Inputs: Cache/paths/lock identity. Outputs: Pinned interpreter."""
     env = tool_environment(home)
-    receipt = directory / "superzip-install.json"
+    receipt = directory / "flitzzip-install.json"
     model_contract = text_identity(ROOT / "tools/test_nltk_model_security.py")
     model_command = [str(python), "-B", "-m", "unittest", "tools.test_nltk_model_security"]
     download_contract = text_identity(ROOT / "tools/test_crawl4ai_downloads.py")
@@ -342,7 +342,7 @@ def install(home: Path) -> Path:
 def main() -> int:
     """Purpose: Expose installer and crawler entry points. Inputs: CLI options. Outputs: Child exit status."""
     parser = argparse.ArgumentParser(description=__doc__, epilog=ATTRIBUTION)
-    parser.add_argument("--home", help="Absolute external cache root; environment override: SUPERZIP_CRAWL4AI_HOME")
+    parser.add_argument("--home", help="Absolute external cache root; environment override: FLITZZIP_CRAWL4AI_HOME")
     parser.add_argument("command", choices=("install", "doctor", "crawl", "qualify"))
     parser.add_argument("arguments", nargs=argparse.REMAINDER, help="Arguments forwarded to the selected tool")
     args = parser.parse_args()

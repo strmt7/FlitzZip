@@ -1,4 +1,5 @@
 #include "app/main_window_impl.hpp"
+#include "app/settings_migration.hpp"
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -16,7 +17,7 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Load persisted per-user settings and publish the current applied snapshot.
 // Inputs: None; reads the current user's Local AppData settings file when present.
@@ -24,7 +25,7 @@ namespace superzip::app {
 void MainWindow::initialize_settings() {
     try {
         ensure_app_storage();
-        applied_settings_ = read_settings_file(settings_file_path());
+        applied_settings_ = read_settings_file(settings_read_path(settings_file_path()));
         {
             std::lock_guard lock(mutex_);
             apply_settings_to_state(applied_settings_, state_);
@@ -173,4 +174,4 @@ LRESULT MainWindow::handle_timer(WPARAM wparam) {
 // Inputs: None.
 // Outputs: Posts quit and returns the handled Win32 result.
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

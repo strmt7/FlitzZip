@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'release_workflow_policy.ps1')
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-$fixtureRoot = Join-Path $tempParent ('superzip-release-policy-' + [guid]::NewGuid().ToString('N'))
+$fixtureRoot = Join-Path $tempParent ('flitzzip-release-policy-' + [guid]::NewGuid().ToString('N'))
 
 # Purpose: Exercise a release safeguard against one mutation of the actual owned workflow/action.
 # Inputs: FixtureRoot, relative file, original/replacement text, and validator function name.
@@ -46,7 +46,7 @@ try {
             @($workflow, 'MSI replacements get a fresh ProductCode from the release run identity', 'MSI replacement', 'Assert-ReleaseReplacementSafeguard'),
             @($workflow, 'Replacement tag tracking mismatch', 'Unchecked tag', 'Assert-ReleaseReplacementSafeguard'),
             @($workflow, 'MsiProductIdentity = "github-run-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_SHA"', 'MsiProductIdentity = "fixed"', 'Assert-ReleaseReplacementSafeguard'),
-            @($workflow, 'Replacement is exceptional', '# SuperZip $env:RELEASE_TAG', 'Assert-ReleaseNotesDoNotDuplicateTitle'),
+            @($workflow, 'Replacement is exceptional', '# FlitzZip $env:RELEASE_TAG', 'Assert-ReleaseNotesDoNotDuplicateTitle'),
             @($workflow, '    if: inputs.publish_release', '    if: always()', 'Assert-ReleaseValidationIsolation'),
             @($workflow, '      contents: read # validation', '      contents: write # validation', 'Assert-ReleaseValidationIsolation'),
             @($workflow, '    needs: hosted-windows', '    needs: unrelated', 'Assert-ReleaseValidationIsolation'),
@@ -72,7 +72,7 @@ try {
     $resolved = [IO.Path]::GetFullPath($fixtureRoot)
     $parentPrefix = $tempParent.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $resolved.StartsWith($parentPrefix, [StringComparison]::OrdinalIgnoreCase) -or
-        (Split-Path -Leaf $resolved) -notmatch '^superzip-release-policy-[0-9a-f]{32}$') {
+        (Split-Path -Leaf $resolved) -notmatch '^flitzzip-release-policy-[0-9a-f]{32}$') {
         throw 'Refusing cleanup outside the owned release policy fixture.'
     }
     if (Test-Path -LiteralPath $resolved) { Remove-Item -LiteralPath $resolved -Recurse -Force }

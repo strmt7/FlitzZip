@@ -9,7 +9,7 @@
 #include <span>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 struct GpuTelemetry;
 
@@ -62,4 +62,4 @@ void improve_neutron_replacements(std::span<const std::byte> input, const std::b
 EncodedChunk apply_dictionary_replacements(EncodedChunk baseline, const DictionaryReplacements& replacements);
 
 }  // namespace dictionary
-}  // namespace superzip
+}  // namespace flitzzip

@@ -44,7 +44,7 @@ class CrawlerContracts(unittest.TestCase):
                 directory, python, other = tool.environment_paths(path)
                 self.assertEqual(python, directory / "bin/python")
             self.assertEqual(identity, other)
-            for platform, expected in (("linux", "superzip/crawl4ai"), ("darwin", "Library/Caches/SuperZip/crawl4ai")):
+            for platform, expected in (("linux", "flitzzip/crawl4ai"), ("darwin", "Library/Caches/FlitzZip/crawl4ai")):
                 with (
                     patch.object(tool.sys, "platform", platform),
                     patch.dict(os.environ, {"USERPROFILE": str(Path.home())}, clear=True),
@@ -85,7 +85,7 @@ class CrawlerContracts(unittest.TestCase):
             pins = json.loads(argv[3])
             self.assertEqual(pins["crawl4ai"], tool.VERSION)
             self.assertIn("importlib.metadata.version", argv[2])
-            self.assertIn("crawl4ai/superzip_download.py", json.loads(argv[4]))
+            self.assertIn("crawl4ai/flitzzip_download.py", json.loads(argv[4]))
             self.assertIn("verify_installed_runtime(sys.argv[3])", argv[2])
             self.assertRegex(argv[5], r"^[a-f0-9]{64}$")
             self.assertTrue(child.call_args.kwargs["source_only"])
@@ -200,7 +200,7 @@ class CrawlerContracts(unittest.TestCase):
             self.assertLess(check_index, model_index)
             self.assertLess(model_index, download_index)
             self.assertLess(download_index, browser_index)
-            self.assertTrue((directory / "superzip-install.json").exists())
+            self.assertTrue((directory / "flitzzip-install.json").exists())
 
     def test_fresh_install_never_admits_a_failed_dependency_or_api_gate(self):
         """Purpose: Enforce setup admission. Inputs: Failed fresh dependency/API gates. Outputs: No receipt."""
@@ -224,7 +224,7 @@ class CrawlerContracts(unittest.TestCase):
                     self.assertRaises(subprocess.CalledProcessError),
                 ):
                     tool.provision(directory, directory, python, "fresh-admission")
-                self.assertFalse((directory / "superzip-install.json").exists())
+                self.assertFalse((directory / "flitzzip-install.json").exists())
                 self.assertFalse(any("playwright" in command for command in commands))
 
     def test_changed_security_contract_reuses_dependencies_and_failed_gate_is_not_cached(self):
@@ -233,7 +233,7 @@ class CrawlerContracts(unittest.TestCase):
             directory = Path(temp)
             python = directory / "python"
             python.touch()
-            receipt = directory / "superzip-install.json"
+            receipt = directory / "flitzzip-install.json"
             original = {"lock_sha256": "fixture", "platform": tool.platform.system(), "model_contract_sha256": "old"}
             tool.write_install_receipt(receipt, original)
             with (
@@ -299,7 +299,7 @@ class CrawlerContracts(unittest.TestCase):
             directory, python, identity = tool.environment_paths(home)
             python.parent.mkdir(parents=True)
             python.touch()
-            receipt = directory / "superzip-install.json"
+            receipt = directory / "flitzzip-install.json"
             receipt.write_text(
                 json.dumps(
                     {

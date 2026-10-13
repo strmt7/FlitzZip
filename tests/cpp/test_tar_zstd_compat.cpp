@@ -60,12 +60,12 @@ TEST_CASE(tar_zstd_roundtrip_nested_tree) {
     std::filesystem::create_directories(input / "empty-dir");
 
     const auto archive = root / "archive.tar.zst";
-    const auto compress_stats = superzip::compress_tar_zstd({input}, archive);
+    const auto compress_stats = flitzzip::compress_tar_zstd({input}, archive);
     REQUIRE_TRUE(compress_stats.entries >= static_cast<std::uint64_t>(4));
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::TarZstd);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::TarZstd);
 
     const auto output = root / "out";
-    const auto extract_stats = superzip::extract_tar_zstd(archive, output, false);
+    const auto extract_stats = flitzzip::extract_tar_zstd(archive, output, false);
     REQUIRE_TRUE(extract_stats.entries >= static_cast<std::uint64_t>(4));
     REQUIRE_EQ(read_text_file(output / "input" / "alpha.txt"), "alpha payload");
     REQUIRE_EQ(read_text_file(output / "input" / "nested" / "beta.txt"), "beta payload");
@@ -81,11 +81,11 @@ TEST_CASE(tar_zstd_tzst_alias_roundtrip) {
     write_text_file(input / "sample.txt", "tzst payload");
 
     const auto archive = root / "archive.tzst";
-    (void)superzip::compress_tar_zstd({input}, archive);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::TarZstd);
+    (void)flitzzip::compress_tar_zstd({input}, archive);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::TarZstd);
 
     const auto output = root / "out";
-    (void)superzip::extract_tar_zstd(archive, output, false);
+    (void)flitzzip::extract_tar_zstd(archive, output, false);
     REQUIRE_EQ(read_text_file(output / "input" / "sample.txt"), "tzst payload");
 }
 
@@ -97,15 +97,15 @@ TEST_CASE(tar_zstd_refuses_overwrite_by_default) {
     const auto input = root / "input";
     write_text_file(input / "alpha.txt", "new payload");
     const auto archive = root / "archive.tar.zst";
-    (void)superzip::compress_tar_zstd({input}, archive);
+    (void)flitzzip::compress_tar_zstd({input}, archive);
 
     const auto output = root / "out";
     write_text_file(output / "input" / "alpha.txt", "old payload");
 
     bool rejected = false;
     try {
-        (void)superzip::extract_tar_zstd(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_tar_zstd(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -123,8 +123,8 @@ TEST_CASE(tar_zstd_rejects_bad_stream_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_tar_zstd(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_tar_zstd(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -155,25 +155,25 @@ TEST_CASE(tar_zstd_exact_serialized_size_parity) {
                             "short Unicode path payload");
         }
         const auto plain = root / "reference.tar";
-        const auto plain_stats = superzip::compress_tar({input}, plain);
+        const auto plain_stats = flitzzip::compress_tar({input}, plain);
         const auto serialized = read_text_file(plain);
         REQUIRE_EQ(serialized.size() % 512U, 0U);
         for (int level = 1; level <= 9; ++level) {
             const auto direct = root / "direct.tar.zst";
             const auto expected = root / "reference.tar.zst";
-            const auto direct_stats = superzip::compress_tar_zstd({input}, direct, level);
-            (void)superzip::compress_zstd({plain}, expected, level);
+            const auto direct_stats = flitzzip::compress_tar_zstd({input}, direct, level);
+            (void)flitzzip::compress_zstd({plain}, expected, level);
             REQUIRE_EQ(read_text_file(direct), read_text_file(expected));
             REQUIRE_EQ(direct_stats.input_bytes, plain_stats.input_bytes);
             REQUIRE_EQ(direct_stats.entries, plain_stats.entries);
             REQUIRE_EQ(direct_stats.output_bytes, std::filesystem::file_size(direct));
-            superzip::ZstdInputStream decoded(direct);
+            flitzzip::ZstdInputStream decoded(direct);
             const std::string restored{std::istreambuf_iterator<char>(decoded), std::istreambuf_iterator<char>()};
             decoded.finish();
             REQUIRE_EQ(restored, serialized);
         }
         const auto destination = root / (populated ? "populated-output" : "empty-output");
-        const auto extracted = superzip::extract_tar_zstd(root / "direct.tar.zst", destination, false);
+        const auto extracted = flitzzip::extract_tar_zstd(root / "direct.tar.zst", destination, false);
         REQUIRE_EQ(extracted.output_bytes, plain_stats.input_bytes);
         REQUIRE_TRUE(std::filesystem::is_directory(destination / "input" / "empty-dir"));
         for (const auto& entry : std::filesystem::recursive_directory_iterator(input)) {

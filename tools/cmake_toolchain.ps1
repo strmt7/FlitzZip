@@ -31,7 +31,8 @@ function Get-CMakeToolchainLock {
     }
     $archive = 'cmake-4.4.3-windows-x86_64.zip'
     $keys = @($archive, 'bin/cmake.exe', 'bin/cpack.exe', 'bin/ctest.exe',
-        'Modules/CMakeCompilerABI.upstream.h', 'Modules/CMakeCompilerABI.guarded.h')
+        'Modules/CMakeCompilerABI.upstream.h', 'Modules/CMakeCompilerABI.guarded.h',
+        'Modules/CMakeCompilerABI.previous.h')
     if (@(Compare-Object $keys @($records.Keys)).Count -ne 0) {
         throw 'Pinned CMake provenance inventory is invalid.'
     }
@@ -45,11 +46,12 @@ function Get-CMakeToolchainLock {
         }
         abi_header_original_sha256 = $records['Modules/CMakeCompilerABI.upstream.h']
         abi_header_patched_sha256 = $records['Modules/CMakeCompilerABI.guarded.h']
+        abi_header_previous_sha256 = $records['Modules/CMakeCompilerABI.previous.h']
     }
 }
 
 # Purpose: Make the pinned ABI probe safe for repeated inclusion without altering its payload.
-# Inputs: Install is an unlinked, verified CMake installation; admits only exact original or repaired bytes.
+# Inputs: Install is an unlinked, verified CMake installation; admits exact original or pinned guarded revisions.
 # Outputs: Atomically adds a complete header guard, or rejects drift, links and interrupted publication.
 function Repair-CMakeCompilerAbiHeader {
     param([Parameter(Mandatory = $true)][string]$Install)
@@ -71,11 +73,23 @@ function Repair-CMakeCompilerAbiHeader {
     }
     $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
     if ($actual -eq $repaired) { return }
-    Assert-CMakeToolHash -Path $path -Expected $original
+    $expectedSource = $original
+    if ($actual -eq $lock.abi_header_previous_sha256) { $expectedSource = $actual }
+    Assert-CMakeToolHash -Path $path -Expected $expectedSource
     $body = [IO.File]::ReadAllText($path)
-    $content = "#ifndef SUPERZIP_CMAKE_COMPILER_ABI_H`n#define SUPERZIP_CMAKE_COMPILER_ABI_H`n" +
-        $body + "`n#endif /* SUPERZIP_CMAKE_COMPILER_ABI_H */`n"
-    $temporary = "$path.superzip-abi"
+    if ($expectedSource -ne $original) {
+        # Strip only the known predecessor's wrapper; verify the complete upstream payload independently.
+        $start = $body.IndexOf("`n", $body.IndexOf("`n") + 1) + 1
+        $end = $body.LastIndexOf("`n#endif ", [StringComparison]::Ordinal)
+        $body = $body.Substring($start, $end - $start)
+        $hasher = [Security.Cryptography.SHA256]::Create()
+        try { $bodyHash = [BitConverter]::ToString($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($body))).Replace('-', '') }
+        finally { $hasher.Dispose() }
+        if ($bodyHash -ne $original) { throw 'Preceding CMake ABI payload identity mismatch.' }
+    }
+    $content = "#ifndef FLITZZIP_CMAKE_COMPILER_ABI_H`n#define FLITZZIP_CMAKE_COMPILER_ABI_H`n" +
+        $body + "`n#endif /* FLITZZIP_CMAKE_COMPILER_ABI_H */`n"
+    $temporary = "$path.flitzzip-abi"
     $stream = [IO.File]::Open($temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try {
         $bytes = [Text.UTF8Encoding]::new($false).GetBytes($content)
@@ -86,7 +100,7 @@ function Repair-CMakeCompilerAbiHeader {
     }
     try {
         Assert-CMakeToolHash -Path $temporary -Expected $repaired
-        Assert-CMakeToolHash -Path $path -Expected $original
+        Assert-CMakeToolHash -Path $path -Expected $expectedSource
         [IO.File]::Replace($temporary, $path, [NullString]::Value)
         Assert-CMakeToolHash -Path $path -Expected $repaired
     } finally {

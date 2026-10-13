@@ -64,11 +64,11 @@ jobs:
               needs.cpp-security-plan.outputs.codeql_configurations) || '["cpu","hip-host"]') }}
     # The build script derives compiler admission from RAM and logical CPUs,
     # and applies one shared CMake/MSBuild job budget without a fixed CPU cap.
-    # Keep C++ analysis whole-repository. Do not split SuperZip into
+    # Keep C++ analysis whole-repository. Do not split FlitzZip into
     # subdirectory CodeQL databases because archive/parser data flow crosses
     # folders and partial databases can miss cross-component vulnerabilities.
     # CodeQL C++ must trace a real Windows build. Build-free C/C++ analysis
-    # under-models SuperZip's Win32, GDI+, host GPU-boundary, and vendored C sources
+    # under-models FlitzZip's Win32, GDI+, host GPU-boundary, and vendored C sources
     # and produces parser-artifact alerts that are not acceptable security
     # signals for this repository.
     # Each complete configuration has its own database: merging mutually
@@ -96,7 +96,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $lock = Get-Content -LiteralPath tools/rocm-sdk-lock.json -Raw | ConvertFrom-Json
-          $sdkParent = Join-Path $env:RUNNER_TOOL_CACHE "superzip-rocm-$($lock.version)-$($lock.sha256.Substring(0, 12))"
+          $sdkParent = Join-Path $env:RUNNER_TOOL_CACHE "flitzzip-rocm-$($lock.version)-$($lock.sha256.Substring(0, 12))"
           $sdkRoot = python tools/bootstrap_rocm_sdk.py --parent $sdkParent
           if ($LASTEXITCODE -ne 0) { throw 'CodeQL HIP host SDK provisioning failed.' }
           . ./tools/rocm_toolchain.ps1
@@ -413,7 +413,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SUPERZIP_DEVSKIM="$RUNNER_TEMP/devskim/devskim" python -m unittest tools.test_devskim_report tools.test_devskim_scope
+          FLITZZIP_DEVSKIM="$RUNNER_TEMP/devskim/devskim" python -m unittest tools.test_devskim_report tools.test_devskim_scope
           python -m tools.devskim_scope --root . --output "$RUNNER_TEMP/devskim-options.json"
           "$RUNNER_TEMP/devskim/devskim" analyze -I . -O "$RUNNER_TEMP/devskim-raw.sarif" \
             -f sarif --options-json "$RUNNER_TEMP/devskim-options.json" --disable-supression --skip-excerpts
@@ -537,5 +537,5 @@ jobs:
         with:
           path: .
           format: spdx-json
-          output-file: superzip-sbom.spdx.json
+          output-file: flitzzip-sbom.spdx.json
           upload-artifact: true

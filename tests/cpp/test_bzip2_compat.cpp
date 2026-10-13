@@ -81,13 +81,13 @@ TEST_CASE(bzip2_roundtrip_single_file) {
     write_text_file(input, payload);
 
     const auto archive = root / "payload.bin.bz2";
-    const auto compress_stats = superzip::compress_bzip2_file(input, archive);
+    const auto compress_stats = flitzzip::compress_bzip2_file(input, archive);
     REQUIRE_EQ(compress_stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_TRUE(compress_stats.output_bytes > 4U);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Bzip2);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Bzip2);
 
     const auto output = root / "out";
-    const auto extract_stats = superzip::extract_bzip2_file(archive, output, false);
+    const auto extract_stats = flitzzip::extract_bzip2_file(archive, output, false);
     REQUIRE_EQ(extract_stats.output_bytes, static_cast<std::uint64_t>(payload.size()));
     REQUIRE_EQ(read_text_file(output / "payload.bin"), payload);
 }
@@ -104,8 +104,8 @@ TEST_CASE(bzip2_rejects_multiple_sources) {
 
     bool rejected = false;
     try {
-        (void)superzip::compress_bzip2({first, second}, root / "multi.bz2");
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::compress_bzip2({first, second}, root / "multi.bz2");
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -119,7 +119,7 @@ TEST_CASE(bzip2_refuses_overwrite_by_default) {
     const auto input = root / "sample.txt";
     write_text_file(input, "new payload");
     const auto archive = root / "sample.txt.bz2";
-    (void)superzip::compress_bzip2_file(input, archive);
+    (void)flitzzip::compress_bzip2_file(input, archive);
 
     const auto output = root / "out";
     std::filesystem::create_directories(output);
@@ -127,8 +127,8 @@ TEST_CASE(bzip2_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_bzip2_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_bzip2_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -146,8 +146,8 @@ TEST_CASE(bzip2_rejects_bad_magic_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_bzip2_file(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_bzip2_file(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -162,8 +162,8 @@ TEST_CASE(bzip2_resumable_error_never_publishes) {
     const auto source = root / "payload.txt";
     const auto archive = root / "payload.txt.bz2";
     write_text_file(source, "verified payload");
-    (void)superzip::compress_bzip2_file(source, archive);
-    (void)superzip::extract_bzip2_file(archive, root / "control", false);
+    (void)flitzzip::compress_bzip2_file(source, archive);
+    (void)flitzzip::extract_bzip2_file(archive, root / "control", false);
     REQUIRE_EQ(read_text_file(root / "control/payload.txt"), "verified payload");
     auto encoded = read_text_file(archive);
     REQUIRE_TRUE(encoded.size() > 4U);
@@ -177,8 +177,8 @@ TEST_CASE(bzip2_resumable_error_never_publishes) {
         }
         bool rejected = false;
         try {
-            (void)superzip::extract_bzip2_file(archive, output, overwrite);
-        } catch (const superzip::Error&) {
+            (void)flitzzip::extract_bzip2_file(archive, output, overwrite);
+        } catch (const flitzzip::Error&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -190,11 +190,11 @@ TEST_CASE(bzip2_resumable_error_never_publishes) {
     }
     bool tar_rejected = false;
     try {
-        (void)superzip::extract_tar_bzip2(archive, root / "tar", false);
-    } catch (const superzip::Error&) {
+        (void)flitzzip::extract_tar_bzip2(archive, root / "tar", false);
+    } catch (const flitzzip::Error&) {
         tar_rejected = true;
     }
     REQUIRE_TRUE(tar_rejected);
     REQUIRE_EQ(count_regular_files(root / "tar"), 0U);
-    require_sticky_decoder_failure<superzip::Bzip2InputStream>(archive);
+    require_sticky_decoder_failure<flitzzip::Bzip2InputStream>(archive);
 }

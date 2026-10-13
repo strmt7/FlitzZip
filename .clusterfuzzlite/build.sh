@@ -22,8 +22,8 @@ COMMON_FLAGS=(
   -Ithird_party/lzma_sdk/C
   -Ithird_party/lhasa/lib/public
   -Ithird_party/lhasa/lib
-  -DSUPERZIP_ENABLE_HIP=0
-  -DSUPERZIP_MINIZ_FUZZ_ALLOCATOR=1
+  -DFLITZZIP_ENABLE_HIP=0
+  -DFLITZZIP_MINIZ_FUZZ_ALLOCATOR=1
   -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION=1
 )
 
@@ -89,7 +89,7 @@ build_miniz_objects() {
     local source="$source_dir/$source_name"
     local object="$object_dir/$(basename "$source_name" .c).o"
     "$CC" $CFLAGS -std=c11 -I"$source_dir" \
-      -DUSE_EXTERNAL_MZCRC -DSUPERZIP_MINIZ_FUZZ_ALLOCATOR=1 -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION=1 \
+      -DUSE_EXTERNAL_MZCRC -DFLITZZIP_MINIZ_FUZZ_ALLOCATOR=1 -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION=1 \
       -Wno-conversion -Wno-sign-conversion -c "$source" -o "$object"
     objects+=("$object")
   done
@@ -149,33 +149,33 @@ PATH_SAFETY_OBJECT="${CORE_OBJECTS[0]}"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/archive_index_fuzzer.cpp \
   src/core/archive_index.cpp \
-  -o "$OUT/superzip_archive_index_fuzzer" \
+  -o "$OUT/flitzzip_archive_index_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/path_safety_fuzzer.cpp \
   "$PATH_SAFETY_OBJECT" \
-  -o "$OUT/superzip_path_safety_fuzzer" \
+  -o "$OUT/flitzzip_path_safety_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/iso_fuzzer.cpp \
   src/iso/iso_adapter.cpp \
   "${CORE_OBJECTS[@]}" \
-  -o "$OUT/superzip_iso_fuzzer" \
+  -o "$OUT/flitzzip_iso_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/cab_header_fuzzer.cpp \
   src/cab/cab_format.cpp \
   "$PATH_SAFETY_OBJECT" \
-  -o "$OUT/superzip_cab_header_fuzzer" \
+  -o "$OUT/flitzzip_cab_header_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/rpm_header_fuzzer.cpp \
   src/rpm/rpm_format.cpp \
-  -o "$OUT/superzip_rpm_header_fuzzer" \
+  -o "$OUT/flitzzip_rpm_header_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 build_lzma_sdk_objects "$OUT/lzma-sdk-objects" > "$OUT/lzma-sdk-objects.list"
@@ -185,7 +185,7 @@ LZMA_CRC_OBJECTS=(
   "$OUT/lzma-sdk-objects/7zCrcOpt.o"
   "$OUT/lzma-sdk-objects/CpuArch.o"
 )
-CHECKSUM_OBJECT="$OUT/superzip-checksum.o"
+CHECKSUM_OBJECT="$OUT/flitzzip-checksum.o"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -c src/core/checksum.cpp -o "$CHECKSUM_OBJECT"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/sevenzip_fuzzer.cpp \
@@ -193,7 +193,7 @@ CHECKSUM_OBJECT="$OUT/superzip-checksum.o"
   "$CHECKSUM_OBJECT" \
   "${CORE_OBJECTS[@]}" \
   "${LZMA_SDK_OBJECTS[@]}" \
-  -o "$OUT/superzip_sevenzip_fuzzer" \
+  -o "$OUT/flitzzip_sevenzip_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
@@ -201,7 +201,7 @@ CHECKSUM_OBJECT="$OUT/superzip-checksum.o"
   src/lzma/lzma_adapter.cpp \
   "${CORE_OBJECTS[@]}" \
   "${LZMA_SDK_OBJECTS[@]}" \
-  -o "$OUT/superzip_lzma_fuzzer" \
+  -o "$OUT/flitzzip_lzma_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
@@ -211,7 +211,7 @@ CHECKSUM_OBJECT="$OUT/superzip-checksum.o"
   "$CHECKSUM_OBJECT" \
   "${CORE_OBJECTS[@]}" \
   "${LZMA_SDK_OBJECTS[@]}" \
-  -o "$OUT/superzip_lzip_fuzzer" \
+  -o "$OUT/flitzzip_lzip_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
@@ -220,21 +220,21 @@ CHECKSUM_OBJECT="$OUT/superzip-checksum.o"
   "$CHECKSUM_OBJECT" \
   "${CORE_OBJECTS[@]}" \
   "${LZMA_CRC_OBJECTS[@]}" \
-  -o "$OUT/superzip_arj_fuzzer" \
+  -o "$OUT/flitzzip_arj_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/arc_fuzzer.cpp \
   src/arc/arc_adapter.cpp \
   "${CORE_OBJECTS[@]}" \
-  -o "$OUT/superzip_arc_fuzzer" \
+  -o "$OUT/flitzzip_arc_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/macbinary_fuzzer.cpp \
   src/macbinary/macbinary_adapter.cpp \
   "${CORE_OBJECTS[@]}" \
-  -o "$OUT/superzip_macbinary_fuzzer" \
+  -o "$OUT/flitzzip_macbinary_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 build_lhasa_objects "$OUT/lhasa-objects" > "$OUT/lhasa-objects.list"
@@ -244,12 +244,12 @@ mapfile -t LHASA_OBJECTS < "$OUT/lhasa-objects.list"
   src/lha/lha_adapter.cpp \
   "${CORE_OBJECTS[@]}" \
   "${LHASA_OBJECTS[@]}" \
-  -o "$OUT/superzip_lha_fuzzer" \
+  -o "$OUT/flitzzip_lha_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 build_miniz_objects "$MINIZ_SOURCE" "$OUT/miniz-objects" > "$OUT/miniz-objects.list"
 mapfile -t MINIZ_OBJECTS < "$OUT/miniz-objects.list"
-MINIZ_CRC_OBJECT="$OUT/superzip-miniz-checksum.o"
+MINIZ_CRC_OBJECT="$OUT/flitzzip-miniz-checksum.o"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
   -c src/core/miniz_checksum.cpp -o "$MINIZ_CRC_OBJECT"
 build_core_objects "$OUT/miniz-core-objects" -I"$MINIZ_SOURCE" > "$OUT/miniz-core-objects.list"
@@ -262,7 +262,7 @@ mapfile -t MINIZ_CORE_OBJECTS < "$OUT/miniz-core-objects.list"
   "${MINIZ_CORE_OBJECTS[@]}" \
   "${MINIZ_OBJECTS[@]}" \
   "$MINIZ_CRC_OBJECT" "$CHECKSUM_OBJECT" "${LZMA_CRC_OBJECTS[@]}" \
-  -o "$OUT/superzip_cpio_fuzzer" \
+  -o "$OUT/flitzzip_cpio_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
@@ -271,40 +271,40 @@ mapfile -t MINIZ_CORE_OBJECTS < "$OUT/miniz-core-objects.list"
   "${MINIZ_CORE_OBJECTS[@]}" \
   "${MINIZ_OBJECTS[@]}" \
   "$MINIZ_CRC_OBJECT" "$CHECKSUM_OBJECT" "${LZMA_CRC_OBJECTS[@]}" \
-  -o "$OUT/superzip_xar_fuzzer" \
+  -o "$OUT/flitzzip_xar_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-cp fuzz/superzip.dict "$OUT/superzip_archive_index_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_path_safety_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_cpio_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_iso_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_cab_header_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_rpm_header_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_sevenzip_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_lzma_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_lzip_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_lha_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_xar_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_arj_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_arc_fuzzer.dict"
-cp fuzz/superzip.dict "$OUT/superzip_macbinary_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_archive_index_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_path_safety_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_cpio_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_iso_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_cab_header_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_rpm_header_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_sevenzip_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_lzma_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_lzip_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_lha_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_xar_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_arj_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_arc_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_macbinary_fuzzer.dict"
 cp fuzz/*.options "$OUT/"
 
 for target in \
-  superzip_archive_index_fuzzer \
-  superzip_path_safety_fuzzer \
-  superzip_cpio_fuzzer \
-  superzip_iso_fuzzer \
-  superzip_cab_header_fuzzer \
-  superzip_rpm_header_fuzzer \
-  superzip_sevenzip_fuzzer \
-  superzip_lzma_fuzzer \
-  superzip_lzip_fuzzer \
-  superzip_lha_fuzzer \
-  superzip_xar_fuzzer \
-  superzip_arj_fuzzer \
-  superzip_arc_fuzzer \
-  superzip_macbinary_fuzzer
+  flitzzip_archive_index_fuzzer \
+  flitzzip_path_safety_fuzzer \
+  flitzzip_cpio_fuzzer \
+  flitzzip_iso_fuzzer \
+  flitzzip_cab_header_fuzzer \
+  flitzzip_rpm_header_fuzzer \
+  flitzzip_sevenzip_fuzzer \
+  flitzzip_lzma_fuzzer \
+  flitzzip_lzip_fuzzer \
+  flitzzip_lha_fuzzer \
+  flitzzip_xar_fuzzer \
+  flitzzip_arj_fuzzer \
+  flitzzip_arc_fuzzer \
+  flitzzip_macbinary_fuzzer
 do
   test -x "$OUT/$target"
 done

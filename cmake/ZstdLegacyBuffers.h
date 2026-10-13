@@ -1,5 +1,5 @@
-#ifndef SUPERZIP_ZSTD_LEGACY_BUFFERS_H
-#define SUPERZIP_ZSTD_LEGACY_BUFFERS_H
+#ifndef FLITZZIP_ZSTD_LEGACY_BUFFERS_H
+#define FLITZZIP_ZSTD_LEGACY_BUFFERS_H
 
 #include <stddef.h>
 #include <stdint.h>

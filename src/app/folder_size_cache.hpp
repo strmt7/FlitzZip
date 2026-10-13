@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Bind one folder-size result to one queue lifetime, including an in-flight scan.
 // Inputs: The owner serializes state/bytes access; workers may read cancelled concurrently.
@@ -109,4 +109,4 @@ class FolderSizeCache {
     std::deque<std::shared_ptr<FolderSizeTask>> pending_;
 };
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

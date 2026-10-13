@@ -63,20 +63,20 @@ jobs:
       - name: Run linters
         shell: pwsh
         env:
-          SUPERZIP_EVENT_NAME: ${{ github.event_name }}
-          SUPERZIP_BASE_REF: ${{ github.base_ref }}
-          SUPERZIP_HEAD_SHA: ${{ github.sha }}
-          SUPERZIP_BEFORE_SHA: ${{ github.event.before }}
+          FLITZZIP_EVENT_NAME: ${{ github.event_name }}
+          FLITZZIP_BASE_REF: ${{ github.base_ref }}
+          FLITZZIP_HEAD_SHA: ${{ github.sha }}
+          FLITZZIP_BEFORE_SHA: ${{ github.event.before }}
         run: |
           $ErrorActionPreference = "Stop"
-          $eventName = $env:SUPERZIP_EVENT_NAME
+          $eventName = $env:FLITZZIP_EVENT_NAME
           if ($eventName -in @("workflow_dispatch", "schedule")) {
             tools/lint.ps1 -CppMode All
           } elseif ($eventName -eq "pull_request") {
-            $baseRef = "origin/$($env:SUPERZIP_BASE_REF)"
-            tools/lint.ps1 -CppMode Changed -BaseRef "$baseRef" -HeadRef "$env:SUPERZIP_HEAD_SHA"
+            $baseRef = "origin/$($env:FLITZZIP_BASE_REF)"
+            tools/lint.ps1 -CppMode Changed -BaseRef "$baseRef" -HeadRef "$env:FLITZZIP_HEAD_SHA"
           } else {
-            $baseRef = $env:SUPERZIP_BEFORE_SHA
+            $baseRef = $env:FLITZZIP_BEFORE_SHA
             if ([string]::IsNullOrWhiteSpace($baseRef)) {
               $baseRef = "HEAD~1"
             } else {
@@ -85,5 +85,5 @@ jobs:
                 $baseRef = "HEAD~1"
               }
             }
-            tools/lint.ps1 -CppMode Changed -BaseRef "$baseRef" -HeadRef "$env:SUPERZIP_HEAD_SHA"
+            tools/lint.ps1 -CppMode Changed -BaseRef "$baseRef" -HeadRef "$env:FLITZZIP_HEAD_SHA"
           }

@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <span>
 
-namespace superzip {
+namespace flitzzip {
 
 constexpr std::size_t kSparsePatternHeaderBytes = 2U * sizeof(std::uint32_t);
 constexpr std::size_t kSparsePatternPatchBytes = sizeof(std::uint32_t) + sizeof(std::byte);
@@ -71,4 +71,4 @@ inline SparsePatternLayout parse_sparse_pattern_block(std::span<const std::byte>
     return SparsePatternLayout{.motif = motif, .patches = patches, .patch_count = patch_count};
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

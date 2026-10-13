@@ -18,7 +18,7 @@
 #include <thread>
 #include <utility>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 // Fit a complete 128 KiB Zstandard block plus its bounded encoded framing.
@@ -47,7 +47,7 @@ struct DecompressionContextDeleter {
     }
 };
 
-// Purpose: Convert a Zstandard runtime result into a stable SuperZip error when needed.
+// Purpose: Convert a Zstandard runtime result into a stable FlitzZip error when needed.
 // Inputs: `runtime` is the loaded Zstandard API, `code` is a runtime result, and `context` names the failed operation.
 // Outputs: Returns normally when `code` is not an error; otherwise throws `ArchiveError`.
 void require_zstd_ok(const ZstdRuntime& runtime, std::size_t code, const char* context) {
@@ -519,4 +519,4 @@ std::uint64_t ZstdInputStream::output_bytes() const {
     return buffer_->output_bytes();
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

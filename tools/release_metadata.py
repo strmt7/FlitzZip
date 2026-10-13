@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve SuperZip release metadata for local and GitHub Actions packaging."""
+"""Resolve FlitzZip release metadata for local and GitHub Actions packaging."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ SEMVER_PATTERN = re.compile(
     r"(?:\.(?:0|[1-9][0-9]*|[A-Za-z-][0-9A-Za-z-]*))*))?$"
 )
 PROJECT_VERSION_PATTERN = re.compile(
-    r"project\s*\(\s*SuperZip\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)",
+    r"project\s*\(\s*FlitzZip\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)",
     re.IGNORECASE,
 )
 
@@ -72,7 +72,7 @@ def read_project_version(repo_root: Path) -> str:
     cmake = repo_root / "CMakeLists.txt"
     match = PROJECT_VERSION_PATTERN.search(cmake.read_text(encoding="utf-8"))
     if match is None:
-        raise ValueError("could not resolve SuperZip project VERSION from CMakeLists.txt")
+        raise ValueError("could not resolve FlitzZip project VERSION from CMakeLists.txt")
     return validate_release_version(match.group(1))
 
 
@@ -104,7 +104,7 @@ def resolve_metadata(
         raise ValueError(
             f"release tag {release_tag} already exists; use replace_existing=true only with an explicit release_version"
         )
-    package_base = f"SuperZip-{release_version}-win64"
+    package_base = f"FlitzZip-{release_version}-win64"
     return ReleaseMetadata(
         release_version=release_version,
         release_tag=release_tag,
@@ -138,7 +138,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     Inputs: `argv` is the command argument list without program name.
     Outputs: argparse namespace with validated option structure.
     """
-    parser = argparse.ArgumentParser(description="Resolve SuperZip release metadata.")
+    parser = argparse.ArgumentParser(description="Resolve FlitzZip release metadata.")
     parser.add_argument("--requested-version", default="")
     parser.add_argument("--existing-tags-file", type=Path, default=None)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())

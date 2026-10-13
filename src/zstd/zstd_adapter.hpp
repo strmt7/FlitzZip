@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Create a single-file Zstandard stream from exactly one regular file.
 // Inputs: `sources` must contain one existing regular file, `output_archive` is the destination `.zst`,
@@ -24,4 +24,4 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
 OperationStats extract_zstd_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                  bool overwrite, const ProgressCallback& progress_callback = {});
 
-}  // namespace superzip
+}  // namespace flitzzip

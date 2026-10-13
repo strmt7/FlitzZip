@@ -7,7 +7,7 @@
 #include <memory>
 #include <span>
 
-namespace superzip {
+namespace flitzzip {
 
 // Output ownership pairs heap or HIP allocation with its exact matching non-throwing release operation.
 struct DecodedStorageDeleter {
@@ -56,4 +56,4 @@ struct DecodedChunk {
 DecodedChunk decode_owned_chunk(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                                 std::size_t decoded_size, const GpuCodecOptions& options);
 
-}  // namespace superzip
+}  // namespace flitzzip

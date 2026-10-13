@@ -7,7 +7,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace superzip_test {
+namespace flitzzip_test {
 
 // Purpose: Require each SDK macro to evaluate pointer/value expressions once.
 // Inputs: UInt fixes the wire width; callbacks expand the real production macros.
@@ -127,4 +127,4 @@ inline void verify_sdk_aligned_access() {
                                           [](auto& p, auto& v) { SetBe64(p(), v()); });
 }
 
-}  // namespace superzip_test
+}  // namespace flitzzip_test

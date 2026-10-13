@@ -35,7 +35,7 @@ const std::filesystem::path& fuzz_root() {
 #else
         const auto process_id = static_cast<unsigned long long>(getpid());
 #endif
-        auto path = std::filesystem::temp_directory_path() / ("superzip-sevenzip-fuzz-" + std::to_string(process_id));
+        auto path = std::filesystem::temp_directory_path() / ("flitzzip-sevenzip-fuzz-" + std::to_string(process_id));
         std::filesystem::create_directories(path);
         return path;
     }();
@@ -56,8 +56,8 @@ void write_fuzz_input(const std::uint8_t* data, std::size_t size, const std::fil
 // Inputs: Unused libFuzzer argument pointers; checks use bounded deterministic byte arrays.
 // Outputs: Returns zero on success; any assertion or sanitizer failure aborts initialization.
 extern "C" int LLVMFuzzerInitialize(int*, char***) {
-    superzip_test::verify_sdk_unaligned_access();
-    superzip_test::verify_sdk_aligned_access();
+    flitzzip_test::verify_sdk_unaligned_access();
+    flitzzip_test::verify_sdk_aligned_access();
     return 0;
 }
 
@@ -77,8 +77,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 
     try {
         write_fuzz_input(data, size, archive);
-        (void)superzip::extract_7z(archive, output, true);
-    } catch (const superzip::Error&) {
+        (void)flitzzip::extract_7z(archive, output, true);
+    } catch (const flitzzip::Error&) {
     } catch (const std::filesystem::filesystem_error&) {
     }
 

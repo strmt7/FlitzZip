@@ -145,15 +145,15 @@ TEST_CASE(macbinary_extracts_data_fork_and_discards_resource_fork) {
     const std::vector<unsigned char> resource{'R', 'S', 'R', 'C'};
     write_binary_file(archive, make_macbinary_fixture("payload.dat", payload, resource));
 
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::MacBinary);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::MacBinary);
     const auto output = root / "out";
-    const auto stats = superzip::extract_macbinary_file(archive, output, false);
+    const auto stats = flitzzip::extract_macbinary_file(archive, output, false);
 
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(payload.size()));
     REQUIRE_EQ(read_binary_file(output / "payload.dat"), payload);
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(1));
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 
@@ -166,9 +166,9 @@ TEST_CASE(macbinary_extracts_legacy_v1_macbin_by_extension) {
     const std::vector<unsigned char> payload{'v', '1'};
     write_binary_file(archive, make_macbinary_fixture("legacy.txt", payload, {}, false));
 
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::MacBinary);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::MacBinary);
     const auto output = root / "out";
-    const auto stats = superzip::extract_macbinary_file(archive, output, false);
+    const auto stats = flitzzip::extract_macbinary_file(archive, output, false);
 
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(payload.size()));
     REQUIRE_EQ(read_binary_file(output / "legacy.txt"), payload);
@@ -183,7 +183,7 @@ TEST_CASE(macbinary_does_not_auto_detect_legacy_v1_bin_without_crc_marker) {
     const auto archive = root / "legacy.bin";
     write_binary_file(archive, make_macbinary_fixture("legacy.txt", {'v', '1'}, {}, false));
 
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Unknown);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Unknown);
     std::filesystem::remove_all(root);
 }
 
@@ -195,7 +195,7 @@ TEST_CASE(macbinary_does_not_false_positive_generic_bin) {
     const auto archive = root / "random.bin";
     write_binary_file(archive, {'n', 'o', 't', ' ', 'm', 'a', 'c'});
 
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Unknown);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Unknown);
     std::filesystem::remove_all(root);
 }
 
@@ -210,8 +210,8 @@ TEST_CASE(macbinary_extract_rejects_unsafe_header_path) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_macbinary_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_macbinary_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -231,8 +231,8 @@ TEST_CASE(macbinary_extract_rejects_classic_colon_separator) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_macbinary_file(archive, output, true);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_macbinary_file(archive, output, true);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -251,8 +251,8 @@ TEST_CASE(macbinary_extract_rejects_bad_header_crc_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_macbinary_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_macbinary_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -274,8 +274,8 @@ TEST_CASE(macbinary_extract_rejects_truncated_data_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_macbinary_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_macbinary_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -297,8 +297,8 @@ TEST_CASE(macbinary_extract_rejects_truncated_resource_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_macbinary_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_macbinary_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -320,8 +320,8 @@ TEST_CASE(macbinary_extract_rejects_signed_fork_length_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_macbinary_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_macbinary_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -338,7 +338,7 @@ TEST_CASE(macbinary_extracts_zero_length_data_fork) {
     write_binary_file(archive, make_macbinary_fixture("empty.txt", {}));
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_macbinary_file(archive, output, false);
+    const auto stats = flitzzip::extract_macbinary_file(archive, output, false);
 
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(0));
     REQUIRE_TRUE(std::filesystem::exists(output / "empty.txt"));
@@ -361,8 +361,8 @@ TEST_CASE(macbinary_extract_rejects_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_macbinary_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_macbinary_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

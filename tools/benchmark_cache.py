@@ -38,7 +38,7 @@ def canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("utf-8")
 
 
-# Purpose: Bind a comparator result to all material measurement inputs, not SuperZip's current commit.
+# Purpose: Bind a comparator result to all material measurement inputs, not FlitzZip's current commit.
 # Inputs: Method/input/binary/reference hashes, dependency hashes, tool/version/scope, settings and host.
 # Outputs: Content-addressed SHA-256 key; missing or malformed identity fails closed.
 def measurement_id(identity: dict) -> str:

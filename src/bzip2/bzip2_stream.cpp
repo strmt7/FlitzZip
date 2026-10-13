@@ -17,7 +17,7 @@
 
 #include "bzlib.h"
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kBzip2StreamBufferBytes = 64U * 1024U;
@@ -462,4 +462,4 @@ std::uint64_t Bzip2InputStream::output_bytes() const {
     return buffer_->output_bytes();
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

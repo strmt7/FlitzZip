@@ -14,7 +14,7 @@ param(
 # Outputs: Creates one new provenance JSON record; never reports filesystem timings as throughput evidence.
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
+$cli = Join-Path $repo "build\$Configuration\flitzzip_cli.exe"
 $sevenZip = if ($SevenZipPath) { [IO.Path]::GetFullPath($SevenZipPath) } else {
     Join-Path $repo 'out\tools\7zip-26.03\x64\7za.exe'
 }
@@ -26,7 +26,7 @@ foreach ($tool in @($cli, $sevenZip, $zstd, $bsdtar)) {
     }
 }
 $formatRows = @(
-    [pscustomobject]@{ Key = 'suzip'; Extension = '.suzip'; LevelAware = $true }
+    [pscustomobject]@{ Key = 'flzip'; Extension = '.flzip'; LevelAware = $true }
     [pscustomobject]@{ Key = 'zip'; Extension = '.zip'; LevelAware = $true }
     [pscustomobject]@{ Key = 'tar'; Extension = '.tar'; LevelAware = $false }
     [pscustomobject]@{ Key = 'tar.gz'; Extension = '.tar.gz'; LevelAware = $true }
@@ -66,7 +66,7 @@ function Initialize-ComparisonSource {
     param([string]$Path, [int]$Count, [string]$FixtureProfile)
     $bytes = [byte[]]::new($Count)
     if ($FixtureProfile -eq 'Text') {
-        $pattern = [Text.Encoding]::UTF8.GetBytes("SuperZip comparative text corpus. Deterministic line with markup, paths, numbers 0123456789.`n")
+        $pattern = [Text.Encoding]::UTF8.GetBytes("FlitzZip comparative text corpus. Deterministic line with markup, paths, numbers 0123456789.`n")
         for ($offset = 0; $offset -lt $Count; $offset += $pattern.Length) {
             [Array]::Copy($pattern, 0, $bytes, $offset, [Math]::Min($pattern.Length, $Count - $offset))
         }
@@ -91,7 +91,7 @@ function Initialize-ComparisonSource {
     return $hash
 }
 
-# Purpose: Verify complete source recovery through SuperZip and an independent reader where one exists.
+# Purpose: Verify complete source recovery through FlitzZip and an independent reader where one exists.
 # Inputs: Source hash, archive path and format, destination, producing tool, and bounded workspace.
 # Outputs: Returns a precise verification label or throws before recording a size.
 function Assert-ComparisonArchive {
@@ -99,30 +99,30 @@ function Assert-ComparisonArchive {
           [string]$Producer, [string]$Directory)
     New-Item -ItemType Directory -Path $Destination | Out-Null
     $extractArgs = @('extract', '--format', 'auto', '--output', $Destination)
-    if ($Format -eq 'suzip') { $extractArgs += '--force-cpu' }
+    if ($Format -eq 'flzip') { $extractArgs += '--force-cpu' }
     Invoke-ComparisonTool -Path $cli -Arguments ($extractArgs + $Archive) -Directory $Directory -Label "$Producer $Format extraction"
     $files = @(Get-ChildItem -LiteralPath $Destination -Recurse -File)
     if ($files.Count -ne 1 -or (Get-FileHash -LiteralPath $files[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $SourceHash) {
-        throw "$Producer $Format failed byte-exact SuperZip extraction."
+        throw "$Producer $Format failed byte-exact FlitzZip extraction."
     }
-    if ($Producer -ne 'SuperZip') { return 'SuperZip independent extraction + SHA-256' }
-    if ($Format -eq 'suzip') {
+    if ($Producer -ne 'FlitzZip') { return 'FlitzZip independent extraction + SHA-256' }
+    if ($Format -eq 'flzip') {
         Invoke-ComparisonTool -Path $cli -Arguments @('verify', '--force-cpu', $Archive) -Directory $Directory -Label 'native verification'
-        return 'SuperZip extraction + SHA-256 + native verify'
+        return 'FlitzZip extraction + SHA-256 + native verify'
     }
     if ($Format -in @('zip', 'gz', 'bz2')) {
         Invoke-ComparisonTool -Path $sevenZip -Arguments @('t', '-bd', '-bso0', '-bsp0', $Archive) -Directory $Directory -Label "7-Zip test $Format"
-        return 'SuperZip extraction + SHA-256 + 7-Zip test'
+        return 'FlitzZip extraction + SHA-256 + 7-Zip test'
     }
     if ($Format -eq 'zst') {
         Invoke-ComparisonTool -Path $zstd -Arguments @('-t', '-q', $Archive) -Directory $Directory -Label 'Zstandard test'
-        return 'SuperZip extraction + SHA-256 + Zstandard test'
+        return 'FlitzZip extraction + SHA-256 + Zstandard test'
     }
     if ($Format -in @('tar', 'tar.gz', 'tar.bz2', 'tar.zst', 'cpio', 'cpio.gz', 'ar')) {
         Invoke-ComparisonTool -Path $bsdtar -Arguments @('-tf', $Archive) -Directory $Directory -Label "libarchive list $Format"
-        return 'SuperZip extraction + SHA-256 + libarchive list'
+        return 'FlitzZip extraction + SHA-256 + libarchive list'
     }
-    return 'SuperZip extraction + SHA-256'
+    return 'FlitzZip extraction + SHA-256'
 }
 
 # Purpose: Read BZip2's encoded 100-KiB block-size selector for honest effort comparisons.
@@ -181,7 +181,7 @@ function Measure-ComparisonCase {
 }
 
 $registry = @(& $cli formats)
-if ($LASTEXITCODE -ne 0) { throw 'SuperZip format registry query failed.' }
+if ($LASTEXITCODE -ne 0) { throw 'FlitzZip format registry query failed.' }
 $writable = @($registry | Where-Object { $_ -match '^format=(\S+).*can_create=true' } |
     ForEach-Object { [regex]::Match($_, '^format=(\S+)').Groups[1].Value })
 if (@(Compare-Object $writable @($formatRows.Key)).Count -ne 0) {
@@ -231,7 +231,7 @@ try {
     $tarVersion = @(& $bsdtar --version | Select-Object -First 1)[0]
     $zstdVersion = @(& $zstd --version | Select-Object -First 1)[0]
     $tools = @(
-        [ordered]@{ name = 'SuperZip'; version = 'source build'; sha256 = (Get-FileHash $cli -Algorithm SHA256).Hash.ToLowerInvariant() }
+        [ordered]@{ name = 'FlitzZip'; version = 'source build'; sha256 = (Get-FileHash $cli -Algorithm SHA256).Hash.ToLowerInvariant() }
         [ordered]@{ name = '7-Zip'; version = $sevenVersion; sha256 = (Get-FileHash $sevenZip -Algorithm SHA256).Hash.ToLowerInvariant() }
         [ordered]@{ name = 'libarchive bsdtar'; version = $tarVersion; sha256 = (Get-FileHash $bsdtar -Algorithm SHA256).Hash.ToLowerInvariant() }
         [ordered]@{ name = 'Zstandard CLI'; version = $zstdVersion; sha256 = (Get-FileHash $zstd -Algorithm SHA256).Hash.ToLowerInvariant() }
@@ -248,13 +248,13 @@ try {
                 if (-not $format.LevelAware) { $levelsForFormat = ,$null }
                 foreach ($level in $levelsForFormat) {
                     $create = @('compress', '--format', $format.Key)
-                    if ($format.Key -eq 'suzip') {
+                    if ($format.Key -eq 'flzip') {
                         $create += @('--force-cpu', '--block-size-kib', "$NativeBlockSizeKiB")
                     }
                     if ($null -ne $level) { $create += @('--compression-level', "$level") }
                     $create += @('--output', '{archive}', $source)
-                    $blockSize = if ($format.Key -eq 'suzip') { $NativeBlockSizeKiB } else { $null }
-                    $result = Measure-ComparisonCase -Producer 'SuperZip' -Format $format.Key -Level $level `
+                    $blockSize = if ($format.Key -eq 'flzip') { $NativeBlockSizeKiB } else { $null }
+                    $result = Measure-ComparisonCase -Producer 'FlitzZip' -Format $format.Key -Level $level `
                         -NativeBlockSizeKiB $blockSize `
                         -Source $source -SourceHash $sourceHash -Root $resolvedWork -Extension $format.Extension `
                         -ToolPath $cli -Arguments $create

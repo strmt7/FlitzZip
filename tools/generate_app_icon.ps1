@@ -6,14 +6,14 @@ param(
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $repo "resources\app\superzip.ico"
+    $OutputPath = Join-Path $repo "resources\app\flitzzip.ico"
 }
 if ([string]::IsNullOrWhiteSpace($SvgPath)) {
-    $SvgPath = Join-Path $repo "resources\brand\superzip-logo.svg"
+    $SvgPath = Join-Path $repo "resources\brand\flitzzip-logo.svg"
 }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OutputPath) | Out-Null
 
-Import-Module (Join-Path $PSScriptRoot "superzip_brand_logo.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "flitzzip_brand_logo.psm1") -Force
 
 # Purpose: Write a multi-resolution Windows ICO file.
 # Inputs: `Path` is the output file and `Images` contains width and raw DIB bytes.
@@ -52,11 +52,11 @@ function Write-IcoFile {
     }
 }
 
-$mark = Read-SuperZipLogoMark -SvgPath $SvgPath
+$mark = Read-FlitzZipLogoMark -SvgPath $SvgPath
 $images = foreach ($size in @(16, 24, 32, 48, 64, 128, 256)) {
     [pscustomobject]@{
         Size = $size
-        Bytes = ConvertTo-SuperZipLogoIcoImage -Mark $mark -Size $size
+        Bytes = ConvertTo-FlitzZipLogoIcoImage -Mark $mark -Size $size
     }
 }
 

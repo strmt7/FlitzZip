@@ -1,7 +1,7 @@
 # Purpose: Recognize exact later revisions outside the legacy decoder pipeline.
 # Inputs: Complete current and preceding source hashes. Outputs: Returns true
 # only for a known paired transformation; unknown bytes remain rejected.
-function(superzip_zstd_nonlegacy_patch_is_superseded actual_hash patched_hash
+function(flitzzip_zstd_nonlegacy_patch_is_superseded actual_hash patched_hash
          output)
   set(recognized FALSE)
   # A later comment-only revision is also a complete result of its preceding
@@ -50,8 +50,8 @@ endfunction()
 # Inputs: actual_hash and patched_hash identify full generated-source bytes.
 # Outputs: Returns true through output only for an explicitly linked pair;
 # unknown revisions remain subject to the writer's source identity rejection.
-function(superzip_zstd_patch_is_superseded actual_hash patched_hash output)
-  set(property "_SUPERZIP_ZSTD_PAIR_${actual_hash}_${patched_hash}")
+function(flitzzip_zstd_patch_is_superseded actual_hash patched_hash output)
+  set(property "_FLITZZIP_ZSTD_PAIR_${actual_hash}_${patched_hash}")
   get_property(
     known GLOBAL
     PROPERTY "${property}"
@@ -59,7 +59,7 @@ function(superzip_zstd_patch_is_superseded actual_hash patched_hash output)
   if(known)
     get_property(recognized GLOBAL PROPERTY "${property}")
   else()
-    superzip_zstd_calculate_superseded("${actual_hash}" "${patched_hash}"
+    flitzzip_zstd_calculate_superseded("${actual_hash}" "${patched_hash}"
                                        recognized)
     # Cache immutable metadata relationships only for this CMake process.
     # Writers still hash actual source bytes before every admission decision.
@@ -73,11 +73,11 @@ endfunction()
 # Purpose: Calculate the exact reviewed predecessor graph for one source pair.
 # Inputs: Complete current and requested hashes from verified source/metadata.
 # Outputs: Returns only a supported graph relationship, never source content.
-function(superzip_zstd_calculate_superseded actual_hash patched_hash output)
+function(flitzzip_zstd_calculate_superseded actual_hash patched_hash output)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedBuffers.cmake")
-  superzip_zstd_owned_predecessor("${actual_hash}" predecessor)
+  flitzzip_zstd_owned_predecessor("${actual_hash}" predecessor)
   if(NOT predecessor STREQUAL "")
-    superzip_zstd_patch_is_superseded("${predecessor}" "${patched_hash}"
+    flitzzip_zstd_patch_is_superseded("${predecessor}" "${patched_hash}"
                                       recognized)
     if(predecessor STREQUAL patched_hash)
       set(recognized TRUE)
@@ -95,7 +95,7 @@ function(superzip_zstd_calculate_superseded actual_hash patched_hash output)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyHistory.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyDictionary.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdDictionaryBounds.cmake")
-  superzip_zstd_dictionary_patch_is_superseded("${actual_hash}"
+  flitzzip_zstd_dictionary_patch_is_superseded("${actual_hash}"
                                                "${patched_hash}" recognized)
   if(actual_hash STREQUAL _zstd_legacy_public_patched
      AND patched_hash STREQUAL _zstd_legacy_public_original)
@@ -133,7 +133,7 @@ function(superzip_zstd_calculate_superseded actual_hash patched_hash output)
       set(recognized TRUE)
     endif()
   endforeach()
-  superzip_zstd_nonlegacy_patch_is_superseded("${actual_hash}"
+  flitzzip_zstd_nonlegacy_patch_is_superseded("${actual_hash}"
                                               "${patched_hash}" nonlegacy)
   if(nonlegacy)
     set(recognized TRUE)
@@ -148,13 +148,13 @@ endfunction()
 # and content is the complete proposed text. Upstream archives stay immutable.
 # Outputs: Atomically replaces the original on an exact match; rejects drift or
 # an interrupted/concurrent patch instead of silently overwriting it.
-function(superzip_write_verified_zstd_patch path original_hash patched_hash
+function(flitzzip_write_verified_zstd_patch path original_hash patched_hash
          content)
   file(SHA256 "${path}" actual_hash)
   if(actual_hash STREQUAL patched_hash)
     return()
   endif()
-  superzip_zstd_patch_is_superseded("${actual_hash}" "${patched_hash}"
+  flitzzip_zstd_patch_is_superseded("${actual_hash}" "${patched_hash}"
                                     superseded)
   if(superseded)
     return()
@@ -167,7 +167,7 @@ function(superzip_write_verified_zstd_patch path original_hash patched_hash
     message(FATAL_ERROR "Zstandard patch output identity mismatch: ${path}; "
                         "expected ${patched_hash}, observed ${proposed_hash}")
   endif()
-  set(temporary "${path}.superzip-patch")
+  set(temporary "${path}.flitzzip-patch")
   set(raw "${temporary}.raw")
   if(EXISTS "${temporary}" OR EXISTS "${raw}")
     message(FATAL_ERROR "Incomplete or concurrent Zstandard patch: ${path}")
@@ -189,7 +189,7 @@ endfunction()
 # source_dir owns verified extracted v1.5.7 source; the fragment keeps stage
 # bodies and consumption semantics. Outputs: Publishes the exact reviewed
 # revision or rejects source drift; never changes the upstream archive.
-function(superzip_patch_zstd_bufferless source_dir)
+function(flitzzip_patch_zstd_bufferless source_dir)
   set(source "${source_dir}/lib/decompress/zstd_decompress.c")
   set(original_hash
       "029580818b7e9cd38d9d07c63516b00ceaa943ffcfbd099fc5ccbe3628fa362f")
@@ -199,7 +199,7 @@ function(superzip_patch_zstd_bufferless source_dir)
   if(actual_hash STREQUAL patched_hash)
     return()
   endif()
-  superzip_zstd_patch_is_superseded("${actual_hash}" "${patched_hash}"
+  flitzzip_zstd_patch_is_superseded("${actual_hash}" "${patched_hash}"
                                     superseded)
   if(superseded)
     return()
@@ -219,7 +219,7 @@ function(superzip_patch_zstd_bufferless source_dir)
        fragment)
   string(REGEX REPLACE "\n$" "" fragment "${fragment}")
   string(CONCAT content "${prefix}" "${fragment}" "${suffix}")
-  superzip_write_verified_zstd_patch("${source}" "${original_hash}"
+  flitzzip_write_verified_zstd_patch("${source}" "${original_hash}"
                                      "${patched_hash}" "${content}")
 endfunction()
 
@@ -227,7 +227,7 @@ endfunction()
 # Inputs: source_dir owns exact v1.5.7 source after the bufferless revision.
 # Outputs: Publishes reviewed stage functions or rejects source/output drift;
 # preserves frame support, allocator semantics and the provenance archive.
-function(superzip_patch_zstd_decompression_stream source_dir)
+function(flitzzip_patch_zstd_decompression_stream source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdDecompressionStream.cmake")
   set(source "${source_dir}/lib/decompress/zstd_decompress.c")
   file(SHA256 "${source}" actual_hash)
@@ -253,7 +253,7 @@ function(superzip_patch_zstd_decompression_stream source_dir)
        fragment)
   string(REGEX REPLACE "\n$" "" fragment "${fragment}")
   string(CONCAT content "${prefix}" "${fragment}" "${suffix}")
-  superzip_write_verified_zstd_patch(
+  flitzzip_write_verified_zstd_patch(
     "${source}" "${actual_hash}" "${_zstd_decompression_stream_patched}"
     "${content}")
 endfunction()
@@ -262,7 +262,7 @@ endfunction()
 # Inputs: source_dir owns verified extracted v1.5.7 source after its comment
 # foundation. Outputs: Publishes exact reviewed compressor bytes or rejects
 # drift; keeps the provenance archive and wire algorithms unchanged.
-function(superzip_patch_zstd_compression_stream source_dir)
+function(flitzzip_patch_zstd_compression_stream source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdCompressionStream.cmake")
   set(source "${source_dir}/lib/compress/zstd_compress.c")
   file(SHA256 "${source}" actual_hash)
@@ -290,7 +290,7 @@ function(superzip_patch_zstd_compression_stream source_dir)
        fragment)
   string(REGEX REPLACE "\n$" "" fragment "${fragment}")
   string(CONCAT content "${prefix}" "${fragment}" "${suffix}")
-  superzip_write_verified_zstd_patch(
+  flitzzip_write_verified_zstd_patch(
     "${source}" "${actual_hash}" "${_zstd_compression_stream_patched}"
     "${content}")
 endfunction()
@@ -298,7 +298,7 @@ endfunction()
 # Purpose: Repair v0.5 partial construction without changing the decoder.
 # Inputs: source_dir is the extracted v1.5.7 root from the verified archive.
 # Outputs: Writes only the identity-checked generated v0.5 source.
-function(superzip_patch_zstd_v05 source_dir)
+function(flitzzip_patch_zstd_v05 source_dir)
   set(decoder "${source_dir}/lib/legacy/zstd_v05.c")
   file(SHA256 "${decoder}" current_hash)
   if(current_hash STREQUAL
@@ -348,7 +348,7 @@ function(superzip_patch_zstd_v05 source_dir)
      "ee643222919c3a354da6f71d69f55c681ae0647a274384f2143afbe63dd5d9be")
     set(original_hash "${current_hash}")
   endif()
-  superzip_write_verified_zstd_patch(
+  flitzzip_write_verified_zstd_patch(
     "${decoder}" "${original_hash}"
     "dd60a43788f2a2150ae9ddf91a43ea34c6a03d6a420196e209f5aca2ffb217e2"
     "${decoder_content}")
@@ -358,7 +358,7 @@ endfunction()
 # Purpose: Keep shipped legacy context transitions ownership-safe on error.
 # Inputs: source_dir is the verified, extracted v1.5.7 source root. Outputs:
 # Patches only the generated initializer header with pinned identity.
-function(superzip_patch_zstd_initializer source_dir)
+function(flitzzip_patch_zstd_initializer source_dir)
   set(header "${source_dir}/lib/legacy/zstd_legacy.h")
   file(READ "${header}" header_content)
   string(
@@ -414,7 +414,7 @@ function(superzip_patch_zstd_initializer source_dir)
     string(REPLACE "${initialize}" "${checked_initialize}" header_content
                    "${header_content}")
   endforeach()
-  superzip_write_verified_zstd_patch(
+  flitzzip_write_verified_zstd_patch(
     "${header}"
     "90ecc3816d28da0e0537c610fe99209fb9603b1ecdb764bd1228a5226f5c7484"
     "a582b26687409283a230ff99d53cf0ccefa945ec86cf35111d00a3600e8eb848"
@@ -425,7 +425,7 @@ endfunction()
 # allocation header, including its dependencies. Inputs: source_dir is the
 # verified v1.5.7 source root. Outputs: Writes only the hash-checked production
 # allocation helper; preserves upstream notices.
-function(superzip_patch_zstd_custom_allocator source_dir)
+function(flitzzip_patch_zstd_custom_allocator source_dir)
   set(header "${source_dir}/lib/common/allocations.h")
   set(original_hash
       "6a718e8edaca112abdc0bdfa7de67edefaa44c8d9e514b79672ab58ab3a9118a")
@@ -463,7 +463,7 @@ function(superzip_patch_zstd_custom_allocator source_dir)
   string(REPLACE "${guard}" "" content "${content}")
   string(REPLACE "#define ZSTD_DEPS_NEED_MALLOC\n"
                  "${guard}#define ZSTD_DEPS_NEED_MALLOC\n" content "${content}")
-  superzip_write_verified_zstd_patch("${header}" "${original_hash}"
+  flitzzip_write_verified_zstd_patch("${header}" "${original_hash}"
                                      "${patched_hash}" "${content}")
 endfunction()
 
@@ -471,21 +471,21 @@ endfunction()
 # Inputs: header is an extracted source; guard/anchor identify the insertion;
 # original_hash/patched_hash pin both complete identities. Outputs: Publishes
 # verified generated source or rejects drift/interruption.
-function(superzip_patch_zstd_header_guard header guard anchor original_hash
+function(flitzzip_patch_zstd_header_guard header guard anchor original_hash
          patched_hash)
   file(READ "${header}" content)
   string(CONCAT guarded_anchor "#ifndef ${guard}\n#define ${guard}\n\n"
                 "${anchor}")
   string(REPLACE "${anchor}" "${guarded_anchor}" content "${content}")
   string(APPEND content "\n#endif /* ${guard} */\n")
-  superzip_write_verified_zstd_patch("${header}" "${original_hash}"
+  flitzzip_write_verified_zstd_patch("${header}" "${original_hash}"
                                      "${patched_hash}" "${content}")
 endfunction()
 
 # Purpose: Replace dictionary selection with explicit input/output extents.
 # Inputs: content is the known generated source; output receives repaired text.
 # Outputs: Replaces the complete helper or rejects a missing source boundary.
-function(superzip_rewrite_zstd_cover_selection content output)
+function(flitzzip_rewrite_zstd_cover_selection content output)
   string(FIND "${content}" "COVER_dictSelection_t COVER_selectDict(" begin)
   string(CONCAT contract_prefix "/* Purpose: Select a dictionary "
                 "using only initialized input suffixes.")
@@ -508,7 +508,7 @@ endfunction()
 # Purpose: Clarify equivalent cleanup or logical conditions in pinned source.
 # Inputs: source_dir is the verified extracted v1.5.7 dependency root. Outputs:
 # Publishes exact reviewed bytes; rejects source drift and preserves provenance.
-function(superzip_patch_zstd_cover_cleanup source_dir)
+function(flitzzip_patch_zstd_cover_cleanup source_dir)
   set(source "${source_dir}/lib/dictBuilder/cover.c")
   file(SHA256 "${source}" current_hash)
   set(patched_hash
@@ -516,7 +516,7 @@ function(superzip_patch_zstd_cover_cleanup source_dir)
   if(current_hash STREQUAL patched_hash)
     return()
   endif()
-  superzip_zstd_patch_is_superseded("${current_hash}" "${patched_hash}"
+  flitzzip_zstd_patch_is_superseded("${current_hash}" "${patched_hash}"
                                     superseded)
   if(superseded)
     return()
@@ -528,8 +528,8 @@ function(superzip_patch_zstd_cover_cleanup source_dir)
      "01cdcb0f00af494a327b9fe8763d82b1d1bbbc63cc824669d26362dfa199126c"
      OR current_hash STREQUAL
         "89a86e4217d306fd236bfb41cbdb7081e13082d88acc0f780a713df46da3b0da")
-    superzip_rewrite_zstd_cover_selection("${content}" content)
-    superzip_write_verified_zstd_patch("${source}" "${current_hash}"
+    flitzzip_rewrite_zstd_cover_selection("${content}" content)
+    flitzzip_write_verified_zstd_patch("${source}" "${current_hash}"
                                        "${patched_hash}" "${content}")
     return()
   endif()
@@ -591,15 +591,15 @@ function(superzip_patch_zstd_cover_cleanup source_dir)
            "void COVER_best_finish(")
   string(REPLACE [=[void COVER_best_finish(]=] "${patch_fragment_9}" content
                  "${content}")
-  superzip_rewrite_zstd_cover_selection("${content}" content)
-  superzip_write_verified_zstd_patch("${source}" "${original_hash}"
+  flitzzip_rewrite_zstd_cover_selection("${content}" content)
+  flitzzip_write_verified_zstd_patch("${source}" "${original_hash}"
                                      "${patched_hash}" "${content}")
 endfunction()
 
 # Purpose: Clarify equivalent cleanup or logical conditions in pinned source.
 # Inputs: source_dir is the verified extracted v1.5.7 dependency root. Outputs:
 # Publishes exact reviewed bytes; rejects source drift and preserves provenance.
-function(superzip_patch_zstd_worker_condition source_dir)
+function(flitzzip_patch_zstd_worker_condition source_dir)
   set(source "${source_dir}/lib/compress/zstdmt_compress.c")
   file(READ "${source}" content)
   string(CONCAT patch_fragment_10
@@ -623,7 +623,7 @@ function(superzip_patch_zstd_worker_condition source_dir)
   string(
     REPLACE [=[MEM_STATIC ZSTDMT_CCtx* ZSTDMT_createCCtx_advanced_internal(]=]
             "${patch_fragment_12}" content "${content}")
-  superzip_write_verified_zstd_patch(
+  flitzzip_write_verified_zstd_patch(
     "${source}"
     "c83db699b4041bf4db89c5558db490dd295635f1eeefd60b643fbc862bbac7b5"
     "0e2910244eedc12f7728f59e232325e964c2fc546f87f4bf74881016c47cf21a"
@@ -633,7 +633,7 @@ endfunction()
 # Purpose: Clarify equivalent cleanup or logical conditions in pinned source.
 # Inputs: source_dir is the verified extracted v1.5.7 dependency root. Outputs:
 # Publishes exact reviewed bytes; rejects source drift and preserves provenance.
-function(superzip_patch_zstd_v04_condition source_dir)
+function(flitzzip_patch_zstd_v04_condition source_dir)
   set(source "${source_dir}/lib/legacy/zstd_v04.c")
   file(READ "${source}" content)
   string(REPLACE [=[if (offsetCode | !litLength)]=]
@@ -650,7 +650,7 @@ function(superzip_patch_zstd_v04_condition source_dir)
            "static void ZSTD_decodeSequence(")
   string(REPLACE [=[static void ZSTD_decodeSequence(]=] "${patch_fragment_13}"
                  content "${content}")
-  superzip_write_verified_zstd_patch(
+  flitzzip_write_verified_zstd_patch(
     "${source}"
     "a80d9591ff3fc387a05e8e075713af9ad34596dc5c8681666346a716013a6e14"
     "079df3416c7aa806e7e9bb3a2db8c4c65dbe938b0b7e261d7b66591e0e29b551"
@@ -661,7 +661,7 @@ endfunction()
 # tokens. Inputs: source_dir is the verified generated dependency root; included
 # data binds complete source identities. Outputs: Applies exact comment-only
 # repairs or rejects drift; upstream archives remain unchanged.
-function(superzip_patch_zstd_comment_clarifications source_dir)
+function(flitzzip_patch_zstd_comment_clarifications source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdCommentClarifications.cmake")
   math(EXPR last_file "${_zstd_comment_file_count} - 1")
   foreach(file_index RANGE 0 ${last_file} 1)
@@ -678,7 +678,7 @@ function(superzip_patch_zstd_comment_clarifications source_dir)
     if(actual_hash STREQUAL "${${key}_prior}")
       set(original_hash "${actual_hash}")
     endif()
-    superzip_write_verified_zstd_patch("${source}" "${original_hash}"
+    flitzzip_write_verified_zstd_patch("${source}" "${original_hash}"
                                        "${${key}_patched}" "${content}")
   endforeach()
 endfunction()
@@ -687,7 +687,7 @@ endfunction()
 # Inputs: source_dir is the verified dependency root; both helper bodies stay
 # unchanged. Outputs: Preserves debug checks and removes unused release
 # definitions; rejects source drift.
-function(superzip_patch_zstd_assertion_helpers source_dir)
+function(flitzzip_patch_zstd_assertion_helpers source_dir)
   foreach(component IN ITEMS huf_compress zstd_lazy)
     set(source "${source_dir}/lib/compress/${component}.c")
     file(READ "${source}" content)
@@ -727,7 +727,7 @@ function(superzip_patch_zstd_assertion_helpers source_dir)
     if(actual_hash STREQUAL patched_hash)
       continue()
     endif()
-    superzip_zstd_patch_is_superseded("${actual_hash}" "${patched_hash}"
+    flitzzip_zstd_patch_is_superseded("${actual_hash}" "${patched_hash}"
                                       superseded)
     if(superseded)
       continue()
@@ -745,7 +745,7 @@ function(superzip_patch_zstd_assertion_helpers source_dir)
     string(CONCAT replacement "#ifndef NDEBUG\n" "${contract}" "${body}"
                   "\n#endif\n\n")
     string(REPLACE "${previous}" "${replacement}" content "${content}")
-    superzip_write_verified_zstd_patch("${source}" "${original_hash}"
+    flitzzip_write_verified_zstd_patch("${source}" "${original_hash}"
                                        "${patched_hash}" "${content}")
   endforeach()
 endfunction()
@@ -754,7 +754,7 @@ endfunction()
 # Inputs: source_dir is the verified extracted root; the fragment preserves
 # header, ownership, placement and error semantics. Outputs: Publishes exact
 # reviewed bytes or rejects drift; preserves the upstream provenance archive.
-function(superzip_patch_zstd_literals source_dir)
+function(flitzzip_patch_zstd_literals source_dir)
   set(source "${source_dir}/lib/decompress/zstd_decompress_block.c")
   set(original_hash
       "9cb8bcb07aeb87e4717a9c8a86d20832dc525dde2c1b72efdaaab7c937f43b87")
@@ -777,7 +777,7 @@ function(superzip_patch_zstd_literals source_dir)
   string(SUBSTRING "${content}" ${end} -1 suffix)
   file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLiteralsDecoder.c" fragment)
   string(CONCAT content "${prefix}" "${fragment}" "\n" "${suffix}")
-  superzip_write_verified_zstd_patch("${source}" "${original_hash}"
+  flitzzip_write_verified_zstd_patch("${source}" "${original_hash}"
                                      "${patched_hash}" "${content}")
 endfunction()
 
@@ -785,29 +785,29 @@ endfunction()
 # before the legacy decoder refactors. Inputs: source_dir is the extracted root
 # of the verified upstream archive. Outputs: Produces accepted foundation
 # revisions or fails closed; leaves provenance untouched.
-function(superzip_patch_zstd_foundation source_dir)
-  superzip_patch_zstd_v05("${source_dir}")
-  superzip_patch_zstd_cover_cleanup("${source_dir}")
-  superzip_patch_zstd_worker_condition("${source_dir}")
-  superzip_patch_zstd_v04_condition("${source_dir}")
-  superzip_patch_zstd_initializer("${source_dir}")
-  superzip_patch_zstd_custom_allocator("${source_dir}")
-  superzip_patch_zstd_header_guard(
+function(flitzzip_patch_zstd_foundation source_dir)
+  flitzzip_patch_zstd_v05("${source_dir}")
+  flitzzip_patch_zstd_cover_cleanup("${source_dir}")
+  flitzzip_patch_zstd_worker_condition("${source_dir}")
+  flitzzip_patch_zstd_v04_condition("${source_dir}")
+  flitzzip_patch_zstd_initializer("${source_dir}")
+  flitzzip_patch_zstd_custom_allocator("${source_dir}")
+  flitzzip_patch_zstd_header_guard(
     "${source_dir}/lib/dictBuilder/cover.h"
     ZSTD_COVER_H
     "#ifndef ZDICT_STATIC_LINKING_ONLY\n"
     "6e2906e7e5c486a5b7f479f60210ff67d068b2c58744ad6a936ba5a9f4a23755"
     "432323ee0a02dbfb49abb146137fc152142df20b4223e1a8a5f6f6303a8eeed5")
-  superzip_patch_zstd_header_guard(
+  flitzzip_patch_zstd_header_guard(
     "${source_dir}/lib/compress/hist.h"
     ZSTD_HIST_H
     "/* --- dependencies --- */\n"
     "9e3363e69d5fa35c1f6e8d2970c6c2453c06fd8a8ab3cc516a14c77d07cdea35"
     "982484a96936e53fcca4c179e522fcb253608c93c2301ca636a3b29e1128b099")
-  superzip_patch_zstd_comment_clarifications("${source_dir}")
-  superzip_patch_zstd_assertion_helpers("${source_dir}")
-  superzip_patch_zstd_literals("${source_dir}")
-  superzip_patch_zstd_bufferless("${source_dir}")
+  flitzzip_patch_zstd_comment_clarifications("${source_dir}")
+  flitzzip_patch_zstd_assertion_helpers("${source_dir}")
+  flitzzip_patch_zstd_literals("${source_dir}")
+  flitzzip_patch_zstd_bufferless("${source_dir}")
 endfunction()
 
 # Purpose: Preserve empty public buffer identity through shipped legacy
@@ -815,7 +815,7 @@ endfunction()
 # repair. Outputs: Guards zero offsets and removes the unneeded sentinel
 # adaptation in shipped versions; preserves optional v0.4 semantics and rejects
 # source drift.
-function(superzip_patch_zstd_legacy_public_stream source_dir)
+function(flitzzip_patch_zstd_legacy_public_stream source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyStream.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyHistory.cmake")
   set(source "${source_dir}/lib/legacy/zstd_legacy.h")
@@ -839,7 +839,7 @@ function(superzip_patch_zstd_legacy_public_stream source_dir)
        fragment)
   string(REGEX REPLACE "\n+$" "" fragment "${fragment}")
   string(CONCAT content "${prefix}" "${fragment}" "${suffix}")
-  superzip_write_verified_zstd_patch(
+  flitzzip_write_verified_zstd_patch(
     "${source}" "${actual_hash}" "${_zstd_legacy_public_patched}" "${content}")
 endfunction()
 
@@ -848,7 +848,7 @@ endfunction()
 # fragment keeps overlap arithmetic and stable savings ordering. Outputs:
 # Publishes exact reviewed bytes or rejects drift, preserving the provenance
 # archive.
-function(superzip_patch_zstd_dictionary_merge source_dir)
+function(flitzzip_patch_zstd_dictionary_merge source_dir)
   set(source "${source_dir}/lib/dictBuilder/zdict.c")
   set(original_hash
       "dbe57910c9d446bbf2195f31bdba5cffef2c80b93c0325e9df8c9ffa744b0aa3")
@@ -872,7 +872,7 @@ function(superzip_patch_zstd_dictionary_merge source_dir)
   file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdDictionaryMerge.c" fragment)
   string(REGEX REPLACE "\n$" "" fragment "${fragment}")
   string(CONCAT content "${prefix}" "${fragment}" "${suffix}")
-  superzip_write_verified_zstd_patch("${source}" "${original_hash}"
+  flitzzip_write_verified_zstd_patch("${source}" "${original_hash}"
                                      "${patched_hash}" "${content}")
 endfunction()
 
@@ -881,7 +881,7 @@ endfunction()
 # worker-construction repair. Outputs: Publishes reviewed role-separated stages
 # or rejects source/output drift, preserving cut decisions, buffer ownership and
 # the upstream provenance archive.
-function(superzip_patch_zstd_synchronization_point source_dir)
+function(flitzzip_patch_zstd_synchronization_point source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdSynchronizationPoint.cmake")
   set(source "${source_dir}/lib/compress/zstdmt_compress.c")
   file(SHA256 "${source}" actual_hash)
@@ -906,7 +906,7 @@ function(superzip_patch_zstd_synchronization_point source_dir)
        fragment)
   string(REGEX REPLACE "\n$" "" fragment "${fragment}")
   string(CONCAT content "${prefix}" "${fragment}" "${suffix}")
-  superzip_write_verified_zstd_patch(
+  flitzzip_write_verified_zstd_patch(
     "${source}" "${_zstd_synchronization_original}"
     "${_zstd_synchronization_patched}" "${content}")
 endfunction()
@@ -914,7 +914,7 @@ endfunction()
 # Purpose: Reject impossible raw-block extents before writing or copying.
 # Inputs: source_dir owns the exact comment-clarified v1.5.7 header. Outputs:
 # Publishes the complete reviewed helper or rejects source/output drift.
-function(superzip_patch_zstd_raw_block_writer source_dir)
+function(flitzzip_patch_zstd_raw_block_writer source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdRawBlockWriter.cmake")
   set(source "${source_dir}/lib/compress/zstd_compress_internal.h")
   file(SHA256 "${source}" actual_hash)
@@ -935,32 +935,32 @@ function(superzip_patch_zstd_raw_block_writer source_dir)
   file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdRawBlockWriter.c" fragment)
   string(REGEX REPLACE "\n+$" "" fragment "${fragment}")
   string(CONCAT content "${prefix}" "${fragment}" "${suffix}")
-  superzip_write_verified_zstd_patch("${source}" "${actual_hash}"
+  flitzzip_write_verified_zstd_patch("${source}" "${actual_hash}"
                                      "${_zstd_raw_block_patched}" "${content}")
 endfunction()
 
 # Purpose: Apply identity-bound nonlegacy repairs and foundational annotations.
 # Inputs: Extracted pinned source with canonical owned legacy decoders. Outputs:
 # Complete nonlegacy revisions with all provenance checks preserved.
-function(superzip_patch_zstd_base source_dir)
+function(flitzzip_patch_zstd_base source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyHistory.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyDictionary.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdDictionaryBounds.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedBuffers.cmake")
-  superzip_patch_zstd_foundation("${source_dir}")
-  superzip_patch_zstd_compression_stream("${source_dir}")
-  superzip_patch_zstd_decompression_stream("${source_dir}")
-  superzip_patch_zstd_dictionary_merge("${source_dir}")
-  superzip_patch_zstd_synchronization_point("${source_dir}")
-  superzip_patch_zstd_legacy_public_stream("${source_dir}")
-  superzip_patch_zstd_raw_block_writer("${source_dir}")
-  superzip_patch_zstd_dictionary_bounds("${source_dir}")
+  flitzzip_patch_zstd_foundation("${source_dir}")
+  flitzzip_patch_zstd_compression_stream("${source_dir}")
+  flitzzip_patch_zstd_decompression_stream("${source_dir}")
+  flitzzip_patch_zstd_dictionary_merge("${source_dir}")
+  flitzzip_patch_zstd_synchronization_point("${source_dir}")
+  flitzzip_patch_zstd_legacy_public_stream("${source_dir}")
+  flitzzip_patch_zstd_raw_block_writer("${source_dir}")
+  flitzzip_patch_zstd_dictionary_bounds("${source_dir}")
 endfunction()
 
 # Purpose: Apply the complete identity-bound production dependency pipeline.
 # Inputs: Extracted pinned sources. Outputs: Complete reviewed revisions or
 # identity rejection; the canonical product never selects a partial pipeline.
-function(superzip_patch_zstd_legacy source_dir)
+function(flitzzip_patch_zstd_legacy source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedBuffers.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdDictionaryEvaluation.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdTableGeometry.cmake")
@@ -968,12 +968,14 @@ function(superzip_patch_zstd_legacy source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdAlgorithmProgress.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdHeaderComponents.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyCanonical.cmake")
-  superzip_patch_zstd_canonical("${source_dir}")
-  superzip_patch_zstd_base("${source_dir}")
-  superzip_patch_zstd_dictionary_evaluation("${source_dir}")
-  superzip_patch_zstd_table_geometry("${source_dir}")
-  superzip_patch_zstd_work_group("${source_dir}")
-  superzip_patch_zstd_algorithm_progress("${source_dir}")
-  superzip_patch_zstd_header_components("${source_dir}")
-  superzip_patch_zstd_default_allocator("${source_dir}")
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdProductIdentity.cmake")
+  flitzzip_migrate_zstd_product_identity("${source_dir}")
+  flitzzip_patch_zstd_canonical("${source_dir}")
+  flitzzip_patch_zstd_base("${source_dir}")
+  flitzzip_patch_zstd_dictionary_evaluation("${source_dir}")
+  flitzzip_patch_zstd_table_geometry("${source_dir}")
+  flitzzip_patch_zstd_work_group("${source_dir}")
+  flitzzip_patch_zstd_algorithm_progress("${source_dir}")
+  flitzzip_patch_zstd_header_components("${source_dir}")
+  flitzzip_patch_zstd_default_allocator("${source_dir}")
 endfunction()

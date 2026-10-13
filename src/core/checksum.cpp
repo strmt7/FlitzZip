@@ -10,7 +10,7 @@
 
 #include "7zCrc.h"
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 // Purpose: Reuse CRC zero-byte operators for every bit of the supported 64-bit concatenated length.
@@ -92,4 +92,4 @@ std::uint32_t crc32_parallel(std::span<const std::byte> bytes, std::uint32_t wor
     return checksum;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

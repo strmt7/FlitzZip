@@ -35,7 +35,7 @@ class ComparisonRunnerTests(unittest.TestCase):
                     "transformation": "owned test fixture, no downloaded data",
                 }
             ],
-            "cases": [{"name": "numeric", "format": "zst", "files": ["sample.csv"], "tools": ["SuperZip", "Zstd"]}],
+            "cases": [{"name": "numeric", "format": "zst", "files": ["sample.csv"], "tools": ["FlitzZip", "Zstd"]}],
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -48,7 +48,7 @@ class ComparisonRunnerTests(unittest.TestCase):
             with patch.object(comparison, "require_permission", return_value={"evidence": [source]}) as permission:
                 files, cases, metadata = comparison.verify_manifest(manifest, corpus)
                 self.assertEqual(files, spec["files"])
-                self.assertEqual(cases, (("numeric", "zst", ("sample.csv",), ("SuperZip", "Zstd")),))
+                self.assertEqual(cases, (("numeric", "zst", ("sample.csv",), ("FlitzZip", "Zstd")),))
                 self.assertEqual(metadata["manifest_sha256"], comparison.digest(manifest))
                 permission.assert_called_once_with("HIGGS", "execute")
                 for field, value in (
@@ -93,25 +93,25 @@ class ComparisonRunnerTests(unittest.TestCase):
     # Outputs: No unsupported case reaches a subprocess; valid ZIP and Zstd pairings normalize exactly.
     def test_manifest_case_boundaries(self) -> None:
         files = {"first": {"bytes": 33 * 1024**2}, "second": {"bytes": 33 * 1024**2}}
-        row = {"name": "files", "format": "zip", "files": ["first"], "tools": ["SuperZip", "7-Zip"]}
-        self.assertEqual(comparison.manifest_case(row, files), ("files", "zip", ("first",), ("SuperZip", "7-Zip")))
+        row = {"name": "files", "format": "zip", "files": ["first"], "tools": ["FlitzZip", "7-Zip"]}
+        self.assertEqual(comparison.manifest_case(row, files), ("files", "zip", ("first",), ("FlitzZip", "7-Zip")))
         for field, value in (
             ("name", "../escape"),
-            ("format", "suzip"),
+            ("format", "flzip"),
             ("format", None),
             ("files", ["missing"]),
             ("files", ["first", "first"]),
             ("files", ["first", "second"]),
             ("files", [False]),
-            ("tools", ["SuperZip", "SuperZip"]),
-            ("tools", ["7-Zip", "SuperZip"]),
-            ("tools", ["SuperZip", "WinZip"]),
+            ("tools", ["FlitzZip", "FlitzZip"]),
+            ("tools", ["7-Zip", "FlitzZip"]),
+            ("tools", ["FlitzZip", "WinZip"]),
         ):
             with self.subTest(field=field, value=value), self.assertRaises(ValueError):
                 comparison.manifest_case({**row, field: value}, files)
         with self.assertRaises(ValueError):
             comparison.manifest_case(
-                {**row, "format": "zst", "files": ["first", "second"], "tools": ["SuperZip", "Zstd"]}, files
+                {**row, "format": "zst", "files": ["first", "second"], "tools": ["FlitzZip", "Zstd"]}, files
             )
 
     # Purpose: Preserve all nine efforts and reject malformed values before starting a process.
@@ -123,12 +123,12 @@ class ComparisonRunnerTests(unittest.TestCase):
                 for tool in tools:
                     with self.subTest(level=level, tool=tool, fmt=fmt):
                         create, extract = comparison.command_templates(tool, fmt, files, level)
-                        switch = {"SuperZip": str(level), "7-Zip": f"-mx={level}", "Zstd": f"-{level}"}[tool]
+                        switch = {"FlitzZip": str(level), "7-Zip": f"-mx={level}", "Zstd": f"-{level}"}[tool]
                         self.assertIn(switch, create)
                         self.assertTrue(extract)
         for level in (0, 10, -1, True, False, 5.0, "5", None):
             with self.subTest(level=level), self.assertRaisesRegex(ValueError, "unsupported comparison effort"):
-                comparison.command_templates("SuperZip", "zip", ("sample",), level)
+                comparison.command_templates("FlitzZip", "zip", ("sample",), level)
 
     # Purpose: Require a real total-processor counter rather than a nullable per-CPU CIM field.
     # Inputs: Simulated Windows performance-counter output, then a missing total-load value.
@@ -159,7 +159,7 @@ class ComparisonRunnerTests(unittest.TestCase):
                 "run",
                 return_value=SimpleNamespace(returncode=0, stdout=json.dumps(sample), stderr=""),
             ) as command,
-            patch.object(comparison, "ROOT", PureWindowsPath("C:/SuperZip")),
+            patch.object(comparison, "ROOT", PureWindowsPath("C:/FlitzZip")),
         ):
             self.assertEqual(comparison.host_snapshot()["cpu_load_percent"], 2)
             self.assertIn("Win32_PerfFormattedData_PerfOS_Processor", command.call_args.args[0][-1])
@@ -171,7 +171,7 @@ class ComparisonRunnerTests(unittest.TestCase):
                 "run",
                 return_value=SimpleNamespace(returncode=0, stdout=json.dumps(sample), stderr=""),
             ),
-            patch.object(comparison, "ROOT", PureWindowsPath("C:/SuperZip")),
+            patch.object(comparison, "ROOT", PureWindowsPath("C:/FlitzZip")),
             self.assertRaisesRegex(RuntimeError, "missing required fields"),
         ):
             comparison.host_snapshot()

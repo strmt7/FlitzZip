@@ -3,7 +3,7 @@
 This document records source-backed engineering lessons from GPU-accelerated UI
 systems, GPU decompression/compression libraries, and AMD HIP performance
 guidance. It is not a design-copying document. External projects are used only
-to extract architecture patterns that can be evaluated inside SuperZip's
+to extract architecture patterns that can be evaluated inside FlitzZip's
 existing Windows-native, AMD HIP-only product boundary.
 
 ## Architecture References
@@ -58,7 +58,7 @@ Modern GPU-accelerated UI stacks converge on the same broad design:
 - Use instrumentation that can explain frame pacing, render-thread work,
   resource uploads, and broken refresh-rate assumptions.
 
-SuperZip currently uses a Win32 GDI/GDI+ double-buffered renderer. That is not a
+FlitzZip currently uses a Win32 GDI/GDI+ double-buffered renderer. That is not a
 GPU-rendered UI stack. For the current fixed-size enterprise interface, this is
 acceptable only if the UI thread remains responsive, animation timers are
 bounded, and archive work never blocks painting or input. A future Direct2D or
@@ -96,7 +96,7 @@ nvCOMP's public API exposes the same high-level model: arrays of device chunk
 pointers, device chunk sizes, temporary GPU workspace, asynchronous operation,
 and explicit stream synchronization.
 
-The useful lesson for SuperZip is the architecture, not the vendor API:
+The useful lesson for FlitzZip is the architecture, not the vendor API:
 
 - Archive work should be chunked into many GPU-visible units.
 - Metadata needed by the GPU should stay in device-accessible arrays.
@@ -108,7 +108,7 @@ The useful lesson for SuperZip is the architecture, not the vendor API:
 
 ### AMD HIP optimization guidance
 
-AMD's HIP guidance maps directly to SuperZip's current bottlenecks:
+AMD's HIP guidance maps directly to FlitzZip's current bottlenecks:
 
 - Profile first with HIP API timing, kernel timing, transfer timing, and system
   GPU telemetry.
@@ -130,9 +130,9 @@ segmented operations. It is not a complete archive codec, but it is a credible
 way to reduce custom prefix-sum, offset, and integrity-reduction code if a
 benchmark proves a win.
 
-## Current SuperZip Boundaries
+## Current FlitzZip Boundaries
 
-The [native format specification](native-suzip-format.md) defines the actual
+The [native format specification](native-flzip-format.md) defines the actual
 versioned representations. Current HIP compression includes dictionary,
 prefix/Huffman, pattern and sparse candidates; Neutron additionally considers
 compound encodings, byte-plane transforms and independent entropy contexts.

@@ -4,7 +4,7 @@
 #include <string>
 #include <stdexcept>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Represent a native filesystem path as UTF-8 diagnostic text without the host ANSI code page.
 // Inputs: `path` is a native path; this conversion neither validates nor changes its filesystem meaning.
@@ -56,4 +56,4 @@ inline std::wstring windows_api_path(const std::filesystem::path& path) {
 }
 #endif
 
-}  // namespace superzip
+}  // namespace flitzzip

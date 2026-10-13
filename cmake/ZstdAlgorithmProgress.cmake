@@ -2,7 +2,7 @@
 # budget. Inputs: Exact preceding match-search source and flavor. Outputs:
 # Preserves comparison consumption and dictionary dispatch while removing
 # counter mutation.
-function(superzip_rewrite_zstd_match_progress content flavor output)
+function(flitzzip_rewrite_zstd_match_progress content flavor output)
   set(prefix "")
   if(flavor STREQUAL lazy)
     string(CONCAT declaration "    U32          nbCompares = "
@@ -68,7 +68,7 @@ endfunction()
 # Purpose: Replace intertwined suffix-group loop control with a bounded rank
 # stage. Inputs: Exact preceding suffix sorter. Outputs: Checked group progress
 # and failure propagation to both suffix-array and BWT consumers.
-function(superzip_rewrite_zstd_suffix_progress content output)
+function(flitzzip_rewrite_zstd_suffix_progress content output)
   string(FIND "${content}" "    /* Compute ranks of type B* substrings. */"
               begin)
   string(FIND "${content}" "    /* Construct the inverse suffix array" end)
@@ -130,7 +130,7 @@ endfunction()
 # sources. Inputs: Pinned extracted dependency after earlier repairs. Outputs:
 # Complete identity-verified source revisions or rejection; preserves
 # provenance.
-function(superzip_patch_zstd_algorithm_progress source_dir)
+function(flitzzip_patch_zstd_algorithm_progress source_dir)
   foreach(flavor IN ITEMS lazy opt suffix)
     set(key "_zstd_algorithm_progress_${flavor}")
     set(source "${source_dir}/${${key}_path}")
@@ -143,11 +143,11 @@ function(superzip_patch_zstd_algorithm_progress source_dir)
     endif()
     file(READ "${source}" content)
     if(flavor STREQUAL suffix)
-      superzip_rewrite_zstd_suffix_progress("${content}" content)
+      flitzzip_rewrite_zstd_suffix_progress("${content}" content)
     else()
-      superzip_rewrite_zstd_match_progress("${content}" "${flavor}" content)
+      flitzzip_rewrite_zstd_match_progress("${content}" "${flavor}" content)
     endif()
-    superzip_write_verified_zstd_patch("${source}" "${actual}"
+    flitzzip_write_verified_zstd_patch("${source}" "${actual}"
                                        "${${key}_patched}" "${content}")
   endforeach()
 endfunction()
@@ -166,4 +166,4 @@ set(_zstd_algorithm_progress_lazy_patched
 set(_zstd_algorithm_progress_opt_patched
     "d24ba148e9dbeeb0721cbc3a7b5a77dddc7ec8a17df93916e18403d40aed975b")
 set(_zstd_algorithm_progress_suffix_patched
-    "55e83c7ec4221638a9f5333893ed44441d9c323e9567e68d03ed9a24341bbfad")
+    "5a1a7a1ab14e4d930d586bf84ca0d015180df197abe2690767fce6712cb77d35")

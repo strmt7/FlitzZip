@@ -12,7 +12,7 @@
 #include <unordered_set>
 #include <utility>
 
-namespace superzip::dictionary {
+namespace flitzzip::dictionary {
 namespace {
 
 // Purpose: Avoid expensive dictionary trials on blocks without sampled repeated substrings.
@@ -560,4 +560,4 @@ EncodedChunk apply_dictionary_replacements(EncodedChunk baseline, const Dictiona
     return result;
 }
 
-}  // namespace superzip::dictionary
+}  // namespace flitzzip::dictionary

@@ -1,14 +1,14 @@
 #include "gpu/hip_kernel_api.hpp"
 
 #include "core/trusted_runtime.hpp"
-#include "superzip_hip_kernel_identity.hpp"
+#include "flitzzip_hip_kernel_identity.hpp"
 
 #include <algorithm>
 #include <tuple>
 #include <utility>
 #include <windows.h>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 struct KernelModule {
@@ -109,12 +109,12 @@ const KernelModule& admitted_kernel_module() {
         (void)require_compiled_kernel_target();
         auto owner = [] {
             try {
-                return load_trusted_app_local_runtime(L"superzip_hip_kernels.dll", kHipKernelModuleSha256);
+                return load_trusted_app_local_runtime(L"flitzzip_hip_kernels.dll", kHipKernelModuleSha256);
             } catch (const Error& error) {
                 throw GpuError(std::string("AMD HIP kernel admission failed: ") + error.what());
             }
         }();
-        const auto entry = GetProcAddress(static_cast<HMODULE>(owner.native_handle()), "superzip_hip_kernel_api_v1");
+        const auto entry = GetProcAddress(static_cast<HMODULE>(owner.native_handle()), "flitzzip_hip_kernel_api_v1");
         if (entry == nullptr) {
             throw GpuError("AMD HIP kernel module is missing its required ABI export");
         }
@@ -165,4 +165,4 @@ void require_hip_kernel_device_support() {
     admitted_device = selected;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

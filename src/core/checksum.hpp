@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <span>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Initialize the process-wide vendored IEEE CRC backend before direct 7-Zip SDK CRC use.
 // Inputs: None; safe and idempotent across concurrent checksum and SDK-reader callers.
@@ -27,4 +27,4 @@ std::uint32_t crc32_parallel(std::span<const std::byte> bytes, std::uint32_t wor
 // Outputs: Returns the concatenated CRC without allocation or exceptions; zero length preserves `first_crc`.
 std::uint32_t crc32_combine(std::uint32_t first_crc, std::uint32_t second_crc, std::uint64_t second_len);
 
-}  // namespace superzip
+}  // namespace flitzzip

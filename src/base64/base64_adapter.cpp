@@ -19,7 +19,7 @@
 #include <string>
 #include <string_view>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kBase64InputBytesPerLine = 57U;
@@ -239,7 +239,7 @@ Base64Header read_base64_header_or_reset(std::ifstream& input, const std::filesy
                 .entry_name = raw_base64_output_name(archive_path), .lines_consumed = 0, .wrapped = false};
         }
     }
-    throw ArchiveError("Base64 preamble exceeds SuperZip metadata limit");
+    throw ArchiveError("Base64 preamble exceeds FlitzZip metadata limit");
 }
 
 // Purpose: Decode a Base64 stream body to an already-open temporary file.
@@ -441,4 +441,4 @@ OperationStats extract_base64_file(const std::filesystem::path& archive_path, co
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

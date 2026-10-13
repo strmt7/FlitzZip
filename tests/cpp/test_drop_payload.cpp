@@ -67,15 +67,15 @@ TestGlobalHandle make_wide_drop_payload(const std::vector<std::wstring>& paths) 
     for (const auto& path : paths) {
         characters += path.size() + 1U;
     }
-    const SIZE_T bytes = sizeof(superzip::app::detail::DropFilesHeader) + (characters * sizeof(wchar_t));
+    const SIZE_T bytes = sizeof(flitzzip::app::detail::DropFilesHeader) + (characters * sizeof(wchar_t));
     TestGlobalHandle handle(GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes));
     REQUIRE_TRUE(handle.get() != nullptr);
     auto* raw = static_cast<unsigned char*>(GlobalLock(handle.get()));
     REQUIRE_TRUE(raw != nullptr);
-    auto* header = reinterpret_cast<superzip::app::detail::DropFilesHeader*>(raw);
-    header->pFiles = sizeof(superzip::app::detail::DropFilesHeader);
+    auto* header = reinterpret_cast<flitzzip::app::detail::DropFilesHeader*>(raw);
+    header->pFiles = sizeof(flitzzip::app::detail::DropFilesHeader);
     header->fWide = TRUE;
-    auto* cursor = reinterpret_cast<wchar_t*>(raw + sizeof(superzip::app::detail::DropFilesHeader));
+    auto* cursor = reinterpret_cast<wchar_t*>(raw + sizeof(flitzzip::app::detail::DropFilesHeader));
     for (const auto& path : paths) {
         cursor = std::copy(path.begin(), path.end(), cursor);
         ++cursor;
@@ -93,15 +93,15 @@ TestGlobalHandle make_ansi_drop_payload(const std::vector<std::string_view>& pat
     for (const auto path : paths) {
         characters += path.size() + 1U;
     }
-    const SIZE_T bytes = sizeof(superzip::app::detail::DropFilesHeader) + characters;
+    const SIZE_T bytes = sizeof(flitzzip::app::detail::DropFilesHeader) + characters;
     TestGlobalHandle handle(GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes));
     REQUIRE_TRUE(handle.get() != nullptr);
     auto* raw = static_cast<unsigned char*>(GlobalLock(handle.get()));
     REQUIRE_TRUE(raw != nullptr);
-    auto* header = reinterpret_cast<superzip::app::detail::DropFilesHeader*>(raw);
-    header->pFiles = sizeof(superzip::app::detail::DropFilesHeader);
+    auto* header = reinterpret_cast<flitzzip::app::detail::DropFilesHeader*>(raw);
+    header->pFiles = sizeof(flitzzip::app::detail::DropFilesHeader);
     header->fWide = FALSE;
-    auto* cursor = reinterpret_cast<char*>(raw + sizeof(superzip::app::detail::DropFilesHeader));
+    auto* cursor = reinterpret_cast<char*>(raw + sizeof(flitzzip::app::detail::DropFilesHeader));
     for (const auto path : paths) {
         cursor = std::copy(path.begin(), path.end(), cursor);
         ++cursor;
@@ -115,12 +115,12 @@ TestGlobalHandle make_ansi_drop_payload(const std::vector<std::string_view>& pat
 // Inputs: None.
 // Outputs: Returns a movable global-memory handle that the caller owns.
 TestGlobalHandle make_invalid_offset_drop_payload() {
-    TestGlobalHandle handle(GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(superzip::app::detail::DropFilesHeader)));
+    TestGlobalHandle handle(GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(flitzzip::app::detail::DropFilesHeader)));
     REQUIRE_TRUE(handle.get() != nullptr);
     auto* raw = static_cast<unsigned char*>(GlobalLock(handle.get()));
     REQUIRE_TRUE(raw != nullptr);
-    auto* header = reinterpret_cast<superzip::app::detail::DropFilesHeader*>(raw);
-    header->pFiles = sizeof(superzip::app::detail::DropFilesHeader);
+    auto* header = reinterpret_cast<flitzzip::app::detail::DropFilesHeader*>(raw);
+    header->pFiles = sizeof(flitzzip::app::detail::DropFilesHeader);
     header->fWide = TRUE;
     GlobalUnlock(handle.get());
     return handle;
@@ -129,24 +129,24 @@ TestGlobalHandle make_invalid_offset_drop_payload() {
 }  // namespace
 
 TEST_CASE(drop_payload_parses_wide_file_list) {
-    const auto handle = make_wide_drop_payload({L"C:\\SuperZip\\alpha.txt", L"C:\\SuperZip\\nested\\folder"});
+    const auto handle = make_wide_drop_payload({L"C:\\FlitzZip\\alpha.txt", L"C:\\FlitzZip\\nested\\folder"});
 
-    const auto paths = superzip::app::paths_from_dropfiles_global(handle.get());
+    const auto paths = flitzzip::app::paths_from_dropfiles_global(handle.get());
 
     REQUIRE_EQ(paths.size(), static_cast<std::size_t>(2));
-    REQUIRE_EQ(paths[0].wstring(), std::wstring(L"C:\\SuperZip\\alpha.txt"));
-    REQUIRE_EQ(paths[1].wstring(), std::wstring(L"C:\\SuperZip\\nested\\folder"));
+    REQUIRE_EQ(paths[0].wstring(), std::wstring(L"C:\\FlitzZip\\alpha.txt"));
+    REQUIRE_EQ(paths[1].wstring(), std::wstring(L"C:\\FlitzZip\\nested\\folder"));
 }
 
 TEST_CASE(drop_payload_parses_large_wide_file_list) {
     std::vector<std::wstring> expected;
     expected.reserve(512U);
     for (int index = 0; index < 512; ++index) {
-        expected.emplace_back(std::wstring(L"C:\\SuperZip\\bulk\\file-") + std::to_wstring(index) + L".txt");
+        expected.emplace_back(std::wstring(L"C:\\FlitzZip\\bulk\\file-") + std::to_wstring(index) + L".txt");
     }
     const auto handle = make_wide_drop_payload(expected);
 
-    const auto paths = superzip::app::paths_from_dropfiles_global(handle.get());
+    const auto paths = flitzzip::app::paths_from_dropfiles_global(handle.get());
 
     REQUIRE_EQ(paths.size(), expected.size());
     for (std::size_t index = 0; index < expected.size(); ++index) {
@@ -155,53 +155,53 @@ TEST_CASE(drop_payload_parses_large_wide_file_list) {
 }
 
 TEST_CASE(drop_payload_parses_ansi_file_list) {
-    const auto handle = make_ansi_drop_payload({"C:\\SuperZip\\ascii.txt", "C:\\SuperZip\\plain-folder"});
+    const auto handle = make_ansi_drop_payload({"C:\\FlitzZip\\ascii.txt", "C:\\FlitzZip\\plain-folder"});
 
-    const auto paths = superzip::app::paths_from_dropfiles_global(handle.get());
+    const auto paths = flitzzip::app::paths_from_dropfiles_global(handle.get());
 
     REQUIRE_EQ(paths.size(), static_cast<std::size_t>(2));
-    REQUIRE_EQ(paths[0].wstring(), std::wstring(L"C:\\SuperZip\\ascii.txt"));
-    REQUIRE_EQ(paths[1].wstring(), std::wstring(L"C:\\SuperZip\\plain-folder"));
+    REQUIRE_EQ(paths[0].wstring(), std::wstring(L"C:\\FlitzZip\\ascii.txt"));
+    REQUIRE_EQ(paths[1].wstring(), std::wstring(L"C:\\FlitzZip\\plain-folder"));
 }
 
 TEST_CASE(drop_payload_rejects_malformed_offset) {
     const auto handle = make_invalid_offset_drop_payload();
 
-    const auto paths = superzip::app::paths_from_dropfiles_global(handle.get());
+    const auto paths = flitzzip::app::paths_from_dropfiles_global(handle.get());
 
     REQUIRE_TRUE(paths.empty());
 }
 
 TEST_CASE(drop_payload_rejects_path_count_over_queue_budget) {
-    std::vector<std::wstring> paths(superzip::app::kMaxQueueItems + 1U, L"C:\\SuperZip\\bounded.txt");
+    std::vector<std::wstring> paths(flitzzip::app::kMaxQueueItems + 1U, L"C:\\FlitzZip\\bounded.txt");
     const auto handle = make_wide_drop_payload(paths);
 
-    const auto parsed = superzip::app::paths_from_dropfiles_global(handle.get());
+    const auto parsed = flitzzip::app::paths_from_dropfiles_global(handle.get());
 
     REQUIRE_TRUE(parsed.empty());
 }
 
 TEST_CASE(drop_payload_rejects_overlong_path) {
     std::wstring path = L"C:\\";
-    path.append(superzip::app::kMaxShellPathCharacters, L'a');
+    path.append(flitzzip::app::kMaxShellPathCharacters, L'a');
     const auto handle = make_wide_drop_payload({path});
 
-    const auto parsed = superzip::app::paths_from_dropfiles_global(handle.get());
+    const auto parsed = flitzzip::app::paths_from_dropfiles_global(handle.get());
 
     REQUIRE_TRUE(parsed.empty());
 }
 
 TEST_CASE(drop_path_policy_rejects_remote_device_and_ambiguous_paths) {
-    REQUIRE_TRUE(!superzip::app::is_supported_local_drop_path(L"\\\\server\\share\\input.bin"));
-    REQUIRE_TRUE(!superzip::app::is_supported_local_drop_path(L"\\\\?\\C:\\input.bin"));
-    REQUIRE_TRUE(!superzip::app::is_supported_local_drop_path(L"C:\\safe\\..\\input.bin"));
-    REQUIRE_TRUE(!superzip::app::is_supported_local_drop_path(L"relative\\input.bin"));
+    REQUIRE_TRUE(!flitzzip::app::is_supported_local_drop_path(L"\\\\server\\share\\input.bin"));
+    REQUIRE_TRUE(!flitzzip::app::is_supported_local_drop_path(L"\\\\?\\C:\\input.bin"));
+    REQUIRE_TRUE(!flitzzip::app::is_supported_local_drop_path(L"C:\\safe\\..\\input.bin"));
+    REQUIRE_TRUE(!flitzzip::app::is_supported_local_drop_path(L"relative\\input.bin"));
 }
 
 TEST_CASE(drop_path_policy_accepts_local_absolute_path) {
     std::error_code error;
-    const auto path = std::filesystem::temp_directory_path(error) / L"SuperZip-drop-input.bin";
+    const auto path = std::filesystem::temp_directory_path(error) / L"FlitzZip-drop-input.bin";
 
     REQUIRE_TRUE(!error);
-    REQUIRE_TRUE(superzip::app::is_supported_local_drop_path(path));
+    REQUIRE_TRUE(flitzzip::app::is_supported_local_drop_path(path));
 }

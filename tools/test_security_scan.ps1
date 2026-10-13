@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-$repo = Join-Path $temporaryRoot ('superzip-policy-scan-' + [Guid]::NewGuid().ToString('N'))
+$repo = Join-Path $temporaryRoot ('flitzzip-policy-scan-' + [Guid]::NewGuid().ToString('N'))
 $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
@@ -52,7 +52,7 @@ try {
 } finally {
     if (Test-Path -LiteralPath $repo) {
         $resolved = [IO.Path]::GetFullPath((Get-Item -LiteralPath $repo).FullName)
-        $prefix = $temporaryRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar + 'superzip-policy-scan-'
+        $prefix = $temporaryRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar + 'flitzzip-policy-scan-'
         if ($resolved -cne $repo -or -not $resolved.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
             throw 'Refusing cleanup outside the exact test fixture.'
         }

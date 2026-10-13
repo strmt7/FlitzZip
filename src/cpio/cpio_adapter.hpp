@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Create a portable SVR4 new ASCII CPIO archive from files/directories.
 // Inputs: `sources` are existing filesystem roots, `output_archive` is the destination `.cpio`, and `progress_callback`
@@ -26,7 +26,7 @@ OperationStats compress_cpio_gzip(const std::vector<std::filesystem::path>& sour
                                   int compression_level = kDefaultCompressionLevel,
                                   const ProgressCallback& progress_callback = {});
 
-// Purpose: Extract a SVR4 new ASCII CPIO archive with SuperZip path-safety checks.
+// Purpose: Extract a SVR4 new ASCII CPIO archive with FlitzZip path-safety checks.
 // Inputs: `archive_path` is a `.cpio` file, `destination` is the extraction root, `overwrite` allows existing targets
 // only when true, and `progress_callback` receives synchronous progress snapshots. Outputs: Returns operation
 // statistics; throws on malformed CPIO metadata, unsafe paths, special files, refused overwrite, or verified-file
@@ -34,7 +34,7 @@ OperationStats compress_cpio_gzip(const std::vector<std::filesystem::path>& sour
 OperationStats extract_cpio(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                             bool overwrite, const ProgressCallback& progress_callback = {});
 
-// Purpose: Extract a Gzip-compressed SVR4 new ASCII CPIO archive with SuperZip path-safety checks.
+// Purpose: Extract a Gzip-compressed SVR4 new ASCII CPIO archive with FlitzZip path-safety checks.
 // Inputs: `archive_path` is a `.cpio.gz`/`.cpgz` file, `destination` is the extraction root, `overwrite` allows
 // existing targets only when true, and `progress_callback` receives synchronous progress snapshots. Outputs: Returns
 // operation statistics; throws on malformed Gzip/CPIO metadata, unsafe paths, special files, refused overwrite, or
@@ -55,4 +55,4 @@ OperationStats extract_cpio_gzip(const std::filesystem::path& archive_path, cons
                                  bool overwrite, const ProgressCallback& progress_callback,
                                  ArchivePathEncoding encoding);
 
-}  // namespace superzip
+}  // namespace flitzzip

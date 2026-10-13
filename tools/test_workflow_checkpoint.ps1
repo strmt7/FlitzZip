@@ -16,7 +16,7 @@ $state = @{
 $githubStub = {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
     $global:LASTEXITCODE = 0
-    if ($Arguments -contains '.full_name') { return 'example/SuperZip' }
+    if ($Arguments -contains '.full_name') { return 'example/FlitzZip' }
     ++$state.LookupCount
     if ($state.ApiFailure) { $global:LASTEXITCODE = 1; return 'test: API unavailable' }
     if ($state.Malformed) { return '[{}]' }
@@ -66,7 +66,7 @@ function Assert-CheckpointFailure {
 }
 
 $arguments = @{
-    ChangedPath = @('tools/superzip_verification.psm1'); Repository = 'example/SuperZip'
+    ChangedPath = @('tools/flitzzip_verification.psm1'); Repository = 'example/FlitzZip'
     Commit = $testCommit; WorkflowName = @('lint'); Mode = 'opportunistic'
 }
 try {

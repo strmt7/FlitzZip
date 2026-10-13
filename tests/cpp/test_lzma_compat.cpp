@@ -15,12 +15,13 @@
 
 namespace {
 
-constexpr std::array<unsigned char, 68> kSingleFileLzmaFixture{{
-    0x5DU, 0x00U, 0x00U, 0x80U, 0x00U, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0x00U,
-    0x29U, 0x9DU, 0x4AU, 0x06U, 0x67U, 0x91U, 0xC2U, 0xBFU, 0xC5U, 0x03U, 0x48U, 0x70U, 0x03U, 0x6CU,
-    0xFDU, 0xF9U, 0x68U, 0xEDU, 0x8BU, 0x91U, 0xC4U, 0x45U, 0x84U, 0x1EU, 0x3CU, 0xC6U, 0xD9U, 0xC4U,
-    0xA4U, 0x44U, 0xCEU, 0xB9U, 0xB4U, 0xB1U, 0xC6U, 0x33U, 0xF0U, 0xDEU, 0x9AU, 0x42U, 0x96U, 0x4FU,
-    0xFFU, 0xD3U, 0xA8U, 0xCDU, 0xD9U, 0xD9U, 0x83U, 0xFFU, 0xE1U, 0xDFU, 0x80U, 0x00U,
+// Independent fixture: Python 3.13 liblzma output, verified with 7-Zip 26.03.
+constexpr std::array<unsigned char, 65> kSingleFileLzmaFixture{{
+    0x5DU, 0x00U, 0x00U, 0x80U, 0x00U, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU,
+    0x00U, 0x22U, 0x9EU, 0x08U, 0x26U, 0xFFU, 0x96U, 0x34U, 0x91U, 0xE7U, 0x71U, 0xDDU, 0x2EU,
+    0xADU, 0x49U, 0x72U, 0xC3U, 0xDEU, 0xC5U, 0x9DU, 0x9CU, 0x34U, 0x17U, 0xBDU, 0x12U, 0xFFU,
+    0xA7U, 0xD0U, 0x2FU, 0x0EU, 0x27U, 0xBBU, 0x66U, 0xB0U, 0x91U, 0xAAU, 0x58U, 0xCEU, 0x40U,
+    0x4EU, 0x29U, 0xF8U, 0x26U, 0x46U, 0x88U, 0x0EU, 0x3DU, 0x1FU, 0xFEU, 0x0BU, 0x40U, 0x00U,
 }};
 
 // Purpose: Write exact fixture bytes to disk.
@@ -73,13 +74,13 @@ TEST_CASE(lzma_extracts_single_file_fixture) {
     const auto root = test_temp_dir("lzma-single");
     const auto archive = root / "payload.txt.lzma";
     write_fixture(archive, kSingleFileLzmaFixture);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Lzma);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Lzma);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_lzma_file(archive, output, false);
+    const auto stats = flitzzip::extract_lzma_file(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
-    REQUIRE_EQ(read_text_file(output / "payload.txt"), "SuperZip LZMA fixture payload.\nSecond line.\n");
-    superzip_test::export_compat_fixture(archive, output);
+    REQUIRE_EQ(read_text_file(output / "payload.txt"), "Example LZMA fixture payload.\nSecond line.\n");
+    flitzzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Preserve native Unicode filenames while extracting independent lzma fixtures.
@@ -92,16 +93,16 @@ TEST_CASE(lzma_unicode_archive_filename_extracts) {
     archive += ".LZMA";
     write_fixture(archive, kSingleFileLzmaFixture);
     const auto output = root / "out";
-    (void)superzip::extract_lzma_file(archive, output, false);
-    REQUIRE_EQ(read_text_file(output / filename), "SuperZip LZMA fixture payload.\nSecond line.\n");
+    (void)flitzzip::extract_lzma_file(archive, output, false);
+    REQUIRE_EQ(read_text_file(output / filename), "Example LZMA fixture payload.\nSecond line.\n");
     bool refused = false;
     try {
-        (void)superzip::extract_lzma_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_lzma_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         refused = true;
     }
     REQUIRE_TRUE(refused);
-    REQUIRE_EQ(read_text_file(output / filename), "SuperZip LZMA fixture payload.\nSecond line.\n");
+    REQUIRE_EQ(read_text_file(output / filename), "Example LZMA fixture payload.\nSecond line.\n");
 }
 
 // Purpose: Verify `.lzma` extraction refuses overwriting existing files unless explicitly allowed.
@@ -119,8 +120,8 @@ TEST_CASE(lzma_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_lzma_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_lzma_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -138,8 +139,8 @@ TEST_CASE(lzma_rejects_truncated_header_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_lzma_file(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_lzma_file(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -174,8 +175,8 @@ TEST_CASE(lzma_rejects_corrupt_payload_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_lzma_file(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_lzma_file(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -195,8 +196,8 @@ TEST_CASE(lzma_rejects_trailing_data_after_end_marker) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_lzma_file(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_lzma_file(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -204,7 +205,7 @@ TEST_CASE(lzma_rejects_trailing_data_after_end_marker) {
 }
 
 // Purpose: Verify hostile dictionary declarations are rejected before decoder allocation.
-// Inputs: A valid LZMA property byte with a dictionary larger than SuperZip policy.
+// Inputs: A valid LZMA property byte with a dictionary larger than FlitzZip policy.
 // Outputs: Throws and leaves the destination without regular files.
 TEST_CASE(lzma_rejects_oversized_dictionary_without_output) {
     const auto root = test_temp_dir("lzma-oversized-dict");
@@ -229,8 +230,8 @@ TEST_CASE(lzma_rejects_oversized_dictionary_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_lzma_file(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_lzma_file(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

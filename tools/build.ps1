@@ -44,14 +44,14 @@ function Invoke-NativeTool {
     }
 }
 
-# Purpose: Fail early when a running SuperZip instance locks the build output executable.
+# Purpose: Fail early when a running FlitzZip instance locks the build output executable.
 # Inputs: `Configuration` selects the build subdirectory that would be overwritten.
 # Outputs: Throws with an actionable message when the target GUI binary is running.
 function Assert-BuildOutputNotRunning {
     param([Parameter(Mandatory = $true)][string]$Configuration)
 
-    $targetExe = [IO.Path]::GetFullPath((Join-Path $repo "build\$Configuration\SuperZip.exe"))
-    foreach ($process in @(Get-Process -Name "SuperZip" -ErrorAction SilentlyContinue)) {
+    $targetExe = [IO.Path]::GetFullPath((Join-Path $repo "build\$Configuration\FlitzZip.exe"))
+    foreach ($process in @(Get-Process -Name "FlitzZip" -ErrorAction SilentlyContinue)) {
         $processPath = ""
         try {
             $processPath = [string]$process.Path
@@ -113,7 +113,7 @@ if ($EnableHip.IsPresent -and $CpuOnlyValidation.IsPresent) {
     throw "-EnableHip and -CpuOnlyValidation are mutually exclusive."
 }
 $hipArg = if ($CpuOnlyValidation.IsPresent) { "OFF" } else { "ON" }
-$PackageVersion = Resolve-SuperZipPackageVersion -RepoRoot $repo -RequestedVersion $PackageVersion
+$PackageVersion = Resolve-FlitzZipPackageVersion -RepoRoot $repo -RequestedVersion $PackageVersion
 if (-not $MsiProductIdentity.Trim()) {
     $MsiProductIdentity = Get-MsiProductIdentity
 }
@@ -123,19 +123,19 @@ $configureArgs = @(
     "-B", $build,
     "-G", $Generator,
     "-A", "x64",
-    "-DSUPERZIP_ENABLE_HIP=$hipArg",
-    "-DSUPERZIP_HIP_ARCH=$HipArch",
-    "-DSUPERZIP_VCVARS_VERSION=$VcvarsVersion",
-    "-DSUPERZIP_PACKAGE_VERSION=$PackageVersion",
-    "-DSUPERZIP_MSI_INSTALL_SCOPE=$MsiInstallScope",
-    "-DSUPERZIP_MSI_PRODUCT_IDENTITY=$MsiProductIdentity",
-    "-DSUPERZIP_BUILD_GUI=ON",
-    "-DSUPERZIP_BUILD_TESTS=ON"
+    "-DFLITZZIP_ENABLE_HIP=$hipArg",
+    "-DFLITZZIP_HIP_ARCH=$HipArch",
+    "-DFLITZZIP_VCVARS_VERSION=$VcvarsVersion",
+    "-DFLITZZIP_PACKAGE_VERSION=$PackageVersion",
+    "-DFLITZZIP_MSI_INSTALL_SCOPE=$MsiInstallScope",
+    "-DFLITZZIP_MSI_PRODUCT_IDENTITY=$MsiProductIdentity",
+    "-DFLITZZIP_BUILD_GUI=ON",
+    "-DFLITZZIP_BUILD_TESTS=ON"
 )
 $configureArgs += "-DCMAKE_DISABLE_PRECOMPILE_HEADERS=$($DisablePrecompiledHeaders.IsPresent.ToString().ToUpperInvariant())"
 if (-not $CpuOnlyValidation) {
     $sdkRoot = Resolve-RocmSdkRoot -RepoRoot $repo -RequestedPath $HipPath
-    $configureArgs += "-DSUPERZIP_HIP_PATH=$sdkRoot"
+    $configureArgs += "-DFLITZZIP_HIP_PATH=$sdkRoot"
 }
 $null = New-Item -ItemType Directory -Force -Path $build
 if ((Get-Item -LiteralPath $build).Attributes -band [IO.FileAttributes]::ReparsePoint) {
@@ -167,7 +167,7 @@ try {
             $buildArgs += '--clean-first'
             $receiptArguments += '--clean-first'
         }
-        Invoke-SuperZipParallelBuild -Jobs $jobs -Action {
+        Invoke-FlitzZipParallelBuild -Jobs $jobs -Action {
             Invoke-NativeTool -FilePath $cmake -Arguments $buildArgs -Operation "CMake build"
         }
         $receipt = Invoke-NativeBuildReceipt -Operation finish -Arguments $receiptArguments

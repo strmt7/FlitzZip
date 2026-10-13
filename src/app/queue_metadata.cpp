@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Query metadata without opening archive content; inputs: local queued path; outputs: type and optional size.
 QueueFileMetadata read_queue_file_metadata(const std::filesystem::path& path) {
@@ -160,4 +160,4 @@ std::vector<std::filesystem::path> queue_archive_candidates(std::span<const std:
     return archives;
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

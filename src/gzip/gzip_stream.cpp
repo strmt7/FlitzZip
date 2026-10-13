@@ -18,7 +18,7 @@
 
 #include "miniz.h"
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kGzipStreamBufferBytes = 64U * 1024U;
@@ -621,4 +621,4 @@ std::uint64_t GzipInputStream::compressed_payload_read_bytes() const {
     return buffer_->compressed_payload_read_bytes();
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

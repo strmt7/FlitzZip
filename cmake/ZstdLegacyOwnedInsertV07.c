@@ -12,7 +12,7 @@ ZSTDLIBv07_API size_t ZSTDv07_insertBlock(ZSTDv07_DCtx* dctx, const void* blockS
     return blockSize;
 }
 
-#ifdef SUPERZIP_ZSTD_BUFFER_PROBES
+#ifdef FLITZZIP_ZSTD_BUFFER_PROBES
 /* Purpose: Check error propagation and valid history after a malformed canonical block call.
  * Inputs: None; all decoder and byte storage belongs to this bounded serial probe.
  * Outputs: Returns one only when the malformed call fails and the history end remains the destination start. */

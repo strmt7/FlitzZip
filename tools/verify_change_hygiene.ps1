@@ -13,7 +13,7 @@ $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'release_workflow_policy.ps1')
 . (Join-Path $PSScriptRoot 'zstd_rewrite_policy.ps1')
-Import-Module (Join-Path $PSScriptRoot "superzip_verification.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "flitzzip_verification.psm1") -Force
 
 # Purpose: Return whether a file extension is normally safe to scan as text.
 # Inputs: `Path` is a repository-relative or absolute path.
@@ -270,7 +270,7 @@ if (-not [string]::IsNullOrWhiteSpace($ChangedPathBase64)) {
 $allChangedPaths = @($jsonChangedPaths) + @($ChangedPath) + @($RemainingChangedPath | Where-Object {
     -not [string]::IsNullOrWhiteSpace($_) -and -not $_.StartsWith("-", [System.StringComparison]::Ordinal)
 })
-$paths = Get-SuperZipChangedPath -ChangedPath $allChangedPaths -BaseRef $BaseRef -HeadRef $HeadRef -IncludeUntracked:$IncludeUntracked
+$paths = Get-FlitzZipChangedPath -ChangedPath $allChangedPaths -BaseRef $BaseRef -HeadRef $HeadRef -IncludeUntracked:$IncludeUntracked
 
 Push-Location $repo
 try {

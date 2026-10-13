@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Create a standard ZIP archive for compatibility workflows.
 // Inputs: `sources` are existing files/directories, `output_archive` is the destination ZIP path, `compression_level`
@@ -23,7 +23,7 @@ OperationStats compress_zip(const std::vector<std::filesystem::path>& sources,
 // decoded size/CRC mismatches, or callback cancellation. No extraction directory is created.
 OperationStats verify_zip(const std::filesystem::path& archive_path, const ProgressCallback& progress_callback = {});
 
-// Purpose: Extract a standard ZIP archive with SuperZip path-safety checks.
+// Purpose: Extract a standard ZIP archive with FlitzZip path-safety checks.
 // Inputs: `archive_path` is the ZIP file, `destination` is the extraction root, `overwrite` allows existing targets
 // only when true, and `progress_callback` receives synchronous progress snapshots. Outputs: Returns operation
 // statistics; throws on malformed ZIP data, unsafe entry paths, refused overwrite, or verified-file publication
@@ -31,4 +31,4 @@ OperationStats verify_zip(const std::filesystem::path& archive_path, const Progr
 OperationStats extract_zip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                            bool overwrite, const ProgressCallback& progress_callback = {});
 
-}  // namespace superzip
+}  // namespace flitzzip

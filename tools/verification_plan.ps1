@@ -9,9 +9,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-Import-Module (Join-Path $PSScriptRoot "superzip_verification.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "flitzzip_verification.psm1") -Force
 
-$plan = Get-SuperZipVerificationPlan `
+$plan = Get-FlitzZipVerificationPlan `
     -ChangedPath $ChangedPath `
     -BaseRef $BaseRef `
     -HeadRef $HeadRef `
@@ -24,7 +24,7 @@ if ($Json.IsPresent) {
     return
 }
 
-Write-Output "SuperZip verification plan"
+Write-Output "FlitzZip verification plan"
 Write-Output "Changed paths: $($plan.scope.pathCount)"
 foreach ($path in $plan.scope.paths) {
     Write-Output "  - $path"

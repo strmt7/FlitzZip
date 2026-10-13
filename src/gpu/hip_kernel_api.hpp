@@ -6,7 +6,7 @@
 
 #include <type_traits>
 
-namespace superzip::hip_detail {
+namespace flitzzip::hip_detail {
 
 inline constexpr std::uint32_t kDictionaryKernelThreads = 256U;
 inline constexpr std::uint32_t kDictionaryMaxPeriodicMatchBytes = 32768U;
@@ -56,9 +56,9 @@ struct EntropyLengthSegmentPlan {
     std::uint32_t length_offset;
 };
 
-}  // namespace superzip::hip_detail
+}  // namespace flitzzip::hip_detail
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Describe the private versioned kernel ABI without exporting heap owners or C++ exceptions.
 // Inputs: Every pointer refers to one registered kernel or a bounded rocPRIM operation in the admitted module.
@@ -158,4 +158,4 @@ const HipKernelApi& hip_kernel_api();
 // Outputs: Returns on compatibility or throws GpuError; caches only successful immutable device-code resolution.
 void require_hip_kernel_device_support();
 
-}  // namespace superzip
+}  // namespace flitzzip

@@ -1,6 +1,6 @@
 param([string]$Configuration = 'Release')
 $ErrorActionPreference = 'Stop'
-$cli = Join-Path (Split-Path -Parent $PSScriptRoot) "build/$Configuration/superzip_cli.exe"
+$cli = Join-Path (Split-Path -Parent $PSScriptRoot) "build/$Configuration/flitzzip_cli.exe"
 . (Join-Path $PSScriptRoot 'benchmark_statistics.ps1')
 
 # Purpose: Probe native planning and invalid admission without executing a multi-gigabyte workload.

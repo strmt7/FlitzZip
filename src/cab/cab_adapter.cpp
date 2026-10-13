@@ -29,12 +29,12 @@
 #include <sys/stat.h>
 #endif
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 #ifdef _WIN32
 
-constexpr const char* kCabFdiVirtualCabinetName = "superzip-input.cab";
+constexpr const char* kCabFdiVirtualCabinetName = "flitzzip-input.cab";
 
 enum class CabFdiPass {
     Validate,
@@ -119,7 +119,7 @@ void publish_cab_progress(CabFdiContext& context) {
     }
 }
 
-// Purpose: Convert one FDI file name to a prevalidated SuperZip path key.
+// Purpose: Convert one FDI file name to a prevalidated FlitzZip path key.
 // Inputs: `name` is an FDI-provided CAB filename pointer.
 // Outputs: Returns a normalized path or throws on unsafe metadata.
 std::string normalize_fdi_cab_name(const char* name) {
@@ -326,7 +326,7 @@ FNFDINOTIFY(cab_fdi_notify) {
 
 class ScopedFdiContext {
   public:
-    // Purpose: Create a Windows FDI context with SuperZip callback functions.
+    // Purpose: Create a Windows FDI context with FlitzZip callback functions.
     // Inputs: None.
     // Outputs: Owns an HFDI handle or throws if FDI initialization fails.
     ScopedFdiContext() {
@@ -354,7 +354,7 @@ class ScopedFdiContext {
     // Outputs: Returns normally on success or throws on callback/FDI failure.
     void copy(const std::shared_ptr<CabFdiContext>& context) {
         ScopedCabFdiContextBinding binding(context);
-        char cabinet_name[] = "superzip-input.cab";
+        char cabinet_name[] = "flitzzip-input.cab";
         char cabinet_path[] = "";
         const BOOL ok = FDICopy(handle_, cabinet_name, cabinet_path, 0, cab_fdi_notify, nullptr, context.get());
         cleanup_pending_outputs(*context);
@@ -456,4 +456,4 @@ OperationStats extract_cab(const std::filesystem::path& archive_path, const std:
 #endif
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

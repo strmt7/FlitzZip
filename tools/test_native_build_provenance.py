@@ -15,7 +15,7 @@ class NativeBuildInputsTests(unittest.TestCase):
     # Purpose: Create a private Git fixture without credentials, hooks or global configuration.
     # Inputs: None. Outputs: Minimal checkout and cleanup owner, isolated from the live repository.
     def setUp(self):
-        self.scratch = tempfile.TemporaryDirectory(prefix="superzip native inputs ")
+        self.scratch = tempfile.TemporaryDirectory(prefix="flitzzip native inputs ")
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name)
         subprocess.run(["git", "-C", str(self.root), "init", "--quiet"], check=True, capture_output=True, timeout=30)
@@ -35,7 +35,7 @@ class NativeBuildInputsTests(unittest.TestCase):
     def test_content_identity_survives_relocation(self):
         first = capture_inputs(self.root)
         self.assertEqual(first, capture_inputs(self.root))
-        with tempfile.TemporaryDirectory(prefix="superzip relocated inputs ") as directory:
+        with tempfile.TemporaryDirectory(prefix="flitzzip relocated inputs ") as directory:
             relocated = Path(directory)
             subprocess.run(
                 ["git", "-C", str(relocated), "init", "--quiet"], check=True, capture_output=True, timeout=30

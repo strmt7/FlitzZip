@@ -15,12 +15,12 @@ function Assert-ResourceRejection {
 
 foreach ($case in @(@(4096, 4096, 2048), @(32768, 8192, 4096), @(8192, 32768, 4096),
         @(65536, 65536, 32768), @(2147483647, 2147483647, 1073741823))) {
-    $budget = Resolve-SuperZipFuzzMemoryBudget -AvailableMiB $case[0] -DockerAvailableMiB $case[1]
+    $budget = Resolve-FlitzZipFuzzMemoryBudget -AvailableMiB $case[0] -DockerAvailableMiB $case[1]
     if ($budget -ne $case[2]) { throw 'Fuzz admission must preserve headroom on both hosts without a fixed cap.' }
 }
 foreach ($low in @(0, 2048, 4095)) {
-    Assert-ResourceRejection { Resolve-SuperZipFuzzMemoryBudget -AvailableMiB $low -DockerAvailableMiB 65536 } 'Insufficient available RAM'
-    Assert-ResourceRejection { Resolve-SuperZipFuzzMemoryBudget -AvailableMiB 65536 -DockerAvailableMiB $low } 'Insufficient available RAM'
+    Assert-ResourceRejection { Resolve-FlitzZipFuzzMemoryBudget -AvailableMiB $low -DockerAvailableMiB 65536 } 'Insufficient available RAM'
+    Assert-ResourceRejection { Resolve-FlitzZipFuzzMemoryBudget -AvailableMiB 65536 -DockerAvailableMiB $low } 'Insufficient available RAM'
 }
 
 $script:dockerInfo = [ordered]@{ OSType = 'linux'; MemoryLimit = $true; SwapLimit = $true; MemTotal = 16GB }
@@ -42,7 +42,7 @@ function docker {
     return $script:probeOutput
 }
 
-$budget = Get-SuperZipDockerAvailableMemoryMiB -Image 'fixture@sha256:fixed' -RepoMount 'C:/fixture with spaces'
+$budget = Get-FlitzZipDockerAvailableMemoryMiB -Image 'fixture@sha256:fixed' -RepoMount 'C:/fixture with spaces'
 if ($budget -ne 8192 -or $script:dockerCalls.Count -ne 2) { throw 'Docker preflight must query and probe exactly once.' }
 $probeArgs = $script:dockerCalls[1]
 foreach ($flag in @('--memory', '--memory-swap')) {
@@ -52,23 +52,23 @@ foreach ($flag in @('--memory', '--memory-swap')) {
 if ($probeArgs -notcontains 'C:/fixture with spaces:/src:ro') { throw 'Probe mounts must preserve spaces and read-only ownership.' }
 if (@($probeArgs | Where-Object { $_ -match '^--cpu' }).Count -ne 0) { throw 'Fuzz resource admission must not cap CPUs.' }
 $script:infoExit = 7
-Assert-ResourceRejection { Get-SuperZipDockerAvailableMemoryMiB -Image fixture -RepoMount fixture } 'preflight failed with exit code 7'
+Assert-ResourceRejection { Get-FlitzZipDockerAvailableMemoryMiB -Image fixture -RepoMount fixture } 'preflight failed with exit code 7'
 $script:infoExit = 0
 foreach ($case in @(@('OSType', 'windows'), @('MemoryLimit', $false), @('SwapLimit', $false),
         @('MemoryLimit', 'true'), @('MemTotal', 0), @('MemTotal', 'unknown'))) {
     $previous = $script:dockerInfo[$case[0]]
     try {
         $script:dockerInfo[$case[0]] = $case[1]
-        Assert-ResourceRejection { Get-SuperZipDockerAvailableMemoryMiB -Image fixture -RepoMount fixture } 'requires Linux Docker'
+        Assert-ResourceRejection { Get-FlitzZipDockerAvailableMemoryMiB -Image fixture -RepoMount fixture } 'requires Linux Docker'
     } finally { $script:dockerInfo[$case[0]] = $previous }
 }
 $script:probeExit = 9
-Assert-ResourceRejection { Get-SuperZipDockerAvailableMemoryMiB -Image fixture -RepoMount fixture } 'probe failed with exit code 9'
+Assert-ResourceRejection { Get-FlitzZipDockerAvailableMemoryMiB -Image fixture -RepoMount fixture } 'probe failed with exit code 9'
 $script:probeExit = 0
 foreach ($invalid in @('', '0', '-1', '8192 warning', '1.5', '99999999999')) {
     $script:probeOutput = $invalid
-    Assert-ResourceRejection { Get-SuperZipDockerAvailableMemoryMiB -Image fixture -RepoMount fixture } 'valid available-memory counter'
+    Assert-ResourceRejection { Get-FlitzZipDockerAvailableMemoryMiB -Image fixture -RepoMount fixture } 'valid available-memory counter'
 }
 $script:probeOutput = '16385'
-Assert-ResourceRejection { Get-SuperZipDockerAvailableMemoryMiB -Image fixture -RepoMount fixture } 'exceeds the reported host capacity'
+Assert-ResourceRejection { Get-FlitzZipDockerAvailableMemoryMiB -Image fixture -RepoMount fixture } 'exceeds the reported host capacity'
 Write-Output 'fuzz_resource_tests status=passed'

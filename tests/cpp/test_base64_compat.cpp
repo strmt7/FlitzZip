@@ -67,15 +67,15 @@ TEST_CASE(base64_compat_roundtrip) {
     write_binary_file(input, payload);
 
     const auto archive = root / "payload.b64";
-    const auto compress_stats = superzip::compress_base64_file(input, archive);
+    const auto compress_stats = flitzzip::compress_base64_file(input, archive);
     REQUIRE_TRUE(compress_stats.output_bytes > payload.size());
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Base64);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Base64);
 
     const auto output = root / "out";
-    const auto extract_stats = superzip::extract_base64_file(archive, output, false);
+    const auto extract_stats = flitzzip::extract_base64_file(archive, output, false);
     REQUIRE_EQ(extract_stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_binary_file(output / "payload.bin"), payload);
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 
@@ -88,7 +88,7 @@ TEST_CASE(base64_extracts_raw_payload_by_extension) {
     write_text_file(archive, "U3VwZXJa\naXAgcmF3\nIGI2NA==\n");
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_base64_file(archive, output, false);
+    const auto stats = flitzzip::extract_base64_file(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_binary_file(output / "hello.txt"), std::vector<unsigned char>({
                                                            'S',
@@ -122,8 +122,8 @@ TEST_CASE(base64_extract_rejects_unsafe_header_path) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_base64_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_base64_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -143,8 +143,8 @@ TEST_CASE(base64_extract_rejects_malformed_payload_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_base64_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_base64_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -161,7 +161,7 @@ TEST_CASE(base64_extract_rejects_overwrite_by_default) {
     const auto input = root / "sample.txt";
     write_text_file(input, "new payload");
     const auto archive = root / "sample.b64";
-    (void)superzip::compress_base64_file(input, archive);
+    (void)flitzzip::compress_base64_file(input, archive);
 
     const auto output = root / "out";
     std::filesystem::create_directories(output);
@@ -169,8 +169,8 @@ TEST_CASE(base64_extract_rejects_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_base64_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_base64_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

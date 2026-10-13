@@ -10,7 +10,7 @@ if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyCo
 }
 
 $repo = Split-Path -Parent $PSScriptRoot
-$cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
+$cli = Join-Path $repo "build\$Configuration\flitzzip_cli.exe"
 if (-not (Test-Path -LiteralPath $cli)) {
     throw "CLI binary not found. Run tools/build.ps1 first."
 }
@@ -112,7 +112,7 @@ function Assert-InteropRestoredPayload {
     }
 }
 
-# Purpose: Verify that libarchive can list and extract a SuperZip-created compatibility archive.
+# Purpose: Verify that libarchive can list and extract a FlitzZip-created compatibility archive.
 # Inputs: `Archive`, `OutputRoot`, `SourceRoot`, and expected slash-form `Entries` define the check.
 # Outputs: Throws on list, extraction, or byte-compare failure.
 function Assert-LibarchiveInterop {
@@ -134,7 +134,7 @@ function Assert-LibarchiveInterop {
     Assert-InteropRestoredPayload -SourceRoot $SourceRoot -OutputRoot $OutputRoot
 }
 
-# Purpose: Verify that PowerShell's ZIP reader can open a SuperZip-created ZIP archive.
+# Purpose: Verify that PowerShell's ZIP reader can open a FlitzZip-created ZIP archive.
 # Inputs: `Archive`, `OutputRoot`, and `SourceRoot` define the check.
 # Outputs: Extracts with `Expand-Archive` and throws on byte mismatch.
 function Assert-PowerShellZipInterop {
@@ -151,8 +151,8 @@ function Assert-PowerShellZipInterop {
 
 # Purpose: Prove XAR heap extents with archives produced by libarchive, not the product's own fixture builder.
 # Inputs: Private work directory and the source fixture root; uses documented stored/zlib, checksum-free support.
-# Outputs: Requires exact SuperZip extraction from both encodings and throws on native or content failure.
-function Assert-SuperZipXarReadInterop {
+# Outputs: Requires exact FlitzZip extraction from both encodings and throws on native or content failure.
+function Assert-FlitzZipXarReadInterop {
     param(
         [Parameter(Mandatory = $true)][string]$Work,
         [Parameter(Mandatory = $true)][string]$SourceRoot
@@ -164,16 +164,16 @@ function Assert-SuperZipXarReadInterop {
             "--format=xar", "--options", "xar:toc-checksum=none,xar:checksum=none,xar:compression=$compression",
             "-cf", $archive, "-C", $SourceRoot, "input"
         ) -Label "libarchive create XAR $compression" | Out-Null
-        $outputRoot = Join-Path $Work ("superzip-xar-$compression")
+        $outputRoot = Join-Path $Work ("flitzzip-xar-$compression")
         Invoke-InteropCommand -FilePath $cli -Arguments @(
             "extract", "--format", "xar", "--output", $outputRoot, $archive
-        ) -Label "SuperZip read external XAR $compression" | Out-Null
+        ) -Label "FlitzZip read external XAR $compression" | Out-Null
         Assert-InteropRestoredPayload -SourceRoot $SourceRoot -OutputRoot $outputRoot
-        Write-Output "compat_interop format=xar encoding=$compression direction=external-to-superzip status=passed"
+        Write-Output "compat_interop format=xar encoding=$compression direction=external-to-flitzzip status=passed"
     }
 }
 
-$work = Join-Path $WorkRoot ("superzip-compat-interop-" + [guid]::NewGuid().ToString("N"))
+$work = Join-Path $WorkRoot ("flitzzip-compat-interop-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 try {
     $inputRoot = Join-Path $work "source"
@@ -203,9 +203,9 @@ try {
             $createArgs += @("--compression-level", [string]$case.CompressionLevel)
         }
         $createArgs += @("--output", $archive, $inputTree)
-        Invoke-InteropCommand -FilePath $cli -Arguments $createArgs -Label "SuperZip create $($case.Format)" | Out-Null
+        Invoke-InteropCommand -FilePath $cli -Arguments $createArgs -Label "FlitzZip create $($case.Format)" | Out-Null
         if (-not (Test-Path -LiteralPath $archive)) {
-            throw "SuperZip did not create expected compatibility archive: $archive"
+            throw "FlitzZip did not create expected compatibility archive: $archive"
         }
         if ($case.PowerShellZip) {
             Assert-PowerShellZipInterop -Archive $archive -OutputRoot (Join-Path $work "expanded-zip") -SourceRoot $inputRoot
@@ -214,7 +214,7 @@ try {
         Write-Output "compat_interop format=$($case.Format) status=passed archive_bytes=$((Get-Item -LiteralPath $archive).Length)"
     }
 
-    Assert-SuperZipXarReadInterop -Work $work -SourceRoot $inputRoot
+    Assert-FlitzZipXarReadInterop -Work $work -SourceRoot $inputRoot
 
     foreach ($format in @("tar", "cpio", "ar")) {
         $archive = Join-Path $work ("reject-level-" + $format + ".archive")
@@ -227,7 +227,7 @@ try {
             "--output",
             $archive,
             $inputTree
-        ) -Label "SuperZip reject compression level for $format" -ExpectedText "does not support compression-level flags"
+        ) -Label "FlitzZip reject compression level for $format" -ExpectedText "does not support compression-level flags"
     }
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue

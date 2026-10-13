@@ -18,7 +18,7 @@
 #include <string>
 #include <string_view>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kUuePayloadBytesPerLine = 45U;
@@ -111,7 +111,7 @@ UueHeader read_uue_header(std::ifstream& input) {
             };
         }
     }
-    throw ArchiveError("UUencoded stream preamble exceeds SuperZip metadata limit");
+    throw ArchiveError("UUencoded stream preamble exceeds FlitzZip metadata limit");
 }
 
 // Purpose: Build one encoded UUE payload line from up to 45 input bytes.
@@ -382,4 +382,4 @@ OperationStats extract_uue_file(const std::filesystem::path& archive_path, const
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

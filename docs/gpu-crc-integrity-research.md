@@ -1,6 +1,6 @@
 # GPU CRC and Integrity Research
 
-SuperZip needs integrity checks that are correct before they are fast. The
+FlitzZip needs integrity checks that are correct before they are fast. The
 archive format currently uses ZIP-compatible CRC-32 for accidental corruption
 detection and an opt-in SHA-256 file hash through Windows CNG for stronger
 integrity checks. Any GPU integrity path must preserve those semantics and must
@@ -39,7 +39,7 @@ CRC-32 is mathematically parallelizable, but not by running the ordinary byte
 loop in many unrelated GPU threads. Correct parallel CRC splits the message into
 ordered segments, computes a CRC for each segment, and combines the segment CRCs
 with GF(2) polynomial operators using the exact length of each following
-segment. SuperZip already has a tested CPU `crc32_combine` implementation for
+segment. FlitzZip already has a tested CPU `crc32_combine` implementation for
 this concatenation step.
 
 AMD's available primitives are useful building blocks, not a complete CRC
@@ -48,7 +48,7 @@ scans. A CRC concatenation operator can be made associative when each item
 carries both CRC state and byte length, but ordered combination must be handled
 carefully because CRC concatenation is not commutative.
 
-The best GPU design for SuperZip is a fused path:
+The best GPU design for FlitzZip is a fused path:
 
 1. While a chunk is already resident on the AMD GPU for classification or
    materialization, compute fixed-size segment CRCs in the same stream.
@@ -67,7 +67,7 @@ the required AMD HIP lane.
 
 ## Integrity Algorithm Options
 
-CRC-32 remains required for ZIP compatibility and for the current `.suzip`
+CRC-32 remains required for ZIP compatibility and for the current `.flzip`
 metadata. It is fast and good for accidental corruption detection, but it is not
 a cryptographic integrity mechanism.
 
@@ -84,7 +84,7 @@ release.
 
 ## Current Implementation
 
-SuperZip now computes source CRC-32 inside the HIP encode path while the source
+FlitzZip now computes source CRC-32 inside the HIP encode path while the source
 chunk is already resident on the AMD GPU. Verification can also compute CRC-32
 over decoded no-deflate chunks in VRAM and copy back only compact CRC segment
 metadata instead of copying the full decoded chunk only to checksum it.
@@ -145,13 +145,13 @@ existing reservation query proves exclusive device capacity or absence of
 other workloads. See the
 [HIP memory API](https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___memory.html).
 
-The [diagnostic comparison](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/benchmarks/2026-09-30-crc-readiness.md) separates
+The [diagnostic comparison](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/benchmarks/2026-09-30-crc-readiness.md) separates
 the isolated combination speedup from whole-operation results. Reducing host
 work does not establish faster GPU kernels or a universal application speedup.
 
 ## Cooperative Device Segments
 
-The [October 2026 review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/benchmarks/2026-10-02-cooperative-crc-review.md)
+The [October 2026 review](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/benchmarks/2026-10-02-cooperative-crc-review.md)
 replaces long per-thread CRC segments with 256-thread ordered cooperative
 reductions. It preserves result geometry and the archive polynomial, using
 bounded 2 KiB device constants and 2 KiB shared storage per block. CPU and HIP

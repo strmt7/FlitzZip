@@ -28,7 +28,7 @@ jobs:
       id-token: write # allow GitHub OIDC authentication to the external scan-secret broker
     env:
       GREENBONE_SECRET_PROVIDER_URL: ${{ vars.GREENBONE_SECRET_PROVIDER_URL }}
-      GREENBONE_SECRET_PROVIDER_AUDIENCE: ${{ vars.GREENBONE_SECRET_PROVIDER_AUDIENCE || 'superzip-openvas' }}
+      GREENBONE_SECRET_PROVIDER_AUDIENCE: ${{ vars.GREENBONE_SECRET_PROVIDER_AUDIENCE || 'flitzzip-openvas' }}
       GREENBONE_TARGET_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.target || '' }}
     steps:
       - name: Checkout

@@ -9,7 +9,7 @@
 #include <chrono>
 #include <utility>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 // Purpose: Select bounded pinned output only for HIP-capable blocks, without changing codec fallback policy.
@@ -81,7 +81,7 @@ std::uint32_t resolve_owned_decode_inflight(std::uint32_t requested, std::size_t
 DecodedChunk decode_owned_chunk(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                                 std::size_t decoded_size, const GpuCodecOptions& options) {
     if (decoded_size > kMaxArchiveChunkBytes || blocks.size() > kMaxBlocksPerEntry) {
-        throw ArchiveError("decoded chunk exceeds SuperZip resource limits");
+        throw ArchiveError("decoded chunk exceeds FlitzZip resource limits");
     }
     auto remaining = decoded_size;
     for (const auto& block : blocks) {
@@ -132,4 +132,4 @@ DecodedChunk decode_owned_chunk(std::span<const std::byte> payload, std::span<co
     };
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

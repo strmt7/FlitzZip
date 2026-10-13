@@ -10,14 +10,15 @@
 #include <string>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
-constexpr std::uint32_t kSuperZipMagic = 0x505A5553;        // SUZP
-constexpr std::uint32_t kSuperZipFooterMagic = 0x465A5553;  // SUZF
-constexpr std::uint64_t kSuperZipFooterBytes = 2U * sizeof(std::uint32_t) + 2U * sizeof(std::uint64_t);
-constexpr std::uint32_t kSuperZipMinReadableVersion = 1;
-constexpr std::uint32_t kSuperZipVersion = 3;
-constexpr std::uint32_t kSuperZipMaxReadableVersion = 11;
+// Wire signatures are stable across the product/extension rename; existing archives need no conversion.
+constexpr std::uint32_t kFlitzZipMagic = 0x505A5553;        // SUZP
+constexpr std::uint32_t kFlitzZipFooterMagic = 0x465A5553;  // SUZF
+constexpr std::uint64_t kFlitzZipFooterBytes = 2U * sizeof(std::uint32_t) + 2U * sizeof(std::uint64_t);
+constexpr std::uint32_t kFlitzZipMinReadableVersion = 1;
+constexpr std::uint32_t kFlitzZipVersion = 3;
+constexpr std::uint32_t kFlitzZipMaxReadableVersion = 11;
 
 struct ArchiveEntry {
     std::string path;
@@ -31,7 +32,7 @@ struct ArchiveEntry {
 
 struct ArchiveIndex {
     std::vector<ArchiveEntry> entries;
-    std::uint32_t version = kSuperZipVersion;
+    std::uint32_t version = kFlitzZipVersion;
     std::uint64_t index_offset = 0;
     std::uint64_t index_size = 0;
 };
@@ -41,7 +42,7 @@ struct ArchiveIndex {
 // metadata and block descriptors. Outputs: Writes bytes to `output`; throws `ArchiveError` when stream writes fail.
 void write_archive_index(std::ostream& output, const ArchiveIndex& index);
 
-// Purpose: Read and validate the SuperZip archive index and footer from an input stream.
+// Purpose: Read and validate the FlitzZip archive index and footer from an input stream.
 // Inputs: `input` must be an open binary stream positioned anywhere in the archive.
 // Outputs: Returns a validated `ArchiveIndex`; throws `ArchiveError` on bad magic, version, truncation, or inconsistent
 // metadata.
@@ -77,4 +78,4 @@ std::uint32_t read_u32(std::istream& input);
 // Outputs: Returns the decoded value; throws `ArchiveError` on truncation or stream failure.
 std::uint64_t read_u64(std::istream& input);
 
-}  // namespace superzip
+}  // namespace flitzzip

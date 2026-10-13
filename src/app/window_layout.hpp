@@ -4,7 +4,7 @@
 #include <optional>
 #include <windows.h>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 inline constexpr int kDesignClientWidth = 1200;
 inline constexpr int kDesignClientHeight = 760;
@@ -38,4 +38,4 @@ inline std::optional<WindowLayout> make_window_layout(const RECT& work, const RE
                         width <= work.right - work.left && height <= work.bottom - work.top};
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

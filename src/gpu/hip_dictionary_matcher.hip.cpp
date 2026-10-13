@@ -2,7 +2,7 @@
 #include "gpu/hip_dictionary_optimal.hpp"
 #include <rocprim/device/device_radix_sort.hpp>
 
-namespace superzip::dictionary {
+namespace flitzzip::dictionary {
 namespace {
 
 using namespace hip_detail;
@@ -528,4 +528,4 @@ void bind_dictionary_kernels(HipKernelApi& api) noexcept {
     api.sort_dictionary_keys = sort_dictionary_keys;
 }
 
-}  // namespace superzip::dictionary
+}  // namespace flitzzip::dictionary

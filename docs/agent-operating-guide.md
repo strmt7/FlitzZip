@@ -1,6 +1,6 @@
-# SuperZip Detailed Operating Guide
+# FlitzZip Detailed Operating Guide
 
-This is the detailed, normative operating manual for SuperZip. Start with the
+This is the detailed, normative operating manual for FlitzZip. Start with the
 root `AGENTS.md`, then read the sections it requires for the affected domain.
 Do not load this entire guide for an unrelated, narrowly scoped task. Paths and
 commands in this guide are relative to the repository root, not this folder.
@@ -26,7 +26,7 @@ References checked on 2026-06-16:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.2, `.zipx` remains extract-only compatibility through the ZIP reader for ZIP-compatible records and must fail explicitly for unsupported ZIPX methods, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.lz`/`.tlz` extraction remains compatibility-only through the TAR stream adapter over the lzip stream decoder and vendored LZMA SDK 26.03, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.lzma` extraction remains single-file compatibility-only through the vendored LZMA SDK 26.03 decoder, `.lz` extraction remains single-file compatibility-only through the lzip wrapper and vendored LZMA SDK 26.03 decoder, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.b64` remains native single-file compatibility-only through the bounded Base64 adapter, `.hqx` remains native extract-only data-fork compatibility through the bounded BinHex 4.0 adapter with header/data/resource CRC validation, `.macbin` and strongly header-detected MacBinary `.bin` streams remain native extract-only data-fork compatibility through the bounded MacBinary adapter, `.xxe` remains native single-file compatibility-only through the bounded XXEncode adapter, `.uue`/`.uu` remain native single-file compatibility-only through the bounded UUencode adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.cpio.gz`/`.cpgz` remain native compatibility-only through the Gzip stream adapter over the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, `.cab` extraction remains native read-only compatibility through the bounded CAB metadata scanner and Windows FDI, `.7z` extraction remains native read-only compatibility through the vendored LZMA SDK 26.03 decoder, `.lha`/`.lzh` extraction remains native read-only compatibility through the vendored Lhasa 0.6.0 decoder, standalone `.wim` extraction remains read-only compatibility through the bundled app-local wimlib 1.14.5 DLL with SuperZip path validation and verified output publication, `.xar` extraction remains native read-only compatibility for the bounded no-TOC-checksum XAR subset through the native XAR adapter over miniz zlib inflate, `.arj` extraction remains native read-only compatibility for stored entries through the bounded ARJ adapter, `.arc`/`.ark` extraction remains native read-only compatibility for SEA ARC unpacked entries through the bounded ARC adapter, and all security-sensitive extraction paths must be validated before writing to disk.
+FlitzZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.flzip` is the native FlitzZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.2, `.zipx` remains extract-only compatibility through the ZIP reader for ZIP-compatible records and must fail explicitly for unsupported ZIPX methods, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.lz`/`.tlz` extraction remains compatibility-only through the TAR stream adapter over the lzip stream decoder and vendored LZMA SDK 26.03, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.lzma` extraction remains single-file compatibility-only through the vendored LZMA SDK 26.03 decoder, `.lz` extraction remains single-file compatibility-only through the lzip wrapper and vendored LZMA SDK 26.03 decoder, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.b64` remains native single-file compatibility-only through the bounded Base64 adapter, `.hqx` remains native extract-only data-fork compatibility through the bounded BinHex 4.0 adapter with header/data/resource CRC validation, `.macbin` and strongly header-detected MacBinary `.bin` streams remain native extract-only data-fork compatibility through the bounded MacBinary adapter, `.xxe` remains native single-file compatibility-only through the bounded XXEncode adapter, `.uue`/`.uu` remain native single-file compatibility-only through the bounded UUencode adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.cpio.gz`/`.cpgz` remain native compatibility-only through the Gzip stream adapter over the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, `.cab` extraction remains native read-only compatibility through the bounded CAB metadata scanner and Windows FDI, `.7z` extraction remains native read-only compatibility through the vendored LZMA SDK 26.03 decoder, `.lha`/`.lzh` extraction remains native read-only compatibility through the vendored Lhasa 0.6.0 decoder, standalone `.wim` extraction remains read-only compatibility through the bundled app-local wimlib 1.14.5 DLL with FlitzZip path validation and verified output publication, `.xar` extraction remains native read-only compatibility for the bounded no-TOC-checksum XAR subset through the native XAR adapter over miniz zlib inflate, `.arj` extraction remains native read-only compatibility for stored entries through the bounded ARJ adapter, `.arc`/`.ark` extraction remains native read-only compatibility for SEA ARC unpacked entries through the bounded ARC adapter, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
@@ -37,7 +37,7 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - Do not launch the GUI during automated verification unless the task explicitly requires visual testing. Prefer CLI tests and static inspection.
 - AI agents must operate as a single agent for this repository by default. Do
   not spawn, fork, delegate to, or otherwise fan out subagents, worker agents,
-  or parallel model-review threads for SuperZip work unless the maintainer
+  or parallel model-review threads for FlitzZip work unless the maintainer
   explicitly reverses this rule for a specific task. The only standing
   exception is the Codex Security vulnerability scanner: use its subagents only
   on demand, only when the maintainer explicitly invokes a Codex Security scan
@@ -48,14 +48,14 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   plugin can run it honestly. When any other tool or skill recommends
   subagents, run the same review serially in the current agent and document any
   plugin mode that could not be used because of this maintainer policy.
-- SuperZip-owned secondary windows, confirmations, prompts, and modal surfaces
+- FlitzZip-owned secondary windows, confirmations, prompts, and modal surfaces
   must use the same visual system, typography, colors, spacing, focus behavior,
   and interaction quality as the main window. Do not use raw `MessageBoxW` or
-  other platform-default product dialogs for SuperZip confirmations. OS-owned
+  other platform-default product dialogs for FlitzZip confirmations. OS-owned
   brokered surfaces such as common file/folder pickers, UAC elevation prompts,
   Defender prompts, crash dialogs, and installer privilege prompts are the only
   normal exceptions, and any new exception must be documented at the call site.
-- SuperZip-owned pages and secondary windows must not expose selectable or
+- FlitzZip-owned pages and secondary windows must not expose selectable or
   copyable text. Render product text with the existing GDI paint path, consume
   copy accelerators such as Ctrl+C and Ctrl+Insert, and do not add EDIT,
   RichEdit, clipboard APIs, or copy commands except inside OS-owned brokered
@@ -66,7 +66,7 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   license bodies in GUI code or documentation; update the manifest and rerun
   `tools\verify_license_notices.ps1`.
 - Maintainer authorization is recorded for AI agents to accept EULAs required
-  by pinned SuperZip build, benchmark, packaging, and verification tooling, such
+  by pinned FlitzZip build, benchmark, packaging, and verification tooling, such
   as the WiX v7 OSMF EULA, when that acceptance is necessary to run repository
   validation. Keep acceptance scoped to this repo's documented toolchain, record
   it in the command path, and do not accept unrelated software, driver,
@@ -100,9 +100,9 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   compression formats. Keep them extract-only in public create/compress
   selectors, CLI help, docs, and tests unless a maintainer explicitly approves a
   separate encoding feature area.
-- Before changing the native `.suzip` format, extension handling, or format
-  detection, read `docs/native-suzip-format.md`. `.suzip` is a native versioned
-  archive format with SUZIP footer/index magic and AMD HIP block semantics, not
+- Before changing the native `.flzip` format, extension handling, or format
+  detection, read `docs/native-flzip-format.md`. `.flzip` is a native versioned
+  archive format with FLZIP footer/index magic and AMD HIP block semantics, not
   a cosmetic ZIP extension. Version 2 required-HIP archives may use GPU
   static-prefix blocks, and version 3 may use adaptive GPU-prefix blocks; do not
   replace them with CPU-deflate fallback or present GPU CRC/classification work
@@ -141,7 +141,7 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   the selected fixed local drive. The drive selector must enumerate only
   `DRIVE_FIXED` letters, the graph must use `LogicalDisk(<drive>)\% Disk Time`,
   and the detail rows must keep total read/write byte rates for that same drive.
-  Do not replace this with SuperZip process-only I/O counters or storage-space
+  Do not replace this with FlitzZip process-only I/O counters or storage-space
   capacity percentages.
 - Do not alter System graph history length, sampling cadence, or x-step
   behavior unless the maintainer explicitly requests graph-cadence work. Axis
@@ -158,12 +158,12 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   selection buffers, `SHBrowseForFolderW`, `SHGetPathFromIDListW`, or `MAX_PATH`
   assumptions. GUI smoke must exercise both picker-driven queue insertion and a
   many-file HDROP drag/drop payload before Queue input changes are accepted.
-- The Compress Format dropdown must always list `SuperZip (.suzip)` first and
+- The Compress Format dropdown must always list `FlitzZip (.flzip)` first and
   use it as the default. Official standard-format rows keep exactly one visible
   extension label, and the remaining rows follow the documented popularity
   proxy in `docs/archive-format-support.md`.
-- The canonical logo artwork is the `superzip-logo-mark` group in
-  `resources/brand/superzip-logo.svg`. AI agents may move or resize that mark
+- The canonical logo artwork is the `flitzzip-logo-mark` group in
+  `resources/brand/flitzzip-logo.svg`. AI agents may move or resize that mark
   for layout, and may edit surrounding wordmark/tagline copy, but must not alter
   the mark path geometry, layer count, stroke width, stroke color, line joins,
   line caps, or source-of-truth metadata.
@@ -384,7 +384,7 @@ Guidelines, and SEI CERT C++.
 - `tools/`: PowerShell build, test, security scan, benchmark, and HIP compile helpers.
 - `third_party/miniz/`: patched production miniz 3.1.2 copy used by the build.
 - `third_party/upstream/miniz/3.1.2/`: unmodified upstream miniz 3.1.2 source archive and checksum for provenance.
-- `third_party/bzip2/`: production libbzip2 1.0.8 copy plus the SuperZip link shim for `bz_internal_error`.
+- `third_party/bzip2/`: production libbzip2 1.0.8 copy plus the FlitzZip link shim for `bz_internal_error`.
 - `third_party/upstream/bzip2/1.0.8/`: unmodified upstream bzip2 1.0.8 source archive and checksum for provenance.
 - `third_party/xz_embedded/`: production XZ Embedded decoder copy used for extract-only `.xz` and `.tar.xz` compatibility.
 - `third_party/upstream/xz-embedded/ae63ae3a36ed01724674e8f3d750dc47bf125410/`: upstream XZ Embedded source archive and checksum for provenance.
@@ -392,7 +392,7 @@ Guidelines, and SEI CERT C++.
 - `third_party/upstream/lzma-sdk/26.03/`: unmodified upstream LZMA SDK 26.03 release archive and checksum for provenance.
 - `third_party/zstd/`: production Zstandard runtime metadata and license files. Do not track extracted runtime DLLs here.
 - `third_party/upstream/zstd/v1.5.7/`: upstream Zstandard source archive, official Win64 runtime package, and checksums for provenance.
-- `third_party/lhasa/`: production Lhasa 0.6.0 copy with SuperZip-local hardening patches documented in `README.SUPERZIP.md`.
+- `third_party/lhasa/`: production Lhasa 0.6.0 copy with FlitzZip-local hardening patches documented in `README.FLITZZIP.md`.
 - `third_party/upstream/lhasa/0.6.0/`: unmodified upstream Lhasa 0.6.0 release archive and checksum for provenance.
 - `third_party/wimlib/`: wimlib 1.14.5 header and LGPL/libdivsufsort-lite notices. Do not track extracted runtime DLLs here.
 - `third_party/upstream/wimlib/1.14.5/`: unmodified upstream Windows x64 runtime
@@ -482,7 +482,7 @@ tools\verify_changes.ps1 -IncludeUntracked
 ```
 
 If local lint tooling is missing, bootstrap the repo-local pinned toolchain
-before rerunning verification. Use `-PythonPath` or `SUPERZIP_PYTHON` only to
+before rerunning verification. Use `-PythonPath` or `FLITZZIP_PYTHON` only to
 select the host Python executable; the linters themselves must come from the
 hash-locked requirements file and the pinned PSScriptAnalyzer package:
 
@@ -529,7 +529,7 @@ Benchmark only after correctness tests pass:
 tools\gpu_proof.ps1 -Configuration Release
 tools\storage_smoke.ps1 -Configuration Release
 tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
-build\Release\superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
+build\Release\flitzzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
 ```
 
 `tools\bench.ps1` is memory-only by default and must report
@@ -653,11 +653,11 @@ manufacture a clean scan. Individual authorizations belong in review records.
 - Compatibility archive support must use in-process parsers/writers. Do not
   shell out to `tar`, 7-Zip, WinRAR, PowerShell compression cmdlets, or other
   host tools from product code.
-- Non-SUZIP create formats must produce standards-compatible files. When
+- Non-FLZIP create formats must produce standards-compatible files. When
   changing ZIP, TAR, compressed TAR, CPIO, CPIO.GZ, AR, or shared compatibility
   stream writers, run `tools\compatibility_interop_smoke.ps1 -Configuration
   Release` so independent Windows readers prove the outputs are not only
-  readable by SuperZip.
+  readable by FlitzZip.
 - When changing the archive-format registry, CLI format routing, create/extract
   capability flags, auto-detection, overwrite behavior, or any user-visible
   adapter contract, run `tools\format_matrix_smoke.ps1 -Configuration Release`.
@@ -721,14 +721,14 @@ manufacture a clean scan. Individual authorizations belong in review records.
   publish extraction output only through the verified temporary-file path.
 - UUE compatibility is single-file for `.uue`/`.uu`. Keep UUencode parsing in
   process, bound preamble and line lengths, validate the begin-line filename
-  through SuperZip path safety before creating output, reject malformed payload
+  through FlitzZip path safety before creating output, reject malformed payload
   lines and trailing data, and publish only through the verified temporary-file
   path.
 - XXEncode compatibility is single-file for common `.xxe` begin/payload/end
   streams. Keep XXEncode parsing in process, use only the
   `+-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz` alphabet
   plus the documented zero-line terminator variants, bound preamble and line
-  lengths, validate the begin-line filename through SuperZip path safety before
+  lengths, validate the begin-line filename through FlitzZip path safety before
   creating output, reject malformed payload lines and trailing data, and publish
   only through the verified temporary-file path. Historical post-end byte-count
   and CRC trailer variants remain rejected until their exact syntax and checksum
@@ -772,7 +772,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
 - Zstandard compatibility is single-file for `.zst`/`.zstd` and TAR-stream-only
   for `.tar.zst`/`.tzst`. Keep libzstd in-process through the app-local DLL
   loader, keep the decoder window cap, validate runtime version `10507`, keep
-  SuperZip-created frame checksums enabled, and reject malformed streams or
+  FlitzZip-created frame checksums enabled, and reject malformed streams or
   trailing garbage before publishing output.
 - WIM compatibility is extract-only for standalone `.wim` archives through the
   bundled app-local wimlib 1.14.5 DLL. Do not call `wimlib-imagex.exe`, DISM,
@@ -795,7 +795,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
 - Microsoft Defender scanning is opt-in and must run with `CREATE_NO_WINDOW`.
 - SHA-256 integrity hashing is opt-in and must use Windows CNG on Windows.
 - Keep CI layered: build, tests, secret scan, dependency review/security scanning, an always-on Greenbone/OpenVAS integration audit, and an OIDC-brokered authorized live OpenVAS/Vulnetix lane.
-- Keep language linting active for the languages actually used by SuperZip:
+- Keep language linting active for the languages actually used by FlitzZip:
   C/C++ formatting, PowerShell static analysis, Python helper lint/format,
   YAML workflow lint, Markdown lint, and CMake lint. Do not add badge-only
   workflows for languages or services that are not part of the repo.
@@ -813,12 +813,12 @@ manufacture a clean scan. Individual authorizations belong in review records.
   analysis produces unacceptable parser-artifact alerts for this Win32/HIP
   codebase and must not be restored for speed.
 - Do not run build/package jobs in parallel with GUI smoke tests or a manually
-  opened build-output `SuperZip.exe`. The build script fails early when the
+  opened build-output `FlitzZip.exe`. The build script fails early when the
   target GUI binary is running so agents do not misdiagnose linker file-lock
   errors as code defects.
 - Keep ClusterFuzzLite fuzzing active for archive metadata and path-handling code. Fuzz targets must exercise real product parser code and must not be placeholder functions added only to satisfy scanner heuristics.
-- Product release artifacts must be HIP-enabled. Do not publish CPU-only portable ZIPs or MSIs as SuperZip releases.
-- Product benchmark claims must sweep the production SUZIP block-size choices:
+- Product release artifacts must be HIP-enabled. Do not publish CPU-only portable ZIPs or MSIs as FlitzZip releases.
+- Product benchmark claims must sweep the production FLZIP block-size choices:
   256 KiB, 512 KiB, 1 MiB, 2 MiB, 4 MiB, 8 MiB, and 16 MiB. The benchmark harness must compare
   forced-CPU and required-AMD-HIP lanes in RAM and must not write multi-GB
   generated workloads to SSDs.
@@ -827,7 +827,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
   all non-store effort levels 1 through 9 are exposed. Historical five-level
   reports do not establish measurements for the four intervening efforts.
 - Product MSI releases must be per-machine installers that preselect
-  `C:\Program Files\SuperZip` and use normal Windows elevation when required.
+  `C:\Program Files\FlitzZip` and use normal Windows elevation when required.
   Use `tools\build.ps1 -MsiInstallScope perUser` only for local non-admin
   coding or installer smoke tests, and never publish that per-user MSI as a
   product release.
@@ -837,7 +837,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
   allowed only through the release workflow, which builds and validates first,
   then deletes the old release/tag immediately before publishing the replacement.
 - MSI update identity must support same-version release replacement: keep one
-  stable SuperZip `UpgradeCode`, derive `ProductCode` from a SHA-256 seed that
+  stable FlitzZip `UpgradeCode`, derive `ProductCode` from a SHA-256 seed that
   includes the MSI numeric version, install scope, and package/build identity,
   and keep WiX `MajorUpgrade` with same-version upgrades enabled. Release builds
   must use the GitHub run identity for the product identity so a republished MSI
@@ -845,7 +845,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
   Windows Installer's already-installed conflict. Run
   `tools\test_msi_identity.ps1` after changing CPack, WiX, release packaging,
   installer scope, product identity, or version metadata.
-- SuperZip-owned installer launch, release, and smoke-test paths must use
+- FlitzZip-owned installer launch, release, and smoke-test paths must use
   bounded waits. MSI install, repair, and uninstall phases default to a 300-second
   timeout, and whole-SDK download, inventory and extraction in hosted release
   validation must time out explicitly instead of waiting indefinitely. The Windows UAC consent prompt
@@ -853,7 +853,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
 - Installer UI must offer an explicit `Create Desktop shortcut` choice. Keep
   the option visible to the user instead of silently creating or suppressing the
   shortcut.
-- Do not redistribute AMD's HIP runtime DLL from a developer SDK. AMD documents that runtime as supplied by the AMD GPU driver; SuperZip delay-loads it and reports missing prerequisites through `dependency-check`.
+- Do not redistribute AMD's HIP runtime DLL from a developer SDK. AMD documents that runtime as supplied by the AMD GPU driver; FlitzZip delay-loads it and reports missing prerequisites through `dependency-check`.
 - Keep event-specific checks in event-specific workflows. Do not add jobs that are expected to show as skipped in normal push CI.
 - Before editing scanner workflows, read `docs/security-code-scanning.md`, verify action versions from official tags/releases, and pin actions by full commit SHA.
 - Do not add GitHub Actions `environment:` blocks or `deployment:` keys. This repository uses repository variables plus an external OIDC broker instead of Actions environments so workflows cannot create deployment records.
@@ -880,11 +880,11 @@ manufacture a clean scan. Individual authorizations belong in review records.
 - Text must use native DPI fonts and avoid bitmap scaling. Do not render
   low-resolution assets and stretch them.
 - Icons must be crisp DPI-aware vector drawing or multi-resolution resources.
-  The application icon must use the same SuperZip stacked-logo mark as the
+  The application icon must use the same FlitzZip stacked-logo mark as the
   in-app brand mark, and navigation icons must have consistent optical size,
   stroke weight, and alignment.
-- `resources/brand/superzip-logo.svg` is the single source of truth for the
-  SuperZip logo. Regenerate `resources/app/superzip.ico` with
+- `resources/brand/flitzzip-logo.svg` is the single source of truth for the
+  FlitzZip logo. Regenerate `resources/app/flitzzip.ico` with
   `tools\generate_app_icon.ps1`, let CMake generate the Win32 logo geometry
   header, and keep `tools\verify_brand_assets.ps1` passing. Do not hand-redraw
   divergent logo marks in code or docs.
@@ -902,7 +902,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
   column resizing hover cursors and minimum readable header widths intact.
 - Elevated Windows drag/drop is a supported shell workflow. Keep `WM_DROPFILES`
   and the drag-query message narrowly allowed through UIPI for elevated
-  SuperZip windows, keep the HDROP handler exception-safe, and do not replace
+  FlitzZip windows, keep the HDROP handler exception-safe, and do not replace
   this with a broad UIAccess manifest or unrelated privilege workaround.
 - Never add or redesign a GUI feature by breaking an existing interaction.
   File-picker queueing, folder-picker queueing, drag/drop queueing, row
@@ -922,7 +922,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
   specific. Persist the effort value, not the row index; migrate legacy five-row
   settings without changing their selected effort. Unsupported tuning remains
   disabled rather than implying compression in an uncompressed container.
-  Neutron star mode is a separate native SUZIP mode below those nine rows. Show
+  Neutron star mode is a separate native FLZIP mode below those nine rows. Show
   it only for actual cached HIP availability and the required-GPU preference;
   persist its intent separately from the numeric effort. Keep its algorithms,
   benchmark evidence and tuning separate from numeric levels. Transfer an
@@ -938,9 +938,9 @@ manufacture a clean scan. Individual authorizations belong in review records.
 - The Settings page uses a draft/apply model. Changing a Settings control
   affects the current draft only; leaving Settings without `Apply` must restore
   the last applied snapshot. `Apply` must atomically persist the validated
-  per-user configuration to `%LOCALAPPDATA%\SuperZip\settings.json`; GUI smoke
+  per-user configuration to `%LOCALAPPDATA%\FlitzZip\settings.json`; GUI smoke
   must redirect to the fixed temp smoke settings file with
-  `SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT=1`, assert the persisted values, and
+  `FLITZZIP_GUI_SMOKE_SETTINGS_REDIRECT=1`, assert the persisted values, and
   verify that an unapplied draft is not persisted. Do not reintroduce
   path-valued settings overrides.
 - Settings log retention options are exactly `1 week`, `2 weeks`, and
@@ -948,8 +948,8 @@ manufacture a clean scan. Individual authorizations belong in review records.
   log rows and over-capacity rows are actually removed; keep the focused C++
   retention tests and GUI smoke label checks passing.
 - Check all pages, not only the main queue page, when making visual changes.
-- Treat `resources/design/superzip-ui-iteration-4.png` as the current visual
-  acceptance reference. Do not simplify the compact enterprise shell, command
+- Use the current layout contract in `docs/design.md` and captured executable
+  screenshots as the visual acceptance reference. Do not simplify the compact enterprise shell, command
   bar, icon rail, page-specific panels, bottom GPU status strip, or explicit
   settings/security pages.
 - After any GUI rendering or interaction change, run `tools/gui_smoke.ps1
@@ -978,7 +978,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
 - The selected `scanner-preflight` gate runs the pinned Gitleaks and DevSkim
   tools on frozen changed publication files before expensive checks. Provision
   the complete pinned tools and supply their executable paths through
-  process-scoped `SUPERZIP_GITLEAKS`/`SUPERZIP_DEVSKIM` or PATH. Missing tools,
+  process-scoped `FLITZZIP_GITLEAKS`/`FLITZZIP_DEVSKIM` or PATH. Missing tools,
   findings, invalid reports and source mutation fail admission. Keep raw reports;
   investigate findings before publishing, including metadata false positives.
   This gate supplements full hosted scans; it does not replace them.
@@ -987,7 +987,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
   provenance checks, and publication safeguards intact. Never restore compiled
   outputs into a fresh CodeQL build. Cancel superseded stateless checks, but
   preserve stateful live scans and release transactions. See
-  [the workflow performance review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/development/workflow-performance-review.md).
+  [the workflow performance review](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/development/workflow-performance-review.md).
 - After pushing, verify the remote URL does not contain credentials.
 - After pushing, choose checkpoint intent from actual remaining work, not file
   type. When another development step is planned, use planner/verifier
@@ -1081,7 +1081,7 @@ product CI.
 
 Before using, modifying, benchmarking, publishing or redistributing third-party
 material, check the action-specific rights and retained notices in the
-[license audit](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/license-and-permission-audit-2026-10-05.md) and
+[license audit](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/license-and-permission-audit-2026-10-05.md) and
 [benchmark permissions](benchmark-permissions.md). A download, root license,
 badge, maintainer instruction or successful test does not establish third-party
 rights. Preserve upstream attribution and modified-source notices. Unknown

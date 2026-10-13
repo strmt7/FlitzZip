@@ -1,4 +1,4 @@
-# SuperZip Copilot Instructions
+# FlitzZip Copilot Instructions
 
 Follow the repository-wide instructions in `AGENTS.md`. They are the source of truth for architecture, security rules, required function documentation, git boundaries, and targeted verification.
 
@@ -8,7 +8,9 @@ Before choosing tests or workflow waits, run:
 tools\verification_plan.ps1 -IncludeUntracked
 ```
 
-Then run the selected local checks with `tools\verify_changes.ps1 -IncludeUntracked`. Use `-Full` when the verifier escalates, a targeted check fails, or a wider regression is suspected.
+Then run the selected local checks with `tools\verify_changes.ps1 -IncludeUntracked`.
+Diagnose a failed targeted check before expanding coverage. Use `-Full` only when
+cross-component impact or a suspected wider regression justifies broad verification.
 The verifier selects `tools\lint.ps1 -CppMode Changed` when docs, workflows,
 PowerShell, Python helpers, CMake, or C/C++ formatting surfaces changed.
 

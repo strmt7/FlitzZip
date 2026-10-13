@@ -12,7 +12,8 @@ from tools.devskim_report import reject_constant
 REPORT_DIRECTORY = Path("docs/benchmarks/data")
 MAX_BYTES = 64 * 1024 * 1024
 MAX_ENTRIES = 4096
-REPORT_KINDS = {"suzip_ram", "archive_application_comparison", "format_size_matrix"}
+# Historical measured records retain their original role and integrity bytes.
+REPORT_KINDS = {"flzip_ram", "suzip_ram", "archive_application_comparison", "format_size_matrix"}
 
 
 # Purpose: Enforce the excluded directory's passive report role before any code-analysis exclusion applies.

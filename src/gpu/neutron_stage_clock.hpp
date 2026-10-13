@@ -8,7 +8,7 @@
 #include <optional>
 #include <utility>
 
-namespace superzip::dictionary {
+namespace flitzzip::dictionary {
 
 // Thread-affine ownership and completion ordering; the HIP adapter supplies the actual dispatch and wait.
 template <typename Events> class NeutronStageClock {
@@ -23,11 +23,12 @@ template <typename Events> class NeutronStageClock {
     NeutronStageClock(NeutronStageClock&&) = delete;
     NeutronStageClock& operator=(NeutronStageClock&&) = delete;
 
+    template <typename Dispatch, typename Complete>
     // Purpose: Reuse timing handles only after dispatch completion and timestamp collection succeed.
-    // Inputs: Dispatch borrows the events; complete must synchronize their stream and return optional milliseconds.
-    // Outputs: Counts completed stages and exact available timing; an exception poisons further dispatches.
-    template <typename Dispatch, typename Complete> void measure(Dispatch&& dispatch, Complete&& complete) {
-        if (!reusable_ || launches_ == std::numeric_limits<std::uint32_t>::max()) {
+    // Inputs: Dispatch borrows events for kernel_count ordered kernels; complete synchronizes and returns timing.
+    // Outputs: Counts completed kernels and exact available timing; an exception poisons further dispatches.
+    void measure(Dispatch&& dispatch, Complete&& complete, std::uint32_t kernel_count = 1U) {
+        if (!reusable_ || kernel_count == 0U || kernel_count > std::numeric_limits<std::uint32_t>::max() - launches_) {
             throw GpuError("Neutron stage timing cannot reuse an incomplete or failed operation");
         }
         reusable_ = false;
@@ -39,7 +40,7 @@ template <typename Events> class NeutronStageClock {
             const auto total = *milliseconds_ + *elapsed;
             milliseconds_ = std::isfinite(total) ? std::optional<double>{total} : std::nullopt;
         }
-        ++launches_;
+        launches_ += kernel_count;
         reusable_ = true;
     }
 
@@ -64,4 +65,4 @@ template <typename Events> class NeutronStageClock {
     bool reusable_ = true;
 };
 
-}  // namespace superzip::dictionary
+}  // namespace flitzzip::dictionary

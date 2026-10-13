@@ -28,18 +28,18 @@
 TEST_CASE(compression_stream_missing_unicode_file_diagnostics) {
     const auto root = test_temp_dir("compression-stream-missing-unicode");
     const auto missing = root / std::filesystem::path(u8"\u538b\u7f29-\U0001f4e6.bin");
-    const auto filename = superzip::path_diagnostic_utf8(missing.filename());
+    const auto filename = flitzzip::path_diagnostic_utf8(missing.filename());
     for (int codec = 0; codec < 3; ++codec) {
         bool rejected = false;
         try {
             if (codec == 0) {
-                superzip::GzipInputStream input(missing);
+                flitzzip::GzipInputStream input(missing);
             } else if (codec == 1) {
-                superzip::Bzip2InputStream input(missing);
+                flitzzip::Bzip2InputStream input(missing);
             } else {
-                superzip::ZstdInputStream input(missing);
+                flitzzip::ZstdInputStream input(missing);
             }
-        } catch (const superzip::ArchiveError& error) {
+        } catch (const flitzzip::ArchiveError& error) {
             REQUIRE_TRUE(std::string_view(error.what()).find(filename) != std::string_view::npos);
             rejected = true;
         }
@@ -53,18 +53,18 @@ TEST_CASE(compression_stream_missing_unicode_file_diagnostics) {
 TEST_CASE(compression_stream_unicode_create_failure_diagnostics) {
     const auto root = test_temp_dir("compression-stream-unicode-create-failure");
     const auto missing = root / "missing-parent" / std::filesystem::path(u8"\u538b\u7f29-\U0001f4e6.bin");
-    const auto filename = superzip::path_diagnostic_utf8(missing.filename());
+    const auto filename = flitzzip::path_diagnostic_utf8(missing.filename());
     for (int codec = 0; codec < 3; ++codec) {
         bool rejected = false;
         try {
             if (codec == 0) {
-                superzip::GzipOutputStream output(missing, 5);
+                flitzzip::GzipOutputStream output(missing, 5);
             } else if (codec == 1) {
-                superzip::Bzip2OutputStream output(missing, 5);
+                flitzzip::Bzip2OutputStream output(missing, 5);
             } else {
-                superzip::ZstdOutputStream output(missing, 5);
+                flitzzip::ZstdOutputStream output(missing, 5);
             }
-        } catch (const superzip::ArchiveError& error) {
+        } catch (const flitzzip::ArchiveError& error) {
             REQUIRE_TRUE(std::string_view(error.what()).find(filename) != std::string_view::npos);
             rejected = true;
         }
@@ -89,18 +89,18 @@ TEST_CASE(compression_stream_unicode_locked_file_diagnostics) {
                                     FILE_ATTRIBUTE_NORMAL, nullptr);
     REQUIRE_TRUE(handle != INVALID_HANDLE_VALUE);
     const std::unique_ptr<void, decltype(&CloseHandle)> lock(handle, &CloseHandle);
-    const auto filename = superzip::path_diagnostic_utf8(path.filename());
+    const auto filename = flitzzip::path_diagnostic_utf8(path.filename());
     for (int codec = 0; codec < 3; ++codec) {
         bool rejected = false;
         try {
             if (codec == 0) {
-                superzip::GzipInputStream input(path);
+                flitzzip::GzipInputStream input(path);
             } else if (codec == 1) {
-                superzip::Bzip2InputStream input(path);
+                flitzzip::Bzip2InputStream input(path);
             } else {
-                superzip::ZstdInputStream input(path);
+                flitzzip::ZstdInputStream input(path);
             }
-        } catch (const superzip::ArchiveError& error) {
+        } catch (const flitzzip::ArchiveError& error) {
             REQUIRE_TRUE(std::string_view(error.what()).find(filename) != std::string_view::npos);
             rejected = true;
         }
@@ -113,8 +113,8 @@ TEST_CASE(compression_stream_unicode_locked_file_diagnostics) {
 // Inputs: Two independent allocators, zero-size requests, exhausted budgets, and released pointers.
 // Outputs: Requires zero initialization, isolated accounting, refusal before overflow, and reusable capacity.
 TEST_CASE(sdk_allocator_enforces_owner_limits_through_c_callbacks) {
-    superzip::BoundedSdkAllocator first(16);
-    superzip::BoundedSdkAllocator second(8);
+    flitzzip::BoundedSdkAllocator first(16);
+    flitzzip::BoundedSdkAllocator second(8);
     auto* first_bytes = static_cast<unsigned char*>(ISzAlloc_Alloc(&first, 16));
     REQUIRE_TRUE(first_bytes != nullptr);
     for (std::size_t index = 0; index < 16; ++index) {
@@ -137,7 +137,7 @@ TEST_CASE(sdk_allocator_enforces_owner_limits_through_c_callbacks) {
     ISzAlloc_Free(&second, second_bytes);
     REQUIRE_EQ(second.current_bytes(), 0U);
     REQUIRE_TRUE(ISzAlloc_Alloc(&first, std::numeric_limits<std::size_t>::max()) == nullptr);
-    superzip::BoundedSdkAllocator empty(0);
+    flitzzip::BoundedSdkAllocator empty(0);
     REQUIRE_TRUE(ISzAlloc_Alloc(&empty, 0) == nullptr);
 }
 
@@ -145,8 +145,8 @@ TEST_CASE(sdk_allocator_enforces_owner_limits_through_c_callbacks) {
 // Inputs: A callback allocation created on one thread and freed on another while another owner stays live.
 // Outputs: Requires no ambient-thread dependency, exact retained accounting, and independent subsequent allocation.
 TEST_CASE(sdk_allocator_context_survives_sequential_thread_handoff) {
-    superzip::BoundedSdkAllocator first(32);
-    superzip::BoundedSdkAllocator second(32);
+    flitzzip::BoundedSdkAllocator first(32);
+    flitzzip::BoundedSdkAllocator second(32);
     auto* retained = ISzAlloc_Alloc(&second, 16);
     REQUIRE_TRUE(retained != nullptr);
     void* handed_off = nullptr;
@@ -168,20 +168,20 @@ TEST_CASE(sdk_allocator_context_survives_sequential_thread_handoff) {
 // Inputs: Three production adapters, uppercase suffix aliases, and a bounded binary payload.
 // Outputs: Requires byte-exact extraction to the native filename and non-destructive overwrite refusal.
 TEST_CASE(single_stream_unicode_archive_names_roundtrip) {
-    using Compress = superzip::OperationStats (*)(const std::vector<std::filesystem::path>&,
-                                                  const std::filesystem::path&, int, const superzip::ProgressCallback&);
-    using Extract = superzip::OperationStats (*)(const std::filesystem::path&, const std::filesystem::path&, bool,
-                                                 const superzip::ProgressCallback&);
+    using Compress = flitzzip::OperationStats (*)(const std::vector<std::filesystem::path>&,
+                                                  const std::filesystem::path&, int, const flitzzip::ProgressCallback&);
+    using Extract = flitzzip::OperationStats (*)(const std::filesystem::path&, const std::filesystem::path&, bool,
+                                                 const flitzzip::ProgressCallback&);
     struct Case {
         const char* suffix;
         Compress compress;
         Extract extract;
     };
     const std::array cases = {
-        Case{".GZ", superzip::compress_gzip, superzip::extract_gzip_file},
-        Case{".BZ2", superzip::compress_bzip2, superzip::extract_bzip2_file},
-        Case{".ZST", superzip::compress_zstd, superzip::extract_zstd_file},
-        Case{".ZSTD", superzip::compress_zstd, superzip::extract_zstd_file},
+        Case{".GZ", flitzzip::compress_gzip, flitzzip::extract_gzip_file},
+        Case{".BZ2", flitzzip::compress_bzip2, flitzzip::extract_bzip2_file},
+        Case{".ZST", flitzzip::compress_zstd, flitzzip::extract_zstd_file},
+        Case{".ZSTD", flitzzip::compress_zstd, flitzzip::extract_zstd_file},
     };
     const auto root = test_temp_dir("single-stream-unicode-names");
     const auto filename = std::filesystem::path(u8"\u6E2C\u8A66\U0001F4E6.bin");
@@ -206,7 +206,7 @@ TEST_CASE(single_stream_unicode_archive_names_roundtrip) {
         bool refused = false;
         try {
             (void)item.extract(archive, destination, false, {});
-        } catch (const superzip::SecurityError&) {
+        } catch (const flitzzip::SecurityError&) {
             refused = true;
         }
         REQUIRE_TRUE(refused);
@@ -222,20 +222,20 @@ TEST_CASE(bounded_archive_text_lines_preserve_boundaries_and_eof) {
     std::istringstream input(std::string("abc\nxy\r\n\n") + std::string("\0z", 2) + "\nend\r");
     std::string line;
     for (const auto& expected : std::array<std::string, 5>{"abc", "xy", "", std::string("\0z", 2), "end"}) {
-        REQUIRE_TRUE(superzip::read_bounded_text_line(input, line, 4, "Test"));
+        REQUIRE_TRUE(flitzzip::read_bounded_text_line(input, line, 4, "Test"));
         REQUIRE_EQ(line, expected);
     }
-    REQUIRE_TRUE(!superzip::read_bounded_text_line(input, line, 4, "Test"));
+    REQUIRE_TRUE(!flitzzip::read_bounded_text_line(input, line, 4, "Test"));
     REQUIRE_TRUE(line.empty());
     std::istringstream exact("1234\n");
-    REQUIRE_TRUE(superzip::read_bounded_text_line(exact, line, 4, "Test"));
+    REQUIRE_TRUE(flitzzip::read_bounded_text_line(exact, line, 4, "Test"));
     REQUIRE_EQ(line, "1234");
     std::istringstream oversized("12345\n");
     bool rejected = false;
     try {
-        (void)superzip::read_bounded_text_line(oversized, line, 4, "Test");
-    } catch (const superzip::ArchiveError& error) {
-        rejected = std::string(error.what()) == "Test line exceeds SuperZip metadata limit";
+        (void)flitzzip::read_bounded_text_line(oversized, line, 4, "Test");
+    } catch (const flitzzip::ArchiveError& error) {
+        rejected = std::string(error.what()) == "Test line exceeds FlitzZip metadata limit";
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(line.size(), 4U);
@@ -251,21 +251,21 @@ TEST_CASE(bounded_archive_text_io_reports_stream_failures) {
         std::string line;
         bool rejected = false;
         try {
-            (void)superzip::read_bounded_text_line(input, line, 4, "Test");
-        } catch (const superzip::ArchiveError& error) {
+            (void)flitzzip::read_bounded_text_line(input, line, 4, "Test");
+        } catch (const flitzzip::ArchiveError& error) {
             rejected = std::string(error.what()) == "failed to read Test stream";
         }
         REQUIRE_TRUE(rejected);
     }
     std::ostringstream output;
     const std::string line("a\0b", 3);
-    superzip::write_archive_text_line(output, line, "Test");
+    flitzzip::write_archive_text_line(output, line, "Test");
     REQUIRE_EQ(output.str(), line + "\n");
     output.setstate(std::ios::badbit);
     bool rejected = false;
     try {
-        superzip::write_archive_text_line(output, line, "Test");
-    } catch (const superzip::ArchiveError& error) {
+        flitzzip::write_archive_text_line(output, line, "Test");
+    } catch (const flitzzip::ArchiveError& error) {
         rejected = std::string(error.what()) == "failed to write Test stream";
     }
     REQUIRE_TRUE(rejected);
@@ -342,7 +342,7 @@ template <typename OutputStream> void require_non_destructive_stream_admission(c
             bool rejected = false;
             try {
                 OutputStream output(path, level);
-            } catch (const superzip::ArchiveError&) {
+            } catch (const flitzzip::ArchiveError&) {
                 rejected = true;
             }
             REQUIRE_TRUE(rejected);
@@ -514,7 +514,7 @@ void require_stream_read_failure(const std::string& codec, std::size_t checksum_
             std::string original_error;
             try {
                 input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-            } catch (const superzip::ArchiveError& error) {
+            } catch (const flitzzip::ArchiveError& error) {
                 rejected = true;
                 original_error = error.what();
             }
@@ -525,7 +525,7 @@ void require_stream_read_failure(const std::string& codec, std::size_t checksum_
                 rejected = false;
                 try {
                     input.finish();
-                } catch (const superzip::ArchiveError& error) {
+                } catch (const flitzzip::ArchiveError& error) {
                     rejected = true;
                     REQUIRE_EQ(std::string(error.what()), original_error);
                 }
@@ -596,32 +596,32 @@ TEST_CASE(compression_stream_miniz_huffman_cost_corpus) {
 // Inputs: Existing and missing disposable destinations with invalid levels.
 // Outputs: Requires no destination changes.
 TEST_CASE(compression_stream_gzip_invalid_effort_preserves_output) {
-    require_non_destructive_stream_admission<superzip::GzipOutputStream>("gzip");
+    require_non_destructive_stream_admission<flitzzip::GzipOutputStream>("gzip");
 }
 
 // Purpose: Protect Bzip2 destinations when compression options are rejected.
 // Inputs: Existing and missing disposable destinations with invalid levels.
 // Outputs: Requires no destination changes.
 TEST_CASE(compression_stream_bzip2_invalid_effort_preserves_output) {
-    require_non_destructive_stream_admission<superzip::Bzip2OutputStream>("bzip2");
+    require_non_destructive_stream_admission<flitzzip::Bzip2OutputStream>("bzip2");
 }
 
 // Purpose: Protect Zstandard destinations when compression options are rejected.
 // Inputs: Existing and missing disposable destinations with invalid levels.
 // Outputs: Requires no destination changes.
 TEST_CASE(compression_stream_zstd_invalid_effort_preserves_output) {
-    require_non_destructive_stream_admission<superzip::ZstdOutputStream>("zstd");
+    require_non_destructive_stream_admission<flitzzip::ZstdOutputStream>("zstd");
 }
 
 // Purpose: Prove worker-scoped Zstandard context reuse leaves independent native frame bytes unchanged.
 // Inputs: Three deterministic binary shapes and all product effort levels, encoded repeatedly through one context.
 // Outputs: Requires exact one-shot frame parity and independent byte-exact decoding for every case.
 TEST_CASE(compression_stream_zstd_reused_context_matches_one_shot) {
-    const auto& zstd = superzip::zstd_runtime();
-    const auto release_context = [&zstd](superzip::ZstdCompressionContext* context) {
+    const auto& zstd = flitzzip::zstd_runtime();
+    const auto release_context = [&zstd](flitzzip::ZstdCompressionContext* context) {
         zstd.free_compression_context(context);
     };
-    std::unique_ptr<superzip::ZstdCompressionContext, decltype(release_context)> context(
+    std::unique_ptr<flitzzip::ZstdCompressionContext, decltype(release_context)> context(
         zstd.create_compression_context(), release_context);
     REQUIRE_TRUE(context != nullptr);
 
@@ -664,7 +664,7 @@ TEST_CASE(compression_stream_zstd_reused_context_matches_one_shot) {
 // Inputs: Empty, short, and multi-block binary frames at all nine efforts, damaged framing, and short destinations.
 // Outputs: Requires runtime errors for invalid jobs followed by an independent byte-exact valid decode.
 TEST_CASE(compression_stream_zstd_block_decoder_bounds_and_roundtrip) {
-    const auto& zstd = superzip::zstd_runtime();
+    const auto& zstd = flitzzip::zstd_runtime();
     for (int level = 1; level <= 9; ++level) {
         for (const auto size : {0U, 1U, 127U, 65553U, 1048593U, 4096U}) {
             std::vector<std::byte> input(size);
@@ -701,44 +701,44 @@ TEST_CASE(compression_stream_zstd_block_decoder_bounds_and_roundtrip) {
 // Inputs: All nine levels, mixed binary writes, and empty streams.
 // Outputs: Requires consistent encoding and byte-exact decoding.
 TEST_CASE(compression_stream_gzip_partition_and_effort_parity) {
-    require_consistent_stream_partitioning<superzip::GzipOutputStream, superzip::GzipInputStream>("gzip");
+    require_consistent_stream_partitioning<flitzzip::GzipOutputStream, flitzzip::GzipInputStream>("gzip");
 }
 
 // Purpose: Verify Bzip2 stream partitioning, effort, framing, and close behavior together.
 // Inputs: All nine levels, mixed binary writes, and empty streams.
 // Outputs: Requires consistent encoding and byte-exact decoding.
 TEST_CASE(compression_stream_bzip2_partition_and_effort_parity) {
-    require_consistent_stream_partitioning<superzip::Bzip2OutputStream, superzip::Bzip2InputStream>("bzip2");
+    require_consistent_stream_partitioning<flitzzip::Bzip2OutputStream, flitzzip::Bzip2InputStream>("bzip2");
 }
 
 // Purpose: Verify Zstandard stream partitioning, effort, framing, and close behavior together.
 // Inputs: All nine levels, mixed binary writes, and empty streams.
 // Outputs: Requires consistent encoding and byte-exact decoding.
 TEST_CASE(compression_stream_zstd_partition_and_effort_parity) {
-    require_consistent_stream_partitioning<superzip::ZstdOutputStream, superzip::ZstdInputStream>("zstd");
+    require_consistent_stream_partitioning<flitzzip::ZstdOutputStream, flitzzip::ZstdInputStream>("zstd");
 }
 
 // Purpose: Preserve the same observable output-flush contract across all shared CPU codecs.
 // Inputs: Bounded mixed binary payload at product effort five.
 // Outputs: Requires published partial bytes, terminal post-close flush errors, and exact restored content.
 TEST_CASE(compression_stream_flush_contract) {
-    require_stream_flush_contract<superzip::GzipOutputStream, superzip::GzipInputStream>("gzip");
-    require_stream_flush_contract<superzip::Bzip2OutputStream, superzip::Bzip2InputStream>("bzip2");
-    require_stream_flush_contract<superzip::ZstdOutputStream, superzip::ZstdInputStream>("zstd");
+    require_stream_flush_contract<flitzzip::GzipOutputStream, flitzzip::GzipInputStream>("gzip");
+    require_stream_flush_contract<flitzzip::Bzip2OutputStream, flitzzip::Bzip2InputStream>("bzip2");
+    require_stream_flush_contract<flitzzip::ZstdOutputStream, flitzzip::ZstdInputStream>("zstd");
 }
 
 // Purpose: Keep malformed Gzip reads distinct from successful end of input.
 // Inputs: A valid tiny member, then a damaged CRC and a truncated trailer.
 // Outputs: Requires immediate decoder errors and repeated rejection after stream-state resets.
 TEST_CASE(compression_stream_gzip_read_failure_is_terminal) {
-    require_stream_read_failure<superzip::GzipOutputStream, superzip::GzipInputStream>("gzip", 8U);
+    require_stream_read_failure<flitzzip::GzipOutputStream, flitzzip::GzipInputStream>("gzip", 8U);
 }
 
 // Purpose: Keep malformed Zstandard reads distinct from successful end of input.
 // Inputs: A valid tiny frame, then a damaged checksum and a truncated trailer.
 // Outputs: Requires immediate decoder errors and repeated rejection after stream-state resets.
 TEST_CASE(compression_stream_zstd_read_failure_is_terminal) {
-    require_stream_read_failure<superzip::ZstdOutputStream, superzip::ZstdInputStream>("zstd", 4U);
+    require_stream_read_failure<flitzzip::ZstdOutputStream, flitzzip::ZstdInputStream>("zstd", 4U);
 }
 
 // Purpose: Establish byte-for-byte equivalence between standalone Gzip and the stream used by container wrappers.
@@ -757,8 +757,8 @@ TEST_CASE(compression_stream_gzip_adapter_wire_parity) {
         for (int level = 1; level <= 9; ++level) {
             const auto archive = root / "standalone.gz";
             const auto stream = root / "stream.gz";
-            const auto stats = superzip::compress_gzip_file(source, archive, level);
-            write_partitioned_stream<superzip::GzipOutputStream>(stream, input, level, true);
+            const auto stats = flitzzip::compress_gzip_file(source, archive, level);
+            write_partitioned_stream<flitzzip::GzipOutputStream>(stream, input, level, true);
             REQUIRE_EQ(read_stream_fixture(archive), read_stream_fixture(stream));
             REQUIRE_EQ(stats.input_bytes, input.size());
             REQUIRE_EQ(stats.output_bytes, std::filesystem::file_size(archive));
@@ -785,7 +785,7 @@ TEST_CASE(compression_stream_gzip_callback_failure_preserves_output) {
     }
     bool interrupted = false;
     try {
-        (void)superzip::compress_gzip_file(source, archive, 5, [](const superzip::ProgressSnapshot& progress) {
+        (void)flitzzip::compress_gzip_file(source, archive, 5, [](const flitzzip::ProgressSnapshot& progress) {
             if (progress.processed_bytes > 0U) {
                 throw std::runtime_error("test progress interruption");
             }
@@ -807,7 +807,7 @@ namespace {
 // Outputs: Returns complete encoded bytes and observed codec workspace; requires exact counters and released state.
 std::pair<std::string, std::size_t> write_sized_zstd_stream(const std::filesystem::path& path, const std::string& input,
                                                             int level, bool fragmented) {
-    superzip::ZstdOutputStream output(path, level, input.size());
+    flitzzip::ZstdOutputStream output(path, level, input.size());
     output.exceptions(std::ios::badbit | std::ios::failbit);
     std::size_t peak = output.workspace_bytes();
     for (std::size_t offset = 0; offset < input.size();) {
@@ -851,11 +851,11 @@ TEST_CASE(compression_stream_zstd_declared_size_contract) {
             REQUIRE_EQ(encoded, partitioned);
             REQUIRE_TRUE(workspace < 16U * 1024U * 1024U);
             REQUIRE_TRUE(partition_workspace < 16U * 1024U * 1024U);
-            const auto stats = superzip::compress_zstd({source}, archive, level);
+            const auto stats = flitzzip::compress_zstd({source}, archive, level);
             REQUIRE_EQ(read_stream_fixture(archive), encoded);
             REQUIRE_EQ(stats.input_bytes, input.size());
             REQUIRE_EQ(stats.output_bytes, encoded.size());
-            superzip::ZstdInputStream decoded(archive);
+            flitzzip::ZstdInputStream decoded(archive);
             const std::string restored{std::istreambuf_iterator<char>(decoded), std::istreambuf_iterator<char>()};
             decoded.finish();
             REQUIRE_EQ(restored, input);
@@ -870,14 +870,14 @@ TEST_CASE(compression_stream_zstd_declared_size_contract) {
 TEST_CASE(compression_stream_zstd_declared_size_mismatch) {
     const auto root = test_temp_dir("zstd-size-mismatch");
     for (const std::uint64_t promised : {0U, 1U, 4U}) {
-        superzip::ZstdOutputStream output(root / "overrun.zst", 5, promised);
+        flitzzip::ZstdOutputStream output(root / "overrun.zst", 5, promised);
         output.exceptions(std::ios::badbit | std::ios::failbit);
         const std::string valid(static_cast<std::size_t>(promised), 'A');
         output.write(valid.data(), static_cast<std::streamsize>(valid.size()));
         bool rejected = false;
         try {
             output.put('x');
-        } catch (const superzip::ArchiveError&) {
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -885,21 +885,21 @@ TEST_CASE(compression_stream_zstd_declared_size_mismatch) {
         rejected = false;
         try {
             output.close();
-        } catch (const superzip::ArchiveError&) {
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
         REQUIRE_EQ(output.workspace_bytes(), 0U);
     }
     for (const bool write_prefix : {false, true}) {
-        superzip::ZstdOutputStream output(root / "underrun.zst", 5, 4U);
+        flitzzip::ZstdOutputStream output(root / "underrun.zst", 5, 4U);
         if (write_prefix) {
             output.write("abc", 3);
         }
         bool rejected = false;
         try {
             output.close();
-        } catch (const superzip::ArchiveError&) {
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -912,8 +912,8 @@ TEST_CASE(compression_stream_zstd_declared_size_mismatch) {
     }
     bool rejected = false;
     try {
-        superzip::ZstdOutputStream output(sentinel, 5, std::numeric_limits<std::uint64_t>::max());
-    } catch (const superzip::ArchiveError&) {
+        flitzzip::ZstdOutputStream output(sentinel, 5, std::numeric_limits<std::uint64_t>::max());
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -927,17 +927,17 @@ TEST_CASE(compression_stream_zstd_declared_size_mismatch) {
 TEST_CASE(compression_stream_zstd_worker_admission) {
     constexpr std::uint64_t threshold = 16U * 1024U * 1024U;
     for (int level = 1; level <= 9; ++level) {
-        REQUIRE_EQ(superzip::zstd_stream_worker_count(std::nullopt, level, 64U), 0U);
-        REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold - 1U, level, 64U), 0U);
+        REQUIRE_EQ(flitzzip::zstd_stream_worker_count(std::nullopt, level, 64U), 0U);
+        REQUIRE_EQ(flitzzip::zstd_stream_worker_count(threshold - 1U, level, 64U), 0U);
         for (unsigned int processors : {0U, 1U, 2U, 3U}) {
-            REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold, level, processors), 0U);
+            REQUIRE_EQ(flitzzip::zstd_stream_worker_count(threshold, level, processors), 0U);
         }
-        REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold, level, 4U), level < 7 ? 1U : 0U);
-        REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold, level, 64U), level < 7 ? 2U : 0U);
-        REQUIRE_EQ(superzip::zstd_stream_worker_count(2U * threshold - 1U, level, 64U), level < 7 ? 3U : 0U);
-        REQUIRE_EQ(superzip::zstd_stream_worker_count(2U * threshold, level, 64U), level < 7 ? 4U : 0U);
-        REQUIRE_EQ(superzip::zstd_stream_worker_count(8U * threshold, level, 64U), level < 7 ? 4U : 0U);
-        REQUIRE_EQ(superzip::zstd_stream_worker_count(std::numeric_limits<std::uint64_t>::max(), level, 64U),
+        REQUIRE_EQ(flitzzip::zstd_stream_worker_count(threshold, level, 4U), level < 7 ? 1U : 0U);
+        REQUIRE_EQ(flitzzip::zstd_stream_worker_count(threshold, level, 64U), level < 7 ? 2U : 0U);
+        REQUIRE_EQ(flitzzip::zstd_stream_worker_count(2U * threshold - 1U, level, 64U), level < 7 ? 3U : 0U);
+        REQUIRE_EQ(flitzzip::zstd_stream_worker_count(2U * threshold, level, 64U), level < 7 ? 4U : 0U);
+        REQUIRE_EQ(flitzzip::zstd_stream_worker_count(8U * threshold, level, 64U), level < 7 ? 4U : 0U);
+        REQUIRE_EQ(flitzzip::zstd_stream_worker_count(std::numeric_limits<std::uint64_t>::max(), level, 64U),
                    level < 7 ? 4U : 0U);
     }
 }
@@ -957,10 +957,10 @@ TEST_CASE(compression_stream_zstd_threaded_roundtrip) {
     std::string first_encoded;
     for (const bool fragmented : {false, true}) {
         const auto path = root / (fragmented ? "fragmented.zst" : "whole.zst");
-        superzip::ZstdOutputStream output(path, 5, input.size());
+        flitzzip::ZstdOutputStream output(path, 5, input.size());
         output.exceptions(std::ios::badbit | std::ios::failbit);
         const auto expected_workers =
-            superzip::zstd_stream_worker_count(input.size(), 5, std::thread::hardware_concurrency());
+            flitzzip::zstd_stream_worker_count(input.size(), 5, std::thread::hardware_concurrency());
         REQUIRE_EQ(output.compression_workers(), expected_workers);
         REQUIRE_EQ(output.completed_workspace_bytes(), 0U);
         for (std::size_t offset = 0; offset < input.size();) {
@@ -974,7 +974,7 @@ TEST_CASE(compression_stream_zstd_threaded_roundtrip) {
             bool rejected = false;
             try {
                 (void)output.workspace_bytes();
-            } catch (const superzip::ArchiveError&) {
+            } catch (const flitzzip::ArchiveError&) {
                 rejected = true;
             }
             REQUIRE_TRUE(rejected);
@@ -992,7 +992,7 @@ TEST_CASE(compression_stream_zstd_threaded_roundtrip) {
         } else {
             REQUIRE_EQ(encoded, first_encoded);
         }
-        superzip::ZstdInputStream decoded(path);
+        flitzzip::ZstdInputStream decoded(path);
         std::array<char, 65536U> buffer{};
         std::size_t offset = 0U;
         while (decoded.read(buffer.data(), static_cast<std::streamsize>(buffer.size())) || decoded.gcount() > 0) {

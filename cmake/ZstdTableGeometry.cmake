@@ -1,7 +1,7 @@
 # Purpose: Replace packed wide stores with a fully checked typed Huffman table.
 # Inputs: Complete pinned predecessor. Outputs: Proposes exact text and rejects
 # missing boundaries; wire format and decoder entry representation stay intact.
-function(superzip_rewrite_zstd_huffman_table content output)
+function(flitzzip_rewrite_zstd_huffman_table content output)
   string(FIND "${content}" "/**\n * Packs 4 HUF_DEltX1 structs" begin)
   string(FIND "${content}" "/**\n * Increase the tableLog" end)
   if(begin LESS 0 OR end LESS_EQUAL begin)
@@ -39,7 +39,7 @@ endfunction()
 # revisions. Inputs: Extracted known generated sources. Outputs: Atomic verified
 # revisions or an identity error; unknown sources and immutable provenance stay
 # untouched.
-function(superzip_patch_zstd_table_geometry source_dir)
+function(flitzzip_patch_zstd_table_geometry source_dir)
   foreach(part IN ITEMS huffman legacy fse_header fse_builder fse_sequences)
     set(key "_zstd_table_geometry_${part}")
     set(source "${source_dir}/${${key}_path}")
@@ -47,7 +47,7 @@ function(superzip_patch_zstd_table_geometry source_dir)
     if(actual STREQUAL "${${key}_patched}")
       continue()
     endif()
-    superzip_zstd_patch_is_superseded("${actual}" "${${key}_patched}"
+    flitzzip_zstd_patch_is_superseded("${actual}" "${${key}_patched}"
                                       superseded)
     if(superseded)
       continue()
@@ -57,15 +57,15 @@ function(superzip_patch_zstd_table_geometry source_dir)
     endif()
     file(READ "${source}" content)
     if(part STREQUAL huffman)
-      superzip_rewrite_zstd_huffman_table("${content}" content)
+      flitzzip_rewrite_zstd_huffman_table("${content}" content)
     elseif(part STREQUAL legacy)
       string(REPLACE "${_zstd_geometry_window_original}"
                      "${_zstd_geometry_window_checked}" content "${content}")
     else()
       include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdFseTableGeometry.cmake")
-      superzip_rewrite_zstd_fse_table("${content}" "${part}" content)
+      flitzzip_rewrite_zstd_fse_table("${content}" "${part}" content)
     endif()
-    superzip_write_verified_zstd_patch("${source}" "${actual}"
+    flitzzip_write_verified_zstd_patch("${source}" "${actual}"
                                        "${${key}_patched}" "${content}")
   endforeach()
 endfunction()

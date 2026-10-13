@@ -11,13 +11,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-Import-Module (Join-Path $PSScriptRoot "superzip_verification.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "flitzzip_verification.psm1") -Force
 if ($NoAutoEscalate.IsPresent) {
     Write-Verbose 'Automatic escalation is disabled by default; -NoAutoEscalate remains accepted for compatibility.'
 }
 
 # Purpose: Run a list of command descriptors in order.
-# Inputs: `Commands` is produced by the SuperZip verification planner.
+# Inputs: `Commands` is produced by the FlitzZip verification planner.
 # Outputs: Throws on the first failed command and records executed ids in `Executed`.
 function Invoke-VerificationCommandList {
     param(
@@ -26,12 +26,12 @@ function Invoke-VerificationCommandList {
     )
 
     foreach ($command in @($Commands)) {
-        Invoke-SuperZipVerificationCommand -Command $command
+        Invoke-FlitzZipVerificationCommand -Command $command
         [void]$Executed.Add([string]$command.id)
     }
 }
 
-$plan = Get-SuperZipVerificationPlan `
+$plan = Get-FlitzZipVerificationPlan `
     -ChangedPath $ChangedPath `
     -BaseRef $BaseRef `
     -HeadRef $HeadRef `

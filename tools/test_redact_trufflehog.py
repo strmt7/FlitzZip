@@ -77,7 +77,7 @@ class ReportRedactionTests(unittest.TestCase):
     def test_checkout_review_evidence_is_available(self):
         root = Path(__file__).resolve().parents[1]
         ledger = json.loads((root / ".github/scanner-secret-reviews.json").read_text(encoding="utf-8"))
-        with tempfile.TemporaryDirectory(prefix="superzip-review-admission-") as directory:
+        with tempfile.TemporaryDirectory(prefix="flitzzip-review-admission-") as directory:
             report = Path(directory) / "review.json"
             result = subprocess.run(
                 [
@@ -225,7 +225,7 @@ class ReportRedactionTests(unittest.TestCase):
         for scanner_status, fixture, redactor_status, count in cases:
             with (
                 self.subTest(scanner_status=scanner_status, redactor_status=redactor_status),
-                tempfile.TemporaryDirectory(prefix="superzip-scanner-test-") as directory,
+                tempfile.TemporaryDirectory(prefix="flitzzip-scanner-test-") as directory,
             ):
                 report = Path(directory) / "reports/secrets/trufflehog-git.jsonl"
                 report.parent.mkdir(parents=True)
@@ -272,7 +272,7 @@ class PublicFixtureReviewTests(unittest.TestCase):
             cls.cohorts[name] = cohort
             cls.ledger["reviews"].extend(cohort["reviews"])
         cls.review = cls.ledger["reviews"][0]
-        cls.directory = tempfile.TemporaryDirectory(prefix="superzip-public-fixture-")
+        cls.directory = tempfile.TemporaryDirectory(prefix="flitzzip-public-fixture-")
         cls.root = Path(cls.directory.name)
         cls.archive = cls.root / cls.review["archive_path"]
         cls.archive_bytes = (source_root / cls.review["archive_path"]).read_bytes()

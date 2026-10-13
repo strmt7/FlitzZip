@@ -43,7 +43,7 @@
 #endif
 #endif
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kWimCopyBufferBytes = 256U * 1024U;
@@ -90,7 +90,7 @@ std::size_t bounded_wide_length(const wchar_t* value, std::size_t max_units) {
             return length;
         }
     }
-    throw ArchiveError("wimlib text exceeds SuperZip metadata limits or is not terminated");
+    throw ArchiveError("wimlib text exceeds FlitzZip metadata limits or is not terminated");
 }
 
 // Purpose: Convert bounded UTF-16 text returned by wimlib into UTF-8 for path handling and diagnostics.
@@ -110,7 +110,7 @@ std::string wide_to_utf8(const wchar_t* value) {
         throw ArchiveError("wimlib returned invalid UTF-16 text: " + windows_error_text(GetLastError()));
     }
     if (static_cast<std::size_t>(required) > kMaxArchivePathBytes) {
-        throw ArchiveError("wimlib UTF-8 text exceeds SuperZip metadata limits");
+        throw ArchiveError("wimlib UTF-8 text exceeds FlitzZip metadata limits");
     }
     std::string result(static_cast<std::size_t>(required), '\0');
     const int written = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value, static_cast<int>(length),
@@ -137,7 +137,7 @@ class WimRuntime final {
     // Purpose: Load and validate the app-local wimlib runtime once for the process.
     // Inputs: None.
     // Outputs: Owns the checked DLL handle and required ABI symbols or throws on loader/version/init failure.
-    WimRuntime() : module_(load_trusted_app_local_runtime(kWimlibDllName, SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256)) {
+    WimRuntime() : module_(load_trusted_app_local_runtime(kWimlibDllName, FLITZZIP_WIMLIB_RUNTIME_DLL_SHA256)) {
         open_wim_ = load_required_symbol<OpenWimFn>("wimlib_open_wim");
         get_wim_info_ = load_required_symbol<GetWimInfoFn>("wimlib_get_wim_info");
         iterate_dir_tree_ = load_required_symbol<IterateDirTreeFn>("wimlib_iterate_dir_tree");
@@ -318,12 +318,12 @@ std::uint64_t checked_add_wim_bytes(std::uint64_t total, std::uint64_t size) {
     }
     total += size;
     if (total > kMaxWimTotalFileBytes) {
-        throw ArchiveError("WIM uncompressed payload exceeds SuperZip resource limit");
+        throw ArchiveError("WIM uncompressed payload exceeds FlitzZip resource limit");
     }
     return total;
 }
 
-// Purpose: Normalize one wimlib image path into SuperZip's archive-path key form.
+// Purpose: Normalize one wimlib image path into FlitzZip's archive-path key form.
 // Inputs: `entry` is untrusted metadata returned by wimlib.
 // Outputs: Returns a slash-separated relative key or throws on malformed/unsafe path metadata.
 std::string normalized_wim_source_path(const wimlib_dir_entry& entry) {
@@ -350,12 +350,12 @@ std::string wim_output_path(std::uint32_t image, const std::string& source_path,
     }
     const auto prefix = "image-" + std::to_string(image) + "/";
     if (source_path.size() > kMaxArchivePathBytes - prefix.size()) {
-        throw ArchiveError("WIM output path exceeds SuperZip path length limit");
+        throw ArchiveError("WIM output path exceeds FlitzZip path length limit");
     }
     return prefix + source_path;
 }
 
-// Purpose: Reject WIM entry features that SuperZip does not publish safely.
+// Purpose: Reject WIM entry features that FlitzZip does not publish safely.
 // Inputs: `entry` is the untrusted wimlib directory entry being scanned.
 // Outputs: Returns normally for directories and regular unnamed data streams; throws on links, reparse points, devices,
 // named streams, or other unsupported attributes.
@@ -400,10 +400,10 @@ void record_wim_entry(WimScanContext& context, const wimlib_dir_entry& entry) {
         throw ArchiveError("WIM scanner context is not initialized");
     }
     if (context.metadata->entries.size() >= kMaxArchiveEntries) {
-        throw ArchiveError("WIM entry count exceeds SuperZip resource limit");
+        throw ArchiveError("WIM entry count exceeds FlitzZip resource limit");
     }
     if (entry.depth > kMaxArchivePathComponents) {
-        throw ArchiveError("WIM entry depth exceeds SuperZip resource limit");
+        throw ArchiveError("WIM entry depth exceeds FlitzZip resource limit");
     }
 
     validate_wim_entry_kind(entry);
@@ -463,7 +463,7 @@ WimMetadata scan_wim_metadata(const WimRuntime& runtime, const std::filesystem::
         throw ArchiveError("WIM archive contains no images");
     }
     if (info.image_count > 64U) {
-        throw ArchiveError("WIM image count exceeds SuperZip resource limit");
+        throw ArchiveError("WIM image count exceeds FlitzZip resource limit");
     }
 
     WimMetadata metadata;
@@ -493,7 +493,7 @@ WimMetadata scan_wim_metadata(const WimRuntime& runtime, const std::filesystem::
 }
 
 // Purpose: Join a normalized UTF-8 archive key under a trusted staging root.
-// Inputs: `root` is a SuperZip-created staging directory and UTF-8 `normalized_path` has already passed
+// Inputs: `root` is a FlitzZip-created staging directory and UTF-8 `normalized_path` has already passed
 // `normalize_archive_path_key`. Outputs: Returns a native-separated path below `root`; this function does not validate
 // untrusted input.
 std::filesystem::path join_normalized_path(const std::filesystem::path& root, const std::string& normalized_path) {
@@ -505,7 +505,7 @@ std::filesystem::path join_normalized_path(const std::filesystem::path& root, co
 // Inputs: `destination` is the caller-selected extraction root.
 // Outputs: Returns a unique staging directory below `destination` or throws on reservation failure.
 ReservedFilePublishTarget reserve_wim_stage(const std::filesystem::path& destination) {
-    return reserve_file_publish_target(destination / ".superzip-wim-stage");
+    return reserve_file_publish_target(destination / ".flitzzip-wim-stage");
 }
 
 // Purpose: Remove only the state-bound private WIM staging directory.
@@ -654,4 +654,4 @@ OperationStats extract_wim(const std::filesystem::path& archive_path, const std:
 #endif
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

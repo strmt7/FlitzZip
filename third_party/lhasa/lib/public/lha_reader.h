@@ -35,7 +35,7 @@ extern "C" {
  * @brief LHA file reader.
  *
  * This file contains the interface functions for the @ref LHAReader
- * structure used by SuperZip to decode and validate compressed LZH data.
+ * structure used by FlitzZip to decode and validate compressed LZH data.
  */
 
 /**

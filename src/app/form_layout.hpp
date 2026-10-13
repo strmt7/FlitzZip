@@ -2,7 +2,7 @@
 
 #include "app/main_window_layout.hpp"
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Lay out compression controls without window or device queries.
 // Inputs: rect excludes shell chrome; dpi is positive; client bounds are at least 960x600 DIPs.
@@ -19,4 +19,4 @@ namespace superzip::app {
 // Outputs: Returns default or balanced narrow-column rectangles without changing settings behavior.
 [[nodiscard]] SettingsLayout make_settings_layout(const RECT& rect, UINT dpi);
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

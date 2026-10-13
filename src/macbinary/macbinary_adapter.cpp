@@ -13,7 +13,7 @@
 #include <limits>
 #include <string>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::uint64_t kMacBinaryHeaderBytes = 128U;
@@ -103,7 +103,7 @@ bool has_macbinary_crc_marker(const std::array<unsigned char, 128>& header) {
 
 // Purpose: Decode a path-safe ASCII filename from the MacBinary Pascal string.
 // Inputs: `header` contains the raw MacBinary filename bytes.
-// Outputs: Returns a normalized SuperZip archive path key or throws on unsafe or unsupported names.
+// Outputs: Returns a normalized FlitzZip archive path key or throws on unsafe or unsupported names.
 std::string parse_macbinary_name(const std::array<unsigned char, 128>& header) {
     const auto name_length = static_cast<std::size_t>(header[1]);
     if (name_length == 0U || name_length > 63U) {
@@ -295,4 +295,4 @@ OperationStats extract_macbinary_file(const std::filesystem::path& archive_path,
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

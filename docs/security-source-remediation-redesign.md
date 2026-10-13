@@ -4,7 +4,7 @@ Demonstrated defects require production repairs and fresh verification. An
 individually proven false positive may instead use the maintainer-authorized
 contract below. Historical approvals establish reviewed identity; they do not
 prove memory safety or activate a current disposition. Completed details are retained in
-[the remediation record](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/source-remediation-implementation.md).
+[the remediation record](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/source-remediation-implementation.md).
 
 ## Repair And Closure
 

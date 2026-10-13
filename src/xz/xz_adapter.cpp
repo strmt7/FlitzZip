@@ -18,7 +18,7 @@
 #include <limits>
 #include <string>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kXzBufferBytes = 64U * 1024U;
@@ -98,4 +98,4 @@ OperationStats extract_xz_file(const std::filesystem::path& archive_path, const 
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

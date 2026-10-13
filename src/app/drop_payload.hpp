@@ -12,7 +12,7 @@
 #include <vector>
 #include <windows.h>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 namespace detail {
 
@@ -218,4 +218,4 @@ inline bool is_supported_local_drop_path(const std::filesystem::path& path) {
     }
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

@@ -10,7 +10,7 @@ documentation, source contracts and commands in normal, precise language.
 | Question | Open next |
 | --- | --- |
 | Current development and unresolved work | [Implementation plan](../IMPLEMENTATION_PLAN.md), [beta readiness](beta-readiness.md), then exact current source and GitHub checks |
-| Format capabilities and wire contracts | [format support](archive-format-support.md), [native format](native-suzip-format.md) |
+| Format capabilities and wire contracts | [format support](archive-format-support.md), [native format](native-flzip-format.md) |
 | GPU admission, codecs and timing | [GPU research](gpu-accelerated-ui-and-codec-research.md), [performance validation](performance-block-size-validation.md), exact `src/gpu` and `src/core` sources |
 | Comparison eligibility and results | [comparison methodology](comparative-benchmark-methodology.md), [benchmark index](compression-level-and-benchmark-suite.md) |
 | Validation and hosted acceptance | [Targeted verification](targeted-verification.md), selected workflows for the exact pushed commit |
@@ -141,7 +141,7 @@ retaining the repository's existing policy, documents and single-agent rule.
 
 [GitHub's January 2026 memory engineering report](https://github.blog/ai-and-ml/github-copilot/building-an-agentic-memory-system-for-github-copilot/)
 supports verifying cited source locations at use time. Its reported gains are
-specific to GitHub's experiments, not measurements of SuperZip.
+specific to GitHub's experiments, not measurements of FlitzZip.
 [GitHub's June 2026 context report](https://github.blog/ai-and-ml/github-copilot/getting-more-from-each-token-how-copilot-improves-context-handling-and-model-routing/)
 describes deferred tool loading and recurring-prefix reuse. Repository tooling
 can reduce emitted context; provider caching and model routing belong to the

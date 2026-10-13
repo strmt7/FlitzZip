@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kCabFixedHeaderBytes = 36U;
@@ -116,7 +116,7 @@ std::string read_cab_name(std::ifstream& input, std::uint64_t archive_limit) {
             throw ArchiveError("CAB filename extends past cabinet boundary");
         }
         if (name.size() >= kMaxCabNameBytes) {
-            throw ArchiveError("CAB filename exceeds SuperZip resource limit");
+            throw ArchiveError("CAB filename exceeds FlitzZip resource limit");
         }
         char ch = '\0';
         read_exact(input, &ch, 1U, "CAB filename");
@@ -177,7 +177,7 @@ CabHeader read_cab_header(std::ifstream& input, std::uint64_t archive_size) {
         throw ArchiveError("spanned CAB sets are not supported");
     }
     if (result.folder_count > kMaxCabFolders) {
-        throw ArchiveError("CAB folder count exceeds SuperZip resource limit");
+        throw ArchiveError("CAB folder count exceeds FlitzZip resource limit");
     }
     if (result.file_count > 0U && result.folder_count == 0U) {
         throw ArchiveError("CAB contains files but no folder table");
@@ -278,7 +278,7 @@ void scan_cab_folders(std::ifstream& input, const CabHeader& header, std::uint64
         }
         total_data_blocks = checked_add_cab_bytes(total_data_blocks, data_block_count, "CAB data block count overflow");
         if (total_data_blocks > kMaxCabDataBlocks) {
-            throw ArchiveError("CAB data block count exceeds SuperZip resource limit");
+            throw ArchiveError("CAB data block count exceeds FlitzZip resource limit");
         }
         folders.push_back(CabFolderRecord{
             .data_offset = coff_cab_start,
@@ -342,7 +342,7 @@ CabMetadata scan_cab_files(std::ifstream& input, const CabHeader& header, std::u
         result.total_file_bytes =
             checked_add_cab_bytes(result.total_file_bytes, file_size, "CAB uncompressed payload byte count overflow");
         if (result.total_file_bytes > kMaxCabTotalFileBytes) {
-            throw ArchiveError("CAB uncompressed payload exceeds SuperZip resource limit");
+            throw ArchiveError("CAB uncompressed payload exceeds FlitzZip resource limit");
         }
     }
     validate_archive_path_set(validation_entries);
@@ -382,4 +382,4 @@ CabMetadata scan_cab_metadata(const std::filesystem::path& archive_path) {
     return scan_cab_files(input, header, archive_limit);
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

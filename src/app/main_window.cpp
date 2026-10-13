@@ -16,7 +16,7 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Construct a main window controller with default UI state.
 // Inputs: None.
@@ -51,7 +51,7 @@ MainWindow::~MainWindow() {
     }
 }
 
-// Purpose: Register and show the native Win32 SuperZip window.
+// Purpose: Register and show the native Win32 FlitzZip window.
 // Inputs: `instance` is the process HINSTANCE and `show_command` is the Windows show mode from `wWinMain`.
 // Outputs: Runs the message loop and returns the process exit code.
 int MainWindow::run(HINSTANCE instance, int show_command) {
@@ -74,10 +74,10 @@ int MainWindow::run(HINSTANCE instance, int show_command) {
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = MainWindow::window_proc;
     wc.hInstance = instance;
-    wc.lpszClassName = L"SuperZipMainWindow";
+    wc.lpszClassName = L"FlitzZipMainWindow";
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_SUPERZIP_APP));
-    wc.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_SUPERZIP_APP), IMAGE_ICON,
+    wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_FLITZZIP_APP));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_FLITZZIP_APP), IMAGE_ICON,
                                                MulDiv(16, static_cast<int>(initial_dpi), 96),
                                                MulDiv(16, static_cast<int>(initial_dpi), 96), LR_DEFAULTCOLOR));
     HBRUSH class_background = CreateSolidBrush(kBg);
@@ -89,7 +89,7 @@ int MainWindow::run(HINSTANCE instance, int show_command) {
         return 1;
     }
 
-    hwnd_ = CreateWindowExW(0, wc.lpszClassName, L"SuperZip", style, CW_USEDEFAULT, CW_USEDEFAULT, initial_width,
+    hwnd_ = CreateWindowExW(0, wc.lpszClassName, L"FlitzZip", style, CW_USEDEFAULT, CW_USEDEFAULT, initial_width,
                             initial_height, nullptr, nullptr, instance, this);
     if (hwnd_ == nullptr) {
         UnregisterClassW(wc.lpszClassName, instance);
@@ -277,4 +277,4 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
 // Inputs: `lparam` contains client-coordinate mouse position from `WM_MOUSEMOVE`.
 // Outputs: Updates hover state and returns the handled Win32 result.
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

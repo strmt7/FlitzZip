@@ -85,7 +85,7 @@
             0.9599042999998346
           ],
           "create_argv": [
-            "{SuperZip}",
+            "{FlitzZip}",
             "compress",
             "--format",
             "zip",
@@ -100,7 +100,7 @@
             "x-ray"
           ],
           "extract_argv": [
-            "{SuperZip}",
+            "{FlitzZip}",
             "extract",
             "--format",
             "zip",
@@ -117,7 +117,7 @@
             0.3158975999995164
           ],
           "independent_verified": true,
-          "tool": "SuperZip"
+          "tool": "FlitzZip"
         },
         {
           "archive_bytes": [
@@ -248,7 +248,7 @@
             0.29860759999974107
           ],
           "create_argv": [
-            "{SuperZip}",
+            "{FlitzZip}",
             "compress",
             "--format",
             "zst",
@@ -259,7 +259,7 @@
             "mozilla"
           ],
           "extract_argv": [
-            "{SuperZip}",
+            "{FlitzZip}",
             "extract",
             "--format",
             "zst",
@@ -276,7 +276,7 @@
             0.10463639999943553
           ],
           "independent_verified": true,
-          "tool": "SuperZip"
+          "tool": "FlitzZip"
         },
         {
           "archive_bytes": [
@@ -403,7 +403,7 @@
             0.13096330000007583
           ],
           "create_argv": [
-            "{SuperZip}",
+            "{FlitzZip}",
             "compress",
             "--format",
             "zst",
@@ -414,7 +414,7 @@
             "nci"
           ],
           "extract_argv": [
-            "{SuperZip}",
+            "{FlitzZip}",
             "extract",
             "--format",
             "zst",
@@ -431,7 +431,7 @@
             0.059893100000408594
           ],
           "independent_verified": true,
-          "tool": "SuperZip"
+          "tool": "FlitzZip"
         },
         {
           "archive_bytes": [
@@ -616,12 +616,12 @@
   },
   "source_commit": "c9ca58278512bb6d4d47591c63b2d1a6535af4a0",
   "source_dirty": false,
-  "superzip_binary_sha256": "1fb2432498fef27aad008d2641d4b8e85a88961f4ef210476525326f456d90b6",
+  "flitzzip_binary_sha256": "1fb2432498fef27aad008d2641d4b8e85a88961f4ef210476525326f456d90b6",
   "tools": [
     {
       "binary_sha256": "1fb2432498fef27aad008d2641d4b8e85a88961f4ef210476525326f456d90b6",
-      "name": "SuperZip",
-      "source_url": "https://github.com/strmt7/SuperZip",
+      "name": "FlitzZip",
+      "source_url": "https://github.com/strmt7/FlitzZip",
       "version": "SuperZip 0.5.0"
     },
     {

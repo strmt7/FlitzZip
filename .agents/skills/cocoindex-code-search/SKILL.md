@@ -24,7 +24,7 @@ part of scanner runtime or training data.
    per-checkout receipt with the source/config digests and query hash; an
    installation or index marker alone does not prove search use. This receipt
    is development evidence, not a proof of complete source review. The wrapper disables usage telemetry
-   and uses CPU embeddings, preserving HIP capacity for SuperZip work.
+   and uses CPU embeddings, preserving HIP capacity for FlitzZip work.
 3. Confirm each relevant candidate with `rg -n` and an exact source
    read. The first-five ranking is a hint, not evidence of completeness
    or correctness. If semantic results miss the target, use bounded

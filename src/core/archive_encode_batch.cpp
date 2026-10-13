@@ -7,7 +7,7 @@
 #include <fstream>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 // Purpose: Capture exact source bytes while keeping each validated source and parent chain pinned.
@@ -149,4 +149,4 @@ void compress_manifest_batch(std::span<const ManifestEntry> entries, const Compr
     stats.gpu_used = stats.gpu_used || batch.encoded.gpu_used;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

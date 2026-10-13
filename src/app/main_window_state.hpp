@@ -11,7 +11,7 @@
 
 #include <windows.h>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 constexpr int kDefaultCompressionBlockSizeIndex = 5;
 constexpr int kCompressionLevelOptionCount = kMaxCompressionLevel - kMinCompressionLevel + 1;
@@ -210,7 +210,7 @@ struct UiState {
     bool show_operation_summary = true;
     bool validate_before_publish = true;
     bool open_destination_after_extract = false;
-    bool prefer_suzip = true;
+    bool prefer_flzip = true;
     bool gpu_required = true;
     bool overwrite = false;
     int extract_name_encoding_index = 0;
@@ -228,4 +228,4 @@ struct UiState {
     DropdownId active_dropdown = DropdownId::None;
 };
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

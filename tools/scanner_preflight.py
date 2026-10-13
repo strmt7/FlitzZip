@@ -15,11 +15,63 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 from tools.devskim_scope import validate_report_directory, write_options
+from tools.scanner_hosted_review import (
+    CURRENT_POLICY,
+    MAX_CURRENT_CACHE_BYTES,
+    match_snapshot_false_positives,
+    read_current_reviews,
+)
 from tools.scanner_metadata_review import read_policy, read_source_policy, review_findings
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_BYTES = 64 * 1024 * 1024
 MAX_FILES = 4096
+
+
+# Purpose: Bind local dispositions to the actual GitHub repository without network access or credentials.
+# Inputs: Checkout with a credential-free GitHub origin. Outputs: Owner/name, or a closed failure.
+def review_repository(root: Path) -> str:
+    remote = (
+        subprocess.check_output(["git", "-C", str(root), "remote", "get-url", "origin"], timeout=15).decode().strip()
+    )
+    match = re.fullmatch(
+        r"(?:https://github\.com/|git@github\.com:)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?", remote
+    )
+    if match is None:
+        raise ValueError("Exact source reviews require a credential-free GitHub origin")
+    return match[1]
+
+
+# Purpose: Freeze only relevant current review evidence separately from detector inputs.
+# Inputs: Checkout, changed names and new owned snapshot directory. Outputs: Validated rows and complete hashes.
+def freeze_current_reviews(root: Path, paths: list[str], destination: Path) -> tuple[list[dict], dict[str, str]]:
+    policy_hashes = snapshot_inputs(root, [CURRENT_POLICY], destination)
+    rows = read_current_reviews((destination / CURRENT_POLICY).read_bytes())
+    rows = [row for row in rows if row["tool"] == "devskim" and row["path"] in paths]
+    names = sorted({name for row in rows for name in row["context_paths"].split("|")} - {CURRENT_POLICY})
+    sizes = [(root / name).stat().st_size for name in names]
+    if any(size > 2 * 1024**2 for size in sizes) or sum(sizes) > MAX_CURRENT_CACHE_BYTES:
+        raise ValueError("Current review exceeds its evidence byte budget")
+    hashes = snapshot_inputs(root, names, destination)
+    return rows, {**policy_hashes, **hashes}
+
+
+# Purpose: Combine metadata and exact current-source decisions without double counting or report mutation.
+# Inputs: Frozen detector/evidence trees, original SARIF, validated ledgers and actual repository identity.
+# Outputs: Complete decision summary; all unmatched results retain blocking status.
+def review_snapshot_results(snapshot, report, policy, source_policy, rows, repository, evidence):
+    review = review_findings(snapshot, report, policy, source_policy)
+    matches = match_snapshot_false_positives(
+        rows,
+        json.loads(report.read_text(encoding="utf-8-sig")),
+        repository,
+        lambda name: (evidence / name).read_bytes(),
+    )
+    metadata = {(row["run_index"], row["result_index"]) for row in review["reviewed_metadata"]}
+    matches = [row for row in matches if (row["run_index"], row["result_index"]) not in metadata]
+    review["reviewed_current_source"] = matches
+    review["unresolved_count"] -= len(matches)
+    return review
 
 
 # Purpose: Select complete changed-file inputs without guessing paths or silently excluding new files.
@@ -100,7 +152,7 @@ def finding_count(path: Path, tool: str) -> int:
 # Purpose: Execute actual detectors with process-tree, time, memory and output containment.
 # Inputs: Explicit tool argv and scanner budget. Outputs: Bounded result; failed invocation never qualifies as clean.
 def run_scanner(argv: list[str], timeout: int = 90, directory: Path | None = None) -> dict:
-    spec = importlib.util.spec_from_file_location("superzip_mcp", ROOT / "mcp/superzip_mcp.py")
+    spec = importlib.util.spec_from_file_location("flitzzip_mcp", ROOT / "mcp/flitzzip_mcp.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -158,8 +210,8 @@ def require_versions(gitleaks: str, devskim: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="HEAD")
-    parser.add_argument("--gitleaks", default=os.environ.get("SUPERZIP_GITLEAKS") or shutil.which("gitleaks"))
-    parser.add_argument("--devskim", default=os.environ.get("SUPERZIP_DEVSKIM") or shutil.which("devskim"))
+    parser.add_argument("--gitleaks", default=os.environ.get("FLITZZIP_GITLEAKS") or shutil.which("gitleaks"))
+    parser.add_argument("--devskim", default=os.environ.get("FLITZZIP_DEVSKIM") or shutil.which("devskim"))
     args = parser.parse_args()
     paths = changed_paths(ROOT, args.base)
     validate_report_directory(ROOT)
@@ -169,7 +221,7 @@ def main() -> int:
     if not args.gitleaks or not args.devskim:
         raise ValueError(
             "Pinned detectors unavailable: pass --gitleaks/--devskim or set process-scoped "
-            "SUPERZIP_GITLEAKS/SUPERZIP_DEVSKIM after complete-tool provisioning"
+            "FLITZZIP_GITLEAKS/FLITZZIP_DEVSKIM after complete-tool provisioning"
         )
     args.gitleaks = str(Path(args.gitleaks).resolve())
     args.devskim = str(Path(args.devskim).resolve())
@@ -185,6 +237,11 @@ def main() -> int:
     hashes = snapshot_inputs(ROOT, paths, snapshot)
     review_policy = read_policy(ROOT)
     source_review_policy = read_source_policy(ROOT)
+    review_snapshot = directory / "review-inputs"
+    current_rows, current_hashes = freeze_current_reviews(ROOT, paths, review_snapshot)
+    if any(current_hashes[name] != digest for name, digest in hashes.items() if name in current_hashes):
+        raise ValueError("Source changed between detector and review snapshots")
+    repository = review_repository(ROOT)
     gitleaks_report, devskim_report = directory / "gitleaks.json", directory / "devskim.sarif"
     devskim_options = directory / "devskim-options.json"
     write_options(snapshot, devskim_options)
@@ -228,11 +285,23 @@ def main() -> int:
         "gitleaks": finding_count(gitleaks_report, "gitleaks"),
         "devskim": finding_count(devskim_report, "devskim"),
     }
-    review = review_findings(snapshot, devskim_report, review_policy, source_review_policy)
+    review = review_snapshot_results(
+        snapshot,
+        devskim_report,
+        review_policy,
+        source_review_policy,
+        current_rows,
+        repository,
+        review_snapshot,
+    )
     unchanged = all(hashlib.sha256((ROOT / name).read_bytes()).hexdigest() == digest for name, digest in hashes.items())
     unchanged = unchanged and changed_paths(ROOT, args.base) == paths
     unchanged = unchanged and read_policy(ROOT) == review_policy
     unchanged = unchanged and read_source_policy(ROOT) == source_review_policy
+    unchanged = unchanged and review_repository(ROOT) == repository
+    unchanged = unchanged and all(
+        hashlib.sha256((ROOT / name).read_bytes()).hexdigest() == digest for name, digest in current_hashes.items()
+    )
     passed = (
         unchanged
         and counts["gitleaks"] == 0
@@ -250,6 +319,8 @@ def main() -> int:
         "devskim_review": review,
         "review_policy_sha256": hashlib.sha256(review_policy).hexdigest(),
         "source_review_policy_sha256": hashlib.sha256(source_review_policy).hexdigest(),
+        "current_review_input_hashes": current_hashes,
+        "repository": repository,
         "source_unchanged": unchanged,
         "devskim_passive_reports": validate_report_directory(snapshot),
         "results": status,
@@ -264,6 +335,7 @@ def main() -> int:
                 "finding_counts": counts,
                 "reviewed_metadata": len(review["reviewed_metadata"]),
                 "reviewed_source": len(review["reviewed_source"]),
+                "reviewed_current_source": len(review["reviewed_current_source"]),
                 "unresolved_devskim": review["unresolved_count"],
                 "receipt": str(directory / "receipt.json"),
             }

@@ -1,8 +1,8 @@
 # Purpose: Recognize a complete ownership revision's exact predecessor. Inputs:
 # actual_hash identifies complete source bytes. Outputs: Returns only a known
 # predecessor or an empty result; never accepts drift.
-function(superzip_zstd_owned_predecessor actual_hash output)
-  set(property "_SUPERZIP_ZSTD_PREDECESSOR_${actual_hash}")
+function(flitzzip_zstd_owned_predecessor actual_hash output)
+  set(property "_FLITZZIP_ZSTD_PREDECESSOR_${actual_hash}")
   get_property(
     known GLOBAL
     PROPERTY "${property}"
@@ -53,7 +53,7 @@ function(superzip_zstd_owned_predecessor actual_hash output)
       set(predecessor "${${key}_original}")
     endif()
   endforeach()
-  superzip_zstd_decoder_owner_predecessor("${actual_hash}" "${predecessor}"
+  flitzzip_zstd_decoder_owner_predecessor("${actual_hash}" "${predecessor}"
                                           predecessor)
   set_property(GLOBAL PROPERTY "${property}" "${predecessor}")
   set(${output}
@@ -64,7 +64,7 @@ endfunction()
 # Purpose: Recognize complete decoder ownership after earlier buffer ownership.
 # Inputs: Exact source hash and prior metadata result. Outputs: Known owner
 # predecessor or the unchanged prior result.
-function(superzip_zstd_decoder_owner_predecessor actual_hash predecessor output)
+function(flitzzip_zstd_decoder_owner_predecessor actual_hash predecessor output)
   include(
     "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedDecoderHashes.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyCanonicalHashes.cmake")
@@ -85,7 +85,7 @@ endfunction()
 # Verified predecessor, version and its original allocator contract. Outputs:
 # Proposed source with matching construction/destruction and no independent
 # capacities.
-function(superzip_zstd_rewrite_owned_context content version output)
+function(flitzzip_zstd_rewrite_owned_context content version output)
   if(version STREQUAL v05)
     set(context zbc)
   else()

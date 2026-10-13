@@ -1,0 +1,41 @@
+# Purpose: Verify rename migration against independently pinned old identities.
+# Inputs: A freshly generated dependency tree and a private scratch directory.
+# Outputs: Rejects source drift, missing migration, changed output or lost
+# idempotence; fixtures are passive source bytes and never compiled.
+function(check_zstd_product_identity fresh scratch)
+  include("${REPO_ROOT}/cmake/ZstdProductIdentity.cmake")
+  set(previous "${scratch}/previous-product")
+  file(COPY "${fresh}/" DESTINATION "${previous}")
+  foreach(index RANGE 0 4 1)
+    set(key "_zstd_identity_${index}")
+    set(path "${previous}/${${key}_path}")
+    file(READ "${path}" content)
+    string(REPLACE "FlitzZip" "SuperZip" content "${content}")
+    string(REPLACE "flitzzip" "superzip" content "${content}")
+    string(REPLACE "FLITZZIP" "SUPERZIP" content "${content}")
+    file(WRITE "${path}.fixture" "${content}")
+    configure_file("${path}.fixture" "${path}" @ONLY NEWLINE_STYLE LF)
+    file(SHA256 "${path}" actual)
+    if(NOT actual STREQUAL "${${key}_old}")
+      message(
+        FATAL_ERROR
+          "Product migration fixture identity mismatch: ${path}; ${actual}")
+    endif()
+  endforeach()
+  set(drift "${scratch}/product-drift")
+  file(COPY "${previous}/" DESTINATION "${drift}")
+  set(path "${drift}/${_zstd_identity_0_path}")
+  file(APPEND "${path}" "\n/* Unknown preceding cache revision. */\n")
+  require_rejection("${drift}" "Zstandard patch source identity mismatch"
+                    "${_zstd_identity_0_path}")
+  foreach(pass RANGE 1 2 1)
+    flitzzip_patch_zstd_legacy("${previous}")
+    foreach(index RANGE 0 4 1)
+      set(key "_zstd_identity_${index}")
+      file(SHA256 "${previous}/${${key}_path}" actual)
+      if(NOT actual STREQUAL "${${key}_new}")
+        message(FATAL_ERROR "Product cache migration differs from fresh source")
+      endif()
+    endforeach()
+  endforeach()
+endfunction()

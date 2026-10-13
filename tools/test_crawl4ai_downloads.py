@@ -49,7 +49,7 @@ class DownloadContracts(unittest.TestCase):
         from tools import crawl4ai_tool as tool
 
         expected = build.runtime_hashes()
-        expected["crawl4ai/superzip_download.py"] = build.hashlib.sha256(b"different repair").hexdigest()
+        expected["crawl4ai/flitzzip_download.py"] = build.hashlib.sha256(b"different repair").hexdigest()
         with tempfile.TemporaryFile(mode="w+b") as diagnostics:
             with (
                 patch.object(build, "runtime_hashes", return_value=expected),

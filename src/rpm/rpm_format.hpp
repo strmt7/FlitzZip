@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <string>
 
-namespace superzip {
+namespace flitzzip {
 
 enum class RpmPayloadCompression {
     None,
@@ -28,4 +28,4 @@ struct RpmPayloadInfo {
 // containers.
 RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path);
 
-}  // namespace superzip
+}  // namespace flitzzip

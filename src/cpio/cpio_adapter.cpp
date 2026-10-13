@@ -18,7 +18,7 @@
 #include <sstream>
 #include <string_view>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kCpioHeaderBytes = 110U;
@@ -756,4 +756,4 @@ OperationStats extract_cpio_gzip(const std::filesystem::path& archive_path, cons
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

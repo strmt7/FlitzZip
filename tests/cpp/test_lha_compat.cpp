@@ -117,20 +117,20 @@ TEST_CASE(lha_extraction_reads_nested_payload) {
     const auto archive = root / "sample.lzh";
     write_lha_fixture(archive, kNestedLhaFixture);
 
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Lha);
-    const auto info = superzip::archive_format_info(superzip::ArchiveFormat::Lha);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Lha);
+    const auto info = flitzzip::archive_format_info(flitzzip::ArchiveFormat::Lha);
     REQUIRE_TRUE(!info.can_create);
     REQUIRE_TRUE(info.can_extract);
     REQUIRE_TRUE(info.bundled_native);
     REQUIRE_TRUE(!info.gpu_native);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_lha(archive, output, false);
+    const auto stats = flitzzip::extract_lha(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(3));
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(std::string_view("hello world\n").size()));
     REQUIRE_TRUE(!stats.gpu_used);
     REQUIRE_EQ(read_text_file(output / "subdir" / "subdir2" / "hello.txt"), "hello world\n");
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify LHA extraction refuses overwriting existing files unless explicitly allowed.
@@ -146,8 +146,8 @@ TEST_CASE(lha_extraction_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_lha(archive, output, false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_lha(archive, output, false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -164,8 +164,8 @@ TEST_CASE(lha_extraction_rejects_truncated_archive_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_lha(archive, root / "out", false));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_lha(archive, root / "out", false));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -184,8 +184,8 @@ TEST_CASE(lha_extraction_rejects_corrupt_payload_crc_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_lha(archive, root / "out", false));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_lha(archive, root / "out", false));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -194,7 +194,7 @@ TEST_CASE(lha_extraction_rejects_corrupt_payload_crc_before_output) {
 
 // Purpose: Verify malformed high-bit MS-DOS timestamps do not trigger undefined behavior.
 // Inputs: A ClusterFuzzLite UBSan reproducer with a hostile level-0 timestamp field.
-// Outputs: Throws a normal SuperZip error and creates no extracted files.
+// Outputs: Throws a normal FlitzZip error and creates no extracted files.
 TEST_CASE(lha_extraction_rejects_ubsan_timestamp_reproducer) {
     const auto root = test_temp_dir("lha-ubsan-timestamp");
     const auto archive = root / "ubsan.lzh";
@@ -202,8 +202,8 @@ TEST_CASE(lha_extraction_rejects_ubsan_timestamp_reproducer) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_lha(archive, root / "out", false));
-    } catch (const superzip::Error&) {
+        static_cast<void>(flitzzip::extract_lha(archive, root / "out", false));
+    } catch (const flitzzip::Error&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -220,8 +220,8 @@ TEST_CASE(lha_extraction_rejects_pm2_copy_table_overread_reproducer) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_lha(archive, root / "out", false));
-    } catch (const superzip::Error&) {
+        static_cast<void>(flitzzip::extract_lha(archive, root / "out", false));
+    } catch (const flitzzip::Error&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -238,15 +238,15 @@ TEST_CASE(lha_extraction_rejects_absolute_paths) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_lha(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_lha(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
 }
 
-// Purpose: Verify dot-dot LHA paths remain visible to SuperZip and are rejected.
+// Purpose: Verify dot-dot LHA paths remain visible to FlitzZip and are rejected.
 // Inputs: An upstream regression fixture with parent-directory path components.
 // Outputs: Throws `SecurityError` and does not create escaped output.
 TEST_CASE(lha_extraction_rejects_parent_directory_paths) {
@@ -256,8 +256,8 @@ TEST_CASE(lha_extraction_rejects_parent_directory_paths) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_lha(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_lha(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -276,8 +276,8 @@ TEST_CASE(lha_extraction_rejects_symbolic_links) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_lha(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_lha(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

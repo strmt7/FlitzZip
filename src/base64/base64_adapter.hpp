@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Create a single-file Base64 text stream with a bounded wrapper header.
 // Inputs: `source_file` is an existing regular file, `output_archive` is the destination `.b64`, and
@@ -30,4 +30,4 @@ OperationStats compress_base64(const std::vector<std::filesystem::path>& sources
 OperationStats extract_base64_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                    bool overwrite, const ProgressCallback& progress_callback = {});
 
-}  // namespace superzip
+}  // namespace flitzzip

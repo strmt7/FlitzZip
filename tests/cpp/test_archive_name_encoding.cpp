@@ -19,7 +19,7 @@ TEST_CASE(archive_name_encoding_valid_utf8_boundaries) {
     constexpr std::array names{"ascii.txt",    "\x7f",         "\xc2\x80",     "\xdf\xbf",         "\xe0\xa0\x80",
                                "\xed\x9f\xbf", "\xee\x80\x80", "\xef\xbf\xbf", "\xf0\x90\x80\x80", "\xf4\x8f\xbf\xbf"};
     for (const auto* name : names) {
-        REQUIRE_EQ(superzip::decode_archive_name(name, superzip::ArchivePathEncoding::Utf8), name);
+        REQUIRE_EQ(flitzzip::decode_archive_name(name, flitzzip::ArchivePathEncoding::Utf8), name);
     }
 }
 
@@ -47,8 +47,8 @@ TEST_CASE(archive_name_encoding_rejects_malformed_utf8) {
     for (const auto name : names) {
         bool rejected = false;
         try {
-            (void)superzip::decode_archive_name(name, superzip::ArchivePathEncoding::Utf8);
-        } catch (const superzip::ArchiveError&) {
+            (void)flitzzip::decode_archive_name(name, flitzzip::ArchivePathEncoding::Utf8);
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -59,21 +59,21 @@ TEST_CASE(archive_name_encoding_rejects_malformed_utf8) {
 // Inputs: Names at and beyond the byte limit and an invalid enum value.
 // Outputs: Accepts the exact bound and rejects excessive metadata or unsupported modes.
 TEST_CASE(archive_name_encoding_limits_and_selection) {
-    const std::string at_limit(superzip::kMaxArchivePathBytes, 'x');
-    REQUIRE_EQ(superzip::decode_archive_name(at_limit, superzip::ArchivePathEncoding::Utf8), at_limit);
-    for (const auto encoding : {superzip::ArchivePathEncoding::Utf8, static_cast<superzip::ArchivePathEncoding>(-1)}) {
+    const std::string at_limit(flitzzip::kMaxArchivePathBytes, 'x');
+    REQUIRE_EQ(flitzzip::decode_archive_name(at_limit, flitzzip::ArchivePathEncoding::Utf8), at_limit);
+    for (const auto encoding : {flitzzip::ArchivePathEncoding::Utf8, static_cast<flitzzip::ArchivePathEncoding>(-1)}) {
         bool rejected = false;
         try {
-            (void)superzip::decode_archive_name(at_limit + "x", encoding);
-        } catch (const superzip::ArchiveError&) {
+            (void)flitzzip::decode_archive_name(at_limit + "x", encoding);
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
     }
     bool rejected = false;
     try {
-        superzip::validate_archive_name_encoding(static_cast<superzip::ArchivePathEncoding>(-1));
-    } catch (const superzip::ArchiveError&) {
+        flitzzip::validate_archive_name_encoding(static_cast<flitzzip::ArchivePathEncoding>(-1));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -83,25 +83,25 @@ TEST_CASE(archive_name_encoding_limits_and_selection) {
 // Inputs: Every registered archive format and both shared encoding choices.
 // Outputs: Requires exact keys, five eligible formats, and refusal of unknown tokens.
 TEST_CASE(archive_name_encoding_product_choices) {
-    for (const auto& choice : superzip::kArchiveNameEncodingChoices) {
-        REQUIRE_EQ(superzip::parse_archive_name_encoding(choice.key), choice.encoding);
+    for (const auto& choice : flitzzip::kArchiveNameEncodingChoices) {
+        REQUIRE_EQ(flitzzip::parse_archive_name_encoding(choice.key), choice.encoding);
     }
     std::size_t enabled = 0;
-    for (const auto& format : superzip::archive_format_registry()) {
+    for (const auto& format : flitzzip::archive_format_registry()) {
         if (format.supports_name_encoding) {
             ++enabled;
             REQUIRE_TRUE(format.can_extract);
             REQUIRE_TRUE(
-                format.format == superzip::ArchiveFormat::Cpio || format.format == superzip::ArchiveFormat::CpioGzip ||
-                format.format == superzip::ArchiveFormat::Ar || format.format == superzip::ArchiveFormat::Deb ||
-                format.format == superzip::ArchiveFormat::Rpm);
+                format.format == flitzzip::ArchiveFormat::Cpio || format.format == flitzzip::ArchiveFormat::CpioGzip ||
+                format.format == flitzzip::ArchiveFormat::Ar || format.format == flitzzip::ArchiveFormat::Deb ||
+                format.format == flitzzip::ArchiveFormat::Rpm);
         }
     }
     REQUIRE_EQ(enabled, 5U);
     bool rejected = false;
     try {
-        (void)superzip::parse_archive_name_encoding("guess");
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::parse_archive_name_encoding("guess");
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -111,16 +111,16 @@ TEST_CASE(archive_name_encoding_product_choices) {
 // Inputs: Every eligible adapter, a missing input path, and an unsupported enum.
 // Outputs: Requires the encoding error instead of file-open errors and no destination creation.
 TEST_CASE(archive_name_encoding_invalid_option_precedes_io) {
-    using Extractor = superzip::OperationStats (*)(const std::filesystem::path&, const std::filesystem::path&, bool,
-                                                   const superzip::ProgressCallback&, superzip::ArchivePathEncoding);
-    const std::array<Extractor, 4> extractors{superzip::extract_ar, superzip::extract_cpio, superzip::extract_cpio_gzip,
-                                              superzip::extract_rpm};
+    using Extractor = flitzzip::OperationStats (*)(const std::filesystem::path&, const std::filesystem::path&, bool,
+                                                   const flitzzip::ProgressCallback&, flitzzip::ArchivePathEncoding);
+    const std::array<Extractor, 4> extractors{flitzzip::extract_ar, flitzzip::extract_cpio, flitzzip::extract_cpio_gzip,
+                                              flitzzip::extract_rpm};
     const auto root = test_temp_dir("invalid-name-encoding-option");
     for (const auto extract : extractors) {
         bool rejected = false;
         try {
-            (void)extract(root / "missing", root / "output", false, {}, static_cast<superzip::ArchivePathEncoding>(-1));
-        } catch (const superzip::ArchiveError& error) {
+            (void)extract(root / "missing", root / "output", false, {}, static_cast<flitzzip::ArchivePathEncoding>(-1));
+        } catch (const flitzzip::ArchiveError& error) {
             REQUIRE_EQ(std::string(error.what()), "unsupported archive member name encoding");
             rejected = true;
         }

@@ -1,6 +1,6 @@
 # Targeted Verification
 
-SuperZip verification is change-aware. Agents must select tests and checks from
+FlitzZip verification is change-aware. Agents must select tests and checks from
 the changed path set and its direct consumers. Batch related changes. Tooling
 edits, path count and failed checks do not automatically justify unrelated
 suites. Unknown paths must be classified before a plan can execute.
@@ -56,7 +56,7 @@ that mechanism before deciding whether wider coverage is justified.
 
 ## Classifier Contract
 
-The classifier lives in `tools\superzip_verification.psm1`. It uses normalized
+The classifier lives in `tools\flitzzip_verification.psm1`. It uses normalized
 repository-relative paths and produces:
 
 - `requiredLocalCommands`: commands the agent should run now.
@@ -249,7 +249,7 @@ being made.
 registered format's public contract. Create-capable formats roundtrip generated
 files and directories; level-aware writers roundtrip every accepted level 1-9.
 These are small correctness fixtures, not timing or compression-ratio benchmarks.
-The SUZIP lane here is explicitly CPU-only; required-HIP proof remains separate.
+The FLZIP lane here is explicitly CPU-only; required-HIP proof remains separate.
 
 For extract-only formats, the matrix runs an exact positive C++ fixture test
 and requires one passing test plus its exported archive and verified output
@@ -258,7 +258,7 @@ overwrite refusal without output changes, explicit overwrite, and every
 advertised extension alias. Each extraction must reproduce the expected path
 tree and SHA-256 file hashes. A test source file's existence is not coverage.
 Fixture export is opt-in for that child process through the test-only
-`SUPERZIP_TEST_FIXTURE_EXPORT` variable; ordinary unit tests do not export files.
+`FLITZZIP_TEST_FIXTURE_EXPORT` variable; ordinary unit tests do not export files.
 
 Both the CLI and native test executable must be rebuilt before this check.
 Child commands have a two-minute deadline, captured diagnostics, and exact
@@ -294,7 +294,7 @@ such a narrower selection is not final commit acceptance.
 `tools\wait_relevant_workflows.ps1` performs a GitHub CLI preflight before it
 polls, resolves local refs or short SHAs to a full commit SHA, and queries the
 Actions REST API by `head_sha`. Do not replace that with `gh run list --commit`;
-that filter has returned empty results for valid SuperZip commits. If `gh` is
+that filter has returned empty results for valid FlitzZip commits. If `gh` is
 not authenticated, lacks repository access, or the Actions API lookup fails, the
 script must throw immediately. Agents must not keep polling a status line where
 every selected workflow is reported as missing because that usually means the

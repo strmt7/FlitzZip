@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <span>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Admit only complete, prefix-consistent version-eight Huffman lookup tables.
 // Inputs: Exactly 4096 little-endian symbol/width entries from one encoded block.
@@ -43,4 +43,4 @@ inline bool huffman_lookup_is_complete(std::span<const std::byte> lookup) {
     return true;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

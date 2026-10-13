@@ -227,7 +227,7 @@ def acquire(source_pin: Path, destination: Path) -> dict:
                 "transformation": transformation,
             }
         )
-        cases.append({"name": row["label"], "format": "zst", "files": [name], "tools": ["SuperZip", "Zstd"]})
+        cases.append({"name": row["label"], "format": "zst", "files": [name], "tools": ["FlitzZip", "Zstd"]})
     manifest = {"schema_version": 1, "name": spec["name"], "files": files, "cases": cases}
     destination.parent.mkdir(parents=True, exist_ok=True)
     if any(path.is_symlink() or path.is_junction() for path in (destination, *destination.parents)):

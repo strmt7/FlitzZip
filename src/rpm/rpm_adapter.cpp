@@ -17,7 +17,7 @@
 #include <fstream>
 #include <limits>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kRpmIoBufferBytes = 256U * 1024U;
@@ -28,7 +28,7 @@ constexpr std::uint64_t kMaxRpmTemporaryPayloadBytes = 16ULL * 1024ULL * 1024ULL
 // Outputs: Returns normally inside the cap or throws before disk usage can grow without bound.
 void assert_rpm_temporary_payload_budget(std::uint64_t bytes, const char* label) {
     if (bytes > kMaxRpmTemporaryPayloadBytes) {
-        throw ArchiveError(std::string(label) + " exceeds SuperZip RPM temporary payload limit");
+        throw ArchiveError(std::string(label) + " exceeds FlitzZip RPM temporary payload limit");
     }
 }
 
@@ -81,7 +81,7 @@ void copy_stream_to_file(std::istream& input, const std::filesystem::path& outpu
         if (count > 0) {
             const auto count_bytes = static_cast<std::uint64_t>(count);
             if (count_bytes > kMaxRpmTemporaryPayloadBytes - written) {
-                throw ArchiveError("decoded RPM CPIO payload exceeds SuperZip RPM temporary payload limit");
+                throw ArchiveError("decoded RPM CPIO payload exceeds FlitzZip RPM temporary payload limit");
             }
             written += count_bytes;
             output.write(buffer.data(), count);
@@ -208,7 +208,7 @@ OperationStats extract_rpm(const std::filesystem::path& archive_path, const std:
     const auto payload = scan_rpm_payload(archive_source.path());
     create_verified_directories(destination);
 
-    const auto temporary = reserve_file_publish_target(destination / ".superzip-rpm-payload.cpio");
+    const auto temporary = reserve_file_publish_target(destination / ".flitzzip-rpm-payload.cpio");
     try {
         materialize_cpio_payload(archive_source.path(), payload, temporary.directory, temporary.file);
         auto stats = extract_cpio(temporary.file, destination, overwrite, progress_callback, encoding);
@@ -222,4 +222,4 @@ OperationStats extract_rpm(const std::filesystem::path& archive_path, const std:
     }
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

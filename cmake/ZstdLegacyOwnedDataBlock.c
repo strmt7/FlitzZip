@@ -18,7 +18,7 @@ static size_t ZSTDvXX_decompressDataBlock(ZSTDvXX_DCtx* dctx, void* dst, size_t 
     default:
         return ERROR(GENERIC);
     }
-    dctx->stage = SUPERZIP_LEGACY_BLOCK_STAGE;
+    dctx->stage = FLITZZIP_LEGACY_BLOCK_STAGE;
     dctx->expected = ZSTDvXX_blockHeaderSize;
     if (ZSTDvXX_isError(result))
         return result;
@@ -27,7 +27,7 @@ static size_t ZSTDvXX_decompressDataBlock(ZSTDvXX_DCtx* dctx, void* dst, size_t 
         if (ZSTDvXX_isError(captured))
             return captured;
     }
-#if SUPERZIP_LEGACY_DECODER_VERSION == 7
+#if FLITZZIP_LEGACY_DECODER_VERSION == 7
     if (dctx->fParams.checksumFlag)
         XXH64_update(&dctx->xxhState, dst, result);
 #endif

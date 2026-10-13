@@ -45,7 +45,7 @@ foreach ($name in $settings) { $previous[$name] = [Environment]::GetEnvironmentV
 foreach ($failAction in @($false, $true)) {
     $caught = $false
     try {
-        Invoke-SuperZipParallelBuild -Jobs 3 -Action {
+        Invoke-FlitzZipParallelBuild -Jobs 3 -Action {
             if ($env:CMAKE_BUILD_PARALLEL_LEVEL -ne '3' -or $env:MultiProcMaxCount -ne '3' -or
                 $env:UseMultiToolTask -ne 'true' -or $env:EnforceProcessCountAcrossBuilds -ne 'true') {
                 throw 'Build child scheduling must share aggregate compiler admission.'
@@ -66,20 +66,20 @@ foreach ($failAction in @($false, $true)) {
 $process = [Diagnostics.Process]::GetCurrentProcess()
 $originalPriority = $process.PriorityClass
 try {
-    $observed = Invoke-SuperZipBackgroundWork { [Diagnostics.Process]::GetCurrentProcess().PriorityClass }
+    $observed = Invoke-FlitzZipBackgroundWork { [Diagnostics.Process]::GetCurrentProcess().PriorityClass }
     $expectedPriority = if ($originalPriority -eq 'Idle') { 'Idle' } else { 'BelowNormal' }
     if ($observed -ne $expectedPriority -or $process.PriorityClass -ne $originalPriority) {
         throw 'Background work must use cooperative priority and restore the caller.'
     }
-    $childPriority = Invoke-SuperZipBackgroundWork {
+    $childPriority = Invoke-FlitzZipBackgroundWork {
         & powershell -NoProfile -Command '[Diagnostics.Process]::GetCurrentProcess().PriorityClass.ToString()'
     }
     if ($childPriority -ne $expectedPriority) { throw 'Native correctness children must inherit cooperative priority.' }
-    Invoke-SuperZipBackgroundWork { & powershell -NoProfile -Command 'exit 19' }
+    Invoke-FlitzZipBackgroundWork { & powershell -NoProfile -Command 'exit 19' }
     if ($LASTEXITCODE -ne 19) { throw 'Cooperative scheduling must preserve native exit status.' }
     $global:LASTEXITCODE = 0
     $caught = $false
-    try { Invoke-SuperZipBackgroundWork { throw 'test: background failure' } } catch {
+    try { Invoke-FlitzZipBackgroundWork { throw 'test: background failure' } } catch {
         $caught = ($_.Exception.Message -eq 'test: background failure')
     }
     if (-not $caught -or $process.PriorityClass -ne $originalPriority) {

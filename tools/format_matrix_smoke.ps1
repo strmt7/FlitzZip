@@ -10,11 +10,11 @@ if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyCo
 }
 
 $repo = Split-Path -Parent $PSScriptRoot
-$cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
+$cli = Join-Path $repo "build\$Configuration\flitzzip_cli.exe"
 if (-not (Test-Path -LiteralPath $cli)) {
     throw "CLI binary not found. Run tools/build.ps1 first."
 }
-$testRunner = Join-Path $repo "build\$Configuration\superzip_tests.exe"
+$testRunner = Join-Path $repo "build\$Configuration\flitzzip_tests.exe"
 if (-not (Test-Path -LiteralPath $testRunner)) {
     throw "Native fixture test binary not found. Run tools/build.ps1 first."
 }
@@ -58,8 +58,8 @@ function Invoke-MatrixProcess {
     $start.CreateNoWindow = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
-    $start.EnvironmentVariables.Remove('SUPERZIP_TEST_FIXTURE_EXPORT')
-    if ($FixtureRoot) { $start.EnvironmentVariables['SUPERZIP_TEST_FIXTURE_EXPORT'] = $FixtureRoot }
+    $start.EnvironmentVariables.Remove('FLITZZIP_TEST_FIXTURE_EXPORT')
+    if ($FixtureRoot) { $start.EnvironmentVariables['FLITZZIP_TEST_FIXTURE_EXPORT'] = $FixtureRoot }
     $process = [System.Diagnostics.Process]::Start($start)
     try {
         $stdout = $process.StandardOutput.ReadToEndAsync()
@@ -79,10 +79,10 @@ function Invoke-MatrixProcess {
     }
 }
 
-# Purpose: Run the SuperZip CLI and fail with captured output on nonzero exit.
+# Purpose: Run the FlitzZip CLI and fail with captured output on nonzero exit.
 # Inputs: `Arguments` are passed verbatim and `Label` names the operation.
 # Outputs: Returns combined output lines or throws with the native exit code.
-function Invoke-SuperZipMatrixCommand {
+function Invoke-FlitzZipMatrixCommand {
     param(
         [string[]]$Arguments = @(),
         [Parameter(Mandatory = $true)][string]$Label
@@ -95,7 +95,7 @@ function Invoke-SuperZipMatrixCommand {
     return @($result.Output)
 }
 
-# Purpose: Run a SuperZip CLI command that must fail with a specific diagnostic fragment.
+# Purpose: Run a FlitzZip CLI command that must fail with a specific diagnostic fragment.
 # Inputs: `Arguments` are passed verbatim, `Label` names the operation, and `ExpectedText` is matched in output.
 # Outputs: Returns normally only when the command fails and reports the expected text.
 function Invoke-ExpectedMatrixFailure {
@@ -115,7 +115,7 @@ function Invoke-ExpectedMatrixFailure {
     }
 }
 
-# Purpose: Parse one `superzip_cli formats` line into structured metadata.
+# Purpose: Parse one `flitzzip_cli formats` line into structured metadata.
 # Inputs: `Line` is one machine-readable registry record.
 # Outputs: Returns a format object or throws when the CLI contract changes.
 function ConvertFrom-FormatRegistryLine {
@@ -148,34 +148,34 @@ function Test-MatrixUnicodePath {
     New-Item -ItemType Directory -Force -Path $nested | Out-Null
     $name = [char]::ConvertFromUtf32(0x1F4C1) + '.txt'
     [System.IO.File]::WriteAllText((Join-Path $nested $name), 'Unicode CLI payload')
-    foreach ($format in @('suzip', 'zip', 'tar', 'tar.gz', 'tar.bz2', 'tar.zst', 'cpio', 'cpio.gz', 'ar')) {
+    foreach ($format in @('flzip', 'zip', 'tar', 'tar.gz', 'tar.bz2', 'tar.zst', 'cpio', 'cpio.gz', 'ar')) {
         $archive = Join-Path $Root ($unicode + '.' + $format)
         $destination = Join-Path $Root ($unicode + '-out-' + $format)
         $create = @('compress', '--format', $format, '--output', $archive)
         $extract = @('extract', '--output', $destination)
-        if ($format -eq 'suzip') {
+        if ($format -eq 'flzip') {
             $create += @('--force-cpu', '--verify-after-write')
             $extract += '--force-cpu'
         } elseif ($format -eq 'zip') {
             $create += '--verify-after-write'
         }
-        Invoke-SuperZipMatrixCommand -Arguments ($create + $tree) -Label "Unicode create $format" | Out-Null
+        Invoke-FlitzZipMatrixCommand -Arguments ($create + $tree) -Label "Unicode create $format" | Out-Null
         if ((Get-MatrixIdentifiedFormat -Archive $archive) -ne $format) {
             throw "Unicode identification mismatch: $format"
         }
-        Invoke-SuperZipMatrixCommand -Arguments ($extract + $archive) -Label "Unicode extract $format" | Out-Null
+        Invoke-FlitzZipMatrixCommand -Arguments ($extract + $archive) -Label "Unicode extract $format" | Out-Null
         Test-MatrixDirectoryMatch -ExpectedRoot $tree -ActualRoot (Join-Path $destination (Split-Path -Leaf $tree))
         if ($format -in @('cpio', 'cpio.gz', 'ar')) {
-            Invoke-SuperZipMatrixCommand -Arguments ($extract + @('--overwrite', '--name-encoding', 'utf8', $archive)) -Label "Explicit UTF-8 $format" | Out-Null
+            Invoke-FlitzZipMatrixCommand -Arguments ($extract + @('--overwrite', '--name-encoding', 'utf8', $archive)) -Label "Explicit UTF-8 $format" | Out-Null
             Test-MatrixDirectoryMatch -ExpectedRoot $tree -ActualRoot (Join-Path $destination (Split-Path -Leaf $tree))
         } else {
             Invoke-ExpectedMatrixFailure -Arguments ($extract + @('--name-encoding', 'utf8', $archive)) -Label "Unsupported encoding option $format" -ExpectedText '--name-encoding is supported only'
         }
         Invoke-ExpectedMatrixFailure -Arguments ($extract + @('--name-encoding', 'guess', $archive)) -Label "Invalid encoding option $format" -ExpectedText '--name-encoding must be'
-        if ($format -eq 'suzip') {
-            Invoke-SuperZipMatrixCommand -Arguments @('verify', '--force-cpu', $archive) -Label 'Unicode native verify' | Out-Null
+        if ($format -eq 'flzip') {
+            Invoke-FlitzZipMatrixCommand -Arguments @('verify', '--force-cpu', $archive) -Label 'Unicode native verify' | Out-Null
         } elseif ($format -eq 'zip') {
-            Invoke-SuperZipMatrixCommand -Arguments @('verify', $archive) -Label 'Unicode ZIP verify' | Out-Null
+            Invoke-FlitzZipMatrixCommand -Arguments @('verify', $archive) -Label 'Unicode ZIP verify' | Out-Null
         }
         Write-Output "format_matrix unicode_paths=$format status=passed verification=cli_roundtrip"
     }
@@ -207,14 +207,14 @@ function Test-MatrixLegacyName {
             $inputArchive = $archive[0].FullName
             if ($format -eq 'cpio.gz') {
                 $inputArchive = Join-Path $export 'fixture.cpio.gz'
-                Invoke-SuperZipMatrixCommand -Arguments @('compress', '--format', 'gz', '--output', $inputArchive, $archive[0].FullName) -Label 'Legacy CPIO Gzip wrapper' | Out-Null
+                Invoke-FlitzZipMatrixCommand -Arguments @('compress', '--format', 'gz', '--output', $inputArchive, $archive[0].FullName) -Label 'Legacy CPIO Gzip wrapper' | Out-Null
             } elseif ($format -eq 'deb') {
                 $inputArchive = Join-Path $export 'fixture.deb'
                 Copy-Item -LiteralPath $archive[0].FullName -Destination $inputArchive
             }
             foreach ($mode in @($format, 'auto')) {
                 $destination = Join-Path $export "output-$format-$mode"
-                Invoke-SuperZipMatrixCommand -Arguments @('extract', '--format', $mode, '--name-encoding', 'system', '--output', $destination, $inputArchive) -Label "Legacy $format mode=$mode" | Out-Null
+                Invoke-FlitzZipMatrixCommand -Arguments @('extract', '--format', $mode, '--name-encoding', 'system', '--output', $destination, $inputArchive) -Label "Legacy $format mode=$mode" | Out-Null
                 Test-MatrixDirectoryMatch -ExpectedRoot (Join-Path $export 'expected') -ActualRoot $destination
             }
             Write-Output "format_matrix legacy_names=$format status=passed verification=cli_fixture"
@@ -346,7 +346,7 @@ function ConvertTo-MatrixToken {
 function Test-MatrixLevelAwareFormat {
     param([Parameter(Mandatory = $true)][string]$Key)
 
-    return @("suzip", "zip", "tar.gz", "tar.bz2", "tar.zst", "gz", "bz2", "zst", "cpio.gz") -contains $Key
+    return @("flzip", "zip", "tar.gz", "tar.bz2", "tar.zst", "gz", "bz2", "zst", "cpio.gz") -contains $Key
 }
 
 # Purpose: Return whether a create format requires exactly one regular-file source.
@@ -391,13 +391,13 @@ function Initialize-MatrixSingleSource {
     }
 }
 
-# Purpose: Parse the `format=` value from `superzip_cli identify` output.
+# Purpose: Parse the `format=` value from `flitzzip_cli identify` output.
 # Inputs: `Archive` is the archive path to identify.
 # Outputs: Returns the detected format key.
 function Get-MatrixIdentifiedFormat {
     param([Parameter(Mandatory = $true)][string]$Archive)
 
-    $identified = Invoke-SuperZipMatrixCommand -Arguments @("identify", $Archive) -Label "identify $Archive"
+    $identified = Invoke-FlitzZipMatrixCommand -Arguments @("identify", $Archive) -Label "identify $Archive"
     if (($identified -join "`n") -notmatch 'format=(?<key>\S+)') {
         throw "Could not parse identify output for $Archive. Output: $($identified -join "`n")"
     }
@@ -465,13 +465,13 @@ function Test-MatrixExtractOnlyFormat {
         $output = Join-Path $export "extract-$mode"
         $arguments = @('extract', '--format', $mode, '--output', $output, $archive)
         if ($mode -ne 'auto') { $arguments += '--validate-before-publish' }
-        Invoke-SuperZipMatrixCommand -Arguments $arguments -Label "fixture extract $($Format.Key) mode=$mode" | Out-Null
+        Invoke-FlitzZipMatrixCommand -Arguments $arguments -Label "fixture extract $($Format.Key) mode=$mode" | Out-Null
         Test-MatrixDirectoryMatch -ExpectedRoot $expected -ActualRoot $output
         Invoke-ExpectedMatrixFailure -Arguments $arguments -Label "fixture overwrite refusal $($Format.Key)" -ExpectedText 'refusing to overwrite'
         Test-MatrixDirectoryMatch -ExpectedRoot $expected -ActualRoot $output
         $overwrite = @('extract', '--format', $mode, '--overwrite', '--output', $output, $archive)
         if ($mode -ne 'auto') { $overwrite += '--validate-before-publish' }
-        Invoke-SuperZipMatrixCommand -Arguments $overwrite -Label "fixture overwrite $($Format.Key) mode=$mode" | Out-Null
+        Invoke-FlitzZipMatrixCommand -Arguments $overwrite -Label "fixture overwrite $($Format.Key) mode=$mode" | Out-Null
         Test-MatrixDirectoryMatch -ExpectedRoot $expected -ActualRoot $output
     }
     $sourceExtension = @($Format.Extensions -split ',' |
@@ -489,14 +489,14 @@ function Test-MatrixExtractOnlyFormat {
             throw "Alias $alias did not identify as $($Format.Key)."
         }
         $output = Join-Path $export ("alias-output" + $alias)
-        Invoke-SuperZipMatrixCommand -Arguments @('extract', '--format', 'auto', '--output', $output, $aliasArchive) -Label "fixture alias $alias" | Out-Null
+        Invoke-FlitzZipMatrixCommand -Arguments @('extract', '--format', 'auto', '--output', $output, $aliasArchive) -Label "fixture alias $alias" | Out-Null
         Test-MatrixDirectoryMatch -ExpectedRoot $expected -ActualRoot $output
     }
     Write-Output "format_matrix extract_only=$($Format.Key) status=passed verification=cli_fixture test=$name"
 }
 
 $rootPrefix = [System.IO.Path]::GetFullPath($WorkRoot).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
-$work = [System.IO.Path]::GetFullPath((Join-Path $rootPrefix ("superzip-format-matrix-" + [guid]::NewGuid().ToString("N"))))
+$work = [System.IO.Path]::GetFullPath((Join-Path $rootPrefix ("flitzzip-format-matrix-" + [guid]::NewGuid().ToString("N"))))
 if (-not $work.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Matrix temporary directory escaped the requested workspace."
 }
@@ -507,7 +507,7 @@ try {
     $fixtures = Initialize-FormatMatrixFixture -Root (Join-Path $work "fixtures")
     $archives = Join-Path $work "archives"
     New-Item -ItemType Directory -Force -Path $archives | Out-Null
-    $formats = @(Invoke-SuperZipMatrixCommand -Arguments @("formats") -Label "format registry" |
+    $formats = @(Invoke-FlitzZipMatrixCommand -Arguments @("formats") -Label "format registry" |
         ForEach-Object { ConvertFrom-FormatRegistryLine -Line $_ })
 
     foreach ($format in $formats) {
@@ -527,7 +527,7 @@ try {
             }
 
             $createArgs = @("compress", "--format", $format.Key)
-            if ($format.Key -eq "suzip") {
+            if ($format.Key -eq "flzip") {
                 $createArgs += @("--force-cpu", "--verify-after-write")
             } elseif ($format.Key -eq 'zip') {
                 $createArgs += '--verify-after-write'
@@ -536,14 +536,14 @@ try {
                 $createArgs += @("--compression-level", "5")
             }
             $createArgs += @("--output", $archive, $source)
-            Invoke-SuperZipMatrixCommand -Arguments $createArgs -Label "create $($format.Key)" | Out-Null
+            Invoke-FlitzZipMatrixCommand -Arguments $createArgs -Label "create $($format.Key)" | Out-Null
 
             $detected = Get-MatrixIdentifiedFormat -Archive $archive
             if ($detected -ne $format.Key) {
                 throw "Identify detected $detected for $archive; expected $($format.Key)"
             }
-            if ($format.Key -in @('suzip', 'zip')) {
-                Invoke-SuperZipMatrixCommand -Arguments @('verify', $archive) -Label "verify $($format.Key)" | Out-Null
+            if ($format.Key -in @('flzip', 'zip')) {
+                Invoke-FlitzZipMatrixCommand -Arguments @('verify', $archive) -Label "verify $($format.Key)" | Out-Null
                 Invoke-ExpectedMatrixFailure -Arguments @('verify', '--not-a-real-option', $archive) `
                     -Label "unknown verify option $($format.Key)" -ExpectedText 'unknown verify argument'
                 Invoke-ExpectedMatrixFailure -Arguments @('verify', $archive, $archive) `
@@ -551,22 +551,22 @@ try {
             }
             if ($format.Key -eq 'zip') {
                 Invoke-ExpectedMatrixFailure -Arguments @('verify', '--workers', '0', $archive) `
-                    -Label 'ZIP verify native tuning refusal' -ExpectedText 'does not support SUZIP GPU'
+                    -Label 'ZIP verify native tuning refusal' -ExpectedText 'does not support FLZIP GPU'
             }
 
             $extractRoot = Split-Path -Parent $expectedOutput
             $extractArgs = @("extract", "--format", "auto", "--output", $extractRoot)
-            if ($format.Key -eq "suzip") {
+            if ($format.Key -eq "flzip") {
                 $extractArgs += @("--force-cpu")
             }
             $extractArgs += @($archive)
-            if ($format.Key -eq 'suzip') {
+            if ($format.Key -eq 'flzip') {
                 Invoke-ExpectedMatrixFailure -Arguments (@('extract', '--not-a-real-option') + $extractArgs[1..($extractArgs.Count - 1)]) `
                     -Label 'Unknown extraction option' -ExpectedText 'unknown extract argument'
                 Invoke-ExpectedMatrixFailure -Arguments ($extractArgs + $archive) `
                     -Label 'Multiple extraction inputs' -ExpectedText 'extract accepts exactly one archive'
             }
-            Invoke-SuperZipMatrixCommand -Arguments $extractArgs -Label "extract $($format.Key)" | Out-Null
+            Invoke-FlitzZipMatrixCommand -Arguments $extractArgs -Label "extract $($format.Key)" | Out-Null
             if ($single) {
                 Test-MatrixFileMatch -ExpectedFile $source -ActualFile $expectedOutput
             } else {
@@ -585,11 +585,11 @@ try {
                 -Label "private publication overwrite refusal $($format.Key)" `
                 -ExpectedText "refusing to overwrite"
             $overwriteArgs = @("extract", "--format", "auto", "--overwrite", "--validate-before-publish", "--output", $extractRoot)
-            if ($format.Key -eq "suzip") {
+            if ($format.Key -eq "flzip") {
                 $overwriteArgs += @("--force-cpu")
             }
             $overwriteArgs += @($archive)
-            Invoke-SuperZipMatrixCommand -Arguments $overwriteArgs -Label "overwrite extract $($format.Key)" | Out-Null
+            Invoke-FlitzZipMatrixCommand -Arguments $overwriteArgs -Label "overwrite extract $($format.Key)" | Out-Null
             if ($single) {
                 Test-MatrixFileMatch -ExpectedFile $source -ActualFile $expectedOutput
             } else {
@@ -597,8 +597,8 @@ try {
                     -CompareDirectories (Test-MatrixDirectoryPreservingFormat -Key $format.Key)
             }
 
-            if ($format.Key -eq "suzip") {
-                Invoke-SuperZipMatrixCommand -Arguments @("verify", "--force-cpu", $archive) -Label "verify suzip" | Out-Null
+            if ($format.Key -eq "flzip") {
+                Invoke-FlitzZipMatrixCommand -Arguments @("verify", "--force-cpu", $archive) -Label "verify flzip" | Out-Null
             }
 
             $aliases = @($format.Extensions -split "," | Select-Object -Skip 1)
@@ -631,20 +631,20 @@ try {
                     New-Item -ItemType Directory -Path $levelRoot | Out-Null
                     $levelArchive = Join-Path $levelRoot (Split-Path -Leaf $archive)
                     $levelArgs = @("compress", "--format", $format.Key)
-                    if ($format.Key -eq "suzip") {
+                    if ($format.Key -eq "flzip") {
                         $levelArgs += @("--force-cpu")
                     }
                     $levelArgs += @("--compression-level", $level, "--output", $levelArchive, $source)
-                    Invoke-SuperZipMatrixCommand -Arguments $levelArgs -Label "level $level create $($format.Key)" | Out-Null
+                    Invoke-FlitzZipMatrixCommand -Arguments $levelArgs -Label "level $level create $($format.Key)" | Out-Null
                     $levelDetected = Get-MatrixIdentifiedFormat -Archive $levelArchive
                     if ($levelDetected -ne $format.Key) {
                         throw "Level $level archive detected $levelDetected; expected $($format.Key)"
                     }
                     $levelOutput = Join-Path $levelRoot "output"
                     $levelExtract = @("extract", "--format", "auto", "--output", $levelOutput)
-                    if ($format.Key -eq "suzip") { $levelExtract += "--force-cpu" }
+                    if ($format.Key -eq "flzip") { $levelExtract += "--force-cpu" }
                     $levelExtract += $levelArchive
-                    Invoke-SuperZipMatrixCommand -Arguments $levelExtract -Label "level $level extract $($format.Key)" | Out-Null
+                    Invoke-FlitzZipMatrixCommand -Arguments $levelExtract -Label "level $level extract $($format.Key)" | Out-Null
                     $levelExpected = Join-Path $levelOutput (Split-Path -Leaf $source)
                     if ($single) {
                         Test-MatrixFileMatch -ExpectedFile $source -ActualFile $levelExpected

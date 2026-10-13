@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'superzip_verification.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'flitzzip_verification.psm1') -Force
 
 # Purpose: Reject missing hosted routing, policy or backend qualification evidence.
 # Inputs: Condition describes an expected invariant; Message identifies the affected boundary.
@@ -33,26 +33,26 @@ function Test-NativeCiWorkflowPath {
 
 foreach ($path in @('src/gpu/hip_codec.hip.cpp', 'src/gpu/hip_codec_static_prefix.hip.cpp',
         'src/gpu/hip_codec_adaptive_prefix.hip.cpp', 'src/gpu/hip_dictionary_matcher.hip.cpp', 'src/gpu/hip_sparse_pattern.hip.cpp')) {
-    $selection = Get-SuperZipHostedWorkflowSelection -Paths @($path, 'docs/design.md')
+    $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path, 'docs/design.md')
     Assert-NativeCi (-not $selection.windows -and $selection.rocm) "HIP implementation requires actual HIP compilation: $path"
 }
 foreach ($path in @('CMakeLists.txt', 'cmake/ResolveHipArchitecture.cmake', 'src/core/checksum.hpp',
         'src/gpu/hip_device.cpp', 'src/gpu/hip_codec_support.hpp', 'tools/build.ps1',
         'tools/rocm-sdk-lock.json', 'tools/cmake-toolchain.sha256', 'tools/compile_hip_object.ps1', 'tools/native_build_receipt.py',
         'third_party/lzma_sdk/CpuArch.c')) {
-    $selection = Get-SuperZipHostedWorkflowSelection -Paths @($path)
+    $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path)
     Assert-NativeCi ($selection.windows -and $selection.rocm) "shared/native ABI inputs retain both builds: $path"
 }
 foreach ($path in @('src/core/checksum.cpp', 'src/app/main_window_controls.cpp', 'tests/cpp/test_zip_compat.cpp',
         'tools/gui_smoke.ps1', 'resources/brand/fixture.svg', 'LICENSE')) {
-    $selection = Get-SuperZipHostedWorkflowSelection -Paths @($path)
+    $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path)
     Assert-NativeCi ($selection.windows -and -not $selection.rocm) "CPU mechanisms avoid unrelated SDK provisioning: $path"
 }
 foreach ($path in @('docs/design.md', 'resources/design/fixture.svg', 'tools/native_test_selection.ps1', 'tools/native_ci.ps1')) {
-    $selection = Get-SuperZipHostedWorkflowSelection -Paths @($path)
+    $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path)
     Assert-NativeCi (-not $selection.windows -and -not $selection.rocm) "tool/docs contracts do not require product builds: $path"
 }
-$mixed = Get-SuperZipHostedWorkflowSelection -Paths @('src/gpu/hip_codec.hip.cpp', 'src/core/checksum.cpp')
+$mixed = Get-FlitzZipHostedWorkflowSelection -Paths @('src/gpu/hip_codec.hip.cpp', 'src/core/checksum.cpp')
 Assert-NativeCi ($mixed.windows -and $mixed.rocm) 'mixed CPU/HIP batches retain both compile boundaries'
 $root = Split-Path -Parent $PSScriptRoot
 $cmake = Get-Content -LiteralPath (Join-Path $root 'CMakeLists.txt') -Raw
@@ -65,7 +65,7 @@ $paths = @($hipSources) + @('src/core/checksum.cpp', 'src/core/checksum.hpp', 's
     'tools/rocm-sdk-lock.json', 'tools/native_ci.ps1', 'tools/gui_smoke.ps1', 'resources/design/fixture.svg',
     'docs/design.md', '.github/workflows/windows-ci.yml', '.github/workflows/rocm-qualification.yml')
 foreach ($path in $paths) {
-    $selection = Get-SuperZipHostedWorkflowSelection -Paths @($path)
+    $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path)
     Assert-NativeCi ((Test-NativeCiWorkflowPath windows-ci $path) -eq $selection.windows) "CPU planner/filter parity: $path"
     Assert-NativeCi ((Test-NativeCiWorkflowPath rocm-qualification $path) -eq $selection.rocm) "HIP planner/filter parity: $path"
 }
@@ -78,35 +78,35 @@ foreach ($case in @(
     @{ path = '.github/workflows/windows-ci.yml'; build = $false; mode = 'none'; matrix = $false },
     @{ path = 'docs/design.md'; build = $false; mode = 'none'; matrix = $false }
 )) {
-    $plan = Get-SuperZipHostedNativePlan -Paths @($case.path)
+    $plan = Get-FlitzZipHostedNativePlan -Paths @($case.path)
     Assert-NativeCi ($plan.build -eq $case.build -and $plan.testMode -eq $case.mode -and
         $plan.formatMatrix -eq $case.matrix -and -not $plan.gpuExecutionQualified) "canonical native projection: $($case.path)"
 }
-$full = Get-SuperZipHostedNativePlan -Paths @('README.md') -Full
+$full = Get-FlitzZipHostedNativePlan -Paths @('README.md') -Full
 Assert-NativeCi ($full.build -and $full.testMode -eq 'full' -and $full.formatMatrix -and $full.securityPolicy) 'explicit broad/manual qualification remains complete'
-$manual = Get-SuperZipNativeCiEvent -EventName workflow_dispatch
+$manual = Get-FlitzZipNativeCiEvent -EventName workflow_dispatch
 Assert-NativeCi $manual.full 'manual dispatch is explicit broad qualification'
-$initial = Get-SuperZipNativeCiEvent -EventName push -PushBase ('0' * 40)
+$initial = Get-FlitzZipNativeCiEvent -EventName push -PushBase ('0' * 40)
 Assert-NativeCi ('CMakeLists.txt' -in $initial.paths -and -not $initial.full) 'initial pushes classify all tracked inputs'
 $base = git rev-parse HEAD~1
 if ($LASTEXITCODE -ne 0) { throw 'Event contract requires the checked-out comparison history.' }
-$push = Get-SuperZipNativeCiEvent -EventName push -PushBase $base
-$pr = Get-SuperZipNativeCiEvent -EventName pull_request -PullRequestBase $base
+$push = Get-FlitzZipNativeCiEvent -EventName push -PushBase $base
+$pr = Get-FlitzZipNativeCiEvent -EventName pull_request -PullRequestBase $base
 Assert-NativeCi (($push.paths -join '|') -eq ($pr.paths -join '|')) 'push/PR use the complete authoritative range'
-$targetedManual = Get-SuperZipNativeCiEvent -EventName workflow_dispatch -DispatchBase $base
+$targetedManual = Get-FlitzZipNativeCiEvent -EventName workflow_dispatch -DispatchBase $base
 Assert-NativeCi (-not $targetedManual.full -and ($targetedManual.paths -join '|') -eq ($push.paths -join '|')) 'reviewed manual ranges use the same canonical comparison without blanket qualification'
 foreach ($invalid in @('', 'HEAD~1', 'invalid', ('0' * 40))) {
     $rejected = $false
-    try { Get-SuperZipNativeCiEvent -EventName pull_request -PullRequestBase $invalid | Out-Null } catch { $rejected = $true }
+    try { Get-FlitzZipNativeCiEvent -EventName pull_request -PullRequestBase $invalid | Out-Null } catch { $rejected = $true }
     Assert-NativeCi $rejected 'missing/malformed event bases must fail instead of testing a guessed range'
     if ($invalid) {
         $rejected = $false
-        try { Get-SuperZipNativeCiEvent -EventName workflow_dispatch -DispatchBase $invalid | Out-Null } catch { $rejected = $true }
+        try { Get-FlitzZipNativeCiEvent -EventName workflow_dispatch -DispatchBase $invalid | Out-Null } catch { $rejected = $true }
         Assert-NativeCi $rejected 'manual ranges reject non-SHA and zero bases'
     }
 }
 $rejected = $false
-try { Get-SuperZipNativeCiEvent -EventName push -PushBase $base -DispatchBase $base | Out-Null } catch { $rejected = $true }
+try { Get-FlitzZipNativeCiEvent -EventName push -PushBase $base -DispatchBase $base | Out-Null } catch { $rejected = $true }
 Assert-NativeCi $rejected 'manual comparison metadata cannot replace a push event base'
 $workflow = Get-Content -LiteralPath (Join-Path $root '.github/workflows/windows-ci.yml') -Raw
 foreach ($output in @('native_build', 'native_tests', 'format_matrix', 'policy_scan')) {
@@ -122,7 +122,7 @@ $entry = Join-Path $PSScriptRoot 'ci_native_plan.ps1'
 $rejected = $false
 try { & $entry -ChangedPath 'tests/cpp/test_dictionary_block.cpp' -DispatchBase $base | Out-Null } catch { $rejected = $true }
 Assert-NativeCi $rejected 'the real entry rejects ignored manual comparison metadata'
-$fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('superzip-native-ci-' + [guid]::NewGuid().ToString('N'))
+$fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('flitzzip-native-ci-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 $outputPath = Join-Path $fixtureRoot 'outputs.txt'
 try {
@@ -142,26 +142,26 @@ $script:NativeCiFailure = $false
 # Purpose: Observe the production hosted executor's exact command without running native code.
 # Inputs: Command is its canonical descriptor; fixture state can fail the single command boundary.
 # Outputs: Captures one invocation or throws the original controlled diagnostic.
-function Invoke-SuperZipVerificationCommand {
+function Invoke-FlitzZipVerificationCommand {
     param($Command)
     $script:NativeCiCommands.Add($Command)
     if ($script:NativeCiFailure) { throw 'Native CI controlled execution failure.' }
 }
 
-$component = Get-SuperZipHostedNativePlan -Paths @('tests/cpp/test_dictionary_block.cpp')
+$component = Get-FlitzZipHostedNativePlan -Paths @('tests/cpp/test_dictionary_block.cpp')
 $original = $component.testCommand.arguments -join '|'
-Invoke-SuperZipHostedNativeTest -Plan $component | Out-Null
+Invoke-FlitzZipHostedNativeTest -Plan $component | Out-Null
 Assert-NativeCi ($script:NativeCiCommands.Count -eq 1 -and
     '-CpuOnlyValidation' -in $script:NativeCiCommands[0].arguments -and
     ($component.testCommand.arguments -join '|') -eq $original) 'component execution explicitly labels CPU mode without mutating the plan'
 $script:NativeCiCommands.Clear()
-Invoke-SuperZipHostedNativeTest -Plan $full | Out-Null
+Invoke-FlitzZipHostedNativeTest -Plan $full | Out-Null
 Assert-NativeCi ($script:NativeCiCommands.Count -eq 1 -and '-CpuOnlyValidation' -notin $script:NativeCiCommands[0].arguments) 'broad execution retains the existing driver once'
 $script:NativeCiCommands.Clear()
-Invoke-SuperZipHostedNativeTest -Plan (Get-SuperZipHostedNativePlan -Paths @('docs/design.md')) | Out-Null
+Invoke-FlitzZipHostedNativeTest -Plan (Get-FlitzZipHostedNativePlan -Paths @('docs/design.md')) | Out-Null
 Assert-NativeCi ($script:NativeCiCommands.Count -eq 0) 'no selected native mechanism launches no native command'
 $script:NativeCiFailure = $true
 $rejected = $false
-try { Invoke-SuperZipHostedNativeTest -Plan $component | Out-Null } catch { $rejected = $_.Exception.Message -eq 'Native CI controlled execution failure.' }
+try { Invoke-FlitzZipHostedNativeTest -Plan $component | Out-Null } catch { $rejected = $_.Exception.Message -eq 'Native CI controlled execution failure.' }
 Assert-NativeCi ($rejected -and $script:NativeCiCommands.Count -eq 1) 'native command failure remains terminal and preserves its original cause'
 Write-Output 'Hosted native event, projection, trigger parity, conditional policy and qualification contracts passed.'

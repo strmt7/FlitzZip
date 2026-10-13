@@ -16,9 +16,9 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 
-// Purpose: Draw a standard SuperZip command button.
+// Purpose: Draw a standard FlitzZip command button.
 // Inputs: `dc` is the target, `rect` is the button bounds, `text` is the caption, and `active` selects accent styling.
 // Outputs: Renders the button without mutating state.
 void MainWindow::draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool active) {
@@ -338,4 +338,4 @@ RECT MainWindow::content_rect() const {
 // Inputs: `content` is the current content rectangle and `state` is a copied UI snapshot.
 // Outputs: Returns controls in Tab order using the same geometry as mouse hit testing.
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

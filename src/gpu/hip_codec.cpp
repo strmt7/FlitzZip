@@ -13,6 +13,7 @@
 #include "core/result.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <limits>
 #include <numeric>
@@ -22,7 +23,7 @@
 #include <vector>
 #include <hip/hip_runtime.h>
 
-namespace superzip {
+namespace flitzzip {
 
 namespace {
 
@@ -144,7 +145,7 @@ void record_selected_block_kinds(const EncodedChunk& chunk, GpuTelemetry* teleme
     record_gpu_sparse_pattern_blocks(telemetry, sparse_blocks);
 }
 
-// Purpose: Convert verified encode candidates into SUZIP block descriptors.
+// Purpose: Convert verified encode candidates into FLZIP block descriptors.
 // Inputs: `candidates` and `mismatches` describe one encoded chunk after GPU verification.
 // Outputs: Populates `out.blocks`, returns true when every block is raw, and records the encoded payload size.
 bool append_verified_encode_descriptors(EncodedChunk& out, std::span<const DeviceBlock> candidates,
@@ -641,22 +642,44 @@ static std::vector<std::byte> encode_neutron_plane_contexts(std::span<const std:
     frame.reserve(exclusive_limit);
     frame[0] = static_cast<std::byte>(width);
     const auto records = transformed.size() / width;
+    std::array<std::uint32_t, 8> lengths{};
+    for (std::size_t plane = 0U; plane < width; ++plane) {
+        lengths[plane] = static_cast<std::uint32_t>(records + (plane + 1U == width ? transformed.size() % width : 0U));
+    }
+    auto trial_options = options;
+    trial_options.block_size = lengths[width - 1U];
+    EncodedChunk grouped;
+    // Preserve the preceding two-plane candidate's exact isolated search. Added wider
+    // candidates share uploads, classification and entropy launches across independent planes.
+    if (width > 2U) {
+        grouped = encode_chunk_hip_impl(transformed, nullptr, trial_options, std::span(lengths).first(width), nullptr,
+                                        HipEncodeRole::CompoundTrial);
+        if (grouped.blocks.size() != width) {
+            throw GpuError("Neutron context batch returned an inconsistent block count");
+        }
+    }
     std::size_t cursor = 0U;
     for (std::size_t plane = 0U; plane < width; ++plane) {
-        const auto bytes = records + (plane + 1U == width ? transformed.size() % width : 0U);
-        auto trial_options = options;
-        trial_options.block_size = static_cast<std::uint32_t>(bytes);
-        const auto trial = encode_chunk_hip_impl(transformed.subspan(cursor, bytes), nullptr, trial_options, {},
-                                                 nullptr, HipEncodeRole::CompoundTrial);
-        if (trial.blocks.size() != 1U || trial.blocks.front().uncompressed_len != bytes ||
-            trial.blocks.front().encoded_offset != 0U || trial.blocks.front().encoded_len != trial.payload.size()) {
+        const auto bytes = lengths[plane];
+        EncodedChunk isolated;
+        if (width == 2U) {
+            trial_options.block_size = bytes;
+            isolated = encode_chunk_hip_impl(transformed.subspan(cursor, bytes), nullptr, trial_options, {}, nullptr,
+                                             HipEncodeRole::CompoundTrial);
+            if (isolated.blocks.size() != 1U) {
+                throw GpuError("Neutron context trial returned an inconsistent block count");
+            }
+        }
+        const auto& trial = width == 2U ? isolated : grouped;
+        const auto& inner = trial.blocks[width == 2U ? 0U : plane];
+        if (inner.uncompressed_len != bytes || inner.encoded_offset > trial.payload.size() ||
+            inner.encoded_len > trial.payload.size() - inner.encoded_offset) {
             throw GpuError("Neutron byte-plane context trial returned inconsistent metadata");
         }
-        const auto& inner = trial.blocks.front();
-        if (!is_gpu_compound_stage(inner.kind) && inner.kind != BlockKind::Raw && inner.kind != BlockKind::Fill) {
+        if (!is_canonical_gpu_byte_plane_context_stage(inner)) {
             throw GpuError("Neutron byte-plane context trial returned a recursive or CPU codec");
         }
-        if (trial.payload.size() >= exclusive_limit - frame.size()) {
+        if (inner.encoded_len >= exclusive_limit - frame.size()) {
             return {};
         }
         const auto offset = kGpuBytePlaneHeaderBytes + plane * kGpuBytePlaneContextRecordBytes;
@@ -665,7 +688,9 @@ static std::vector<std::byte> encode_neutron_plane_contexts(std::span<const std:
         for (std::size_t byte = 0U; byte < sizeof(inner.encoded_len); ++byte) {
             frame[offset + 2U + byte] = static_cast<std::byte>((inner.encoded_len >> (byte * 8U)) & 0xFFU);
         }
-        frame.insert(frame.end(), trial.payload.begin(), trial.payload.end());
+        const auto payload =
+            std::span(trial.payload).subspan(static_cast<std::size_t>(inner.encoded_offset), inner.encoded_len);
+        frame.insert(frame.end(), payload.begin(), payload.end());
         cursor += bytes;
     }
     return frame;
@@ -704,16 +729,14 @@ static EncodedChunk select_neutron_byte_planes(std::span<const std::byte> source
                     continue;
                 }
                 transform_byte_planes_hip(original, transformed, width, false, options);
-                if (width == 2U) {
-                    auto contexts = encode_neutron_plane_contexts(transformed, width, best_bytes, options);
-                    if (!contexts.empty()) {
-                        selected_frame = std::move(contexts);
-                        descriptor.kind = BlockKind::GpuBytePlaneContexts;
-                        descriptor.fill_value = 0U;
-                        descriptor.encoded_len = static_cast<std::uint32_t>(selected_frame.size());
-                        (void)parse_gpu_byte_plane_contexts(selected_frame, descriptor);
-                        best_bytes = selected_frame.size();
-                    }
+                auto contexts = encode_neutron_plane_contexts(transformed, width, best_bytes, options);
+                if (!contexts.empty()) {
+                    selected_frame = std::move(contexts);
+                    descriptor.kind = BlockKind::GpuBytePlaneContexts;
+                    descriptor.fill_value = 0U;
+                    descriptor.encoded_len = static_cast<std::uint32_t>(selected_frame.size());
+                    (void)parse_gpu_byte_plane_contexts(selected_frame, descriptor);
+                    best_bytes = selected_frame.size();
                 }
                 const auto trial = encode_chunk_hip_impl(transformed, nullptr, trial_options, {}, nullptr,
                                                          HipEncodeRole::CompoundTrial);
@@ -1105,7 +1128,7 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
         return 0;
     }
     if (output_size > kMaxArchiveChunkBytes) {
-        throw ArchiveError("decode output exceeds SuperZip resource limit");
+        throw ArchiveError("decode output exceeds FlitzZip resource limit");
     }
     for (const auto& block : blocks) {
         if (block.kind == BlockKind::Deflate || block.kind == BlockKind::CpuZstd) {
@@ -1175,4 +1198,4 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
     return crc;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

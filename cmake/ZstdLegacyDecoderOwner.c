@@ -1,6 +1,6 @@
 /* Complete decoder ownership; the enclosing source retains upstream notices. */
 
-#if SUPERZIP_LEGACY_DECODER_VERSION == 7
+#if FLITZZIP_LEGACY_DECODER_VERSION == 7
 /* Purpose: Construct the decoder and history under the original custom allocator.
  * Inputs: Two callbacks or two null callbacks, with the upstream aligned nonthrowing contract.
  * Outputs: A fully initialized owner or NULL after matching rollback. */
@@ -32,7 +32,7 @@ ZSTDvXX_DCtx* ZSTDvXX_createDCtx_advanced(ZSTDvXX_customMem customMem) {
 /* Purpose: Construct a complete default decoder ownership tree.
  * Inputs: None. Outputs: A fully initialized context or NULL after matching rollback. */
 ZSTDvXX_DCtx* ZSTDvXX_createDCtx(void) {
-#if SUPERZIP_LEGACY_DECODER_VERSION == 7
+#if FLITZZIP_LEGACY_DECODER_VERSION == 7
     return ZSTDvXX_createDCtx_advanced(defaultCustomMem);
 #else
     ZBUFF_bufferAllocator const allocator = {NULL, NULL, NULL};
@@ -67,14 +67,14 @@ void ZSTDvXX_copyDCtx(ZSTDvXX_DCtx* destination, const ZSTDvXX_DCtx* source) {
     ZBUFF_decoderOwner* owner;
     ZBUFF_ownedHistory* history;
     ZBUFF_bufferResult copied;
-#if SUPERZIP_LEGACY_DECODER_VERSION == 7
+#if FLITZZIP_LEGACY_DECODER_VERSION == 7
     ZSTDvXX_customMem allocator;
 #endif
     if (destination == source)
         return;
     owner = destination->owner;
     history = destination->history;
-#if SUPERZIP_LEGACY_DECODER_VERSION == 7
+#if FLITZZIP_LEGACY_DECODER_VERSION == 7
     allocator = destination->customMem;
 #endif
     copied = ZBUFF_cloneOwnedHistory(history, source->history);
@@ -86,7 +86,7 @@ void ZSTDvXX_copyDCtx(ZSTDvXX_DCtx* destination, const ZSTDvXX_DCtx* source) {
     *destination = *source;
     destination->owner = owner;
     destination->history = history;
-#if SUPERZIP_LEGACY_DECODER_VERSION == 7
+#if FLITZZIP_LEGACY_DECODER_VERSION == 7
     destination->customMem = allocator;
 #endif
     destination->litPtr = destination->litBuffer;

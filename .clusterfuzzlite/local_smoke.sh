@@ -5,7 +5,7 @@
 set -euo pipefail
 runs="${1:?Missing fuzz run count}"
 [[ $runs =~ ^[0-9]+$ ]]
-python3 tools/fuzz_memory.py verify --budget-mib "${SUPERZIP_FUZZ_MEMORY_MIB:?Missing fuzz RAM budget}"
+python3 tools/fuzz_memory.py verify --budget-mib "${FLITZZIP_FUZZ_MEMORY_MIB:?Missing fuzz RAM budget}"
 python3 -m unittest tools.test_fuzz_build
 mkdir -p /out
 # Direct base-image invocation does not perform ClusterFuzzLite's compiler flag setup.
@@ -14,7 +14,7 @@ export CFLAGS="${CFLAGS:?Missing C compiler flags} $sanitizer_flags"
 export CXXFLAGS="${CXXFLAGS:?Missing C++ compiler flags} $sanitizer_flags"
 bash .clusterfuzzlite/build.sh
 # Runtime symbols verify linking; the flags above instrument both source languages.
-for target in /out/superzip_*_fuzzer; do
+for target in /out/flitzzip_*_fuzzer; do
   symbols="$(llvm-nm "$target")"
   grep -qE '[[:space:]]T[[:space:]]__asan_init$' <<< "$symbols"
   grep -qE '[[:space:]]T[[:space:]]__ubsan_handle_type_mismatch_v1$' <<< "$symbols"
@@ -135,18 +135,18 @@ header = b'xar!' + struct.pack('>HHQQI', 28, 1, len(toc_encoded), len(toc), 0)
 Path('/out/corpus/xar/nested-payload.xar').write_bytes(header + toc_encoded + encoded)
 PY
 if [ "$runs" -gt 0 ]; then
-  /out/superzip_archive_index_fuzzer -runs=$runs -max_len=1048576 /out/corpus/archive_index
-  /out/superzip_path_safety_fuzzer -runs=$runs -max_len=4096 /out/corpus/path_safety
-  /out/superzip_cpio_fuzzer -runs=$runs -max_len=1048576 /out/corpus/cpio
-  /out/superzip_iso_fuzzer -runs=$runs -max_len=1048576 /out/corpus/iso
-  /out/superzip_cab_header_fuzzer -runs=$runs -max_len=1048576 /out/corpus/cab
-  /out/superzip_rpm_header_fuzzer -runs=$runs -max_len=1048576 /out/corpus/rpm
-  /out/superzip_sevenzip_fuzzer -runs=$runs -max_len=1048576 /out/corpus/sevenzip
-  /out/superzip_lzma_fuzzer -runs=$runs -max_len=1048576 /out/corpus/lzma
-  /out/superzip_lzip_fuzzer -runs=$runs -max_len=1048576 /out/corpus/lzip
-  /out/superzip_arj_fuzzer -runs=$runs -max_len=1048576 /out/corpus/arj
-  /out/superzip_arc_fuzzer -runs=$runs -max_len=1048576 /out/corpus/arc
-  /out/superzip_macbinary_fuzzer -runs=$runs -max_len=1048576 /out/corpus/macbinary
-  /out/superzip_lha_fuzzer -runs=$runs -max_len=1048576 /out/corpus/lha
-  /out/superzip_xar_fuzzer -runs=$runs -max_len=1048576 /out/corpus/xar
+  /out/flitzzip_archive_index_fuzzer -runs=$runs -max_len=1048576 /out/corpus/archive_index
+  /out/flitzzip_path_safety_fuzzer -runs=$runs -max_len=4096 /out/corpus/path_safety
+  /out/flitzzip_cpio_fuzzer -runs=$runs -max_len=1048576 /out/corpus/cpio
+  /out/flitzzip_iso_fuzzer -runs=$runs -max_len=1048576 /out/corpus/iso
+  /out/flitzzip_cab_header_fuzzer -runs=$runs -max_len=1048576 /out/corpus/cab
+  /out/flitzzip_rpm_header_fuzzer -runs=$runs -max_len=1048576 /out/corpus/rpm
+  /out/flitzzip_sevenzip_fuzzer -runs=$runs -max_len=1048576 /out/corpus/sevenzip
+  /out/flitzzip_lzma_fuzzer -runs=$runs -max_len=1048576 /out/corpus/lzma
+  /out/flitzzip_lzip_fuzzer -runs=$runs -max_len=1048576 /out/corpus/lzip
+  /out/flitzzip_arj_fuzzer -runs=$runs -max_len=1048576 /out/corpus/arj
+  /out/flitzzip_arc_fuzzer -runs=$runs -max_len=1048576 /out/corpus/arc
+  /out/flitzzip_macbinary_fuzzer -runs=$runs -max_len=1048576 /out/corpus/macbinary
+  /out/flitzzip_lha_fuzzer -runs=$runs -max_len=1048576 /out/corpus/lha
+  /out/flitzzip_xar_fuzzer -runs=$runs -max_len=1048576 /out/corpus/xar
 fi

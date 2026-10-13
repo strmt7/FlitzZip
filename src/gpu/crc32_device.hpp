@@ -3,7 +3,7 @@
 #include "core/crc32_operators.hpp"
 #include "gpu/hip_codec_support.hpp"
 
-namespace superzip::hip_detail {
+namespace flitzzip::hip_detail {
 
 constexpr std::size_t kDeviceCrcLengthBits = 16U;
 static_assert(kLargeCrcSegmentBytes < (1U << kDeviceCrcLengthBits));
@@ -61,4 +61,4 @@ __device__ __forceinline__ void publish_cooperative_crc32(std::uint32_t crc, std
     }
 }
 
-}  // namespace superzip::hip_detail
+}  // namespace flitzzip::hip_detail

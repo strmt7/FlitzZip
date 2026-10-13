@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <windows.h>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Share bounded popup geometry; inputs: physical client pixels; outputs: rows plus optional scroll arrows.
 struct DropdownLayout {
@@ -73,4 +73,4 @@ inline int dropdown_first_row_for_selection(const DropdownLayout& layout, int se
     return std::clamp(first, 0, layout.max_first_row);
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

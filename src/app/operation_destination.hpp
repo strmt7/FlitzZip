@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <utility>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Resolve the folder requested by the job's captured presentation preferences.
 // Inputs: operation, output path, applied global preference, and per-extraction preference.
@@ -52,4 +52,4 @@ class OperationDestination {
     std::filesystem::path pending_;
 };
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

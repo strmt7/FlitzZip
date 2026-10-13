@@ -5,7 +5,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/ZstdLegacyCanonicalHashes.cmake")
 # Purpose: Recognize only complete previously published decoder revisions.
 # Inputs: One shipped version and an actual whole-file SHA-256. Outputs: True
 # for a pinned pristine or historical revision; false for drift.
-function(superzip_zstd_canonical_input version actual output)
+function(flitzzip_zstd_canonical_input version actual output)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyLiterals.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyStream.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyHistory.cmake")
@@ -42,7 +42,7 @@ endfunction()
 # Purpose: Preserve reviewed foundational annotations before direct generation.
 # Inputs: Exact pristine text after the v05 constructor/sequence repair.
 # Outputs: The exact historical foundation text, checked against its identity.
-function(superzip_zstd_canonical_foundation content version output)
+function(flitzzip_zstd_canonical_foundation content version output)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdCommentClarifications.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyLiterals.cmake")
   foreach(index RANGE 0 16 1)
@@ -68,7 +68,7 @@ endfunction()
 # Inputs: Complete admitted foundation source and a shipped wire version.
 # Outputs: Private proposed text; no intermediate source is published or
 # compiled.
-function(superzip_zstd_canonical_boundaries content version output)
+function(flitzzip_zstd_canonical_boundaries content version output)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyLiterals.cmake")
   string(TOUPPER "${version}" upper)
   file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyLiterals${upper}.c"
@@ -81,10 +81,10 @@ function(superzip_zstd_canonical_boundaries content version output)
                  "${raw}\n\n/* Purpose: Decode rle literals" literals
                  "${literals}")
   set(key "_zstd_legacy_literals_${version}")
-  superzip_zstd_replace_owned_region("${content}" "${${key}_begin}"
+  flitzzip_zstd_replace_owned_region("${content}" "${${key}_begin}"
                                      "${${key}_end}" "${literals}" content)
-  superzip_zstd_rewrite_legacy_dictionary("${content}" "${version}" content)
-  superzip_zstd_replace_owned_region(
+  flitzzip_zstd_rewrite_legacy_dictionary("${content}" "${version}" content)
+  flitzzip_zstd_replace_owned_region(
     "${content}" "static void ZSTD${version}_checkContinuity("
     "static size_t ZSTD${version}_decompressBlock_internal(" "" content)
   if(version STREQUAL "v07")
@@ -92,7 +92,7 @@ function(superzip_zstd_canonical_boundaries content version output)
   else()
     set(dictionary_return void)
   endif()
-  superzip_zstd_replace_owned_region(
+  flitzzip_zstd_replace_owned_region(
     "${content}" "static ${dictionary_return} ZSTD${version}_refDictContent("
     "static size_t ZSTD${version}_loadEntropy(" "" content)
   set(${output}
@@ -104,7 +104,7 @@ endfunction()
 # Inputs: Private source with canonical independent components installed.
 # Outputs: Owned decoder geometry and complete entry guards before pointer
 # formation.
-function(superzip_zstd_canonical_geometry content version output)
+function(flitzzip_zstd_canonical_geometry content version output)
   if(NOT version STREQUAL "v05")
     # Header transfers use the actual owned array extent. The private duplicate
     # maximum constant has no remaining reader; public upstream headers retain
@@ -122,8 +122,8 @@ function(superzip_zstd_canonical_geometry content version output)
                  "${content}")
   string(REPLACE "base, vBase, dictEnd" "base, dictSize, dictEnd" content
                  "${content}")
-  superzip_zstd_owned_decoder_geometry("${content}" "${version}" content)
-  superzip_zstd_owned_decoder_guards("${content}" "${version}" content)
+  flitzzip_zstd_owned_decoder_geometry("${content}" "${version}" content)
+  flitzzip_zstd_owned_decoder_guards("${content}" "${version}" content)
   string(REPLACE "    dctx->previousDstEnd = op;\n" "" content "${content}")
   set(${output}
       "${content}"
@@ -133,7 +133,7 @@ endfunction()
 # Purpose: Install the complete stream ownership boundary from its original
 # region. Inputs: Private decoder source and a shipped version. Outputs: Checked
 # stream stages and matching context ownership, with no raw growth path.
-function(superzip_zstd_canonical_stream content version output)
+function(flitzzip_zstd_canonical_stream content version output)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyStream.cmake")
   string(TOUPPER "${version}" upper)
   file(READ
@@ -141,14 +141,14 @@ function(superzip_zstd_canonical_stream content version output)
        stream)
   string(REGEX REPLACE "\n+$" "" stream "${stream}")
   set(key "_zstd_legacy_stream_${version}")
-  superzip_zstd_replace_owned_region("${content}" "${${key}_begin}"
+  flitzzip_zstd_replace_owned_region("${content}" "${${key}_begin}"
                                      "${${key}_end}" "${stream}" content)
   string(
     REGEX
     REPLACE
       "(static|MEM_STATIC) size_t ZBUFF${version}_limitCopy\\([^}]*}[^}]*}" ""
       content "${content}")
-  superzip_zstd_rewrite_owned_context("${content}" "${version}" content)
+  flitzzip_zstd_rewrite_owned_context("${content}" "${version}" content)
   if(version STREQUAL "v07")
     string(REPLACE "${_zstd_geometry_window_original}"
                    "${_zstd_geometry_window_checked}" content "${content}")
@@ -161,19 +161,19 @@ endfunction()
 # Purpose: Generate one complete canonical decoder entirely in private storage.
 # Inputs: Exact immutable source text and one shipped version. Outputs: The
 # complete owned production decoder, including canonical test-only probes.
-function(superzip_zstd_generate_canonical content version output)
-  superzip_zstd_canonical_foundation("${content}" "${version}" content)
-  superzip_zstd_canonical_boundaries("${content}" "${version}" content)
-  superzip_zstd_owned_decoder_components("${content}" "${version}" content)
-  superzip_zstd_canonical_geometry("${content}" "${version}" content)
-  superzip_zstd_canonical_stream("${content}" "${version}" content)
+function(flitzzip_zstd_generate_canonical content version output)
+  flitzzip_zstd_canonical_foundation("${content}" "${version}" content)
+  flitzzip_zstd_canonical_boundaries("${content}" "${version}" content)
+  flitzzip_zstd_owned_decoder_components("${content}" "${version}" content)
+  flitzzip_zstd_canonical_geometry("${content}" "${version}" content)
+  flitzzip_zstd_canonical_stream("${content}" "${version}" content)
   file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedProbe.c" probe)
   string(REPLACE vXX "${version}" probe "${probe}")
   string(SUBSTRING "${version}" 1 2 number)
   string(REGEX REPLACE "^0" "" number "${number}")
   string(APPEND content
-         "\n#define SUPERZIP_LEGACY_DECODER_VERSION ${number}\n${probe}\n"
-         "#undef SUPERZIP_LEGACY_DECODER_VERSION\n")
+         "\n#define FLITZZIP_LEGACY_DECODER_VERSION ${number}\n${probe}\n"
+         "#undef FLITZZIP_LEGACY_DECODER_VERSION\n")
   string(SHA256 actual "${content}")
   if(NOT actual STREQUAL "${_zstd_canonical_${version}_patched}")
     message(
@@ -189,7 +189,7 @@ endfunction()
 # migrating exact old caches. Inputs: A dependency root whose three current
 # decoder hashes are all recognized. Outputs: Atomic individually verified final
 # sources; drift and interrupted writes reject before generation.
-function(superzip_patch_zstd_canonical source_dir)
+function(flitzzip_patch_zstd_canonical source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedDecoder.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyDictionary.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdTableGeometry.cmake")
@@ -201,12 +201,12 @@ function(superzip_patch_zstd_canonical source_dir)
     if(actual STREQUAL "${_zstd_canonical_${version}_patched}")
       continue()
     endif()
-    superzip_zstd_canonical_input("${version}" "${actual}" recognized)
+    flitzzip_zstd_canonical_input("${version}" "${actual}" recognized)
     if(NOT recognized)
       message(FATAL_ERROR "Zstandard patch source identity mismatch: ${source}")
     endif()
-    if(EXISTS "${source}.superzip-patch" OR EXISTS
-                                            "${source}.superzip-patch.raw")
+    if(EXISTS "${source}.flitzzip-patch" OR EXISTS
+                                            "${source}.flitzzip-patch.raw")
       message(FATAL_ERROR "Incomplete or concurrent Zstandard patch: ${source}")
     endif()
     set(required TRUE)
@@ -215,30 +215,30 @@ function(superzip_patch_zstd_canonical source_dir)
   if(NOT required)
     return()
   endif()
-  superzip_zstd_prepare_canonical_provenance("${source_dir}" pristine scratch)
+  flitzzip_zstd_prepare_canonical_provenance("${source_dir}" pristine scratch)
   foreach(version IN ITEMS v05 v06 v07)
     if(NOT DEFINED input_${version})
       continue()
     endif()
     file(READ "${pristine}/lib/legacy/zstd_${version}.c" content)
-    superzip_zstd_generate_canonical("${content}" "${version}"
+    flitzzip_zstd_generate_canonical("${content}" "${version}"
                                      proposed_${version})
   endforeach()
   foreach(version IN ITEMS v05 v06 v07)
     if(DEFINED input_${version})
-      superzip_write_verified_zstd_patch(
+      flitzzip_write_verified_zstd_patch(
         "${source_dir}/lib/legacy/zstd_${version}.c" "${input_${version}}"
         "${_zstd_canonical_${version}_patched}" "${proposed_${version}}")
     endif()
   endforeach()
-  superzip_zstd_release_canonical_provenance("${source_dir}" "${scratch}")
+  flitzzip_zstd_release_canonical_provenance("${source_dir}" "${scratch}")
 endfunction()
 
 # Purpose: Prepare exact upstream decoder bytes in a fresh private directory.
 # Inputs: The admitted dependency root; output names receive pristine and
 # scratch paths. Outputs: Only three immutable source files and the verified v05
 # foundation, or an explicit provenance/extraction error.
-function(superzip_zstd_prepare_canonical_provenance source_dir output
+function(flitzzip_zstd_prepare_canonical_provenance source_dir output
          scratch_output)
   string(CONCAT archive "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../third_party/"
                 "upstream/zstd/v1.5.7/zstd-v1.5.7.zip")
@@ -250,7 +250,7 @@ function(superzip_zstd_prepare_canonical_provenance source_dir output
     RANDOM
     LENGTH 16
     ALPHABET 0123456789abcdef nonce)
-  set(scratch "${source_dir}/.superzip-canonical-${nonce}")
+  set(scratch "${source_dir}/.flitzzip-canonical-${nonce}")
   if(EXISTS "${scratch}")
     message(FATAL_ERROR "Refusing a preexisting canonical generation directory")
   endif()
@@ -267,7 +267,7 @@ function(superzip_zstd_prepare_canonical_provenance source_dir output
     message(FATAL_ERROR "Canonical Zstandard provenance extraction failed")
   endif()
   set(pristine "${scratch}/zstd-1.5.7")
-  superzip_patch_zstd_v05("${pristine}")
+  flitzzip_patch_zstd_v05("${pristine}")
   set(${output}
       "${pristine}"
       PARENT_SCOPE)
@@ -280,13 +280,13 @@ endfunction()
 # Inputs: The admitted dependency root and its fresh scratch path. Outputs:
 # Removes private files after real-path containment checks; failed proposals
 # stay available for diagnosis.
-function(superzip_zstd_release_canonical_provenance source_dir scratch)
+function(flitzzip_zstd_release_canonical_provenance source_dir scratch)
   get_filename_component(resolved_source "${source_dir}" REALPATH)
   get_filename_component(resolved_scratch "${scratch}" REALPATH)
-  string(FIND "${resolved_scratch}" "${resolved_source}/.superzip-canonical-"
+  string(FIND "${resolved_scratch}" "${resolved_source}/.flitzzip-canonical-"
               owned_prefix)
   if(NOT owned_prefix EQUAL 0 OR NOT resolved_scratch MATCHES
-                                 "\\.superzip-canonical-[0-9a-f]+$")
+                                 "\\.flitzzip-canonical-[0-9a-f]+$")
     message(
       FATAL_ERROR "Refusing canonical cleanup outside private source storage")
   endif()

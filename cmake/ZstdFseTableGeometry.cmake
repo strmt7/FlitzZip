@@ -1,7 +1,7 @@
 # Purpose: Give all packed FSE construction/state consumers one checked layout.
 # Inputs: Verified predecessor text and component. Outputs: Proposed source with
 # unchanged packed ABI and explicit region/count contracts.
-function(superzip_rewrite_zstd_fse_table content part output)
+function(flitzzip_rewrite_zstd_fse_table content part output)
   if(part STREQUAL fse_header)
     file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdFseTableGeometry.c"
          helper)

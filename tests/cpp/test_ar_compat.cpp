@@ -127,13 +127,13 @@ TEST_CASE(ar_roundtrip_extracts_files_from_directories) {
     }
 
     const auto archive = root / "sample.ar";
-    const auto compress_stats = superzip::compress_ar({input}, archive);
+    const auto compress_stats = flitzzip::compress_ar({input}, archive);
     REQUIRE_EQ(compress_stats.entries, static_cast<std::uint64_t>(2));
     REQUIRE_TRUE(compress_stats.output_bytes > compress_stats.input_bytes);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Ar);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Ar);
 
     const auto output = root / "output";
-    const auto extract_stats = superzip::extract_ar(archive, output, false);
+    const auto extract_stats = flitzzip::extract_ar(archive, output, false);
     REQUIRE_EQ(extract_stats.output_bytes, compress_stats.input_bytes);
     REQUIRE_EQ(read_text_file(output / "input" / "dir" / "hello.txt"), read_text_file(input / "dir" / "hello.txt"));
     REQUIRE_EQ(read_text_file(output / "input" / "root.txt"), read_text_file(input / "root.txt"));
@@ -151,8 +151,8 @@ TEST_CASE(ar_unicode_member_names_roundtrip) {
     std::ofstream(source / "sibling.txt", std::ios::binary) << "sibling payload";
     const auto archive = root / "fixture.ar";
     const auto output = root / "output";
-    (void)superzip::compress_ar({source}, archive);
-    (void)superzip::extract_ar(archive, output, false);
+    (void)flitzzip::compress_ar({source}, archive);
+    (void)flitzzip::extract_ar(archive, output, false);
     REQUIRE_EQ(read_text_file(output / "source" / name), "unicode payload");
     REQUIRE_EQ(read_text_file(output / "source" / "sibling.txt"), "sibling payload");
     REQUIRE_EQ(count_regular_files(output), 2U);
@@ -181,13 +181,13 @@ TEST_CASE(ar_legacy_member_names_all_layouts) {
         }
         const auto output = root / std::to_string(layout);
         const auto stats =
-            superzip::extract_ar(archive, output, false, {}, superzip::ArchivePathEncoding::HostCodePage);
+            flitzzip::extract_ar(archive, output, false, {}, flitzzip::ArchivePathEncoding::HostCodePage);
         REQUIRE_EQ(stats.entries, 2U);
         REQUIRE_EQ(read_text_file(output / expected), "legacy");
         REQUIRE_EQ(read_text_file(output / "sibling.txt"), "next payload");
         REQUIRE_EQ(count_regular_files(output), 2U);
         if (layout == 1) {
-            superzip_test::export_compat_fixture(archive, output);
+            flitzzip_test::export_compat_fixture(archive, output);
         }
     }
 }
@@ -207,8 +207,8 @@ TEST_CASE(ar_invalid_member_encoding_prevents_all_output) {
     const auto output = root / "output";
     bool rejected = false;
     try {
-        (void)superzip::extract_ar(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_ar(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -224,7 +224,7 @@ TEST_CASE(ar_extracts_gnu_string_table_names) {
     write_gnu_long_name_ar_archive(archive);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_ar(archive, output, false);
+    const auto stats = flitzzip::extract_ar(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "dir" / "gnu-long-name.txt"), "gnu payload");
 }
@@ -237,17 +237,17 @@ TEST_CASE(deb_outer_container_extracts_with_native_ar_adapter) {
     const auto archive = root / "package.deb";
     write_one_bsd_ar_archive(archive, "debian-binary", "2.0\n");
 
-    const auto info = superzip::archive_format_info(superzip::ArchiveFormat::Deb);
+    const auto info = flitzzip::archive_format_info(flitzzip::ArchiveFormat::Deb);
     REQUIRE_TRUE(info.can_extract);
     REQUIRE_TRUE(!info.can_create);
     REQUIRE_TRUE(info.bundled_native);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Deb);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Deb);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_ar(archive, output, false);
+    const auto stats = flitzzip::extract_ar(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "debian-binary"), "2.0\n");
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify AR extraction rejects traversal metadata during the validation pass.
@@ -260,8 +260,8 @@ TEST_CASE(ar_extraction_rejects_traversal_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_ar(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_ar(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -285,8 +285,8 @@ TEST_CASE(ar_extraction_rejects_truncated_member_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_ar(archive, root / "out", false));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_ar(archive, root / "out", false));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -306,8 +306,8 @@ TEST_CASE(ar_extraction_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_ar(archive, output, false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_ar(archive, output, false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

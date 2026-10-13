@@ -34,12 +34,16 @@ Current guides use the measured size tables above. Superseded quantitative
 graphs have been retired from product documentation. Mermaid diagrams describe
 behavior and security flow; design-reference images describe UI concepts.
 
-The [fixture directory](data/fixtures) retains immutable historical record
+The [fixture directory](data/fixtures) retains historical record
 formats required by renderer and scanner-policy regression tests, including
 paired and GPU-only effort records with a nonmonotonic size observation. The
 [expected native SVG](../../resources/benchmarks/fixtures/native-v1.svg) is a
 golden test output, not a current performance chart. Their original dates,
-source identities and measurements remain intact. These passive fixtures stay
+source identities, actual tool-version strings and measurements remain intact.
+Product display labels and passive schema keys use the current names. The native
+receipt fixture remains byte-identical because its digests cover the original
+recipe and artifact names; it is read through the explicit historical schema.
+These passive fixtures stay
 within normal repository scanning and never authorize another corpus run.
 
 The graph workflow still runs every renderer's validation tests, including

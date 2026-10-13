@@ -42,12 +42,12 @@ class NativeBuildReceiptTests(unittest.TestCase):
         self.cache.update(
             CMAKE_GENERATOR="Visual Studio 18 2026",
             CMAKE_GENERATOR_PLATFORM="x64",
-            SUPERZIP_ENABLE_HIP="OFF",
-            SUPERZIP_HIP_ARCH="gfx1201",
-            SUPERZIP_PACKAGE_VERSION="0.8.0",
-            SUPERZIP_MSI_INSTALL_SCOPE="perMachine",
-            SUPERZIP_BUILD_GUI="ON",
-            SUPERZIP_BUILD_TESTS="ON",
+            FLITZZIP_ENABLE_HIP="OFF",
+            FLITZZIP_HIP_ARCH="gfx1201",
+            FLITZZIP_PACKAGE_VERSION="0.8.0",
+            FLITZZIP_MSI_INSTALL_SCOPE="perMachine",
+            FLITZZIP_BUILD_GUI="ON",
+            FLITZZIP_BUILD_TESTS="ON",
             CMAKE_CACHE_MAJOR_VERSION="4",
             CMAKE_CACHE_MINOR_VERSION="4",
             CMAKE_CACHE_PATCH_VERSION="3",
@@ -62,9 +62,9 @@ class NativeBuildReceiptTests(unittest.TestCase):
         )
         output = self.build / "Release"
         output.mkdir(exist_ok=True)
-        for name in ("superzip_cli.exe", "SuperZip.exe", "fixture.dll"):
+        for name in ("flitzzip_cli.exe", "FlitzZip.exe", "fixture.dll"):
             (output / name).write_bytes(name.encode("ascii"))
-        (self.build / "superzip-runtime-dependencies.json").write_text(
+        (self.build / "flitzzip-runtime-dependencies.json").write_text(
             json.dumps({"packaged_runtime_files": [{"name": "fixture.dll"}]}), encoding="utf-8"
         )
 
@@ -104,9 +104,9 @@ class NativeBuildReceiptTests(unittest.TestCase):
             result["receipt_sha256"], receipt.validate_current(self.root, "Release", False)["receipt_sha256"]
         )
         data = receipt.read_metadata(self.root, f"build/{receipt.RECEIPT}")
-        output = self.build / "Release/superzip_cli.exe"
+        output = self.build / "Release/flitzzip_cli.exe"
         self.assertEqual(
-            data["outputs_sha256"]["build/Release/superzip_cli.exe"], hashlib.sha256(output.read_bytes()).hexdigest()
+            data["outputs_sha256"]["build/Release/flitzzip_cli.exe"], hashlib.sha256(output.read_bytes()).hexdigest()
         )
         self.assertNotIn(str(self.root), canonical(data).decode("ascii"))
         self.assertNotIn(self.root.as_posix(), canonical(data).decode("ascii"))
@@ -185,8 +185,8 @@ class NativeBuildReceiptTests(unittest.TestCase):
         self.successful()
         for name in (
             "src/main.cpp",
-            "build/Release/SuperZip.exe",
-            "build/Release/superzip_cli.exe",
+            "build/Release/FlitzZip.exe",
+            "build/Release/flitzzip_cli.exe",
             "build/Release/fixture.dll",
         ):
             path = self.root / name
@@ -198,7 +198,7 @@ class NativeBuildReceiptTests(unittest.TestCase):
         (self.root / "src/new.cpp").write_text("new source", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "changed"):
             receipt.validate_current(self.root, "Release", False)
-        self.cache["SUPERZIP_PACKAGE_VERSION"] = "0.9.0"
+        self.cache["FLITZZIP_PACKAGE_VERSION"] = "0.9.0"
         self.write_cache()
         with self.assertRaisesRegex(ValueError, "configuration"):
             receipt.validate_current(self.root, "Release", False)
@@ -249,7 +249,7 @@ class NativeBuildReceiptTests(unittest.TestCase):
         (self.build / "bad.json").write_text('{"status":1,"status":2}', encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "duplicate"):
             receipt.read_metadata(self.root, "build/bad.json")
-        self.cache["SUPERZIP_HIP_ARCH"] = "C:/private/location"
+        self.cache["FLITZZIP_HIP_ARCH"] = "C:/private/location"
         self.write_cache()
         with self.assertRaises(ValueError):
             receipt.configured_recipe(self.root, "Release")

@@ -209,7 +209,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $lock = Get-Content -LiteralPath tools/rocm-sdk-lock.json -Raw | ConvertFrom-Json
-          $sdkParent = Join-Path $env:RUNNER_TOOL_CACHE "superzip-rocm-$($lock.version)-$($lock.sha256.Substring(0, 12))"
+          $sdkParent = Join-Path $env:RUNNER_TOOL_CACHE "flitzzip-rocm-$($lock.version)-$($lock.sha256.Substring(0, 12))"
           $sdkRoot = python tools/bootstrap_rocm_sdk.py --parent $sdkParent
           if ($LASTEXITCODE -ne 0) { throw "Complete ROCm SDK provisioning failed." }
           . ./tools/rocm_toolchain.ps1
@@ -306,7 +306,7 @@ jobs:
               if ($env:WIX_OSMF_EULA_ID -ne "wix7") {
                   throw "Set repository variable WIX_OSMF_EULA_ID to wix7 after accepting the WiX v7 OSMF EULA."
               }
-              $env:SUPERZIP_ACCEPT_WIX_OSMF_EULA = $env:WIX_OSMF_EULA_ID
+              $env:FLITZZIP_ACCEPT_WIX_OSMF_EULA = $env:WIX_OSMF_EULA_ID
               $packageArgs.CreateMsi = $true
           }
           & tools/package.ps1 @packageArgs
@@ -318,25 +318,25 @@ jobs:
           if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
               $PSNativeCommandUseErrorActionPreference = $false
           }
-          $root = Join-Path $env:RUNNER_TEMP "superzip-portable-smoke"
+          $root = Join-Path $env:RUNNER_TEMP "flitzzip-portable-smoke"
           $input = Join-Path $root "input"
           $extract = Join-Path $root "extract"
           $cpioExtract = Join-Path $root "extract-cpio"
           $cpioGzipExtract = Join-Path $root "extract-cpio-gzip"
           New-Item -ItemType Directory -Force -Path $input, $extract, $cpioExtract, $cpioGzipExtract | Out-Null
-          Set-Content -LiteralPath (Join-Path $input "alpha.txt") -Value "SuperZip release smoke $env:RELEASE_TAG"
-          $cli = Join-Path $PWD "out\install-Release\bin\superzip_cli.exe"
+          Set-Content -LiteralPath (Join-Path $input "alpha.txt") -Value "FlitzZip release smoke $env:RELEASE_TAG"
+          $cli = Join-Path $PWD "out\install-Release\bin\flitzzip_cli.exe"
           $dependency = & $cli dependency-check
           $dependencyExit = $LASTEXITCODE
           $dependency | Set-Content -LiteralPath (Join-Path $root "portable-dependency-check.txt")
           if ($env:ENABLE_HIP -eq "true") {
               . ./tools/package_runtime.ps1
-              Assert-SuperZipPackagedRuntime -PackageRoot (Join-Path $PWD 'out/install-Release') -HipEnabled $true
-              Assert-SuperZipHipDependencyState -Output $dependency -ExitCode $dependencyExit
+              Assert-FlitzZipPackagedRuntime -PackageRoot (Join-Path $PWD 'out/install-Release') -HipEnabled $true
+              Assert-FlitzZipHipDependencyState -Output $dependency -ExitCode $dependencyExit
           }
           & $cli compress --format zip --output (Join-Path $root "archive.zip") $input
           & $cli extract --format zip --output $extract (Join-Path $root "archive.zip")
-          if ((Get-Content -LiteralPath (Join-Path $extract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $extract "input\alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable ZIP smoke extraction did not preserve payload."
           }
           $sevenZipArchive = Join-Path $root "archive.7z"
@@ -372,21 +372,21 @@ jobs:
           New-Item -ItemType Directory -Force -Path $tarExtract | Out-Null
           & $cli compress --format tar --output (Join-Path $root "archive.tar") $input
           & $cli extract --format tar --output $tarExtract (Join-Path $root "archive.tar")
-          if ((Get-Content -LiteralPath (Join-Path $tarExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $tarExtract "input\alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable TAR smoke extraction did not preserve payload."
           }
           $tarGzExtract = Join-Path $root "extract-tar-gz"
           New-Item -ItemType Directory -Force -Path $tarGzExtract | Out-Null
           & $cli compress --format tar.gz --output (Join-Path $root "archive.tar.gz") $input
           & $cli extract --format tar.gz --output $tarGzExtract (Join-Path $root "archive.tar.gz")
-          if ((Get-Content -LiteralPath (Join-Path $tarGzExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $tarGzExtract "input\alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable TAR.GZ smoke extraction did not preserve payload."
           }
           $tarBz2Extract = Join-Path $root "extract-tar-bz2"
           New-Item -ItemType Directory -Force -Path $tarBz2Extract | Out-Null
           & $cli compress --format tar.bz2 --output (Join-Path $root "archive.tar.bz2") $input
           & $cli extract --format tar.bz2 --output $tarBz2Extract (Join-Path $root "archive.tar.bz2")
-          if ((Get-Content -LiteralPath (Join-Path $tarBz2Extract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $tarBz2Extract "input\alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable TAR.BZ2 smoke extraction did not preserve payload."
           }
           $tarZstdExtract = Join-Path $root "extract-tar-zst"
@@ -397,14 +397,14 @@ jobs:
               throw "Portable TAR.ZST smoke did not identify the .tar.zst archive: $tarZstdIdentity"
           }
           & $cli extract --format tar.zst --output $tarZstdExtract (Join-Path $root "archive.tar.zst")
-          if ((Get-Content -LiteralPath (Join-Path $tarZstdExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $tarZstdExtract "input\alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable TAR.ZST smoke extraction did not preserve payload."
           }
           $gzipExtract = Join-Path $root "extract-gzip"
           New-Item -ItemType Directory -Force -Path $gzipExtract | Out-Null
           & $cli compress --format gz --output (Join-Path $root "alpha.txt.gz") (Join-Path $input "alpha.txt")
           & $cli extract --format gz --output $gzipExtract (Join-Path $root "alpha.txt.gz")
-          if ((Get-Content -LiteralPath (Join-Path $gzipExtract "alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $gzipExtract "alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable Gzip smoke extraction did not preserve payload."
           }
           $bzip2Extract = Join-Path $root "extract-bzip2"
@@ -415,7 +415,7 @@ jobs:
               throw "Portable Bzip2 smoke did not identify the .bz2 stream: $bzip2Identity"
           }
           & $cli extract --format bz2 --output $bzip2Extract (Join-Path $root "alpha.txt.bz2")
-          if ((Get-Content -LiteralPath (Join-Path $bzip2Extract "alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $bzip2Extract "alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable Bzip2 smoke extraction did not preserve payload."
           }
           $zstdExtract = Join-Path $root "extract-zstd"
@@ -426,7 +426,7 @@ jobs:
               throw "Portable Zstandard smoke did not identify the .zst stream: $zstdIdentity"
           }
           & $cli extract --format zst --output $zstdExtract (Join-Path $root "alpha.txt.zst")
-          if ((Get-Content -LiteralPath (Join-Path $zstdExtract "alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $zstdExtract "alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable Zstandard smoke extraction did not preserve payload."
           }
           $unixCompressExtract = Join-Path $root "extract-unix-compress"
@@ -437,12 +437,12 @@ jobs:
               throw "Portable Unix Compress smoke did not identify the .Z stream: $unixCompressIdentity"
           }
           & $cli extract --format z --output $unixCompressExtract (Join-Path $root "alpha.txt.Z")
-          if ((Get-Content -LiteralPath (Join-Path $unixCompressExtract "alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $unixCompressExtract "alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable Unix Compress smoke extraction did not preserve payload."
           }
           & $cli compress --format cpio --output (Join-Path $root "archive.cpio") $input
           & $cli extract --format cpio --output $cpioExtract (Join-Path $root "archive.cpio")
-          if ((Get-Content -LiteralPath (Join-Path $cpioExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $cpioExtract "input\alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable CPIO smoke extraction did not preserve payload."
           }
           & $cli compress --format cpio.gz --output (Join-Path $root "archive.cpgz") $input
@@ -451,7 +451,7 @@ jobs:
               throw "Portable CPIO.GZ smoke did not identify the .cpgz archive: $cpioGzipIdentity"
           }
           & $cli extract --format cpio.gz --output $cpioGzipExtract (Join-Path $root "archive.cpgz")
-          if ((Get-Content -LiteralPath (Join-Path $cpioGzipExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $cpioGzipExtract "input\alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable CPIO.GZ smoke extraction did not preserve payload."
           }
           $rpmExtract = Join-Path $root "extract-rpm"
@@ -463,7 +463,7 @@ jobs:
               throw "Portable RPM smoke did not identify the RPM package: $rpmIdentity"
           }
           & $cli extract --format rpm --output $rpmExtract $rpmArchive
-          if ((Get-Content -LiteralPath (Join-Path $rpmExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $rpmExtract "input\alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable RPM smoke extraction did not preserve CPIO payload."
           }
           $cabExtract = Join-Path $root "extract-cab"
@@ -472,20 +472,20 @@ jobs:
           & .\tools\new_cab_smoke_fixture.ps1 `
             -OutputPath $cabArchive `
             -EntryName "input\alpha.txt" `
-            -Payload "SuperZip release smoke $env:RELEASE_TAG"
+            -Payload "FlitzZip release smoke $env:RELEASE_TAG"
           $cabIdentity = & $cli identify $cabArchive
           if ($cabIdentity -notmatch 'format=cab') {
               throw "Portable CAB smoke did not identify the CAB archive: $cabIdentity"
           }
           & $cli extract --format cab --output $cabExtract $cabArchive
-          if ((Get-Content -LiteralPath (Join-Path $cabExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $cabExtract "input\alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable CAB smoke extraction did not preserve payload."
           }
           $arExtract = Join-Path $root "extract-ar"
           New-Item -ItemType Directory -Force -Path $arExtract | Out-Null
           & $cli compress --format ar --output (Join-Path $root "archive.ar") $input
           & $cli extract --format ar --output $arExtract (Join-Path $root "archive.ar")
-          if ((Get-Content -LiteralPath (Join-Path $arExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $arExtract "input\alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable AR smoke extraction did not preserve payload."
           }
           $debExtract = Join-Path $root "extract-deb"
@@ -496,27 +496,27 @@ jobs:
               throw "Portable DEB smoke did not identify the AR-based package as deb: $debIdentity"
           }
           & $cli extract --format deb --output $debExtract (Join-Path $root "package.deb")
-          if ((Get-Content -LiteralPath (Join-Path $debExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $debExtract "input\alpha.txt")) -notlike "FlitzZip release smoke*") {
               throw "Portable DEB smoke extraction did not preserve outer AR payload."
           }
           $isoExtract = Join-Path $root "extract-iso"
           New-Item -ItemType Directory -Force -Path $isoExtract | Out-Null
           $isoArchive = Join-Path $root "archive.iso"
-          & .\tools\new_iso_smoke_fixture.ps1 -OutputPath $isoArchive -Payload "SuperZip release smoke $env:RELEASE_TAG"
+          & .\tools\new_iso_smoke_fixture.ps1 -OutputPath $isoArchive -Payload "FlitzZip release smoke $env:RELEASE_TAG"
           $isoIdentity = & $cli identify $isoArchive
           if ($isoIdentity -notmatch 'format=iso') {
               throw "Portable ISO smoke did not identify the .iso image: $isoIdentity"
           }
           & $cli extract --format iso --output $isoExtract $isoArchive
-          if ((Get-Content -LiteralPath (Join-Path $isoExtract "ALPHA.TXT")) -notlike "SuperZip release smoke*") {
+          if ((Get-Content -LiteralPath (Join-Path $isoExtract "ALPHA.TXT")) -notlike "FlitzZip release smoke*") {
               throw "Portable ISO smoke extraction did not preserve payload."
           }
-          $archive = Join-Path $root "archive.suzip"
-          $suzipArgs = @("compress", "--format", "suzip", "--sha256", "--output", $archive, $input)
+          $archive = Join-Path $root "archive.flzip"
+          $flzipArgs = @("compress", "--format", "flzip", "--sha256", "--output", $archive, $input)
           if ($env:ENABLE_HIP -eq "true" -and $dependencyExit -eq 0) {
-              $suzipArgs = @("compress", "--format", "suzip", "--require-gpu", "--sha256", "--output", $archive, $input)
+              $flzipArgs = @("compress", "--format", "flzip", "--require-gpu", "--sha256", "--output", $archive, $input)
           }
-          & $cli @suzipArgs
+          & $cli @flzipArgs
           & $cli verify --sha256 $archive
 
       - name: MSI install smoke
@@ -575,10 +575,10 @@ jobs:
           }
 
           $msi = Join-Path $PWD "out\$env:PACKAGE_BASE.msi"
-          $installLog = Join-Path $env:RUNNER_TEMP "superzip-msi-install.log"
-          $repairLog = Join-Path $env:RUNNER_TEMP "superzip-msi-repair.log"
-          $uninstallLog = Join-Path $env:RUNNER_TEMP "superzip-msi-uninstall.log"
-          $expectedCli = Join-Path $env:ProgramFiles "SuperZip\bin\superzip_cli.exe"
+          $installLog = Join-Path $env:RUNNER_TEMP "flitzzip-msi-install.log"
+          $repairLog = Join-Path $env:RUNNER_TEMP "flitzzip-msi-repair.log"
+          $uninstallLog = Join-Path $env:RUNNER_TEMP "flitzzip-msi-uninstall.log"
+          $expectedCli = Join-Path $env:ProgramFiles "FlitzZip\bin\flitzzip_cli.exe"
           $installed = $false
           try {
               Invoke-CheckedMsiExec `
@@ -592,11 +592,11 @@ jobs:
               }
               $dependency = & $expectedCli dependency-check
               $dependencyExit = $LASTEXITCODE
-              $dependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "superzip-msi-dependency-check.txt")
+              $dependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "flitzzip-msi-dependency-check.txt")
               if ($env:ENABLE_HIP -eq "true") {
                   . ./tools/package_runtime.ps1
-                  Assert-SuperZipPackagedRuntime -PackageRoot (Split-Path -Parent (Split-Path -Parent $expectedCli)) -HipEnabled $true
-                  Assert-SuperZipHipDependencyState -Output $dependency -ExitCode $dependencyExit
+                  Assert-FlitzZipPackagedRuntime -PackageRoot (Split-Path -Parent (Split-Path -Parent $expectedCli)) -HipEnabled $true
+                  Assert-FlitzZipHipDependencyState -Output $dependency -ExitCode $dependencyExit
               } elseif ($dependencyExit -ne 0) {
                   throw "Installed dependency check failed with exit code $dependencyExit."
               }
@@ -610,10 +610,10 @@ jobs:
               }
               $repairDependency = & $expectedCli dependency-check
               $repairDependencyExit = $LASTEXITCODE
-              $repairDependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "superzip-msi-repair-dependency-check.txt")
+              $repairDependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "flitzzip-msi-repair-dependency-check.txt")
               if ($env:ENABLE_HIP -eq "true") {
-                  Assert-SuperZipPackagedRuntime -PackageRoot (Split-Path -Parent (Split-Path -Parent $expectedCli)) -HipEnabled $true
-                  Assert-SuperZipHipDependencyState -Output $repairDependency -ExitCode $repairDependencyExit
+                  Assert-FlitzZipPackagedRuntime -PackageRoot (Split-Path -Parent (Split-Path -Parent $expectedCli)) -HipEnabled $true
+                  Assert-FlitzZipHipDependencyState -Output $repairDependency -ExitCode $repairDependencyExit
               } elseif ($repairDependencyExit -ne 0) {
                   throw "Repaired dependency check failed with exit code $repairDependencyExit."
               }
@@ -642,8 +642,8 @@ jobs:
               throw "Curated release notes are required: $curatedPath"
           }
           $firstLine = Get-Content -LiteralPath $curatedPath -TotalCount 1
-          if ($firstLine -ne "# SuperZip $env:RELEASE_VERSION") {
-              throw "Release notes heading must match SuperZip $env:RELEASE_VERSION."
+          if ($firstLine -ne "# FlitzZip $env:RELEASE_VERSION") {
+              throw "Release notes heading must match FlitzZip $env:RELEASE_VERSION."
           }
           $curatedNotes = (Get-Content -LiteralPath $curatedPath -Raw).Trim()
           $hipLine = if ($env:ENABLE_HIP -eq "true") {
@@ -756,7 +756,7 @@ jobs:
               "release", "create", $env:RELEASE_TAG
           ) + $assets + @(
               "--target", $env:GITHUB_SHA,
-              "--title", "SuperZip $env:RELEASE_TAG",
+              "--title", "FlitzZip $env:RELEASE_TAG",
               "--notes-file", "out\release-notes.md",
               "--draft"
           )

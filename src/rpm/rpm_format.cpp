@@ -14,7 +14,7 @@
 #include <string_view>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kRpmLeadBytes = 96U;
@@ -147,7 +147,7 @@ RpmHeaderScan read_rpm_header(std::ifstream& input, std::uint64_t archive_size, 
         throw ArchiveError(std::string("RPM ") + label + " header contains too many entries");
     }
     if (store_size > kRpmMaxHeaderStoreBytes) {
-        throw ArchiveError(std::string("RPM ") + label + " header store exceeds SuperZip limits");
+        throw ArchiveError(std::string("RPM ") + label + " header store exceeds FlitzZip limits");
     }
 
     const auto index_bytes = checked_mul_rpm_bytes(index_count, kRpmIndexEntryBytes, "RPM index byte count overflow");
@@ -211,7 +211,7 @@ RpmHeaderScan read_rpm_header(std::ifstream& input, std::uint64_t archive_size, 
 
 // Purpose: Read and validate the fixed 96-byte RPM lead.
 // Inputs: `input` is positioned at the file start.
-// Outputs: Throws when the file is not an RPM lead supported by SuperZip.
+// Outputs: Throws when the file is not an RPM lead supported by FlitzZip.
 void read_rpm_lead(std::ifstream& input) {
     std::array<unsigned char, kRpmLeadBytes> lead{};
     read_exact(input, reinterpret_cast<char*>(lead.data()), lead.size(), "RPM lead");
@@ -342,4 +342,4 @@ RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path) {
     };
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

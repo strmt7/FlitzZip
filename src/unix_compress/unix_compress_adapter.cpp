@@ -21,7 +21,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kIoBufferBytes = 64U * 1024U;
@@ -517,7 +517,7 @@ std::uint64_t decode_unix_compress_payload(std::ifstream& input, std::ofstream& 
 
 struct UnixCompressEncodeState {
     // Purpose: Initialize bounded Unix Compress encoder dictionary state.
-    // Inputs: None; SuperZip emits block-mode 16-bit `.Z` streams.
+    // Inputs: None; FlitzZip emits block-mode 16-bit `.Z` streams.
     // Outputs: Creates the compressor dictionary and counters for a new payload.
     UnixCompressEncodeState() {
         dictionary.reserve(kMaxDictionaryEntries);
@@ -766,4 +766,4 @@ OperationStats extract_unix_compress_file(const std::filesystem::path& archive_p
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

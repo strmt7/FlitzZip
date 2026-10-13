@@ -6,7 +6,7 @@
 #include <string_view>
 #include <array>
 
-namespace superzip {
+namespace flitzzip {
 
 struct ArchiveNameEncodingChoice {
     ArchivePathEncoding encoding;
@@ -34,4 +34,4 @@ void validate_archive_name_encoding(ArchivePathEncoding encoding);
 // Outputs: Returns strict UTF-8 within path limits; throws ArchiveError for malformed or excessive metadata.
 std::string decode_archive_name(std::string_view raw, ArchivePathEncoding encoding);
 
-}  // namespace superzip
+}  // namespace flitzzip

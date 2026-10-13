@@ -4,7 +4,7 @@
 
 #include <string_view>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Decide whether a configured log level should record one event.
 // Inputs: `log_level_index` is the Settings dropdown row and `severity` is the event category.
@@ -35,4 +35,4 @@ inline std::string_view log_severity_text(LogSeverity severity) {
     return "Information";
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

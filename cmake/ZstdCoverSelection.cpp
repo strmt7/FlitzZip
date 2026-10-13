@@ -13,7 +13,7 @@ extern "C" {
 #include "zstd.h"
 }
 
-#ifdef SUPERZIP_COVER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_COVER_FAULT_ALLOCATIONS
 #include "fault_allocator.h"
 #endif
 
@@ -22,7 +22,7 @@ struct DictionaryDelete {
     // Purpose: Release a selected dictionary with its matching allocator.
     // Inputs: A transferred array or null. Outputs: Releases exactly one owner; never throws.
     void operator()(BYTE* data) const noexcept {
-#ifdef SUPERZIP_COVER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_COVER_FAULT_ALLOCATIONS
         sz_fault_free(data);
 #else
         delete[] data;
@@ -67,7 +67,7 @@ bool capture_samples(const BYTE* bytes, const std::size_t* sizes, const std::siz
 // Purpose: Acquire a move-only dictionary array, with serial allocator interposition in the test build.
 // Inputs: Validated byte capacity. Outputs: One owner or an empty owner on allocation failure.
 DictionaryOwner allocate_dictionary(std::size_t capacity) noexcept {
-#ifdef SUPERZIP_COVER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_COVER_FAULT_ALLOCATIONS
     return DictionaryOwner(static_cast<BYTE*>(sz_fault_malloc(capacity)));
 #else
     return DictionaryOwner(new (std::nothrow) BYTE[capacity]);

@@ -102,8 +102,8 @@ foreach ($entry in @($manifest.notices)) {
         throw "License notice title must not be empty."
     }
     $group = [string]$entry.group
-    if ($group -ne "SuperZip" -and $group -ne "Other") {
-        throw "License notice '$title' must declare group SuperZip or Other."
+    if ($group -ne "FlitzZip" -and $group -ne "Other") {
+        throw "License notice '$title' must declare group FlitzZip or Other."
     }
     if (-not $titles.Add($title)) {
         throw "Duplicate license notice title: $title"
@@ -132,7 +132,7 @@ $lines.Add("")
 $lines.Add("#include <array>")
 $lines.Add("#include <string_view>")
 $lines.Add("")
-$lines.Add("namespace superzip::app {")
+$lines.Add("namespace flitzzip::app {")
 $lines.Add("")
 $lines.Add("struct LicenseNotice {")
 $lines.Add("    std::string_view title;")
@@ -151,6 +151,6 @@ for ($index = 0; $index -lt $notices.Count; ++$index) {
 }
 $lines.Add("}};")
 $lines.Add("")
-$lines.Add("}  // namespace superzip::app")
+$lines.Add("}  // namespace flitzzip::app")
 $lines.Add("")
 [IO.File]::WriteAllLines($OutputPath, $lines.ToArray(), [Text.UTF8Encoding]::new($false))

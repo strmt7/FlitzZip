@@ -68,15 +68,15 @@ TEST_CASE(xxe_compat_roundtrip) {
     write_binary_file(input, payload);
 
     const auto archive = root / "payload.xxe";
-    const auto compress_stats = superzip::compress_xxe_file(input, archive);
+    const auto compress_stats = flitzzip::compress_xxe_file(input, archive);
     REQUIRE_TRUE(compress_stats.output_bytes > payload.size());
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Xxe);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Xxe);
 
     const auto output = root / "out";
-    const auto extract_stats = superzip::extract_xxe_file(archive, output, false);
+    const auto extract_stats = flitzzip::extract_xxe_file(archive, output, false);
     REQUIRE_EQ(extract_stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_binary_file(output / "payload.bin"), payload);
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 
@@ -92,8 +92,8 @@ TEST_CASE(xxe_compress_rejects_multiple_sources) {
 
     bool rejected = false;
     try {
-        (void)superzip::compress_xxe({first, second}, root / "multi.xxe");
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::compress_xxe({first, second}, root / "multi.xxe");
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -111,8 +111,8 @@ TEST_CASE(xxe_extract_rejects_unsafe_header_path) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_xxe_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_xxe_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -132,8 +132,8 @@ TEST_CASE(xxe_extract_rejects_malformed_payload_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_xxe_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_xxe_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -153,8 +153,8 @@ TEST_CASE(xxe_extract_rejects_post_end_trailer_data) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_xxe_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_xxe_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -172,7 +172,7 @@ TEST_CASE(xxe_extract_accepts_space_zero_length_terminator) {
     write_text_file(archive, "begin 644 empty.txt\n \nend\n");
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_xxe_file(archive, output, false);
+    const auto stats = flitzzip::extract_xxe_file(archive, output, false);
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(0));
     REQUIRE_TRUE(std::filesystem::exists(output / "empty.txt"));
     REQUIRE_EQ(read_binary_file(output / "empty.txt"), std::vector<unsigned char>{});
@@ -187,7 +187,7 @@ TEST_CASE(xxe_extract_rejects_overwrite_by_default) {
     const auto input = root / "sample.txt";
     write_text_file(input, "new payload");
     const auto archive = root / "sample.xxe";
-    (void)superzip::compress_xxe_file(input, archive);
+    (void)flitzzip::compress_xxe_file(input, archive);
 
     const auto output = root / "out";
     std::filesystem::create_directories(output);
@@ -195,8 +195,8 @@ TEST_CASE(xxe_extract_rejects_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_xxe_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_xxe_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

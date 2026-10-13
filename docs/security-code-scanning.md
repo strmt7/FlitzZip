@@ -1,6 +1,6 @@
 # Security Code Scanning
 
-SuperZip uses automatic GitHub security workflows adapted for a native Windows
+FlitzZip uses automatic GitHub security workflows adapted for a native Windows
 C++ app. The workflows are source-controlled, SHA-pinned where GitHub Actions
 are used, and default to read-only repository permissions.
 
@@ -38,7 +38,7 @@ prevent duplicate alerts across runs. Preserve paths, rule IDs, categories and
 fingerprints when modifying scanners; never invent fingerprints to hide results.
 GitHub's [incremental-analysis guidance](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/scan-from-the-command-line/incremental-analysis)
 states that CodeQL Actions handle incremental analysis automatically, and CLI
-overlays require no-build extraction. SuperZip retains its traced native build
+overlays require no-build extraction. FlitzZip retains its traced native build
 and generated dependency coverage; switching to no-build extraction or filtering
 results to edited lines would not provide equivalent acceptance evidence here.
 The existing [security-and-quality suite](https://docs.github.com/en/code-security/concepts/code-scanning/codeql/codeql-query-suites)
@@ -130,7 +130,7 @@ identities; the skipped label alone does not establish coverage or closure.
   linting. Push and pull-request runs are change-aware; weekly and manual runs
   check all owned files. Markdown includes root documents and agent skills,
   not only README and `docs/`. Upstream vendor formatting is not rewritten to
-  enforce SuperZip style; its compiled/source security checks remain active.
+  enforce FlitzZip style; its compiled/source security checks remain active.
 - `.github/workflows/dependency-review.yml` runs Dependency Review on pull
   request only.
 - `.github/workflows/release.yml` is manual-only and runs release build,
@@ -228,18 +228,18 @@ consumer binds actual member/source locations separately from reported archive
 attributions, and rejects verified credentials or any unmatched identity.
 
 The maintainer approved the ten exact integrity metadata records in
-[the 5 October review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-public-checksum-review-2026-10-05.md). These
+[the 5 October review](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-public-checksum-review-2026-10-05.md). These
 cover original corpus, comparator binary and license-notice hashes. Raw reports
 remain intact, changed file bytes or values expire admission, and source/test
 findings cannot use this metadata ledger. This approval does not dismiss hosted
 alerts or close unresolved legal, source, GPU or release obligations.
 
-The [NLTK public commit review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-nltk-public-commit-review-2026-10-05.md)
+The [NLTK public commit review](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-nltk-public-commit-review-2026-10-05.md)
 documents one additional provenance report. Its status and individual maintainer
 authorization are recorded in that review; the admission ledger cannot inherit
 the earlier checksum approvals for this separate value.
 
-The [latest individual review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-finding-review-2026-10-03.md#latest-individual-metadata-triage)
+The [latest individual review](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-finding-review-2026-10-03.md#latest-individual-metadata-triage)
 records five metadata/namespace false-positive dispositions at `ed3ea0f`.
 Each has its own source/producer evidence and GitHub audit comment. They are
 not automatic closures or code-finding exemptions; all remaining source and
@@ -279,18 +279,18 @@ checks; hosted history and working-tree acceptance still require a new run.
 DevSkim uses the separate input-role contract above; this checksum policy does
 not alter DevSkim rules or suppress any code findings.
 
-On October 3, 2026, [alert 1742](https://github.com/strmt7/SuperZip/security/code-scanning/1742)
+On October 3, 2026, [alert 1742](https://github.com/strmt7/FlitzZip/security/code-scanning/1742)
 was confirmed to match the public ROCm archive SHA-256 pin, which
-`download_archive` verifies against archive bytes. [Alert 1743](https://github.com/strmt7/SuperZip/security/code-scanning/1743)
+`download_archive` verifies against archive bytes. [Alert 1743](https://github.com/strmt7/FlitzZip/security/code-scanning/1743)
 matched HTTP metadata in a negative redirect test; `NoRedirect.redirect_request`
 unconditionally raises before network I/O, while production downloads require
 HTTPS. Both dispositions reviewed source at `be30316` and required the passing
 Gitleaks history/working-tree and TruffleHog history steps in
-[security run 37100463323](https://github.com/strmt7/SuperZip/actions/runs/37100463323).
+[security run 37100463323](https://github.com/strmt7/FlitzZip/actions/runs/37100463323).
 Each alert has its own evidence comment. No rule, scan scope or test was removed.
 
-On October 3, [alert 1754](https://github.com/strmt7/SuperZip/security/code-scanning/1754)
-and [alert 1753](https://github.com/strmt7/SuperZip/security/code-scanning/1753)
+On October 3, [alert 1754](https://github.com/strmt7/FlitzZip/security/code-scanning/1754)
+and [alert 1753](https://github.com/strmt7/FlitzZip/security/code-scanning/1753)
 were individually confirmed to match the pinned `archive_sha256` and
 `member.sha256` in `household-power-source.json` at `5c1101f`. These are locally
 observed public dataset digests, not credentials or publisher-signed hashes.
@@ -299,7 +299,7 @@ and its 132,960,755-byte member, including complete-member CRC. The producer in
 `tools/acquire_benchmark_corpus.py` compares complete bytes against these fields
 before writing excerpts. Gitleaks history/working-tree and TruffleHog history
 passed for the exact SHA in
-[run 37114057563](https://github.com/strmt7/SuperZip/actions/runs/37114057563).
+[run 37114057563](https://github.com/strmt7/FlitzZip/actions/runs/37114057563).
 Both alerts have specific false-positive comments within GitHub's 280-character
 limit; the initial oversized comment was rejected before changing any alert.
 The subsequent audit still reported 209 unapproved open alerts. No broader
@@ -309,7 +309,7 @@ disposition, scanner exclusion or source-pin removal followed this review.
 
 On 2026-09-30, OSV and Grype reported PyJWT 2.13.0 in
 `.github/requirements/requirements-semgrep-linux.txt`. The affected package is
-CI scanner tooling, not a dependency shipped in the SuperZip application.
+CI scanner tooling, not a dependency shipped in the FlitzZip application.
 [PyJWT's newer pre-verification advisory](https://github.com/advisories/GHSA-42vr-xj54-vc7v)
 requires at least 2.15.0; the latest stable PyJWT checked on 2026-10-01 is 2.15.1.
 At that point Semgrep 1.178.0 declared `pyjwt[crypto]~=2.13.0`, excluding that version.
@@ -333,7 +333,7 @@ These diagnostics are coverage limits, not proof of a vulnerability-free tree.
 Other scanners and all current GitHub alerts remain required.
 
 The October 1 production workflow built the explicit downstream distribution
-`semgrep==1.178.0+superzip.1` through a reviewed wheel builder. The
+`semgrep==1.178.0+flitzzip.1` through a reviewed wheel builder. The
 official upstream wheel and its RECORD are verified before transformation.
 Every code/notice byte stays unchanged; the distribution version and requirement
 become the reviewed local identity and `pyjwt[crypto]==2.15.1`. Complete RECORD
@@ -386,21 +386,21 @@ Local Linux verification uses the same installation and runtime commands as CI:
 
 ```sh
 python -m unittest tools.test_semgrep_installation
-python -m venv /tmp/superzip-semgrep
-/tmp/superzip-semgrep/bin/python -m pip install --require-hashes --only-binary=:all: -r .github/requirements/requirements-semgrep-linux.txt
-/tmp/superzip-semgrep/bin/python -m pip check
-/tmp/superzip-semgrep/bin/python -m unittest tools.test_semgrep_runtime
+python -m venv /tmp/flitzzip-semgrep
+/tmp/flitzzip-semgrep/bin/python -m pip install --require-hashes --only-binary=:all: -r .github/requirements/requirements-semgrep-linux.txt
+/tmp/flitzzip-semgrep/bin/python -m pip check
+/tmp/flitzzip-semgrep/bin/python -m unittest tools.test_semgrep_runtime
 ```
 
 Hosted remediation is not confirmed until the exact pushed commit passes its
 scanner workflows and the post-push audit shows the affected alerts fixed.
 The earlier downstream revision remains historical evidence, not the current
 installation or an official release. CI tooling does not add a Python dependency
-to SuperZip's native runtime.
+to FlitzZip's native runtime.
 
 ## Required GitHub Repository Settings
 
-Enable these in `strmt7/SuperZip`:
+Enable these in `strmt7/FlitzZip`:
 
 1. `Settings > Code security and analysis > Code scanning`.
 2. `Settings > Code security and analysis > Dependabot alerts`.
@@ -429,14 +429,14 @@ Required repository variables:
   broker. The broker must validate the GitHub OIDC token claims before returning
   any private scanner settings.
 - `GREENBONE_SECRET_PROVIDER_AUDIENCE`: Optional OIDC audience. Defaults to
-  `superzip-openvas`.
+  `flitzzip-openvas`.
 
 The broker must return this JSON object after validating the OIDC token:
 
 ```json
 {
   "greenbone_host": "scanner.example",
-  "greenbone_username": "superzip-ci",
+  "greenbone_username": "flitzzip-ci",
   "greenbone_password": "redacted",
   "greenbone_target": "authorized-target.example",
   "greenbone_port": "9390",
@@ -479,19 +479,19 @@ Optional returned fields:
 
 Create the repository variables through the GitHub UI:
 
-1. Open `https://github.com/strmt7/SuperZip`.
+1. Open `https://github.com/strmt7/FlitzZip`.
 2. Go to `Settings > Secrets and variables > Actions`.
 3. Add each required value under `Variables`.
 
-Do not create a GitHub Actions environment for this workflow. SuperZip
+Do not create a GitHub Actions environment for this workflow. FlitzZip
 workflows must never create deployment records, and scanner credentials must
 stay outside GitHub Actions.
 
 Create the same repository variables with GitHub CLI:
 
 ```powershell
-gh variable set GREENBONE_SECRET_PROVIDER_URL -R strmt7/SuperZip --body https://scanner-broker.example/superzip/openvas
-gh variable set GREENBONE_SECRET_PROVIDER_AUDIENCE -R strmt7/SuperZip --body superzip-openvas
+gh variable set GREENBONE_SECRET_PROVIDER_URL -R strmt7/FlitzZip --body https://scanner-broker.example/flitzzip/openvas
+gh variable set GREENBONE_SECRET_PROVIDER_AUDIENCE -R strmt7/FlitzZip --body flitzzip-openvas
 ```
 
 The variable values are non-secret broker routing metadata. Do not put
@@ -500,16 +500,16 @@ variables.
 
 ## Operational Rules
 
-- The SuperZip lint stack is intentionally language-specific. It uses
+- The FlitzZip lint stack is intentionally language-specific. It uses
   `clang-format` for owned C/C++ files, PSScriptAnalyzer for PowerShell, Ruff
   for Python helper scripts, yamllint for GitHub YAML, pymarkdownlnt for
   Markdown, and cmakelang for CMake. The Python/Docker reference repository
   pattern of separate Ruff/Mypy/Vulture/Super-Linter lanes is useful as a CI
-  shape, but SuperZip does not run linters for languages or container surfaces
+  shape, but FlitzZip does not run linters for languages or container surfaces
   that are not part of this Windows-native C++ product.
 - CodeQL C++ uses `build-mode: manual` on `windows-2022` with
   `tools/build.ps1 -Configuration Release -CpuOnlyValidation`. Build-free C/C++
-  analysis under-modeled SuperZip's Win32, GDI+, HIP-boundary, and vendored C
+  analysis under-modeled FlitzZip's Win32, GDI+, HIP-boundary, and vendored C
   sources and produced parser-artifact alerts such as namespace qualifiers,
   macros, and typed pointer arithmetic being reported as code issues. Manual
   Windows tracing is the default security signal because it uses real compiler
@@ -524,8 +524,8 @@ variables.
   both configurations. Device-kernel
   extraction is not claimed; the six-target compile lane, source scanners,
   kernel review and actual GPU tests retain that separate coverage.
-- Do not split CodeQL C++ by SuperZip subdirectory. Subdirectory-parallel CodeQL
-  can be useful for independent interpreted-language monorepos, but SuperZip is
+- Do not split CodeQL C++ by FlitzZip subdirectory. Subdirectory-parallel CodeQL
+  can be useful for independent interpreted-language monorepos, but FlitzZip is
   one C++ product whose archive parser, path validation, CLI, GUI, and GPU
   boundary share data flow. Partial C++ databases can hide cross-component
   vulnerabilities.
@@ -554,7 +554,7 @@ variables.
   totals, then applies the unchanged open-alert gate. An unresolved finding still
   fails the command after its report is saved. Ordinary post-push checks remain
   open-only to avoid repeatedly downloading the entire history.
-  See [the review and recurrence map](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/code-scanning-history-review.md).
+  See [the review and recurrence map](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/code-scanning-history-review.md).
 - The push and pull-request lane validates the workflow, hash-locked Greenbone
   tools, and GMP script contract without touching a network target.
 - The scheduled/manual live scan lane fails closed with an explicit report when

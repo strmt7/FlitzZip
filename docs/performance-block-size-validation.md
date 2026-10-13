@@ -1,6 +1,6 @@
-# SuperZip Performance And Block-Size Validation
+# FlitzZip Performance And Block-Size Validation
 
-This document defines how SuperZip performance work is validated without
+This document defines how FlitzZip performance work is validated without
 creating unnecessary SSD wear. It is the operating reference for block-size
 changes, CPU/GPU benchmark claims, and the relationship between GUI controls,
 CLI arguments, and archive-core resource limits.
@@ -188,7 +188,7 @@ outlier removal to obtain a preferred result.
 
 - Compare forced-CPU and required-AMD-HIP lanes on the same generated data.
 - Keep development benchmarks RAM-only for both lanes.
-- Exercise every production SUZIP block-size option.
+- Exercise every production FLZIP block-size option.
 - Compare CPU and GPU at the same compression level and record compression ratio.
 - Keep the Mixed profile broad enough to include low-entropy non-pattern data,
   not only fill, repeated text, and random bytes.
@@ -234,7 +234,7 @@ flowchart LR
     UI["Compress page block-size dropdown"] --> State["UiState.compression_block_size_index"]
     State --> Map["compression_block_size_bytes"]
     Map --> Options["CompressOptions.block_size"]
-    Options --> Core["compress_suzip"]
+    Options --> Core["compress_flzip"]
     Core --> Codec["GpuCodecOptions.block_size"]
     Codec --> HIP["AMD HIP block analysis and encode/decode kernels"]
 ```
@@ -372,7 +372,7 @@ Record these fields for every block size:
 | `MemoryOnly`, `DiskWriteBytes` | Confirms the benchmark did not write the workload to storage. |
 | CPU/GPU utilization samples | Helps interpret whether the bottleneck is host, device, or scheduling. |
 
-The owned-output [development checkpoint](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/benchmarks/2026-10-01-pinned-output-pool.md)
+The owned-output [development checkpoint](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/benchmarks/2026-10-01-pinned-output-pool.md)
 records the bounded pin policy, production/RAM path parity, and matched
 extraction measurements. Its new schema-two fields are additive. Historical
 records without decoder counters retain unavailable values; do not infer their

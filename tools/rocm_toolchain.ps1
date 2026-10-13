@@ -59,5 +59,5 @@ function Invoke-RocmCompilerEnvironment {
         HIP_DEVICE_LIB_PATH = (Join-Path $Root 'lib/llvm/amdgcn/bitcode')
         LLVM_PATH = (Join-Path $Root 'lib/llvm')
     }
-    Invoke-SuperZipProcessEnvironment -Settings $settings -Action $Action
+    Invoke-FlitzZipProcessEnvironment -Settings $settings -Action $Action
 }

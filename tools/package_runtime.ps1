@@ -1,7 +1,7 @@
 # Purpose: Validate installed runtime bytes independently from optional GPU hardware availability.
 # Inputs: PackageRoot is an installed/staged payload; HipEnabled is its configured product capability.
 # Outputs: Throws for missing, redirected, duplicate, unexpected or checksum-mismatched packaged runtimes.
-function Assert-SuperZipPackagedRuntime {
+function Assert-FlitzZipPackagedRuntime {
     param([Parameter(Mandatory = $true)][string]$PackageRoot, [bool]$HipEnabled)
 
     foreach ($directory in @($PackageRoot, (Join-Path $PackageRoot 'bin'))) {
@@ -10,13 +10,13 @@ function Assert-SuperZipPackagedRuntime {
             throw 'Packaged runtime directory is redirected or invalid.'
         }
     }
-    $manifestPath = Join-Path $PackageRoot 'superzip-runtime-dependencies.json'
+    $manifestPath = Join-Path $PackageRoot 'flitzzip-runtime-dependencies.json'
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    if ($manifest.product -ne 'SuperZip' -or $manifest.gpu_backend.enabled -ne $HipEnabled) {
+    if ($manifest.product -ne 'FlitzZip' -or $manifest.gpu_backend.enabled -ne $HipEnabled) {
         throw 'Packaged runtime manifest does not match the product capability.'
     }
     $expected = @('libzstd.dll', 'libwim-15.dll')
-    if ($HipEnabled) { $expected += 'superzip_hip_kernels.dll' }
+    if ($HipEnabled) { $expected += 'flitzzip_hip_kernels.dll' }
     $entries = @($manifest.packaged_runtime_files)
     if ($entries.Count -ne $expected.Count) { throw 'Packaged runtime manifest has an unexpected entry count.' }
     $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -39,7 +39,7 @@ function Assert-SuperZipPackagedRuntime {
 # Purpose: Admit truthful capability diagnostics without pretending a hardware-free host executed GPU work.
 # Inputs: Output/ExitCode came from the installed CLI; payload bytes must already have passed integrity validation.
 # Outputs: Accepts ready, missing-driver or missing-device states; rejects damaged modules and contradictory output.
-function Assert-SuperZipHipDependencyState {
+function Assert-FlitzZipHipDependencyState {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Output, [int]$ExitCode)
 
     $flags = @{}

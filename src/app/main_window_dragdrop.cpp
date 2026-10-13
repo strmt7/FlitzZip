@@ -12,7 +12,7 @@
 #ifndef DWMWA_BORDER_COLOR
 #define DWMWA_BORDER_COLOR 34
 #endif
-namespace superzip::app {
+namespace flitzzip::app {
 
 class QueueDropTarget final : public IDropTarget {
   public:
@@ -372,4 +372,4 @@ LRESULT MainWindow::handle_destroy() {
     return 0;
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app
