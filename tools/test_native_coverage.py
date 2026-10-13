@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -73,6 +74,16 @@ class CoverageTests(unittest.TestCase):
         (self.root / "src/second/example.cpp").write_text("other\n", encoding="utf-8")
         with self.assertRaises(ValueError):
             source_path("example.cpp", ["src", "src/second"], self.root)
+
+    # Purpose: Resolve the collector's actual Windows drive-root Cobertura representation.
+    # Inputs: Owned source expressed relative to its drive. Outputs: Exact mapping without using the drive's cwd.
+    @unittest.skipUnless(os.name == "nt", "The native collector and Windows drive paths require Windows")
+    def test_collector_drive_root_is_absolute(self):
+        source = self.root / "src/example.cpp"
+        name = source.relative_to(source.anchor).as_posix()
+        self.assertEqual(source_path(name, [source.drive], self.root), "src/example.cpp")
+        with self.assertRaises(ValueError):
+            source_path("unrelated-repository/src/example.cpp", [source.drive], self.root)
 
     # Purpose: Merge repeated header line evidence without counting duplicate declarations as extra lines.
     # Inputs: Two measured classes for one source. Outputs: Union of real line hits and untouched measured classes.

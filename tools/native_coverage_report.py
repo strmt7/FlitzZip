@@ -12,7 +12,11 @@ from pathlib import Path
 def source_path(filename: str, sources: list[str], root: Path) -> str:
     root = root.resolve(strict=True)
     name = Path(filename.replace("\\", "/"))
-    candidates = [name] if name.is_absolute() else [Path(base.replace("\\", "/")) / name for base in sources]
+    # OpenCppCoverage exports a bare drive (for example D:) as a source root.
+    # Cobertura joins that root to its relative filenames; Windows Path("D:")
+    # instead means the drive's current directory. Make the document root explicit.
+    roots = [base + "/" if re.fullmatch(r"[A-Za-z]:", base) else base for base in sources]
+    candidates = [name] if name.is_absolute() else [Path(base.replace("\\", "/")) / name for base in roots]
     resolved = set()
     for candidate in candidates:
         if not candidate.is_absolute():
