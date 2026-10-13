@@ -6,6 +6,8 @@ import unittest
 
 from tools.test_semgrep_runtime import REQUIREMENTS, pinned_version
 
+EXTRAS_PATTERN = r"(?:\[[a-z0-9][a-z0-9_-]*(?:,[a-z0-9][a-z0-9_-]*)*\])?"
+
 
 # Purpose: Admit only the scanner's single official index, binary policy and bounded package/hash tokens.
 # Inputs: Tracked requirements input or lock text. Outputs: Returns normally or raises ValueError on unknown syntax.
@@ -24,7 +26,7 @@ def validate_requirements_options(contents: str) -> None:
             name, value = "--only-binary", ":all:"
             index += 1
         elif re.fullmatch(r"--hash=sha256:[a-f0-9]{64}", token) or re.fullmatch(
-            r"[a-z][a-z0-9-]*(?:\[[a-z0-9,-]+\])?(?:==|>=)[0-9][a-zA-Z0-9.-]*", token
+            rf"[a-z][a-z0-9-]*{EXTRAS_PATTERN}(?:==|>=)[0-9][a-zA-Z0-9.-]*", token
         ):
             index += 1
             continue
@@ -35,6 +37,29 @@ def validate_requirements_options(contents: str) -> None:
         options[name] = value
     if options != {"--index-url": "https://pypi.org/simple", "--only-binary": ":all:"}:
         raise ValueError("Scanner requirements need the official index and binary-only policy")
+
+
+# Purpose: Validate all locked distributions, including normal requirement extras.
+# Inputs: Hash-locked requirements text. Outputs: Unique base package names; malformed or unhashed entries fail.
+def validate_locked_packages(contents: str) -> set[str]:
+    validate_requirements_options(contents)
+    tokens = shlex.split(contents.replace("\\\n", ""), comments=True)
+    if tokens[:4] != ["--index-url", "https://pypi.org/simple", "--only-binary", ":all:"]:
+        raise ValueError("The lock must retain its canonical installation policy")
+    packages: set[str] = set()
+    index = 4
+    while index < len(tokens):
+        package = re.fullmatch(rf"([a-z0-9-]+){EXTRAS_PATTERN}==([0-9][a-zA-Z0-9.-]*)", tokens[index])
+        if package is None or package[1] in packages:
+            raise ValueError("Invalid or duplicate locked distribution")
+        packages.add(package[1])
+        index += 1
+        start = index
+        while index < len(tokens) and re.fullmatch(r"--hash=sha256:[a-f0-9]{64}", tokens[index]):
+            index += 1
+        if index == start:
+            raise ValueError("Every locked distribution must retain its artifact hashes")
+    return packages
 
 
 class InstallationTests(unittest.TestCase):
@@ -75,25 +100,28 @@ class InstallationTests(unittest.TestCase):
     # Inputs: generated pip lock tokens. Outputs: exact pins and SHA-256 checks for the full graph.
     def test_every_locked_dependency_has_hashes(self):
         contents = (REQUIREMENTS / "requirements-semgrep-linux.txt").read_text(encoding="utf-8")
-        tokens = shlex.split(contents.replace("\\\n", ""), comments=True)
-        self.assertEqual(tokens[:4], ["--index-url", "https://pypi.org/simple", "--only-binary", ":all:"])
-        packages = set()
-        index = 4
-        while index < len(tokens):
-            package = re.fullmatch(r"([a-z0-9-]+)==([0-9][a-zA-Z0-9.-]*)", tokens[index])
-            self.assertIsNotNone(package, tokens[index])
-            self.assertNotIn(package[1], packages)
-            packages.add(package[1])
-            index += 1
-            hashes = 0
-            while index < len(tokens) and tokens[index].startswith("--hash="):
-                self.assertRegex(tokens[index], r"^--hash=sha256:[a-f0-9]{64}$")
-                hashes += 1
-                index += 1
-            self.assertGreater(hashes, 0, package[1])
+        packages = validate_locked_packages(contents)
         self.assertIn("semgrep", packages)
         self.assertIn("pyjwt", packages)
         self.assertIn("cryptography", packages)
+
+    # Purpose: Accept standard extras without losing duplicate, exact-version or hash checks.
+    # Inputs: Valid locks and independent malformed cases. Outputs: Correct identity or explicit rejection.
+    def test_lock_extras_and_distribution_identity(self):
+        policy = "--index-url https://pypi.org/simple\n--only-binary :all:\n"
+        digest = "--hash=sha256:" + "a" * 64
+        entry = "example[feature-one,feature_two]==1.2.3 " + digest + "\n"
+        self.assertEqual(validate_locked_packages(policy + entry), {"example"})
+        for malformed in (
+            entry + "example==1.2.3 " + digest,
+            entry.replace(digest, ""),
+            entry.replace(digest, "--hash=sha256:invalid"),
+            entry.replace("==1.2.3", ">=1.2.3"),
+            entry.replace("[feature-one,feature_two]", "[]"),
+            entry.replace("[feature-one,feature_two]", "[feature-one,]"),
+        ):
+            with self.subTest(malformed=malformed), self.assertRaises(ValueError):
+                validate_locked_packages(policy + malformed)
 
     # Purpose: Refuse missing, ambiguous or nonexact package identities in runtime gates.
     # Inputs: well-formed and deliberately malformed requirements text. Outputs: exact pin or explicit rejection.
