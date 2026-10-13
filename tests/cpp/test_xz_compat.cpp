@@ -18,13 +18,14 @@
 
 namespace {
 
+// Independent fixture: Python 3.13 liblzma output, verified with 7-Zip 26.03.
 constexpr std::array<unsigned char, 100> kSingleFileXzFixture{{
     0xFDU, 0x37U, 0x7AU, 0x58U, 0x5AU, 0x00U, 0x00U, 0x04U, 0xE6U, 0xD6U, 0xB4U, 0x46U, 0x02U, 0x00U, 0x21U,
-    0x01U, 0x16U, 0x00U, 0x00U, 0x00U, 0x74U, 0x2FU, 0xE5U, 0xA3U, 0x01U, 0x00U, 0x29U, 0x53U, 0x75U, 0x70U,
-    0x65U, 0x72U, 0x5AU, 0x69U, 0x70U, 0x20U, 0x58U, 0x5AU, 0x20U, 0x66U, 0x69U, 0x78U, 0x74U, 0x75U, 0x72U,
-    0x65U, 0x20U, 0x70U, 0x61U, 0x79U, 0x6CU, 0x6FU, 0x61U, 0x64U, 0x2EU, 0x0AU, 0x53U, 0x65U, 0x63U, 0x6FU,
-    0x6EU, 0x64U, 0x20U, 0x6CU, 0x69U, 0x6EU, 0x65U, 0x2EU, 0x0AU, 0x00U, 0x00U, 0x00U, 0x69U, 0x30U, 0x60U,
-    0x81U, 0xBFU, 0x14U, 0x46U, 0x9EU, 0x00U, 0x01U, 0x42U, 0x2AU, 0x7AU, 0x51U, 0x72U, 0x39U, 0x1FU, 0xB6U,
+    0x01U, 0x16U, 0x00U, 0x00U, 0x00U, 0x74U, 0x2FU, 0xE5U, 0xA3U, 0x01U, 0x00U, 0x28U, 0x45U, 0x78U, 0x61U,
+    0x6DU, 0x70U, 0x6CU, 0x65U, 0x20U, 0x58U, 0x5AU, 0x20U, 0x66U, 0x69U, 0x78U, 0x74U, 0x75U, 0x72U, 0x65U,
+    0x20U, 0x70U, 0x61U, 0x79U, 0x6CU, 0x6FU, 0x61U, 0x64U, 0x2EU, 0x0AU, 0x53U, 0x65U, 0x63U, 0x6FU, 0x6EU,
+    0x64U, 0x20U, 0x6CU, 0x69U, 0x6EU, 0x65U, 0x2EU, 0x0AU, 0x00U, 0x00U, 0x00U, 0x00U, 0x46U, 0x0DU, 0xBAU,
+    0x04U, 0x20U, 0x0DU, 0xD9U, 0x43U, 0x00U, 0x01U, 0x41U, 0x29U, 0x03U, 0x53U, 0x56U, 0x8BU, 0x1FU, 0xB6U,
     0xF3U, 0x7DU, 0x01U, 0x00U, 0x00U, 0x00U, 0x00U, 0x04U, 0x59U, 0x5AU,
 }};
 
@@ -78,13 +79,13 @@ TEST_CASE(xz_extracts_single_file_fixture) {
     const auto root = test_temp_dir("xz-single");
     const auto archive = root / "payload.txt.xz";
     write_fixture(archive, kSingleFileXzFixture);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Xz);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Xz);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_xz_file(archive, output, false);
+    const auto stats = flitzzip::extract_xz_file(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
-    REQUIRE_EQ(read_text_file(output / "payload.txt"), "SuperZip XZ fixture payload.\nSecond line.\n");
-    superzip_test::export_compat_fixture(archive, output);
+    REQUIRE_EQ(read_text_file(output / "payload.txt"), "Example XZ fixture payload.\nSecond line.\n");
+    flitzzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Preserve native Unicode filenames while extracting independent xz fixtures.
@@ -97,16 +98,16 @@ TEST_CASE(xz_unicode_archive_filename_extracts) {
     archive += ".XZ";
     write_fixture(archive, kSingleFileXzFixture);
     const auto output = root / "out";
-    (void)superzip::extract_xz_file(archive, output, false);
-    REQUIRE_EQ(read_text_file(output / filename), "SuperZip XZ fixture payload.\nSecond line.\n");
+    (void)flitzzip::extract_xz_file(archive, output, false);
+    REQUIRE_EQ(read_text_file(output / filename), "Example XZ fixture payload.\nSecond line.\n");
     bool refused = false;
     try {
-        (void)superzip::extract_xz_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_xz_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         refused = true;
     }
     REQUIRE_TRUE(refused);
-    REQUIRE_EQ(read_text_file(output / filename), "SuperZip XZ fixture payload.\nSecond line.\n");
+    REQUIRE_EQ(read_text_file(output / filename), "Example XZ fixture payload.\nSecond line.\n");
 }
 
 // Purpose: Verify `.xz` extraction refuses overwriting existing files unless explicitly allowed.
@@ -124,8 +125,8 @@ TEST_CASE(xz_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_xz_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_xz_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -143,8 +144,8 @@ TEST_CASE(xz_rejects_bad_magic_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_xz_file(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_xz_file(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -164,7 +165,7 @@ TEST_CASE(xz_resumable_error_never_publishes) {
         0xED, 0x81, 0xB5, 0xA8, 0x06, 0x72, 0x9E, 0x7A, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x59, 0x5A,
     };
     write_binary_file(archive, bytes);
-    (void)superzip::extract_xz_file(archive, root / "control", false);
+    (void)flitzzip::extract_xz_file(archive, root / "control", false);
     REQUIRE_EQ(read_text_file(root / "control/payload.txt"), "verified payload");
     bytes[8] ^= 1U;
     write_binary_file(archive, bytes);
@@ -176,8 +177,8 @@ TEST_CASE(xz_resumable_error_never_publishes) {
         }
         bool rejected = false;
         try {
-            (void)superzip::extract_xz_file(archive, output, overwrite);
-        } catch (const superzip::Error&) {
+            (void)flitzzip::extract_xz_file(archive, output, overwrite);
+        } catch (const flitzzip::Error&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -189,13 +190,13 @@ TEST_CASE(xz_resumable_error_never_publishes) {
     }
     bool tar_rejected = false;
     try {
-        (void)superzip::extract_tar_xz(archive, root / "tar", false);
-    } catch (const superzip::Error&) {
+        (void)flitzzip::extract_tar_xz(archive, root / "tar", false);
+    } catch (const flitzzip::Error&) {
         tar_rejected = true;
     }
     REQUIRE_TRUE(tar_rejected);
     REQUIRE_EQ(count_regular_files(root / "tar"), 0U);
-    require_sticky_decoder_failure<superzip::XzInputStream>(archive);
+    require_sticky_decoder_failure<flitzzip::XzInputStream>(archive);
 }
 
 // Purpose: Reject a payload checksum failure even if the decoder produced bytes during the failing call.
@@ -207,14 +208,14 @@ TEST_CASE(xz_payload_checksum_error_never_publishes) {
     auto bytes = kSingleFileXzFixture;
     bytes[72] ^= 1U;
     write_fixture(archive, bytes);
-    require_sticky_decoder_failure<superzip::XzInputStream>(archive);
+    require_sticky_decoder_failure<flitzzip::XzInputStream>(archive);
     const auto output = root / "out";
     std::filesystem::create_directories(output);
     std::ofstream(output / "payload.txt") << "preserve me";
     bool rejected = false;
     try {
-        (void)superzip::extract_xz_file(archive, output, true);
-    } catch (const superzip::Error&) {
+        (void)flitzzip::extract_xz_file(archive, output, true);
+    } catch (const flitzzip::Error&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

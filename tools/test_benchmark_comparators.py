@@ -125,7 +125,7 @@ class ComparatorPreflightTests(unittest.TestCase):
         ):
             clock.now.return_value = datetime(2026, 10, 1, tzinfo=UTC)
             with self.assertRaisesRegex(ValueError, "Silesia execute is hold"):
-                comparison.tool_preflight({"SuperZip": Path("not-executed.exe")})
+                comparison.tool_preflight({"FlitzZip": Path("not-executed.exe")})
             process.assert_not_called()
 
     # Purpose: Keep short diagnostics out of sustained headline evidence without dropping raw samples.

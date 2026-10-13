@@ -20,7 +20,7 @@
 #include <windows.h>
 #endif
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kWindowsExtendedPathUnits = 32768U;
@@ -42,10 +42,10 @@ std::filesystem::path executable_directory() {
     std::array<wchar_t, kWindowsExtendedPathUnits> buffer{};
     const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
     if (length == 0U) {
-        throw ArchiveError("cannot locate SuperZip executable directory: " + windows_error_text(GetLastError()));
+        throw ArchiveError("cannot locate FlitzZip executable directory: " + windows_error_text(GetLastError()));
     }
     if (length >= buffer.size()) {
-        throw ArchiveError("SuperZip executable path exceeds the Windows extended-path limit");
+        throw ArchiveError("FlitzZip executable path exceeds the Windows extended-path limit");
     }
     return std::filesystem::path(std::wstring_view(buffer.data(), length)).parent_path();
 }
@@ -150,4 +150,4 @@ TrustedRuntimeModule load_trusted_app_local_runtime(std::wstring_view dll_name, 
 #endif
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

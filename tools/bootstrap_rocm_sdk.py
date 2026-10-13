@@ -177,7 +177,7 @@ def bounded_extract(archive: Path, destination: Path) -> None:
     Inputs: Archive has passed complete inventory; destination is a fresh owned staging directory.
     Outputs: Populates the SDK or raises with native status; time, output and aggregate RAM are bounded.
     """
-    spec = importlib.util.spec_from_file_location("superzip_rocm_bounds", REPO / "mcp" / "superzip_mcp.py")
+    spec = importlib.util.spec_from_file_location("flitzzip_rocm_bounds", REPO / "mcp" / "flitzzip_mcp.py")
     if spec is None or spec.loader is None:
         raise RuntimeError("Shared Windows process containment is unavailable")
     module = importlib.util.module_from_spec(spec)
@@ -252,7 +252,7 @@ def main() -> int:
     parser.add_argument("--parent", type=Path)
     args = parser.parse_args()
     if os.name != "nt":
-        parser.error("SuperZip ROCm provisioning requires native Windows; do not use WSL")
+        parser.error("FlitzZip ROCm provisioning requires native Windows; do not use WSL")
     lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
     parent = args.parent or REPO / "out" / f"rocm-core-sdk-{lock['version']}"
     try:

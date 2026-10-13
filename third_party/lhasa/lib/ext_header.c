@@ -85,6 +85,9 @@ typedef struct {
 //
 // This contains a 16-bit CRC of the entire LHA header.
 
+/* Purpose: Read the stored whole-header CRC and clear its field for verification.
+ * Inputs: A header and a mutable extension payload admitted by its two-byte minimum.
+ * Outputs: Records the expected CRC and zeroes only its two bytes; returns success. */
 static int ext_header_common_decoder(LHAFileHeader *header,
                                      uint8_t *data,
                                      size_t data_len)
@@ -103,7 +106,7 @@ static int ext_header_common_decoder(LHAFileHeader *header,
 	data[1] = 0x00;
 
 	// Some platforms store additional common-header payload bytes.
-	// SuperZip only needs the shared CRC field for compatibility
+	// FlitzZip only needs the shared CRC field for compatibility
 	// extraction, so unknown trailing bytes are deliberately ignored.
 
 	return 1;
@@ -395,12 +398,15 @@ static const LHAExtHeaderType lha_ext_header_unix_timestamp = {
 //
 // This stores OS-9 filesystem metadata.
 
+/* Purpose: Decode the OS-9 permission metadata consumed by the archive reader.
+ * Inputs: A header and an extension payload admitted by its twelve-byte minimum.
+ * Outputs: Records permission bits and their presence flag; returns success. */
 static int ext_header_os9_decoder(LHAFileHeader *header,
                                   uint8_t *data,
                                   size_t data_len)
 {
 	// The OS-9 extended header contains additional filesystem metadata.
-	// SuperZip only consumes the permission bits needed to classify
+	// FlitzZip only consumes the permission bits needed to classify
 	// special entries and leaves the remaining fields as archive metadata.
 
 	header->os9_perms = lha_decode_uint16(data + 7);

@@ -1,6 +1,6 @@
 # Native Windows ROCm Toolchain
 
-SuperZip uses the complete ROCm Core SDK Windows distribution pinned in
+FlitzZip uses the complete ROCm Core SDK Windows distribution pinned in
 `tools/rocm-sdk-lock.json`. This is one whole-distribution update: SDK headers,
 compiler, libraries and device files remain as AMD supplied them. No individual
 bundled component is replaced or independently upgraded.
@@ -14,7 +14,7 @@ releases. Run it from the checkout on any native Windows build host:
 py -3 tools/bootstrap_rocm_sdk.py
 tools/build.ps1 -Configuration Release -HipArch release
 tools/test.ps1 -Configuration Release
-build/Release/superzip_cli.exe dependency-check
+build/Release/flitzzip_cli.exe dependency-check
 ```
 
 The ordinary build now defaults to the portable `release` target preset.
@@ -47,7 +47,7 @@ preserved and rejected. Provision a fresh parent to replace them.
 
 `-HipPath` selects an explicit complete installation. Without it, the build
 prefers the repository's pinned cache and then examines `HIP_PATH`. Direct CMake
-users can set `SUPERZIP_HIP_PATH`. That selected root controls host includes,
+users can set `FLITZZIP_HIP_PATH`. That selected root controls host includes,
 import libraries, runtime metadata, every HIP compilation and every dependency
 scan. The build script passes it on each configure, preventing an older CMake
 cache from silently selecting a different SDK. CPU-only validation does not
@@ -129,7 +129,7 @@ full local verification commands. Hardware execution covers the available
 ## Compiler And Runtime Environment
 
 AMD's installation guide documents `HIP_DEVICE_LIB_PATH` and `LLVM_PATH` for
-compiler discovery. SuperZip sets these, `HIP_PATH`, `ROCM_PATH` and
+compiler discovery. FlitzZip sets these, `HIP_PATH`, `ROCM_PATH` and
 `HIP_PLATFORM` only around HIP compilation and its dependency scans, restoring
 the caller's values on both success and failure. No global PATH modification or
 SDK runtime redistribution is required.
@@ -138,7 +138,7 @@ An isolated fixture on one driver configuration crashed with `0xC0000005` when
 the new SDK's `LLVM_PATH` was present, then passed with that variable unset and
 the same System32 runtime loaded. This is finite host evidence, not a claim that
 every AMD driver is affected. Keep compiler-only settings out of application
-launch environments. SuperZip retains its trusted driver runtime loader and
+launch environments. FlitzZip retains its trusted driver runtime loader and
 required-HIP failure semantics.
 
 Compilation for six targets does not establish runtime compatibility on every
@@ -156,7 +156,7 @@ thread and selected device; runtime readiness and operation errors remain live.
 
 For an incompatible-target regression on a HIP-equipped development host, build
 with an approved target that differs from the device's reported `gcn_arch`.
-`superzip_cli dependency-check` must return 13 with an unsupported-target status;
+`flitzzip_cli dependency-check` must return 13 with an unsupported-target status;
 required-HIP `--neutron-star` must fail before compression, while `--force-cpu`
 remains byte-exact. Restore the matching target and run the native tests before
 using that build for benchmarks or packaging. This test changes build inputs;

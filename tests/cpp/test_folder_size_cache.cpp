@@ -1,8 +1,8 @@
 #include "app/folder_size_cache.hpp"
 #include "test_util.hpp"
 
-using superzip::app::FolderSizeCache;
-using superzip::app::FolderSizeTask;
+using flitzzip::app::FolderSizeCache;
+using flitzzip::app::FolderSizeTask;
 
 TEST_CASE(folder_size_cache_invalidates_changed_kind_without_publishing_its_old_scan) {
     FolderSizeCache cache;

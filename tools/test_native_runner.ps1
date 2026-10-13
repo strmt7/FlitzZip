@@ -54,14 +54,14 @@ struct Cases {
     [IO.File]::WriteAllText((Join-Path $fixtureRoot 'cases.cpp'), $source)
     $cmakeSource = @'
 cmake_minimum_required(VERSION 3.20)
-project(superzip_native_runner_contract LANGUAGES CXX)
+project(flitzzip_native_runner_contract LANGUAGES CXX)
 add_executable(runner test_main.cpp cases.cpp)
 target_compile_features(runner PRIVATE cxx_std_20)
 '@
     [IO.File]::WriteAllText((Join-Path $fixtureRoot 'CMakeLists.txt'), $cmakeSource)
     $build = Join-Path $fixtureRoot 'build'
     $cmake = Find-CMake -RepoRoot $root
-    $generator = Find-CMakeGenerator -Requested $env:SUPERZIP_CMAKE_GENERATOR -BuildRoot $build
+    $generator = Find-CMakeGenerator -Requested $env:FLITZZIP_CMAKE_GENERATOR -BuildRoot $build
     $configure = @(& $cmake -S $fixtureRoot -B $build -G $generator -A x64)
     if ($LASTEXITCODE -ne 0) { $configure; throw 'Native runner fixture configuration failed.' }
     $compile = @(& $cmake --build $build --config Release --parallel)

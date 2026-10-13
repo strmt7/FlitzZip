@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-namespace superzip::cli {
+namespace flitzzip::cli {
 
 inline constexpr std::size_t kMemoryBenchmarkReferenceBytes = 64U * 1024U;
 // Match the CLI extent representation; physical-memory admission supplies the operational limit.
@@ -39,4 +39,4 @@ void validate_memory_benchmark_bytes_parallel(std::span<const std::byte> decoded
                                               std::uint64_t total_bytes, std::string_view profile,
                                               std::uint32_t workers, std::span<const std::byte> source = {});
 
-}  // namespace superzip::cli
+}  // namespace flitzzip::cli

@@ -8,9 +8,9 @@ function Resolve-BuildParallelism {
     param(
         [AllowEmptyString()][string]$Requested = $env:CMAKE_BUILD_PARALLEL_LEVEL,
         [ValidateRange(1, 2147483647)][int]$ProcessorCount = [Environment]::ProcessorCount,
-        [ValidateRange(0, 2147483647)][long]$AvailableMiB = (Get-SuperZipAvailableMemoryMiB)
+        [ValidateRange(0, 2147483647)][long]$AvailableMiB = (Get-FlitzZipAvailableMemoryMiB)
     )
-    $budget = Resolve-SuperZipLocalMemoryBudget -AvailableMiB $AvailableMiB
+    $budget = Resolve-FlitzZipLocalMemoryBudget -AvailableMiB $AvailableMiB
     $memoryJobs = [Math]::Floor($budget / 2048.0)
     if ([string]::IsNullOrEmpty($Requested)) {
         return [int][Math]::Min($memoryJobs, $ProcessorCount)
@@ -29,11 +29,11 @@ function Resolve-BuildParallelism {
 # Purpose: Keep CMake project scheduling and MSBuild compiler scheduling within the same admitted job count.
 # Inputs: Jobs is RAM-admitted; Action invokes the trusted build without changing unrelated host work.
 # Outputs: Forwards build output/errors and restores all overridden process-local environment variables.
-function Invoke-SuperZipParallelBuild {
+function Invoke-FlitzZipParallelBuild {
     param([ValidateRange(1, 2147483647)][int]$Jobs, [Parameter(Mandatory = $true)][scriptblock]$Action)
     $settings = @{
         CMAKE_BUILD_PARALLEL_LEVEL = [string]$Jobs; MultiProcMaxCount = [string]$Jobs
         UseMultiToolTask = 'true'; EnforceProcessCountAcrossBuilds = 'true'
     }
-    Invoke-SuperZipProcessEnvironment -Settings $settings -Action $Action
+    Invoke-FlitzZipProcessEnvironment -Settings $settings -Action $Action
 }

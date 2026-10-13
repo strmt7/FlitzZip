@@ -69,7 +69,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $lock = Get-Content -LiteralPath tools/rocm-sdk-lock.json -Raw | ConvertFrom-Json
-          $sdkParent = Join-Path $env:RUNNER_TOOL_CACHE "superzip-rocm-$($lock.version)-$($lock.sha256.Substring(0, 12))"
+          $sdkParent = Join-Path $env:RUNNER_TOOL_CACHE "flitzzip-rocm-$($lock.version)-$($lock.sha256.Substring(0, 12))"
           $sdkRoot = python tools/bootstrap_rocm_sdk.py --parent $sdkParent
           if ($LASTEXITCODE -ne 0) { throw 'Complete ROCm SDK provisioning failed.' }
           . ./tools/rocm_toolchain.ps1

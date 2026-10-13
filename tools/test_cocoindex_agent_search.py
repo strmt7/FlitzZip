@@ -201,7 +201,7 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
                     run.return_value.stdout = name.encode("utf-8") + b"\0"
                     tracked_files(root)
 
-    def test_superzip_headers_and_build_files_are_indexed_without_vendored_code(self):
+    def test_flitzzip_headers_and_build_files_are_indexed_without_vendored_code(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             for name in ("src/codec.hpp", "CMakeLists.txt", "third_party/lib/codec.cpp"):

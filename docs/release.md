@@ -1,6 +1,6 @@
 # Release Workflow
 
-SuperZip releases are created by `.github/workflows/release.yml`. The workflow
+FlitzZip releases are created by `.github/workflows/release.yml`. The workflow
 is manual-only and versioned with SemVer. By default it validates a candidate
 without creating a tag or release; explicit publication can create a beta
 prerelease or a stable GitHub release.
@@ -46,7 +46,7 @@ tools/package.ps1 -Configuration Release
 An explicit `-HipArch gfx1201` (or another compiler-supported target) remains
 available for focused development; a single-target build is not the portable
 release. Existing direct CMake caches preserve an explicitly selected target;
-set `-DSUPERZIP_HIP_ARCH=release` to change that selection. This default change
+set `-DFLITZZIP_HIP_ARCH=release` to change that selection. This default change
 does not expand the six-target hardware claim or qualify execution elsewhere.
 
 The compiler supports multiple target images as documented in
@@ -77,13 +77,13 @@ build passed 570 native tests and the full local verifier on the available
 ## Installation
 
 The MSI defaults to the release deployment scope: per-machine install under
-`C:\Program Files\SuperZip`. This matches normal Windows desktop installers and
+`C:\Program Files\FlitzZip`. This matches normal Windows desktop installers and
 requires elevation when the installing user does not already have administrator
 rights.
 
 The Windows elevation prompt is controlled by the operating system before the
 per-machine MSI can make changes. The MSI cannot shorten that OS-owned prompt
-from inside the package. SuperZip-owned installer launchers, release validation,
+from inside the package. FlitzZip-owned installer launchers, release validation,
 and smoke tests must therefore use bounded waits around the installer process:
 MSI install, repair, and uninstall phases fail after 300 seconds. Whole-SDK
 provisioning separately bounds download, inventory and contained extraction;
@@ -96,10 +96,18 @@ remove it cleanly.
 
 ## MSI Maintenance And Updates
 
-SuperZip uses Windows Installer identity rules directly:
+FlitzZip uses Windows Installer identity rules directly:
 
-- `UpgradeCode` is stable for all SuperZip MSI releases so Windows Installer can
-  detect installed SuperZip products.
+The product rename keeps the established upgrade GUID so an installed predecessor
+is detected and removed by the MSI major-upgrade transaction. Display names,
+executables, shortcuts and new installation directories use FlitzZip. Per-user
+settings are read from the predecessor directory only when no current settings
+file exists; validated settings are then written to the new directory. The old
+file is retained, current settings always take precedence, and smoke isolation
+never reads a real user's predecessor settings.
+
+- `UpgradeCode` is stable for all FlitzZip MSI releases so Windows Installer can
+  detect installed FlitzZip products.
 - `ProductCode` is deterministically derived from a SHA-256 identity seed
   containing the stable `UpgradeCode`, MSI numeric version, install scope, and
   package/build identity. Release builds use the GitHub run identity so a
@@ -144,7 +152,7 @@ Before running a hosted release, configure this repository variable:
   accepted the WiX v7 OSMF EULA.
 
 Do not use GitHub Actions environments for release inputs in this repository:
-environment-gated jobs can create deployment records, and SuperZip workflows
+environment-gated jobs can create deployment records, and FlitzZip workflows
 must never create deployments. Public pinned distribution metadata belongs in
 the shared repository lock; credentials do not.
 
@@ -194,7 +202,7 @@ The workflow performs:
   inventory through the same tool used by local developers and agents.
 - HIP-enabled build and C++ tests.
 - Local repository security scan.
-- Portable package staging, dependency check, SUZIP/ZIP/TAR/TAR.GZ/TAR.BZ2/Gzip/Bzip2/Unix Compress/CPIO/CPIO.GZ/AR/DEB
+- Portable package staging, dependency check, FLZIP/ZIP/TAR/TAR.GZ/TAR.BZ2/Gzip/Bzip2/Unix Compress/CPIO/CPIO.GZ/AR/DEB
   smoke tests, and
   checksum generation.
 - MSI creation and silent install/repair/uninstall smoke tests under the
@@ -209,7 +217,7 @@ The workflow performs:
 Release notes must list the actual fixes, created assets, validation work, and
 known limitations for that release. Do not publish vague notes that hide what
 changed. Add `docs/releases/<version>.md` before dispatch; the workflow requires
-its first line to match `# SuperZip <version>` and includes its curated content
+its first line to match `# FlitzZip <version>` and includes its curated content
 before build-specific verification facts.
 
 ## Local MSI Tooling
@@ -221,11 +229,11 @@ tools\install_wix.ps1
 ```
 
 That helper installs WiX under `out\tools\wix`. Maintainer authorization is
-recorded in `AGENTS.md` for agents to accept EULAs required by pinned SuperZip
+recorded in `AGENTS.md` for agents to accept EULAs required by pinned FlitzZip
 verification tooling. To package the MSI locally, set:
 
 ```powershell
-Set-Item Env:SUPERZIP_ACCEPT_WIX_OSMF_EULA "wix7"
+Set-Item Env:FLITZZIP_ACCEPT_WIX_OSMF_EULA "wix7"
 ```
 
 Then run:
@@ -235,18 +243,18 @@ tools\package.ps1 -Configuration Release -CreateMsi
 ```
 
 That command packages the currently configured build. If the build was created
-with the default scope, the MSI installs under `C:\Program Files\SuperZip` and
+with the default scope, the MSI installs under `C:\Program Files\FlitzZip` and
 requires elevation. For a non-admin local MSI smoke, first configure with
 `tools\build.ps1 -Configuration Release -MsiInstallScope perUser`.
 
 ## Installer Dependency Contract
 
-The MSI must install SuperZip itself and validate external prerequisites. It must
+The MSI must install FlitzZip itself and validate external prerequisites. It must
 not silently install or downgrade AMD GPU drivers. AMD's Windows HIP deployment
 guidance treats the HIP runtime as part of the AMD GPU driver, and the HIP SDK
 installer requires explicit license acceptance and administrator privileges.
 
-The installer smoke test runs `superzip_cli.exe dependency-check` after install.
+The installer smoke test runs `flitzzip_cli.exe dependency-check` after install.
 The accepted states are:
 
 - `0`: release artifact is HIP-enabled, the HIP runtime is loadable, and an AMD
@@ -271,7 +279,7 @@ driver or claim GPU execution. Hardware execution with
 added to hosted release validation only when a secure AMD Windows runner profile
 is available without introducing self-hosted-runner risk.
 
-The first-party `superzip_hip_kernels.dll` contains HIP registration and device
+The first-party `flitzzip_hip_kernels.dll` contains HIP registration and device
 code. Its digest is embedded into the host after linking and recorded in the
 package manifest. Executables do not import this module at process startup.
 The existing trusted loader pins its files, verifies bytes and admits it only
@@ -295,7 +303,7 @@ Use the GitHub UI:
 Use GitHub CLI:
 
 ```powershell
-gh workflow run release.yml -R strmt7/SuperZip `
+gh workflow run release.yml -R strmt7/FlitzZip `
   -f release_version=<new-semver> `
   -f publish_release=false `
   -f replace_existing=false `
@@ -308,7 +316,7 @@ Replacement example, only after the current maintainer/user request explicitly
 asks to replace that specific version:
 
 ```powershell
-gh workflow run release.yml -R strmt7/SuperZip `
+gh workflow run release.yml -R strmt7/FlitzZip `
   -f release_version=<existing-semver> `
   -f publish_release=true `
   -f replace_existing=true `

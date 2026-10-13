@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Create a single-file Unix Compress `.Z` stream with bounded in-process LZW.
 // Inputs: `source_file` is an existing regular file, `output_archive` is the destination `.Z`, and `progress_callback`
@@ -31,4 +31,4 @@ OperationStats extract_unix_compress_file(const std::filesystem::path& archive_p
                                           const std::filesystem::path& destination, bool overwrite,
                                           const ProgressCallback& progress_callback = {});
 
-}  // namespace superzip
+}  // namespace flitzzip

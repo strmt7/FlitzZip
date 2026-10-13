@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace superzip::detail {
+namespace flitzzip::detail {
 
 // Purpose: Encode one SVR4 new ASCII header field without locale or varargs conversion.
 // Inputs: value is the complete unsigned 32-bit field, including zero and UINT32_MAX.
@@ -28,4 +28,4 @@ inline std::array<char, 8> encode_cpio_hex_field(std::uint32_t value) {
     return field;
 }
 
-}  // namespace superzip::detail
+}  // namespace flitzzip::detail

@@ -27,7 +27,7 @@ INPUT_FILES = (
     "tools/local_resources.ps1",
     "tools/version.ps1",
     "tools/generate_brand_logo_header.ps1",
-    "tools/superzip_brand_logo.psm1",
+    "tools/flitzzip_brand_logo.psm1",
     "tools/generate_license_notices_header.ps1",
     "tools/native_build_provenance.py",
     "tools/native_build_receipt.py",

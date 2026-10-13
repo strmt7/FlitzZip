@@ -29,7 +29,7 @@
 
 namespace {
 
-using namespace superzip::dictionary;
+using namespace flitzzip::dictionary;
 
 // Purpose: Preserve LZ4's reachable unsigned error sentinel before a malformed Neutron candidate can publish literals.
 // Inputs: An unterminated literal-length extension and an independently initialized bounded output buffer.
@@ -53,17 +53,17 @@ TEST_CASE(neutron_dictionary_lz4_rejects_unterminated_length_extension) {
 // Outputs: Requires precise host-layout rejection in both builds and rejection before actual HIP work when compiled.
 TEST_CASE(neutron_dictionary_layout_admission_precedes_device_work) {
     const std::array<std::byte, 4> input{};
-    superzip::BlockDescriptor first{};
+    flitzzip::BlockDescriptor first{};
     first.uncompressed_len = 2U;
     first.encoded_len = 4096U;
-    const auto require_rejection = [&](std::vector<superzip::BlockDescriptor> blocks, std::string_view expected) {
+    const auto require_rejection = [&](std::vector<flitzzip::BlockDescriptor> blocks, std::string_view expected) {
         DictionaryReplacements replacements(blocks.size());
         const auto original = replacements;
-        superzip::GpuTelemetry telemetry;
+        flitzzip::GpuTelemetry telemetry;
         unsigned int checkpoints = 0U;
         bool rejected = false;
         try {
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
             improve_neutron_replacements(input, input.data(), blocks, replacements, &telemetry, [&] {
                 ++checkpoints;
                 throw std::runtime_error("Neutron device boundary must not be reached");
@@ -71,7 +71,7 @@ TEST_CASE(neutron_dictionary_layout_admission_precedes_device_work) {
 #else
             validate_neutron_layout(input.size(), blocks, replacements);
 #endif
-        } catch (const superzip::GpuError& error) {
+        } catch (const flitzzip::GpuError& error) {
             rejected = std::string_view(error.what()) == expected;
         }
         REQUIRE_TRUE(rejected);
@@ -90,7 +90,7 @@ TEST_CASE(neutron_dictionary_layout_admission_precedes_device_work) {
     bool count_rejected = false;
     try {
         validate_neutron_layout(input.size(), std::array{first, first}, DictionaryReplacements(1U));
-    } catch (const superzip::GpuError& error) {
+    } catch (const flitzzip::GpuError& error) {
         count_rejected = std::string_view(error.what()) == "Neutron replacement inputs are inconsistent";
     }
     REQUIRE_TRUE(count_rejected);
@@ -100,7 +100,7 @@ TEST_CASE(neutron_dictionary_layout_admission_precedes_device_work) {
 // Inputs: Every combination of the three admission prerequisites and an existing Neutron choice.
 // Outputs: Requires nine unchanged numeric rows, one conditional Neutron row, and explicit unavailable normalization.
 TEST_CASE(neutron_dictionary_gui_selection_isolation) {
-    using namespace superzip::app;
+    using namespace flitzzip::app;
     for (const bool native : {false, true}) {
         for (const bool available : {false, true}) {
             for (const bool required : {false, true}) {
@@ -233,7 +233,7 @@ TEST_CASE(neutron_dictionary_admission_and_unavailable_gpu) {
     bool rejected = false;
     try {
         static_cast<void>(encode_neutron_segments(std::vector<std::byte>(kMaxNeutronBatchBytes + 1U)));
-    } catch (const superzip::ArchiveError&) {
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -245,11 +245,11 @@ TEST_CASE(neutron_dictionary_admission_and_unavailable_gpu) {
         cancelled = std::string_view(error.what()) == "Neutron control cancellation";
     }
     REQUIRE_TRUE(cancelled);
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         rejected = false;
         try {
             static_cast<void>(encode_neutron_segments(std::vector<std::byte>(17U)));
-        } catch (const superzip::GpuError&) {
+        } catch (const flitzzip::GpuError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -261,10 +261,10 @@ TEST_CASE(neutron_dictionary_admission_and_unavailable_gpu) {
 // Outputs: Requires policy rejection before codec work even on hosted systems without HIP.
 TEST_CASE(neutron_dictionary_native_policy_rejects_fallback) {
     for (const auto control : {0U, 1U, 2U, 3U}) {
-        superzip::GpuCodecOptions options{.require_gpu = true,
+        flitzzip::GpuCodecOptions options{.require_gpu = true,
                                           .force_cpu = false,
                                           .compression_level = 9,
-                                          .compression_mode = superzip::NativeCompressionMode::NeutronStar};
+                                          .compression_mode = flitzzip::NativeCompressionMode::NeutronStar};
         if (control == 0U) {
             options.force_cpu = true;
         } else if (control == 1U) {
@@ -272,12 +272,12 @@ TEST_CASE(neutron_dictionary_native_policy_rejects_fallback) {
         } else if (control == 2U) {
             options.compression_level = 8;
         } else {
-            options.compression_mode = static_cast<superzip::NativeCompressionMode>(255U);
+            options.compression_mode = static_cast<flitzzip::NativeCompressionMode>(255U);
         }
         bool rejected = false;
         try {
-            static_cast<void>(superzip::encode_chunk({}, options));
-        } catch (const superzip::ArchiveError&) {
+            static_cast<void>(flitzzip::encode_chunk({}, options));
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -291,7 +291,7 @@ TEST_CASE(neutron_dictionary_progress_serialization) {
     std::atomic<unsigned int> active{0U};
     std::atomic<unsigned int> calls{0U};
     std::atomic<bool> overlap{false};
-    const auto observer = superzip::serialize_progress_callback([&](const superzip::ProgressSnapshot&) {
+    const auto observer = flitzzip::serialize_progress_callback([&](const flitzzip::ProgressSnapshot&) {
         if (active.fetch_add(1U) != 0U) {
             overlap.store(true);
         }
@@ -314,8 +314,8 @@ TEST_CASE(neutron_dictionary_progress_serialization) {
     REQUIRE_TRUE(!overlap.load());
     REQUIRE_EQ(calls.load(), 128U);
     unsigned int nested_calls = 0U;
-    superzip::ProgressCallback reentrant;
-    reentrant = superzip::serialize_progress_callback([&](const superzip::ProgressSnapshot& snapshot) {
+    flitzzip::ProgressCallback reentrant;
+    reentrant = flitzzip::serialize_progress_callback([&](const flitzzip::ProgressSnapshot& snapshot) {
         if (++nested_calls == 1U) {
             reentrant(snapshot);
         }
@@ -328,10 +328,10 @@ TEST_CASE(neutron_dictionary_progress_serialization) {
 // Inputs: Shared progress, one throwing observer and sibling checkpoints.
 // Outputs: Requires original error propagation, shared cancellation and rejection before subsequent observer calls.
 TEST_CASE(neutron_dictionary_progress_failure_cancels_siblings) {
-    superzip::ProgressState progress;
-    progress.start(superzip::OperationKind::Compress, 128U, 1U);
+    flitzzip::ProgressState progress;
+    progress.start(flitzzip::OperationKind::Compress, 128U, 1U);
     unsigned int calls = 0U;
-    auto checkpoint = superzip::make_cancellation_checkpoint(progress, [&](const superzip::ProgressSnapshot&) {
+    auto checkpoint = flitzzip::make_cancellation_checkpoint(progress, [&](const flitzzip::ProgressSnapshot&) {
         ++calls;
         throw std::runtime_error("Neutron observer control");
     });
@@ -347,7 +347,7 @@ TEST_CASE(neutron_dictionary_progress_failure_cancels_siblings) {
     bool cancelled = false;
     try {
         sibling();
-    } catch (const superzip::ArchiveError&) {
+    } catch (const flitzzip::ArchiveError&) {
         cancelled = true;
     }
     REQUIRE_TRUE(cancelled);
@@ -358,38 +358,38 @@ TEST_CASE(neutron_dictionary_progress_failure_cancels_siblings) {
 // Inputs: Nonperiodic source with isolated repeats missed by the ordinary sampling heuristic, at the same level nine.
 // Outputs: Requires a strictly smaller dictionary winner, complete CRC semantics and exact CPU/HIP decoding.
 TEST_CASE(neutron_dictionary_native_portfolio_and_readback) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron native portfolio requires HIP\n";
         return;
     }
     auto input = small_neutron_fixture(600U, 713947U, 256U);
     std::copy_n(input.begin() + 4, 16U, input.begin() + 230);
     std::copy_n(input.begin() + 32, 20U, input.begin() + 512);
-    const auto baseline = superzip::encode_chunk(input, {.require_gpu = true, .compression_level = 9});
-    auto telemetry = std::make_shared<superzip::GpuTelemetry>();
+    const auto baseline = flitzzip::encode_chunk(input, {.require_gpu = true, .compression_level = 9});
+    auto telemetry = std::make_shared<flitzzip::GpuTelemetry>();
     const auto encoded =
-        superzip::encode_chunk(input, {.require_gpu = true,
+        flitzzip::encode_chunk(input, {.require_gpu = true,
                                        .compression_level = 9,
-                                       .compression_mode = superzip::NativeCompressionMode::NeutronStar,
+                                       .compression_mode = flitzzip::NativeCompressionMode::NeutronStar,
                                        .telemetry = telemetry});
     REQUIRE_TRUE(encoded.payload.size() < baseline.payload.size());
     REQUIRE_EQ(encoded.blocks.size(), 1U);
-    REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+    REQUIRE_EQ(encoded.blocks.front().kind, flitzzip::BlockKind::GpuDictionary);
     REQUIRE_TRUE(encoded.gpu_used && encoded.source_crc32_available);
     REQUIRE_EQ(encoded.source_crc32, baseline.source_crc32);
     std::vector<std::byte> decoded(input.size());
-    superzip::decode_chunk_cpu(encoded.payload, encoded.blocks, decoded, {});
+    flitzzip::decode_chunk_cpu(encoded.payload, encoded.blocks, decoded, {});
     REQUIRE_EQ(decoded, input);
-    REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, {.require_gpu = true}));
+    REQUIRE_TRUE(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, {.require_gpu = true}));
     REQUIRE_EQ(decoded, input);
-    REQUIRE_TRUE(superzip::snapshot_gpu_telemetry(*telemetry).kernel_launches > 20U);
+    REQUIRE_TRUE(flitzzip::snapshot_gpu_telemetry(*telemetry).kernel_launches > 20U);
 }
 
 // Purpose: Verify the separate mode through real native archive publication, framing and both decoder policies.
 // Inputs: Four small nonperiodic files with isolated repeats, one ordinary GPU archive and one Neutron archive.
 // Outputs: Requires a smaller complete archive, required-HIP telemetry and exact restored bytes for every file.
 TEST_CASE(neutron_dictionary_complete_archive_readback) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron archive publication requires HIP\n";
         return;
     }
@@ -405,22 +405,22 @@ TEST_CASE(neutron_dictionary_complete_archive_readback) {
         stream.write(expected.data(), static_cast<std::streamsize>(expected.size()));
         REQUIRE_TRUE(stream.good());
     }
-    superzip::CompressOptions options;
+    flitzzip::CompressOptions options;
     options.compression_level = 9;
     options.gpu_required = true;
-    const auto baseline_path = root / "standard.suzip";
-    superzip::compress_suzip({source}, baseline_path, options);
-    options.compression_mode = superzip::NativeCompressionMode::NeutronStar;
+    const auto baseline_path = root / "standard.flzip";
+    flitzzip::compress_flzip({source}, baseline_path, options);
+    options.compression_mode = flitzzip::NativeCompressionMode::NeutronStar;
     options.verify_after_write = true;
-    const auto neutron_path = root / "neutron.suzip";
-    const auto stats = superzip::compress_suzip({source}, neutron_path, options);
+    const auto neutron_path = root / "neutron.flzip";
+    const auto stats = flitzzip::compress_flzip({source}, neutron_path, options);
     REQUIRE_TRUE(stats.gpu_used);
     REQUIRE_TRUE(stats.gpu_runtime.kernel_launches > 20U);
     REQUIRE_TRUE(std::filesystem::file_size(neutron_path) < std::filesystem::file_size(baseline_path));
     for (const bool gpu : {false, true}) {
         const auto destination = root / (gpu ? "hip" : "cpu");
         const auto extracted =
-            superzip::extract_suzip(neutron_path, destination, {.gpu_required = gpu, .force_cpu = !gpu});
+            flitzzip::extract_flzip(neutron_path, destination, {.gpu_required = gpu, .force_cpu = !gpu});
         REQUIRE_EQ(extracted.gpu_used, gpu);
         for (int file = 0; file < 4; ++file) {
             std::ifstream stream(destination / "source" / (std::to_string(file) + ".bin"), std::ios::binary);
@@ -435,24 +435,24 @@ TEST_CASE(neutron_dictionary_complete_archive_readback) {
 // Inputs: A bounded source, existing destination bytes and a deliberately failing progress observer.
 // Outputs: Requires the original exception and unchanged destination without partial publication.
 TEST_CASE(neutron_dictionary_archive_cancellation_preserves_destination) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron archive cancellation requires HIP\n";
         return;
     }
     const auto root = test_temp_dir("neutron-cancellation");
     const auto source = root / "input.bin";
-    const auto output = root / "archive.suzip";
+    const auto output = root / "archive.flzip";
     const std::string sentinel = "existing destination control";
     std::ofstream(output, std::ios::binary) << sentinel;
     const std::string input(128U * 1024U, 'N');
     std::ofstream(source, std::ios::binary).write(input.data(), static_cast<std::streamsize>(input.size()));
-    superzip::CompressOptions options;
+    flitzzip::CompressOptions options;
     options.compression_level = 9;
-    options.compression_mode = superzip::NativeCompressionMode::NeutronStar;
+    options.compression_mode = flitzzip::NativeCompressionMode::NeutronStar;
     bool cancelled = false;
     int publications = 0;
     try {
-        superzip::compress_suzip({source}, output, options, [&](const superzip::ProgressSnapshot&) {
+        flitzzip::compress_flzip({source}, output, options, [&](const flitzzip::ProgressSnapshot&) {
             if (++publications == 3) {
                 throw std::runtime_error("Neutron archive cancellation control");
             }
@@ -472,7 +472,7 @@ TEST_CASE(neutron_dictionary_archive_cancellation_preserves_destination) {
 // Inputs: Uniform independent segments with closed-form minimum LZ4 representations.
 // Outputs: Requires one long match with the exact minimum cost, independent LZ4 readback and production HIP readback.
 TEST_CASE(neutron_dictionary_full_segment_match_extension) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron full-length match requires HIP\n";
         return;
     }
@@ -492,7 +492,7 @@ TEST_CASE(neutron_dictionary_full_segment_match_extension) {
 // Inputs: Deterministic alphabets, overlaps, literal tails and extension boundaries, all RAM-only.
 // Outputs: Requires exact minimum byte count, deterministic payloads and independent CPU/HIP recovery.
 TEST_CASE(neutron_dictionary_gpu_matches_exhaustive_oracle) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron minimum-byte parsing requires a compatible HIP device\n";
         return;
     }
@@ -568,7 +568,7 @@ std::vector<std::byte> unique_neutron_segment() {
 // Inputs: Independently verified unique four-byte windows through the largest admitted batch and a mixed batch.
 // Outputs: Requires exact literal costs, zero parse launches for empty graphs and only the active segment's tiles.
 TEST_CASE(neutron_dictionary_empty_graph_and_mixed_admission) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron match-graph admission requires HIP\n";
         return;
     }
@@ -620,7 +620,7 @@ TEST_CASE(neutron_dictionary_budget_admission_precedes_work) {
         bool rejected = false;
         try {
             (void)encode_neutron_segments(input, [&] { ++checkpoints; }, budgets);
-        } catch (const superzip::GpuError&) {
+        } catch (const flitzzip::GpuError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -630,7 +630,7 @@ TEST_CASE(neutron_dictionary_budget_admission_precedes_work) {
     bool rejected = false;
     try {
         (void)encode_neutron_segments({}, {}, empty_budget);
-    } catch (const superzip::GpuError&) {
+    } catch (const flitzzip::GpuError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -640,7 +640,7 @@ TEST_CASE(neutron_dictionary_budget_admission_precedes_work) {
 // Inputs: Independently unique four-byte windows with one real repetition, plus a competitive partial tail.
 // Outputs: Requires unchanged competitive bytes, exact independent readback and honest bounded HIP accounting.
 TEST_CASE(neutron_dictionary_budget_prunes_only_proven_losing_groups) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron payload lower bounds require HIP\n";
         return;
     }
@@ -679,11 +679,11 @@ TEST_CASE(neutron_dictionary_budget_prunes_only_proven_losing_groups) {
                 sparse,
                 [&] {
                     if (++checkpoints == stop) {
-                        throw superzip::ArchiveError("cancel budget analysis");
+                        throw flitzzip::ArchiveError("cancel budget analysis");
                     }
                 },
                 losing);
-        } catch (const superzip::ArchiveError&) {
+        } catch (const flitzzip::ArchiveError&) {
             cancelled = true;
         }
         REQUIRE_TRUE(cancelled);
@@ -696,7 +696,7 @@ TEST_CASE(neutron_dictionary_budget_prunes_only_proven_losing_groups) {
 // Inputs: Throwing checkpoints before admission, after initialization and during descending parse tiles.
 // Outputs: Requires exact cancellation propagation and successful byte-exact encoding after every interrupted run.
 TEST_CASE(neutron_dictionary_cancellation_releases_workspace) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron staged cancellation requires HIP\n";
         return;
     }
@@ -725,7 +725,7 @@ TEST_CASE(neutron_dictionary_cancellation_releases_workspace) {
 // Inputs: Repeating RAM-only input at a segment boundary and the exact 1 MiB admission maximum.
 // Outputs: Requires independent CPU/HIP recovery and a payload no larger than the ordinary level-nine parser.
 TEST_CASE(neutron_dictionary_segment_and_workspace_boundaries) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron workspace qualification requires HIP\n";
         return;
     }
@@ -755,7 +755,7 @@ TEST_CASE(neutron_dictionary_segment_and_workspace_boundaries) {
 // Inputs: Sixteen full segments mixing verified empty graphs and long matches, using at most one MiB per call.
 // Outputs: Requires byte-identical segment payloads against four isolated calls and independent CPU/HIP readback.
 TEST_CASE(neutron_dictionary_batched_parse_equals_isolated_blocks) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron batched parsing requires HIP\n";
         return;
     }
@@ -790,7 +790,7 @@ TEST_CASE(neutron_dictionary_batched_parse_equals_isolated_blocks) {
 // Outputs: Reconstructs every baseline byte/descriptor through the selected stage, with strict savings and dual
 // readback.
 TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron grouped portfolio requires HIP\n";
         return;
     }
@@ -801,13 +801,13 @@ TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
     }
     constexpr auto block_bytes = static_cast<std::uint32_t>(kMaxNeutronBatchBytes / 4U);
     const auto baseline =
-        superzip::encode_chunk(input, {.require_gpu = true, .block_size = block_bytes, .compression_level = 9});
+        flitzzip::encode_chunk(input, {.require_gpu = true, .block_size = block_bytes, .compression_level = 9});
     std::size_t checkpoints = 0U;
     const auto encoded =
-        superzip::encode_chunk(input, {.require_gpu = true,
+        flitzzip::encode_chunk(input, {.require_gpu = true,
                                        .block_size = block_bytes,
                                        .compression_level = 9,
-                                       .compression_mode = superzip::NativeCompressionMode::NeutronStar,
+                                       .compression_mode = flitzzip::NativeCompressionMode::NeutronStar,
                                        .encode_checkpoint = [&] { ++checkpoints; }});
     REQUIRE_EQ(encoded.blocks.size(), 4U);
     std::vector<std::byte> restored_payload;
@@ -817,16 +817,16 @@ TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
         const auto payload =
             std::span(encoded.payload).subspan(static_cast<std::size_t>(original.encoded_offset), original.encoded_len);
         original.encoded_offset = restored_payload.size();
-        if (superzip::is_gpu_byte_plane_kind(original.kind)) {
+        if (flitzzip::is_gpu_byte_plane_kind(original.kind)) {
             // A different permutation may now beat composition. Independently invert it before recreating the
             // unchanged ordinary GPU payload; retain the exact baseline byte and descriptor oracle below.
             std::vector<std::byte> restored_source(original.uncompressed_len);
             auto local = original;
             local.encoded_offset = 0U;
-            superzip::decode_chunk_cpu(payload, std::span(&local, 1U), restored_source, {});
+            flitzzip::decode_chunk_cpu(payload, std::span(&local, 1U), restored_source, {});
             REQUIRE_TRUE(
                 std::ranges::equal(restored_source, std::span(input).subspan(index * block_bytes, block_bytes)));
-            const auto restored = superzip::encode_chunk(
+            const auto restored = flitzzip::encode_chunk(
                 restored_source, {.require_gpu = true, .block_size = block_bytes, .compression_level = 9});
             REQUIRE_EQ(restored.blocks.size(), 1U);
             REQUIRE_TRUE(payload.size() < restored.payload.size());
@@ -834,10 +834,10 @@ TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
             original.encoded_offset = restored_payload.size();
             restored_payload.insert(restored_payload.end(), restored.payload.begin(), restored.payload.end());
             ++composed;
-        } else if (original.kind == superzip::BlockKind::GpuCompound) {
-            const auto stages = superzip::parse_gpu_compound_block(payload, original);
+        } else if (original.kind == flitzzip::BlockKind::GpuCompound) {
+            const auto stages = flitzzip::parse_gpu_compound_block(payload, original);
             std::vector<std::byte> intermediate(stages.inner.uncompressed_len);
-            superzip::decode_chunk_cpu(stages.inner_payload, std::span(&stages.inner, 1U), intermediate, {});
+            flitzzip::decode_chunk_cpu(stages.inner_payload, std::span(&stages.inner, 1U), intermediate, {});
             original = stages.original;
             original.encoded_offset = restored_payload.size();
             REQUIRE_TRUE(payload.size() < intermediate.size());
@@ -856,29 +856,29 @@ TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
     REQUIRE_EQ(encoded.source_crc32, baseline.source_crc32);
     REQUIRE_TRUE(encoded.source_crc32_available && encoded.gpu_used);
     std::vector<std::byte> decoded(input.size());
-    superzip::decode_chunk_cpu(encoded.payload, encoded.blocks, decoded, {});
+    flitzzip::decode_chunk_cpu(encoded.payload, encoded.blocks, decoded, {});
     REQUIRE_EQ(decoded, input);
-    REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, {.require_gpu = true}));
+    REQUIRE_TRUE(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, {.require_gpu = true}));
     REQUIRE_EQ(decoded, input);
     // The final observed checkpoint is the last secondary trial; cancellation must not enter a CPU fallback.
     std::size_t observed = 0U;
     bool cancelled = false;
     try {
-        (void)superzip::encode_chunk(input, {.require_gpu = true,
+        (void)flitzzip::encode_chunk(input, {.require_gpu = true,
                                              .block_size = block_bytes,
                                              .compression_level = 9,
-                                             .compression_mode = superzip::NativeCompressionMode::NeutronStar,
+                                             .compression_mode = flitzzip::NativeCompressionMode::NeutronStar,
                                              .encode_checkpoint = [&] {
                                                  if (++observed == checkpoints) {
-                                                     throw superzip::ArchiveError("cancel secondary trial");
+                                                     throw flitzzip::ArchiveError("cancel secondary trial");
                                                  }
                                              }});
-    } catch (const superzip::ArchiveError&) {
+    } catch (const flitzzip::ArchiveError&) {
         cancelled = true;
     }
     REQUIRE_TRUE(cancelled);
     REQUIRE_EQ(observed, checkpoints);
     REQUIRE_EQ(
-        superzip::encode_chunk(input, {.require_gpu = true, .block_size = block_bytes, .compression_level = 9}).payload,
+        flitzzip::encode_chunk(input, {.require_gpu = true, .block_size = block_bytes, .compression_level = 9}).payload,
         baseline.payload);
 }

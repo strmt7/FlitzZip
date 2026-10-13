@@ -1,5 +1,5 @@
 param(
-    [string]$PythonPath = $env:SUPERZIP_PYTHON,
+    [string]$PythonPath = $env:FLITZZIP_PYTHON,
     [string]$VenvPath = "",
     [switch]$SkipPowerShellAnalyzer
 )
@@ -36,7 +36,7 @@ function Resolve-BootstrapPython {
         return [pscustomobject]@{ Command = $pyLauncher.Source; PrefixArgs = @("-3") }
     }
 
-    throw "Python was not found. Install Python 3.12+ or set SUPERZIP_PYTHON to a Python executable."
+    throw "Python was not found. Install Python 3.12+ or set FLITZZIP_PYTHON to a Python executable."
 }
 
 # Purpose: Invoke the resolved bootstrap Python command and fail on non-zero exit.

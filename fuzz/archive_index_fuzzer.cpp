@@ -19,8 +19,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     const std::string bytes(reinterpret_cast<const char*>(data), size);
     std::istringstream input(bytes, std::ios::binary);
     try {
-        (void)superzip::read_archive_index(input);
-    } catch (const superzip::Error&) {
+        (void)flitzzip::read_archive_index(input);
+    } catch (const flitzzip::Error&) {
     }
     if (size >= sizeof(std::uint32_t)) {
         std::uint32_t decoded_bytes = 0U;
@@ -30,25 +30,25 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         const auto payload =
             std::span(reinterpret_cast<const std::byte*>(data + sizeof(decoded_bytes)), size - sizeof(decoded_bytes));
         try {
-            (void)superzip::parse_gpu_compound_block(payload,
-                                                     {.kind = superzip::BlockKind::GpuCompound,
+            (void)flitzzip::parse_gpu_compound_block(payload,
+                                                     {.kind = flitzzip::BlockKind::GpuCompound,
                                                       .uncompressed_len = decoded_bytes,
                                                       .encoded_len = static_cast<std::uint32_t>(payload.size())});
-        } catch (const superzip::Error&) {
+        } catch (const flitzzip::Error&) {
         }
         try {
-            (void)superzip::parse_gpu_byte_plane_contexts(payload,
-                                                          {.kind = superzip::BlockKind::GpuBytePlaneContexts,
+            (void)flitzzip::parse_gpu_byte_plane_contexts(payload,
+                                                          {.kind = flitzzip::BlockKind::GpuBytePlaneContexts,
                                                            .uncompressed_len = decoded_bytes,
                                                            .encoded_len = static_cast<std::uint32_t>(payload.size())});
-        } catch (const superzip::Error&) {
+        } catch (const flitzzip::Error&) {
         }
         try {
-            (void)superzip::parse_gpu_byte_plane_block(payload,
-                                                       {.kind = superzip::BlockKind::GpuBytePlane,
+            (void)flitzzip::parse_gpu_byte_plane_block(payload,
+                                                       {.kind = flitzzip::BlockKind::GpuBytePlane,
                                                         .uncompressed_len = decoded_bytes,
                                                         .encoded_len = static_cast<std::uint32_t>(payload.size())});
-        } catch (const superzip::Error&) {
+        } catch (const flitzzip::Error&) {
         }
     }
     return 0;

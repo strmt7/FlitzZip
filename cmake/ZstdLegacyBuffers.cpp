@@ -9,7 +9,7 @@
 #include <span>
 #include <utility>
 
-#ifdef SUPERZIP_LEGACY_BUFFER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_LEGACY_BUFFER_FAULT_ALLOCATIONS
 #include "fault_allocator.h"
 #endif
 
@@ -23,7 +23,7 @@ struct BufferDelete {
         if (allocator.release != nullptr) {
             allocator.release(allocator.opaque, data);
         } else {
-#ifdef SUPERZIP_LEGACY_BUFFER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_LEGACY_BUFFER_FAULT_ALLOCATIONS
             sz_fault_free(data);
 #else
             delete[] data;
@@ -40,7 +40,7 @@ BufferOwner acquire_buffer(ZBUFF_bufferAllocator allocator, std::size_t size) no
     if (allocator.allocate != nullptr) {
         data = static_cast<char*>(allocator.allocate(allocator.opaque, size));
     } else {
-#ifdef SUPERZIP_LEGACY_BUFFER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_LEGACY_BUFFER_FAULT_ALLOCATIONS
         data = static_cast<char*>(sz_fault_malloc(size));
 #else
         data = new (std::nothrow) char[size];
@@ -64,7 +64,7 @@ template <typename Owner> Owner* create_record(ZBUFF_bufferAllocator allocator) 
         }
         return storage == nullptr ? nullptr : new (storage) Owner(allocator);
     }
-#ifdef SUPERZIP_LEGACY_BUFFER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_LEGACY_BUFFER_FAULT_ALLOCATIONS
     auto* storage = sz_fault_malloc(sizeof(Owner));
     return storage == nullptr ? nullptr : new (storage) Owner(allocator);
 #else
@@ -83,7 +83,7 @@ template <typename Owner> void release_record(Owner* owner) noexcept {
         owner->~Owner();
         allocator.release(allocator.opaque, owner);
     } else {
-#ifdef SUPERZIP_LEGACY_BUFFER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_LEGACY_BUFFER_FAULT_ALLOCATIONS
         owner->~Owner();
         sz_fault_free(owner);
 #else

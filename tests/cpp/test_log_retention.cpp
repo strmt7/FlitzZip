@@ -23,9 +23,9 @@ ProbeLogEntry probe_entry(std::chrono::system_clock::time_point now, std::chrono
 }  // namespace
 
 TEST_CASE(log_retention_labels_are_exact_gui_choices) {
-    using superzip::app::log_retention_days;
-    using superzip::app::log_retention_display_text;
-    using superzip::app::log_retention_log_text;
+    using flitzzip::app::log_retention_days;
+    using flitzzip::app::log_retention_display_text;
+    using flitzzip::app::log_retention_log_text;
 
     REQUIRE_EQ(log_retention_display_text(0), std::wstring_view(L"1 week"));
     REQUIRE_EQ(log_retention_display_text(1), std::wstring_view(L"2 weeks"));
@@ -44,9 +44,9 @@ TEST_CASE(log_retention_labels_are_exact_gui_choices) {
 }
 
 TEST_CASE(log_level_filter_matrix_matches_settings_labels) {
-    using superzip::app::log_level_allows;
-    using superzip::app::log_severity_text;
-    using superzip::app::LogSeverity;
+    using flitzzip::app::log_level_allows;
+    using flitzzip::app::log_severity_text;
+    using flitzzip::app::LogSeverity;
 
     REQUIRE_TRUE(log_level_allows(0, LogSeverity::Information));
     REQUIRE_TRUE(log_level_allows(0, LogSeverity::Warning));
@@ -66,7 +66,7 @@ TEST_CASE(log_level_filter_matrix_matches_settings_labels) {
 }
 
 TEST_CASE(log_retention_prunes_expired_entries_and_caps_count) {
-    using superzip::app::prune_log_entries;
+    using flitzzip::app::prune_log_entries;
 
     const auto now = std::chrono::system_clock::time_point{} + std::chrono::hours(24 * 40);
 

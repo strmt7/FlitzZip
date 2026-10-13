@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace superzip::crc_detail {
+namespace flitzzip::crc_detail {
 
 struct Matrix {
     std::uint32_t rows[32]{};
@@ -58,4 +58,4 @@ template <std::size_t Count> constexpr ByteOperators<Count> make_byte_operators(
     return result;
 }
 
-}  // namespace superzip::crc_detail
+}  // namespace flitzzip::crc_detail

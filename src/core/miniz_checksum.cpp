@@ -11,5 +11,5 @@ extern "C" mz_ulong mz_crc32(mz_ulong crc, const unsigned char* ptr, size_t buf_
         return MZ_CRC32_INIT;
     }
     const auto bytes = std::as_bytes(std::span(ptr, buf_len));
-    return superzip::crc32(bytes, static_cast<std::uint32_t>(crc));
+    return flitzzip::crc32(bytes, static_cast<std::uint32_t>(crc));
 }

@@ -1,7 +1,7 @@
 param([string]$Configuration = 'Release', [switch]$RequireHip, [switch]$ControllerOnly)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$cli = Join-Path $root "build/$Configuration/superzip_cli.exe"
+$cli = Join-Path $root "build/$Configuration/flitzzip_cli.exe"
 . (Join-Path $PSScriptRoot 'benchmark_statistics.ps1')
 $receiptArguments = @('-3', (Join-Path $PSScriptRoot 'native_build_receipt.py'), 'validate', '--root', $root, '--configuration', $Configuration)
 if ($RequireHip) { $receiptArguments += '--require-hip' }
@@ -141,7 +141,7 @@ function Test-MemoryCorpusController {
         foreach ($lane in @(Get-BenchmarkLaneOrder -Iteration 1 -SkipGpu:$SkipGpu)) {
             $flag = if ($lane -eq 'CPU') { '--force-cpu' } else { '--require-gpu' }
             $arguments = @(Get-MemoryBenchmarkArgument -ModeFlag $flag -BlockSizeKiB 8192 -RequestedDepth 1)
-            $geometry = Invoke-SuperZipStat -Arguments @($arguments + '--plan-only')
+            $geometry = Invoke-FlitzZipStat -Arguments @($arguments + '--plan-only')
             Assert-BenchmarkGeometry -Stats $geometry -Expected $geometry -PlanOnly
             $script:BenchmarkGeometryPlans["${lane}:8192"] = $geometry
         }

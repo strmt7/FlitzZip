@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <span>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Assign distinct bounded histogram budgets without completing the sample before maximum effort.
 // Inputs: Nonempty bounded block bytes and validated entropy effort 2-9.
@@ -109,4 +109,4 @@ class EntropyHistogramSampler {
     std::size_t permutation_size_ = 0U;
 };
 
-}  // namespace superzip
+}  // namespace flitzzip

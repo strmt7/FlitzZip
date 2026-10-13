@@ -28,7 +28,7 @@ class SecurityBuildTests(unittest.TestCase):
             self.assertEqual(source.read(prefix + "nltk/VERSION").decode().strip(), data["upstream_version"])
             for name in ("LICENSE.txt", "AUTHORS.md", "README.md"):
                 self.assertGreater(len(source.read(prefix + name)), 100)
-        self.assertIn("superzip.security", data["version"])
+        self.assertIn("flitzzip.security", data["version"])
         self.assertIn("GHSA-8mgp-746c-j5xp", data["advisories"])
 
     def test_digest_and_source_tampering_refused(self):
@@ -83,8 +83,8 @@ class SecurityBuildTests(unittest.TestCase):
             build.identify_build(source, data)
             self.assertEqual(before, {name: (source / name).read_bytes() for name in targets})
             self.assertEqual((source / "nltk/VERSION").read_text().strip(), data["version"])
-            self.assertIn("not a published NLTK release", (source / "SUPERZIP_BUILD_NOTICE.txt").read_text())
-            self.assertIn("SUPERZIP_BUILD_NOTICE.txt", (source / "setup.cfg").read_text())
+            self.assertIn("not a published NLTK release", (source / "FLITZZIP_BUILD_NOTICE.txt").read_text())
+            self.assertIn("FLITZZIP_BUILD_NOTICE.txt", (source / "setup.cfg").read_text())
 
     def test_installed_runtime_binds_original_sources_without_import_or_version_fallback(self):
         """Purpose: Reject installed source drift. Inputs: Original owned tree and mutations. Outputs: Exact refusal."""

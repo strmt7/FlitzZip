@@ -26,7 +26,7 @@ function Invoke-CMakeChecked {
 }
 
 # Purpose: Increment the numeric patch component for installer identity drift tests.
-# Inputs: PackageVersion is a SuperZip SemVer string without build metadata.
+# Inputs: PackageVersion is a FlitzZip SemVer string without build metadata.
 # Outputs: Returns a SemVer string with the same major/minor and patch + 1.
 function Get-NextPatchPackageVersion {
     param(
@@ -34,8 +34,8 @@ function Get-NextPatchPackageVersion {
         [string]$PackageVersion
     )
 
-    $normalized = Assert-SuperZipPackageVersion -Version $PackageVersion
-    $numeric = Get-SuperZipNumericPackageVersion -PackageVersion $normalized
+    $normalized = Assert-FlitzZipPackageVersion -Version $PackageVersion
+    $numeric = Get-FlitzZipNumericPackageVersion -PackageVersion $normalized
     $parts = $numeric.Split(".")
     return "$($parts[0]).$($parts[1]).$([int]$parts[2] + 1)"
 }
@@ -88,12 +88,12 @@ function Get-MsiIdentitySnapshot {
         "-B", $buildRoot,
         "-G", (Find-CMakeGenerator -BuildRoot $buildRoot),
         "-A", "x64",
-        "-DSUPERZIP_ENABLE_HIP=OFF",
-        "-DSUPERZIP_BUILD_GUI=OFF",
-        "-DSUPERZIP_BUILD_TESTS=OFF",
-        "-DSUPERZIP_PACKAGE_VERSION=$PackageVersion",
-        "-DSUPERZIP_MSI_PRODUCT_IDENTITY=$ProductIdentity",
-        "-DSUPERZIP_MSI_INSTALL_SCOPE=$Scope"
+        "-DFLITZZIP_ENABLE_HIP=OFF",
+        "-DFLITZZIP_BUILD_GUI=OFF",
+        "-DFLITZZIP_BUILD_TESTS=OFF",
+        "-DFLITZZIP_PACKAGE_VERSION=$PackageVersion",
+        "-DFLITZZIP_MSI_PRODUCT_IDENTITY=$ProductIdentity",
+        "-DFLITZZIP_MSI_INSTALL_SCOPE=$Scope"
     )
     Invoke-CMakeChecked -CMakePath $CMakePath -Arguments $configureArgs -Label "CMake configure for $Name"
 
@@ -102,15 +102,15 @@ function Get-MsiIdentitySnapshot {
         packageVersion = $PackageVersion
         productIdentity = $ProductIdentity
         scope = $Scope
-        productVersion = Read-SuperZipCPackValue -BuildRoot $buildRoot -Name "CPACK_PACKAGE_VERSION"
-        productCode = Read-SuperZipCPackValue -BuildRoot $buildRoot -Name "CPACK_WIX_PRODUCT_GUID"
-        upgradeCode = Read-SuperZipCPackValue -BuildRoot $buildRoot -Name "CPACK_WIX_UPGRADE_GUID"
+        productVersion = Read-FlitzZipCPackValue -BuildRoot $buildRoot -Name "CPACK_PACKAGE_VERSION"
+        productCode = Read-FlitzZipCPackValue -BuildRoot $buildRoot -Name "CPACK_WIX_PRODUCT_GUID"
+        upgradeCode = Read-FlitzZipCPackValue -BuildRoot $buildRoot -Name "CPACK_WIX_UPGRADE_GUID"
         buildRoot = $buildRoot
     }
 }
 
 $cmake = Find-CMake -RepoRoot $repo
-$baseVersion = Resolve-SuperZipProjectVersion -RepoRoot $repo
+$baseVersion = Resolve-FlitzZipProjectVersion -RepoRoot $repo
 $nextPatchVersion = Get-NextPatchPackageVersion -PackageVersion $baseVersion
 $snapshots = @()
 
@@ -134,6 +134,9 @@ try {
         throw "Per-machine and per-user MSI scopes produced the same ProductCode."
     }
     foreach ($snapshot in $snapshots) {
+        if ($snapshot.upgradeCode -ne '8E0D80F6-859D-4FE9-B082-F0D8048A8B57') {
+            throw 'The product rename must preserve the installed product family UpgradeCode.'
+        }
         if ($snapshot.upgradeCode -ne $snapshots[0].upgradeCode) {
             throw "MSI UpgradeCode changed for snapshot $($snapshot.name)."
         }

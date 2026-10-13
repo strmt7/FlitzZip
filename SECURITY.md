@@ -10,11 +10,11 @@ created.
 Do not open public issues for exploitable archive parsing, path traversal,
 malware scanning, credential, or supply-chain findings. Report privately through
 GitHub private vulnerability reporting:
-[Create a private report](https://github.com/strmt7/SuperZip/security/advisories/new).
+[Create a private report](https://github.com/strmt7/FlitzZip/security/advisories/new).
 
 ## Scope
 
-Security-sensitive SuperZip areas include:
+Security-sensitive FlitzZip areas include:
 
 - Archive metadata parsing and payload bounds checks.
 - Extraction path validation.
@@ -32,7 +32,7 @@ Before a security release:
 1. Add or update a regression test.
 2. Run `tools\build.ps1 -Configuration Release` on a HIP-capable Windows host.
 3. Run `tools\test.ps1 -Configuration Release`.
-4. Run `build\Release\superzip_cli.exe dependency-check`.
+4. Run `build\Release\flitzzip_cli.exe dependency-check`.
 5. Run `tools\security_scan.ps1`.
 6. Verify the GitHub `security` and `greenbone-openvas-vulnetix` workflows.
 7. Verify no credentials or local paths are present in commits.

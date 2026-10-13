@@ -13,7 +13,7 @@ MAX_CORPUS = 768 * 1024 * 1024
 MAX_MANIFEST = 1024 * 1024
 MAX_PROTOCOL = 65536
 SLOT_BYTES = 4 + MAX_PROTOCOL
-SESSION_ENV = "SUPERZIP_NEUTRON_CORPUS_MAPPING"
+SESSION_ENV = "FLITZZIP_NEUTRON_CORPUS_MAPPING"
 
 
 def mutex_api():
@@ -83,7 +83,7 @@ def prepare_session(stack: ExitStack, files: list[dict], runs: int, admit) -> di
     result_bytes = len(files) * runs * SLOT_BYTES
     # Publication briefly overlaps original bytes; admission also reserves both child input copies.
     admit(source_bytes + result_bytes + 2 * max(row["bytes"] for row in rows))
-    name = "superzip-neutron-" + secrets.token_hex(32)
+    name = "flitzzip-neutron-" + secrets.token_hex(32)
     source = SharedMemory(name=name + "-source", create=True, size=source_bytes)
     stack.callback(source.close)
     results = SharedMemory(name=name + "-results", create=True, size=result_bytes)
@@ -131,7 +131,7 @@ def validate_descriptor(descriptor: dict) -> None:
         raise ValueError("RAM corpus has no payload")
     if descriptor["result_bytes"] != descriptor["file_count"] * descriptor["runs"] * SLOT_BYTES:
         raise ValueError("Observation capacity disagrees with the complete study")
-    prefix = "superzip-neutron-"
+    prefix = "flitzzip-neutron-"
     source = descriptor.get("source", "")
     token = source[len(prefix) : -len("-source")] if isinstance(source, str) else ""
     if len(token) != 64 or any(char not in "0123456789abcdef" for char in token):

@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Create a single-file Gzip stream with bounded in-process raw deflate.
 // Inputs: `source_file` is an existing regular file, `output_archive` is the destination `.gz`, `compression_level` is
@@ -31,4 +31,4 @@ OperationStats compress_gzip(const std::vector<std::filesystem::path>& sources,
 OperationStats extract_gzip_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                  bool overwrite, const ProgressCallback& progress_callback = {});
 
-}  // namespace superzip
+}  // namespace flitzzip

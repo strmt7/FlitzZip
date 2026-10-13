@@ -1,46 +1,51 @@
 <p align="center">
-  <img src="resources/brand/superzip-logo.svg" alt="SuperZip logo" width="760">
+  <img src="resources/brand/flitzzip-logo.svg" alt="FlitzZip logo" width="760">
 </p>
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![Windows CI](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/windows-ci.yml?branch=main&label=windows-ci)](https://github.com/strmt7/SuperZip/actions/workflows/windows-ci.yml)
-[![Security](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/security-code-scanning.yml?branch=main&label=security)](https://github.com/strmt7/SuperZip/actions/workflows/security-code-scanning.yml)
-[![Lint](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/lint.yml?branch=main&label=lint)](https://github.com/strmt7/SuperZip/actions/workflows/lint.yml)
-[![Fuzzing](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/fuzzing.yml?branch=main&label=fuzzing)](https://github.com/strmt7/SuperZip/actions/workflows/fuzzing.yml)
-[![Scorecard](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/scorecard.yml?branch=main&label=scorecard)](https://github.com/strmt7/SuperZip/actions/workflows/scorecard.yml)
-[![Release](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/release.yml?branch=main&label=release)](https://github.com/strmt7/SuperZip/actions/workflows/release.yml)
-[![Commit activity](https://img.shields.io/github/commit-activity/m/strmt7/SuperZip)](https://github.com/strmt7/SuperZip/commits/main)
+[![Windows CI](https://img.shields.io/github/actions/workflow/status/strmt7/FlitzZip/windows-ci.yml?branch=main&label=windows-ci)](https://github.com/strmt7/FlitzZip/actions/workflows/windows-ci.yml)
+[![Security](https://img.shields.io/github/actions/workflow/status/strmt7/FlitzZip/security-code-scanning.yml?branch=main&label=security)](https://github.com/strmt7/FlitzZip/actions/workflows/security-code-scanning.yml)
+[![Lint](https://img.shields.io/github/actions/workflow/status/strmt7/FlitzZip/lint.yml?branch=main&label=lint)](https://github.com/strmt7/FlitzZip/actions/workflows/lint.yml)
+[![Fuzzing](https://img.shields.io/github/actions/workflow/status/strmt7/FlitzZip/fuzzing.yml?branch=main&label=fuzzing)](https://github.com/strmt7/FlitzZip/actions/workflows/fuzzing.yml)
+[![Scorecard](https://img.shields.io/github/actions/workflow/status/strmt7/FlitzZip/scorecard.yml?branch=main&label=scorecard)](https://github.com/strmt7/FlitzZip/actions/workflows/scorecard.yml)
+[![Release](https://img.shields.io/github/actions/workflow/status/strmt7/FlitzZip/release.yml?branch=main&label=release)](https://github.com/strmt7/FlitzZip/actions/workflows/release.yml)
+[![Commit activity](https://img.shields.io/github/commit-activity/m/strmt7/FlitzZip)](https://github.com/strmt7/FlitzZip/commits/main)
 [![cocoindex-code](https://img.shields.io/static/v1?label=&message=cocoindex-code&color=555&logo=github&logoColor=white)](https://github.com/cocoindex-io/cocoindex-code)
 [![caveman](https://img.shields.io/static/v1?label=&message=caveman&color=555&logo=github&logoColor=white)](https://github.com/JuliusBrussee/caveman)
 [![crawl4ai](https://img.shields.io/static/v1?label=&message=crawl4ai&color=555&logo=github&logoColor=white)](https://github.com/unclecode/crawl4ai)
 
-# SuperZip
+# FlitzZip
 
-SuperZip is a Windows archive app with a native `.suzip` format accelerated by
+FlitzZip is a Windows archive app with a native `.flzip` format accelerated by
 AMD HIP. It also creates and extracts common archive formats, offers archive
 verification and guarded extraction, and provides both a graphical app and a CLI.
 
-**Beta:** SuperZip is prerelease software. Keep original files and verify
-archives before relying on them for long-term storage. The latest published
-build may be older than the source on `main`.
+**Beta:** FlitzZip is prerelease software. Keep original files and verify
+archives before relying on them for long-term storage.
 
-[Download a release](https://github.com/strmt7/SuperZip/releases) as a portable
-ZIP or an MSI installer. Both packages contain the same HIP-enabled binaries;
+There are currently no published release packages. The previous release was
+withdrawn during the FlitzZip rename; a replacement requires separate maintainer
+approval. Qualified releases will provide a portable ZIP and an MSI installer.
+Both packages contain the same HIP-enabled binaries;
 the portable edition is not a reduced CPU-only build. Check the requirements
 below before installing.
 
 | Task | Formats |
 | --- | --- |
-| Native GPU-accelerated archiving | `.suzip` |
+| Native GPU-accelerated archiving | `.flzip` |
 | Common archive creation and extraction | ZIP, TAR and supported compressed TAR variants, CPIO, AR, Gzip, Bzip2, Zstandard, and other documented formats |
 | Extraction of additional formats | Supported ZIPX methods, 7z, CAB, ISO, RPM, WIM, and other documented subsets |
 
 The [format support matrix](docs/archive-format-support.md) gives exact
-create/extract capabilities and method limits. `.suzip` is a distinct versioned
-format, not a renamed ZIP file; its [format specification](docs/native-suzip-format.md)
+create/extract capabilities and method limits. `.flzip` is a distinct versioned
+format, not a renamed ZIP file; its [format specification](docs/native-flzip-format.md)
 documents compatibility and verification. Unsupported methods fail explicitly.
 
-Native SUZIP also has a separate experimental [Neutron star mode](docs/neutron-star-mode-research.md)
+The rename preserves existing native archive bytes and supported format versions.
+Existing `.suzip` files remain readable through structural detection; new archives
+use `.flzip`. Saved preferences migrate once into the FlitzZip application folder.
+
+Native FLZIP also has a separate experimental [Neutron star mode](docs/neutron-star-mode-research.md)
 below the nine numeric efforts. It requires a compatible AMD HIP GPU and the
 required-GPU setting; the CLI selects it with `--neutron-star`. Its
 [public-corpus results](docs/neutron-public-corpus-benchmark.md) describe measured
@@ -54,13 +59,13 @@ Runtime systems need:
 - Windows 11 x64.
 - A [supported](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html)
   AMD GPU. Choose Windows in AMD's compatibility selector and check the
-  [GPU targets included in the SuperZip build](docs/release.md#gpu-targets).
+  [GPU targets included in the FlitzZip build](docs/release.md#gpu-targets).
 - An AMD GPU driver that provides the HIP runtime required by the build.
 
 AMD documents the HIP runtime as part of the AMD GPU driver, not something an
-application should redistribute. SuperZip therefore delay-loads the HIP runtime,
+application should redistribute. FlitzZip therefore delay-loads the HIP runtime,
 reports missing prerequisites clearly, and records the expected runtime DLL in
-`superzip-runtime-dependencies.json` inside each HIP-enabled package.
+`flitzzip-runtime-dependencies.json` inside each HIP-enabled package.
 Device-kernel registration also loads explicitly after trusted runtime/device
 admission. Missing AMD components leave capability reporting and CPU functions
 usable; Neutron remains unavailable. The packaged kernel DLL must match the
@@ -114,7 +119,7 @@ tools/build.ps1 -Configuration Release -CpuOnlyValidation
 tools/test.ps1 -Configuration Release
 ```
 
-CPU-only validation artifacts must not be published as SuperZip product
+CPU-only validation artifacts must not be published as FlitzZip product
 releases.
 
 When building HIP objects on Windows, `tools/build.ps1` leaves
@@ -134,19 +139,19 @@ tools/package.ps1 -Configuration Release
 The package script refuses to package a CPU-only build unless
 `-AllowCpuValidationPackage` is passed explicitly for internal validation. For
 MSI packaging, install the pinned repo-local WiX tool and set
-`SUPERZIP_ACCEPT_WIX_OSMF_EULA=wix7` only after accepting the WiX v7 OSMF EULA:
+`FLITZZIP_ACCEPT_WIX_OSMF_EULA=wix7` only after accepting the WiX v7 OSMF EULA:
 
 ```powershell
 tools/install_wix.ps1
-$env:SUPERZIP_ACCEPT_WIX_OSMF_EULA = "wix7"
+$env:FLITZZIP_ACCEPT_WIX_OSMF_EULA = "wix7"
 tools/package.ps1 -Configuration Release -CreateMsi
 ```
 
 The MSI build defaults to the release deployment scope: per-machine install
-under `C:\Program Files\SuperZip`. Like normal Windows desktop software, that
+under `C:\Program Files\FlitzZip`. Like normal Windows desktop software, that
 installer requires elevation when installed by a non-admin user.
 Windows owns the UAC consent prompt, so the MSI cannot shorten an unanswered
-admin-rights prompt from inside the package. SuperZip-owned installer launch and
+admin-rights prompt from inside the package. FlitzZip-owned installer launch and
 release validation paths use bounded waits instead: MSI install and uninstall
 smoke phases time out after 300 seconds instead of waiting indefinitely.
 The installer offers `Create Desktop shortcut` as an optional MSI feature rather
@@ -165,15 +170,15 @@ Do not publish a per-user MSI as a product release.
 ## CLI
 
 Examples use PowerShell. From the extracted portable package, select the
-executable once; `&` invokes the path stored in `$SuperZip`, including paths
+executable once; `&` invokes the path stored in `$FlitzZip`, including paths
 containing spaces:
 
 ```powershell
-$SuperZip = (Resolve-Path ".\superzip_cli.exe").Path
-& $SuperZip --help
+$FlitzZip = (Resolve-Path ".\flitzzip_cli.exe").Path
+& $FlitzZip --help
 ```
 
-For a source build, use `.\build\Release\superzip_cli.exe` in the assignment
+For a source build, use `.\build\Release\flitzzip_cli.exe` in the assignment
 instead. Input and output paths below are examples; quote paths containing
 spaces. Commands return `0` on success, `1` on operation or option-validation
 failure and `2` when a missing or unknown command prints usage.
@@ -181,10 +186,10 @@ failure and `2` when a missing or unknown command prints usage.
 ### Check readiness and inspect archives
 
 ```powershell
-& $SuperZip dependency-check
-& $SuperZip gpu-info
-& $SuperZip formats
-& $SuperZip identify "archive.tar"
+& $FlitzZip dependency-check
+& $FlitzZip gpu-info
+& $FlitzZip formats
+& $FlitzZip identify "archive.tar"
 ```
 
 `dependency-check` checks runtime prerequisites; `gpu-info` reports the HIP
@@ -194,9 +199,9 @@ backend. `formats` lists the build's create/extract capabilities, while
 ### Create and restore a native GPU archive
 
 ```powershell
-& $SuperZip compress --format suzip --require-gpu --verify-after-write --output "archive.suzip" "path\to\folder"
-& $SuperZip verify --require-gpu --sha256 "archive.suzip"
-& $SuperZip extract --require-gpu --output "restored" "archive.suzip"
+& $FlitzZip compress --format flzip --require-gpu --verify-after-write --output "archive.flzip" "path\to\folder"
+& $FlitzZip verify --require-gpu --sha256 "archive.flzip"
+& $FlitzZip extract --require-gpu --output "restored" "archive.flzip"
 ```
 
 `--require-gpu` makes an unavailable HIP backend or a CPU-only native block
@@ -208,10 +213,10 @@ format automatically and refuses accidental overwrite by default.
 ### Work with compatibility formats
 
 ```powershell
-& $SuperZip compress --format zip --compression-level 5 --output "archive.zip" "path\to\folder"
-& $SuperZip compress --format tar.zst --compression-level 5 --output "archive.tar.zst" "path\to\folder"
-& $SuperZip compress --format zst --compression-level 5 --output "file.txt.zst" "file.txt"
-& $SuperZip extract --output "restored" "archive.7z"
+& $FlitzZip compress --format zip --compression-level 5 --output "archive.zip" "path\to\folder"
+& $FlitzZip compress --format tar.zst --compression-level 5 --output "archive.tar.zst" "path\to\folder"
+& $FlitzZip compress --format zst --compression-level 5 --output "file.txt.zst" "file.txt"
+& $FlitzZip extract --output "restored" "archive.7z"
 ```
 
 Choose `--format` when creating an archive. Folder/container formats such as
@@ -220,7 +225,7 @@ Zstandard. Extraction normally needs no format flag; use an explicit format
 when necessary, for example `--format macbinary`. The
 [format support matrix](docs/archive-format-support.md) documents every format,
 alias and method limit, including extraction-only formats. Compatibility
-adapters run on the CPU and do not use native SUZIP GPU tuning options.
+adapters run on the CPU and do not use native FLZIP GPU tuning options.
 
 ### Commands and options
 
@@ -230,7 +235,7 @@ adapters run on the CPU and do not use native SUZIP GPU tuning options.
 | `dependency-check`, `gpu-info` | Check prerequisites and HIP availability. |
 | `formats`, `identify <archive>` | Inspect supported capabilities or detect a file's format. |
 | `compress`, `extract` | Create an archive or restore its contents. |
-| `verify <archive>` | Validate SUZIP, ZIP or supported ZIPX contents. |
+| `verify <archive>` | Validate FLZIP, ZIP or supported ZIPX contents. |
 | `gpu-diagnostic` | Run a bounded HIP diagnostic workload. |
 | `memory-benchmark`, `benchmark-suite` | Measure native RAM-only workloads; see [Benchmarking](#benchmarking). |
 
@@ -238,18 +243,18 @@ adapters run on the CPU and do not use native SUZIP GPU tuning options.
 | --- | --- |
 | `--output <path>` | Required destination for compression or extraction. |
 | `--format <name>` | Select creation format or override extraction auto-detection. |
-| `--compression-level <1-9>` | Native SUZIP and CPU ZIP, Gzip, Bzip2, Zstandard, TAR.GZ, TAR.BZ2, TAR.ZST and CPIO.GZ writers. Uncompressed TAR, CPIO, AR and fixed-policy Unix Compress reject it. |
-| `--require-gpu`, `--force-cpu` | Native SUZIP only; mutually exclusive. Use forced CPU for diagnostics or comparisons. |
+| `--compression-level <1-9>` | Native FLZIP and CPU ZIP, Gzip, Bzip2, Zstandard, TAR.GZ, TAR.BZ2, TAR.ZST and CPIO.GZ writers. Uncompressed TAR, CPIO, AR and fixed-policy Unix Compress reject it. |
+| `--require-gpu`, `--force-cpu` | Native FLZIP only; mutually exclusive. Use forced CPU for diagnostics or comparisons. |
 | `--workers`, `--inflight`, `--block-size-kib` | Native operation controls; consult `--help` for each command's accepted options and ranges. |
-| `--verify-after-write` | SUZIP or ZIP creation; adds post-write archive validation. |
+| `--verify-after-write` | FLZIP or ZIP creation; adds post-write archive validation. |
 | `--overwrite` | Extraction only; explicitly allow replacement of existing files. |
 | `--validate-before-publish` | Extraction; validate through the guarded publication path before finalizing output. |
 | `--sha256`, `--defender-scan` | Optional integrity hashing or bounded Microsoft Defender checks; additional passes are explicit. |
 | `--name-encoding utf8\|system` | Compatibility extraction filename decoding; format-specific restrictions apply. |
 
 Recognized but unsupported formats or methods fail explicitly. Full command
-syntax comes from `& $SuperZip --help`; native format semantics and CPU/GPU
-limits are documented in the [SUZIP specification](docs/native-suzip-format.md).
+syntax comes from `& $FlitzZip --help`; native format semantics and CPU/GPU
+limits are documented in the [FLZIP specification](docs/native-flzip-format.md).
 
 ## GUI
 
@@ -260,7 +265,7 @@ high-resolution displays.
 
 ## Security
 
-SuperZip treats archive contents as untrusted input. It rejects unsafe
+FlitzZip treats archive contents as untrusted input. It rejects unsafe
 extraction paths, malformed metadata, CRC mismatches, and accidental overwrites
 by default. Microsoft Defender scanning and SHA-256 integrity hashing are
 available as opt-in checks. Defender scans are hidden subprocesses with a
@@ -285,7 +290,7 @@ findings rather than style nits.
 ## Fuzzing
 
 Security-sensitive parsers are fuzzed with ClusterFuzzLite. The integration
-builds libFuzzer targets for SuperZip archive-index metadata, archive-entry
+builds libFuzzer targets for FlitzZip archive-index metadata, archive-entry
 path canonicalization, ISO metadata, CAB metadata, RPM header metadata, 7z
 decode/metadata handling, LZMA and lzip stream handling, ARJ metadata/stored-payload
 handling, SEA ARC/ARK metadata/unpacked-payload handling, CPIO metadata/path
@@ -357,7 +362,7 @@ tools/storage_smoke.ps1 -Configuration Release
 ```
 
 `tools/bench.ps1` is memory-only by default. It generates deterministic chunks
-inside `superzip_cli.exe`, stores the encoded archive representation in process
+inside `flitzzip_cli.exe`, stores the encoded archive representation in process
 RAM, verifies/extracts from RAM, and reports `memory_only=true` plus
 `disk_write_bytes=0` from both the forced-CPU and required-GPU benchmark lanes:
 
@@ -371,7 +376,7 @@ than 10 GiB in memory mode and sweeps the production block-size choices:
 256 KiB, 512 KiB, 1 MiB, 2 MiB, 4 MiB, 8 MiB, and 16 MiB. It reports production-aligned worker
 allocation (`Workers`, `InflightChunks`, and `CodecWorkers`) plus backend HIP
 event counters, kernel time, transfer bytes, and allocation bytes emitted by the
-SuperZip GPU backend itself. Benchmark records include compression ratio so CPU
+FlitzZip GPU backend itself. Benchmark records include compression ratio so CPU
 and GPU lanes are compared at the same compression level, with level 5 as the
 standard balanced baseline. Do not treat a GPU-only timing as a product
 benchmark; if required HIP is slower than forced CPU, record it as an
@@ -385,7 +390,7 @@ the production block size while staying RAM-only. Use the executable selected
 in the [CLI setup](#cli):
 
 ```powershell
-& $SuperZip benchmark-suite --profile Mixed --compression-level 5 --tune
+& $FlitzZip benchmark-suite --profile Mixed --compression-level 5 --tune
 ```
 
 See `docs/security.md`, `docs/portability.md`, `docs/design.md`,

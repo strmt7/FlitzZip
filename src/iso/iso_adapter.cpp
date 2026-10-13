@@ -21,7 +21,7 @@
 #include <string_view>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kIsoSectorBytes = 2048U;
@@ -216,7 +216,7 @@ std::uint64_t validate_iso_extent(std::uint32_t extent_sector, std::uint32_t dat
 std::vector<unsigned char> read_iso_directory_extent(std::ifstream& input, std::uint32_t extent_sector,
                                                      std::uint32_t data_length, std::uint64_t archive_size) {
     if (data_length > kMaxArchiveIndexBytes) {
-        throw ArchiveError("ISO directory extent exceeds SuperZip metadata limits");
+        throw ArchiveError("ISO directory extent exceeds FlitzZip metadata limits");
     }
     const auto offset = validate_iso_extent(extent_sector, data_length, archive_size);
     seek_iso_offset(input, offset, "ISO directory extent");
@@ -242,7 +242,7 @@ std::string join_iso_archive_path(const std::string& parent, const std::string& 
     const auto separator_bytes = parent.empty() ? 0U : 1U;
     const auto required_bytes = child.size() + separator_bytes;
     if (required_bytes > kMaxArchivePathBytes || parent.size() > kMaxArchivePathBytes - required_bytes) {
-        throw ArchiveError("ISO path exceeds SuperZip path length limit");
+        throw ArchiveError("ISO path exceeds FlitzZip path length limit");
     }
     if (parent.empty()) {
         return child;
@@ -345,7 +345,7 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
         result.metadata_work_bytes = checked_add_iso_bytes(result.metadata_work_bytes, directory.data_length,
                                                            "ISO metadata work byte count overflows");
         if (result.metadata_work_bytes > kMaxArchiveIndexBytes) {
-            throw ArchiveError("ISO directory metadata work exceeds SuperZip limits");
+            throw ArchiveError("ISO directory metadata work exceeds FlitzZip limits");
         }
         const auto bytes =
             read_iso_directory_extent(input, directory.extent_sector, directory.data_length, archive_size);
@@ -366,7 +366,7 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
             result.metadata_work_bytes = checked_add_iso_bytes(result.metadata_work_bytes, record_length,
                                                                "ISO directory record work byte count overflows");
             if (result.metadata_work_bytes > kMaxArchiveIndexBytes) {
-                throw ArchiveError("ISO directory metadata work exceeds SuperZip limits");
+                throw ArchiveError("ISO directory metadata work exceeds FlitzZip limits");
             }
             if (record.special) {
                 continue;
@@ -376,7 +376,7 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
             }
             const auto payload_offset = validate_iso_extent(record.extent_sector, record.data_length, archive_size);
             if (directory.depth >= kMaxArchivePathComponents) {
-                throw ArchiveError("ISO directory depth exceeds SuperZip limits");
+                throw ArchiveError("ISO directory depth exceeds FlitzZip limits");
             }
             const auto path = join_iso_archive_path(directory.path, record.name);
             const auto retained_copies = record.directory ? 3U : 2U;
@@ -492,4 +492,4 @@ OperationStats extract_iso(const std::filesystem::path& archive_path, const std:
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

@@ -14,7 +14,7 @@
 #ifndef DWMWA_BORDER_COLOR
 #define DWMWA_BORDER_COLOR 34
 #endif
-namespace superzip::app {
+namespace flitzzip::app {
 
 namespace {
 
@@ -127,13 +127,13 @@ void require_succeeded(HRESULT result, const char* operation) {
 }
 
 // Purpose: Parse GUI smoke file-selection paths from an environment override.
-// Inputs: None; reads `SUPERZIP_GUI_SMOKE_FILE_SELECTION` from the current process.
+// Inputs: None; reads `FLITZZIP_GUI_SMOKE_FILE_SELECTION` from the current process.
 // Outputs: Returns semicolon-separated filesystem paths, or an empty vector when the override is absent.
 std::vector<std::filesystem::path> smoke_file_selection_paths() {
     wchar_t smoke_paths[32768]{};
     constexpr DWORD smoke_paths_capacity = static_cast<DWORD>(sizeof(smoke_paths) / sizeof(smoke_paths[0]));
     const DWORD smoke_length =
-        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_FILE_SELECTION", smoke_paths, smoke_paths_capacity);
+        GetEnvironmentVariableW(L"FLITZZIP_GUI_SMOKE_FILE_SELECTION", smoke_paths, smoke_paths_capacity);
     std::vector<std::filesystem::path> paths;
     if (smoke_length == 0 || smoke_length >= smoke_paths_capacity) {
         return paths;
@@ -155,13 +155,13 @@ std::vector<std::filesystem::path> smoke_file_selection_paths() {
 }
 
 // Purpose: Read a single GUI smoke folder-selection path from an environment override.
-// Inputs: None; reads `SUPERZIP_GUI_SMOKE_FOLDER_SELECTION` from the current process.
+// Inputs: None; reads `FLITZZIP_GUI_SMOKE_FOLDER_SELECTION` from the current process.
 // Outputs: Returns the selected folder path, or an empty path when the override is absent.
 std::filesystem::path smoke_folder_selection_path() {
     wchar_t smoke_path[32768]{};
     constexpr DWORD smoke_path_capacity = static_cast<DWORD>(sizeof(smoke_path) / sizeof(smoke_path[0]));
     const DWORD smoke_length =
-        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", smoke_path, smoke_path_capacity);
+        GetEnvironmentVariableW(L"FLITZZIP_GUI_SMOKE_FOLDER_SELECTION", smoke_path, smoke_path_capacity);
     if (smoke_length == 0 || smoke_length >= smoke_path_capacity) {
         return {};
     }
@@ -182,11 +182,11 @@ std::filesystem::path explorer_executable_path() {
 }
 
 // Purpose: Suppress external shell windows only in explicitly configured GUI smoke runs.
-// Inputs: The process-local SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN flag.
+// Inputs: The process-local FLITZZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN flag.
 // Outputs: Returns true only for the exact value 1.
 bool suppress_smoke_shell_open() {
     wchar_t value[8]{};
-    const auto length = GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", value, 8);
+    const auto length = GetEnvironmentVariableW(L"FLITZZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", value, 8);
     return length == 1 && value[0] == L'1';
 }
 
@@ -203,7 +203,7 @@ std::filesystem::path shell_item_filesystem_path(IShellItem* item) {
 }
 
 // Purpose: Open the modern Windows shell picker for multi-file selection.
-// Inputs: `owner` is the SuperZip window owner for modality.
+// Inputs: `owner` is the FlitzZip window owner for modality.
 // Outputs: Returns every selected filesystem file path, or an empty vector on user cancel.
 std::vector<std::filesystem::path> selected_files_from_dialog(HWND owner) {
     ComPtr<IFileOpenDialog> dialog;
@@ -214,7 +214,7 @@ std::vector<std::filesystem::path> selected_files_from_dialog(HWND owner) {
     require_succeeded(dialog->SetOptions(options | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST |
                                          FOS_PATHMUSTEXIST),
                       "File picker option update");
-    dialog->SetTitle(L"Add files to SuperZip");
+    dialog->SetTitle(L"Add files to FlitzZip");
     const HRESULT shown = dialog->Show(owner);
     if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
         return {};
@@ -240,7 +240,7 @@ std::vector<std::filesystem::path> selected_files_from_dialog(HWND owner) {
 }
 
 // Purpose: Open the modern Windows shell picker for folder selection.
-// Inputs: `owner` is the SuperZip window owner for modality and `title` is the dialog caption.
+// Inputs: `owner` is the FlitzZip window owner for modality and `title` is the dialog caption.
 // Outputs: Returns the selected filesystem folder path, or an empty path on user cancel.
 std::filesystem::path selected_folder_from_dialog(HWND owner, PCWSTR title) {
     ComPtr<IFileOpenDialog> dialog;
@@ -343,7 +343,7 @@ void MainWindow::add_folder() {
     }
 
     try {
-        auto selected = selected_folder_from_dialog(hwnd_, L"Add folder to SuperZip");
+        auto selected = selected_folder_from_dialog(hwnd_, L"Add folder to FlitzZip");
         if (!selected.empty()) {
             std::vector<std::filesystem::path> paths;
             paths.emplace_back(std::move(selected));
@@ -400,7 +400,7 @@ void MainWindow::choose_destination() {
     wchar_t smoke_path[32768]{};
     constexpr DWORD smoke_path_capacity = static_cast<DWORD>(sizeof(smoke_path) / sizeof(smoke_path[0]));
     const DWORD smoke_length =
-        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_DESTINATION", smoke_path, smoke_path_capacity);
+        GetEnvironmentVariableW(L"FLITZZIP_GUI_SMOKE_DESTINATION", smoke_path, smoke_path_capacity);
     if (smoke_length > 0 && smoke_length < smoke_path_capacity) {
         std::lock_guard lock(mutex_);
         state_.destination_directory = smoke_path;
@@ -410,7 +410,7 @@ void MainWindow::choose_destination() {
     }
 
     try {
-        auto selected = selected_folder_from_dialog(hwnd_, L"Choose SuperZip destination");
+        auto selected = selected_folder_from_dialog(hwnd_, L"Choose FlitzZip destination");
         if (!selected.empty()) {
             std::lock_guard lock(mutex_);
             state_.destination_directory = std::move(selected);
@@ -426,7 +426,7 @@ void MainWindow::choose_destination() {
     request_repaint();
 }
 
-// Purpose: Open Windows Explorer with the current user's SuperZip log file selected.
+// Purpose: Open Windows Explorer with the current user's FlitzZip log file selected.
 // Inputs: None; resolves and creates the per-user log file path.
 // Outputs: Launches Explorer or records a warning status when the shell action fails.
 void MainWindow::open_log_file_location() {
@@ -439,7 +439,7 @@ void MainWindow::open_log_file_location() {
             const auto result = reinterpret_cast<INT_PTR>(
                 ShellExecuteW(hwnd_, L"open", explorer.c_str(), arguments.c_str(), nullptr, SW_SHOWNORMAL));
             if (result <= 32) {
-                throw ArchiveError("Explorer could not open the SuperZip log file location");
+                throw ArchiveError("Explorer could not open the FlitzZip log file location");
             }
         }
         {
@@ -515,10 +515,10 @@ void MainWindow::start_compress() {
     bool integrity = false;
     bool defender = false;
     bool verify_after_write = false;
-    std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
-    int compression_level = superzip::kDefaultCompressionLevel;
+    std::uint32_t block_size = flitzzip::kDefaultArchiveBlockBytes;
+    int compression_level = flitzzip::kDefaultCompressionLevel;
     NativeCompressionMode compression_mode = NativeCompressionMode::Standard;
-    ArchiveFormat archive_format = ArchiveFormat::SuperZip;
+    ArchiveFormat archive_format = ArchiveFormat::FlitzZip;
     std::filesystem::path output;
     std::filesystem::path destination_to_open;
     {
@@ -587,4 +587,4 @@ void MainWindow::start_compress() {
 // Inputs: `destination` is the extraction root.
 // Outputs: Returns true when the destination exists and is non-empty or cannot be proven empty.
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

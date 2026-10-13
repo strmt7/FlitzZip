@@ -84,14 +84,14 @@ TEST_CASE(tar_xz_extracts_files_and_directories) {
     const auto root = test_temp_dir("tar-xz-extract");
     const auto archive = root / "sample.tar.xz";
     write_fixture(archive, kTarXzFixture);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::TarXz);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::TarXz);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_tar_xz(archive, output, false);
+    const auto stats = flitzzip::extract_tar_xz(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(3));
     REQUIRE_EQ(read_text_file(output / "dir" / "hello.txt"), "hello from tar.xz\n");
     REQUIRE_EQ(read_text_file(output / "root.txt"), "root tar xz payload");
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify `.tar.xz` extraction rejects traversal metadata during the validation pass.
@@ -101,12 +101,12 @@ TEST_CASE(tar_xz_extraction_rejects_traversal_before_output) {
     const auto root = test_temp_dir("tar-xz-traversal");
     const auto archive = root / "bad.txz";
     write_fixture(archive, kUnsafeTarXzFixture);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::TarXz);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::TarXz);
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_tar_xz(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_tar_xz(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

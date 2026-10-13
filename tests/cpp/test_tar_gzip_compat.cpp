@@ -138,13 +138,13 @@ TEST_CASE(tar_gzip_roundtrip_extracts_files_and_directories) {
     }
 
     const auto archive = root / "sample.tar.gz";
-    const auto compress_stats = superzip::compress_tar_gzip({input}, archive);
+    const auto compress_stats = flitzzip::compress_tar_gzip({input}, archive);
     REQUIRE_TRUE(compress_stats.entries >= 3);
     REQUIRE_TRUE(compress_stats.output_bytes > 0);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::TarGzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::TarGzip);
 
     const auto output = root / "output";
-    const auto extract_stats = superzip::extract_tar_gzip(archive, output, false);
+    const auto extract_stats = flitzzip::extract_tar_gzip(archive, output, false);
     REQUIRE_EQ(extract_stats.output_bytes, compress_stats.input_bytes);
     REQUIRE_EQ(read_text_file(output / "input" / "dir" / "hello.txt"), read_text_file(input / "dir" / "hello.txt"));
     REQUIRE_EQ(std::filesystem::file_size(output / "input" / "root.txt"), static_cast<std::uintmax_t>(128 * 1024));
@@ -158,12 +158,12 @@ TEST_CASE(tar_gzip_extraction_rejects_traversal_before_output) {
     const auto tar = root / "bad.tar";
     const auto archive = root / "bad.tar.gz";
     write_one_entry_tar(tar, "../escape.txt", '0', "bad");
-    (void)superzip::compress_gzip_file(tar, archive);
+    (void)flitzzip::compress_gzip_file(tar, archive);
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_tar_gzip(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_tar_gzip(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -179,15 +179,15 @@ TEST_CASE(tar_gzip_extraction_refuses_overwrite_by_default) {
     const auto tar = root / "overwrite.tar";
     const auto archive = root / "overwrite.tgz";
     write_one_entry_tar(tar, "file.txt", '0', "new");
-    (void)superzip::compress_gzip_file(tar, archive);
+    (void)flitzzip::compress_gzip_file(tar, archive);
     const auto output = root / "out";
     std::filesystem::create_directories(output);
     std::ofstream(output / "file.txt") << "old";
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_tar_gzip(archive, output, false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_tar_gzip(archive, output, false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -203,7 +203,7 @@ TEST_CASE(tar_gzip_rejects_gzip_crc_mismatch_before_output) {
     std::filesystem::create_directories(input);
     std::ofstream(input / "payload.txt") << "payload";
     const auto archive = root / "payload.tar.gz";
-    (void)superzip::compress_tar_gzip({input}, archive);
+    (void)flitzzip::compress_tar_gzip({input}, archive);
 
     auto bytes = read_binary_file(archive);
     REQUIRE_TRUE(bytes.size() > 18U);
@@ -213,8 +213,8 @@ TEST_CASE(tar_gzip_rejects_gzip_crc_mismatch_before_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_tar_gzip(archive, output, true));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_tar_gzip(archive, output, true));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

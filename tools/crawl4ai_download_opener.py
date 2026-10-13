@@ -1,6 +1,6 @@
 """Portable, no-follow download opening for the identified Crawl4AI source build.
 
-Copyright 2026 SuperZip contributors. SPDX-License-Identifier: Apache-2.0
+Copyright 2026 FlitzZip contributors. SPDX-License-Identifier: Apache-2.0
 This module is included in Crawl4AI's development-tool wheel, not the archive app.
 """
 

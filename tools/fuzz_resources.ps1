@@ -3,7 +3,7 @@
 # Purpose: Query Linux Docker-host free RAM with a small, memory-contained trusted probe.
 # Inputs: Image is the pinned fuzz image; RepoMount is the read-only repository mount.
 # Outputs: Returns available MiB or throws on missing counters, limits, or Docker failures.
-function Get-SuperZipDockerAvailableMemoryMiB {
+function Get-FlitzZipDockerAvailableMemoryMiB {
     param(
         [Parameter(Mandatory = $true)][string]$Image,
         [Parameter(Mandatory = $true)][string]$RepoMount
@@ -33,12 +33,12 @@ function Get-SuperZipDockerAvailableMemoryMiB {
 # Purpose: Admit one fuzz container against both Windows and Docker-host RAM headroom.
 # Inputs: AvailableMiB and DockerAvailableMiB are current free physical-memory snapshots.
 # Outputs: Returns the smaller shared-policy budget, or throws below the 2 GiB minimum.
-function Resolve-SuperZipFuzzMemoryBudget {
+function Resolve-FlitzZipFuzzMemoryBudget {
     param(
         [ValidateRange(0, 2147483647)][long]$AvailableMiB,
         [ValidateRange(0, 2147483647)][long]$DockerAvailableMiB
     )
-    $hostBudget = Resolve-SuperZipLocalMemoryBudget -AvailableMiB $AvailableMiB
-    $dockerBudget = Resolve-SuperZipLocalMemoryBudget -AvailableMiB $DockerAvailableMiB
+    $hostBudget = Resolve-FlitzZipLocalMemoryBudget -AvailableMiB $AvailableMiB
+    $dockerBudget = Resolve-FlitzZipLocalMemoryBudget -AvailableMiB $DockerAvailableMiB
     return [long][Math]::Min($hostBudget, $dockerBudget)
 }

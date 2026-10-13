@@ -8,7 +8,7 @@
 #include <optional>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 struct CompressOptions {
     bool gpu_required = true;
@@ -54,28 +54,28 @@ struct OperationStats {
     std::optional<OperationPhaseStats> phases;
 };
 
-// Purpose: Create a native SuperZip `.suzip` archive from one or more files/directories.
+// Purpose: Create a native FlitzZip `.flzip` archive from one or more files/directories.
 // Inputs: `sources` are existing roots, `output_archive` is the final destination, and `options` selects codec policy
 // and optional read-back verification. `progress_callback` observes both phases and may throw to cancel.
 // Outputs: Returns archive statistics after publication; failures before publication preserve an existing destination.
-OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
+OperationStats compress_flzip(const std::vector<std::filesystem::path>& sources,
                               const std::filesystem::path& output_archive, const CompressOptions& options,
                               const ProgressCallback& progress_callback = {});
 
-// Purpose: Extract a native SuperZip `.suzip` archive into a destination directory.
+// Purpose: Extract a native FlitzZip `.flzip` archive into a destination directory.
 // Inputs: `archive_path` is the trusted archive file handle target, `destination` is the extraction root, `options`
 // controls overwrite/GPU/CPU behavior, and `progress_callback` receives progress snapshots. Outputs: Returns extraction
 // statistics; throws when archive metadata is invalid, CRC fails, path validation fails, overwrite is refused, or a
 // required GPU is unavailable.
-OperationStats extract_suzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+OperationStats extract_flzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                              const ExtractOptions& options, const ProgressCallback& progress_callback = {});
 
-// Purpose: Validate a native SuperZip `.suzip` archive without writing extracted files to disk.
+// Purpose: Validate a native FlitzZip `.flzip` archive without writing extracted files to disk.
 // Inputs: `archive_path` is the archive to read, `options` controls decode policy, and `progress_callback` receives
 // initialization, entry, and bounded decode-window snapshots. Callback exceptions cancel verification.
 // Outputs: Returns verification statistics; throws on malformed metadata, invalid blocks, decode failure, or CRC
 // mismatch.
-OperationStats verify_suzip(const std::filesystem::path& archive_path, const ExtractOptions& options,
+OperationStats verify_flzip(const std::filesystem::path& archive_path, const ExtractOptions& options,
                             const ProgressCallback& progress_callback = {});
 
-}  // namespace superzip
+}  // namespace flitzzip

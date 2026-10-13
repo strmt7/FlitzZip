@@ -2,7 +2,7 @@
 # No measured observation is trimmed, winsorized, or excluded as an outlier.
 . (Join-Path $PSScriptRoot 'benchmark_corpus.ps1')
 
-# Purpose: Parse one stable superzip_cli key/value statistics line for measurements and their direct planning tests.
+# Purpose: Parse one stable flitzzip_cli key/value statistics line for measurements and their direct planning tests.
 # Inputs: Line contains measured seconds or an explicit plan_only=true admission record.
 # Outputs: Returns the same parsed keys and values independent of field ordering; rejects non-statistics output.
 function ConvertFrom-StatsLine {
@@ -25,13 +25,13 @@ function ConvertFrom-StatsLine {
 # Outputs: Returns a Task of complete text or a faulted task on excess output; no output is silently truncated.
 function Read-BoundedBenchmarkStream {
     param([Parameter(Mandatory = $true)][IO.TextReader]$Reader)
-    if (-not ([Management.Automation.PSTypeName]'SuperZipBoundedTextReader').Type) {
+    if (-not ([Management.Automation.PSTypeName]'FlitzZipBoundedTextReader').Type) {
         Add-Type -TypeDefinition @'
 using System;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
-public static class SuperZipBoundedTextReader {
+public static class FlitzZipBoundedTextReader {
     // Purpose: Read one pipe within a fixed text ceiling.
     // Inputs: reader is owned by the caller; maximumCharacters limits retained UTF-16 characters.
     // Outputs: Returns complete text; throws on excess output or an I/O error.
@@ -48,7 +48,7 @@ public static class SuperZipBoundedTextReader {
 }
 '@
     }
-    return [SuperZipBoundedTextReader]::ReadAsync($Reader, 65536)
+    return [FlitzZipBoundedTextReader]::ReadAsync($Reader, 65536)
 }
 
 # Purpose: Reject absent or malformed product statistics before numeric casts could turn them into zero.

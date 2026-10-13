@@ -155,10 +155,10 @@ function Get-LintTargetFile {
     return Select-LintFile -Path $ChangedPath -Pattern $FilePattern
 }
 
-# Purpose: Select C/C++ files owned by SuperZip rather than vendored upstream code.
+# Purpose: Select C/C++ files owned by FlitzZip rather than vendored upstream code.
 # Inputs: `Path` contains repository-relative paths.
 # Outputs: Returns source, test, and fuzz C/C++ files suitable for clang-format checks.
-function Select-SuperZipCppLintFile {
+function Select-FlitzZipCppLintFile {
     param([string[]]$Path)
 
     return @($Path | Where-Object {
@@ -267,9 +267,9 @@ try {
     if ($CppMode -ne "Off") {
         $cppFiles = if ($CppMode -eq "All") {
             $allCppFiles = @(Get-TrackedLintFile -Pathspec @("src/*", "tests/*", "fuzz/*")) + $changedFiles
-            Select-SuperZipCppLintFile -Path $allCppFiles
+            Select-FlitzZipCppLintFile -Path $allCppFiles
         } else {
-            Select-SuperZipCppLintFile -Path $changedFiles
+            Select-FlitzZipCppLintFile -Path $changedFiles
         }
         if ($cppFiles.Count -gt 0) {
             Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "clang-format" -VenvPath $LintVenvPath) -Arguments (@("--dry-run", "--Werror") + $cppFiles) -Label "cpp-clang-format-$CppMode"

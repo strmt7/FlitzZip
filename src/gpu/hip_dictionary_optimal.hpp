@@ -2,7 +2,7 @@
 
 #include "gpu/hip_dictionary_optimal_state.hpp"
 
-namespace superzip::dictionary::optimal {
+namespace flitzzip::dictionary::optimal {
 
 #if defined(__HIPCC__)
 
@@ -439,4 +439,4 @@ __global__ void emit_tile(const std::byte* input, std::uint32_t input_size, Stat
 
 #endif
 
-}  // namespace superzip::dictionary::optimal
+}  // namespace flitzzip::dictionary::optimal

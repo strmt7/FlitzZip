@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "benchmark_kind": "suzip_ram",
+  "benchmark_kind": "flzip_ram",
   "recorded_utc": "2026-09-29T15:04:52.7668633Z",
   "source_commit": "464dbbc4050a88b881053f2e46c304cdce25888a",
   "source_dirty": false,

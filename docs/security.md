@@ -1,6 +1,6 @@
 # Security Model
 
-SuperZip treats archive contents as untrusted input.
+FlitzZip treats archive contents as untrusted input.
 
 ## Extraction Boundary
 
@@ -17,10 +17,10 @@ Extraction rejects:
 
 Regular file extraction uses a same-directory temporary target and publishes the
 final file only after the entry has been decoded and verified. A corrupt ZIP,
-TAR, or SUZIP entry can therefore fail after writing temporary bytes without
+TAR, or FLZIP entry can therefore fail after writing temporary bytes without
 exposing a partial final file or replacing an existing final file.
 
-TAR extraction is two-pass: SuperZip scans all headers and PAX path metadata,
+TAR extraction is two-pass: FlitzZip scans all headers and PAX path metadata,
 validates the complete normalized path set, and only then creates output.
 Symbolic links, hard links, devices, and FIFOs are rejected until a dedicated
 Windows restore policy exists.
@@ -39,9 +39,9 @@ The repository ships local scripts for:
 
 ## Optional Microsoft Defender Scanning
 
-SuperZip includes an opt-in Microsoft Defender hook for Windows 11 systems. It
+FlitzZip includes an opt-in Microsoft Defender hook for Windows 11 systems. It
 uses the local `MpCmdRun.exe` command with path scanning and
-`-DisableRemediation`, so SuperZip can ask Defender for a scan result without
+`-DisableRemediation`, so FlitzZip can ask Defender for a scan result without
 silently deleting or quarantining user files from inside the app. Runtime lookup
 prefers the newest versioned Defender Platform copy under ProgramData and falls
 back to the Program Files copy only when the platform copy is unavailable.
@@ -53,35 +53,35 @@ This setting must remain opt-in. It can be surfaced in Settings for:
 - Scan selected archive before extraction.
 
 If Microsoft Defender is unavailable, disabled by policy, or returns an error,
-SuperZip reports that state to the user instead of claiming the file is clean.
+FlitzZip reports that state to the user instead of claiming the file is clean.
 Enabled scans validate that the selected target exists before scanner discovery.
 The scanner subprocess is hidden, bounded by a 30-minute timeout, and treated as
 not clean if it times out.
 
 ## Optional Integrity Hashing
 
-SuperZip always stores and verifies CRC-32 for archive corruption detection.
+FlitzZip always stores and verifies CRC-32 for archive corruption detection.
 Users can opt in to stronger SHA-256 integrity hashing for archive files,
 selected queue paths, and post-extraction output verification. Regular files
 use standard SHA-256 over file bytes. Directories use a deterministic
-SuperZip tree digest that hashes stable relative paths, file sizes, and file
+FlitzZip tree digest that hashes stable relative paths, file sizes, and file
 payload bytes in sorted order; reparse points and unsupported entry types are
 rejected instead of being silently skipped. This is intentionally separate from
 the mandatory CRC path because SHA-256 costs extra I/O on large archives and
 large output trees.
 
 Compression can also opt in to `--verify-after-write`, which immediately reads
-the completed `.suzip` archive through the normal verifier. This extra pass is
+the completed `.flzip` archive through the normal verifier. This extra pass is
 not implicit because it doubles read work for large archives and should be a
 deliberate integrity policy choice.
 
 The CLI exposes:
 
 ```powershell
-build/Release/superzip_cli.exe compress --format suzip --verify-after-write --output archive.suzip path\to\folder
-build/Release/superzip_cli.exe verify --sha256 archive.suzip
-build/Release/superzip_cli.exe extract --sha256 --defender-scan --output restored archive.suzip
-build/Release/superzip_cli.exe extract --defender-scan --output restored archive.tar
+build/Release/flitzzip_cli.exe compress --format flzip --verify-after-write --output archive.flzip path\to\folder
+build/Release/flitzzip_cli.exe verify --sha256 archive.flzip
+build/Release/flitzzip_cli.exe extract --sha256 --defender-scan --output restored archive.flzip
+build/Release/flitzzip_cli.exe extract --defender-scan --output restored archive.tar
 ```
 
 The GUI Settings page must keep SHA-256 hashing disabled by default and label
@@ -92,7 +92,7 @@ produce visible history rows when SHA-256 is enabled.
 
 The CLI and GUI both keep Defender scans opt-in. When Defender actively scans a
 source archive before extraction and does not report it as clean, extraction is
-blocked. If Defender is unavailable, the result is reported but SuperZip does
+blocked. If Defender is unavailable, the result is reported but FlitzZip does
 not claim the target is clean.
 
 GitHub Actions should run the local security script first. Optional external
@@ -111,7 +111,7 @@ Report retrieval explicitly disables pagination. Invalid or nonfinite severity
 values fail qualification; partial scans cannot be uploaded. A complete report
 containing vulnerabilities is still uploaded when the vulnerability gate fails.
 
-The SuperZip workflow fails closed until `GREENBONE_SECRET_PROVIDER_URL` points
+The FlitzZip workflow fails closed until `GREENBONE_SECRET_PROVIDER_URL` points
 to a broker that validates GitHub OIDC claims and returns the authorized
 Greenbone and Vulnetix settings. Do not add hard-coded organization IDs,
 tokens, URLs, scan targets, or credentials to the repository.

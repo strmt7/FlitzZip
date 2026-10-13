@@ -24,7 +24,7 @@ extern "C" {
 #include "LzmaDec.h"
 }
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kLzipHeaderBytes = 6U;
@@ -76,7 +76,7 @@ std::string lzip_lzma_result_message(SRes result) {
     }
 }
 
-// Purpose: Throw the SuperZip error that corresponds to an SDK result.
+// Purpose: Throw the FlitzZip error that corresponds to an SDK result.
 // Inputs: `result` is the SDK status and `context` names the operation.
 // Outputs: Throws `ArchiveError` unless `result` is `SZ_OK`.
 void throw_on_lzip_lzma_error(SRes result, const char* context) {
@@ -105,7 +105,7 @@ void checked_add_lzip_stream_bytes(std::uint64_t& total, std::uint64_t bytes, co
     }
     total += bytes;
     if (total > kMaxPipelineMemoryBytes) {
-        throw ArchiveError(std::string(context) + " exceeds SuperZip resource limit");
+        throw ArchiveError(std::string(context) + " exceeds FlitzZip resource limit");
     }
 }
 
@@ -121,7 +121,7 @@ std::uint32_t decode_lzip_dictionary_size(unsigned char coded_size) {
     const auto base = 1ULL << base_log;
     const auto dictionary = base - ((base / 16U) * numerator);
     if (dictionary < 4096ULL || dictionary > kMaxLzipDictionaryBytes) {
-        throw ArchiveError("lzip dictionary size exceeds SuperZip policy");
+        throw ArchiveError("lzip dictionary size exceeds FlitzZip policy");
     }
     return static_cast<std::uint32_t>(dictionary);
 }
@@ -450,4 +450,4 @@ std::uint64_t LzipInputStream::output_bytes() const {
     return buffer_->output_bytes();
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

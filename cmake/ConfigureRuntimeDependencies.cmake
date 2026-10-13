@@ -1,14 +1,14 @@
 # Purpose: Generate the common CPU/HIP native runtime manifest. Inputs: Template
 # directory, output path, HIP flag and caller provenance. Outputs: JSON with
 # truthful HIP scope and common app-local dependencies.
-function(superzip_configure_runtime_dependencies template_directory output_path
+function(flitzzip_configure_runtime_dependencies template_directory output_path
          hip_enabled)
   set(hip_enabled_json false)
   set(host_prerequisites_json "[]")
   if(hip_enabled)
     set(hip_enabled_json true)
     set(prerequisites_template
-        "${template_directory}/superzip-hip-prerequisites.json.in")
+        "${template_directory}/flitzzip-hip-prerequisites.json.in")
     set_property(
       DIRECTORY
       APPEND
@@ -16,6 +16,6 @@ function(superzip_configure_runtime_dependencies template_directory output_path
     file(READ "${prerequisites_template}" prerequisites LIMIT 65536)
     string(CONFIGURE "${prerequisites}" host_prerequisites_json @ONLY)
   endif()
-  configure_file("${template_directory}/superzip-runtime-dependencies.json.in"
+  configure_file("${template_directory}/flitzzip-runtime-dependencies.json.in"
                  "${output_path}" @ONLY)
 endfunction()

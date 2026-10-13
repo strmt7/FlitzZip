@@ -35,12 +35,12 @@ $cmake = Find-CMake -RepoRoot $repoRoot
 $ctest = Join-Path (Split-Path -Parent $cmake) 'ctest.exe'
 $generator = Find-CMakeGenerator -Requested '' -BuildRoot $validationRoot
 $jobs = Resolve-BuildParallelism
-Invoke-SuperZipBackgroundWork {
+Invoke-FlitzZipBackgroundWork {
     & $cmake -S (Join-Path $repoRoot 'tests/zstd/sanitizers') -B $validationRoot `
         -G $generator -A x64 "-DREPO_ROOT=$repoRoot"
     $configureExit = $LASTEXITCODE
     if ($configureExit -ne 0) { throw "Sanitizer configure failed ($configureExit)." }
-    Invoke-SuperZipParallelBuild -Jobs $jobs -Action {
+    Invoke-FlitzZipParallelBuild -Jobs $jobs -Action {
         & $cmake --build $validationRoot --config RelWithDebInfo --parallel $jobs
         $buildExit = $LASTEXITCODE
         if ($buildExit -ne 0) { throw "Sanitizer build failed ($buildExit)." }

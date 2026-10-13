@@ -16,7 +16,7 @@
 #include <limits>
 #include <string>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kLzipAdapterBufferBytes = 64U * 1024U;
@@ -102,4 +102,4 @@ OperationStats extract_lzip_file(const std::filesystem::path& archive_path, cons
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

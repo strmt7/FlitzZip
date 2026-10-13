@@ -39,16 +39,16 @@ EXPECTED = {
     "x-ray": (8_474_240, "7de9fce1405dc44ae5e6813ed21cd5751e761bd4265655a005d39b9685d1c9ad"),
 }
 CASES = (
-    ("mixed-files", "zip", ("dickens", "ooffice", "samba", "xml", "x-ray"), ("SuperZip", "7-Zip")),
-    ("mozilla", "zst", ("mozilla",), ("SuperZip", "Zstd")),
-    ("nci", "zst", ("nci",), ("SuperZip", "Zstd")),
+    ("mixed-files", "zip", ("dickens", "ooffice", "samba", "xml", "x-ray"), ("FlitzZip", "7-Zip")),
+    ("mozilla", "zst", ("mozilla",), ("FlitzZip", "Zstd")),
+    ("nci", "zst", ("nci",), ("FlitzZip", "Zstd")),
 )
 SOURCES = {
-    "SuperZip": "https://github.com/strmt7/SuperZip",
+    "FlitzZip": "https://github.com/strmt7/FlitzZip",
     "7-Zip": "https://github.com/ip7z/7zip/releases/tag/26.03",
     "Zstd": "https://github.com/facebook/zstd/releases/tag/v1.5.7",
 }
-CASE_TOOLS = {"zip": {"SuperZip", "7-Zip"}, "zst": {"SuperZip", "Zstd"}}
+CASE_TOOLS = {"zip": {"FlitzZip", "7-Zip"}, "zst": {"FlitzZip", "Zstd"}}
 MAX_FILESYSTEM_BYTES = 64 * 1024 * 1024
 RESERVED_FILENAMES = {"CON", "PRN", "AUX", "NUL"} | {
     f"{prefix}{number}" for prefix in ("COM", "LPT") for number in range(1, 10)
@@ -130,9 +130,9 @@ def manifest_case(row: dict, files: dict[str, dict]) -> tuple:
         or len(tools) != 2
         or any(not isinstance(value, str) or value not in CASE_TOOLS[fmt] for value in tools)
         or set(tools) != CASE_TOOLS[fmt]
-        or tools[0] != "SuperZip"
+        or tools[0] != "FlitzZip"
     ):
-        raise ValueError("corpus case requires SuperZip and its independent supported comparator")
+        raise ValueError("corpus case requires FlitzZip and its independent supported comparator")
     if sum(files[value]["bytes"] for value in names) > MAX_FILESYSTEM_BYTES:
         raise ValueError("filesystem case exceeds 64 MiB")
     return name, fmt, tuple(names), tuple(tools)
@@ -220,7 +220,7 @@ def commands(
 ) -> tuple[list[str], list[str]]:
     if type(level) is not int or not 1 <= level <= 9:
         raise ValueError(f"unsupported comparison effort: {level}")
-    if tool == "SuperZip":
+    if tool == "FlitzZip":
         create = [
             str(binaries[tool]),
             "compress",
@@ -332,11 +332,11 @@ def host_snapshot() -> dict:
 
 
 # Purpose: Identify the x64 Release/HIP configuration that produced the tested executable.
-# Inputs: SuperZip executable path under the repository's CMake build tree.
+# Inputs: FlitzZip executable path under the repository's CMake build tree.
 # Outputs: Returns build settings or raises when release identity cannot be proved.
 def build_identity(binary: Path) -> dict:
-    if binary != (ROOT / "build" / "Release" / "superzip_cli.exe").resolve():
-        raise ValueError("comparison requires the repository x64 Release SuperZip binary")
+    if binary != (ROOT / "build" / "Release" / "flitzzip_cli.exe").resolve():
+        raise ValueError("comparison requires the repository x64 Release FlitzZip binary")
     cache = ROOT / "build" / "CMakeCache.txt"
     if not cache.is_file():
         raise ValueError("CMake build cache is missing")
@@ -346,14 +346,14 @@ def build_identity(binary: Path) -> dict:
             key_type, value = line.split("=", 1)
             key, _ = key_type.split(":", 1)
             values[key] = value
-    if values.get("CMAKE_GENERATOR_PLATFORM", "").lower() != "x64" or values.get("SUPERZIP_ENABLE_HIP") != "ON":
+    if values.get("CMAKE_GENERATOR_PLATFORM", "").lower() != "x64" or values.get("FLITZZIP_ENABLE_HIP") != "ON":
         raise ValueError("comparison requires a HIP-enabled x64 Release build")
     return {
         "configuration": "Release",
         "platform": values["CMAKE_GENERATOR_PLATFORM"],
         "generator": values.get("CMAKE_GENERATOR"),
         "hip_enabled": True,
-        "hip_arch": values.get("SUPERZIP_HIP_ARCH"),
+        "hip_arch": values.get("FLITZZIP_HIP_ARCH"),
         "cmake_cache_sha256": digest(cache),
     }
 
@@ -485,7 +485,7 @@ def measure_case(
 
 
 # Purpose: Require source/binary identity without treating unrelated local edits as product changes.
-# Inputs: Git checkout root and tested SuperZip executable.
+# Inputs: Git checkout root and tested FlitzZip executable.
 # Outputs: Returns clean source commit, executable SHA-256, and unrelated dirty path names.
 def source_identity(binary: Path) -> tuple[str, str, list[str]]:
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
@@ -521,7 +521,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--downloads", type=Path)
     parser.add_argument("--manifest", type=Path)
-    parser.add_argument("--superzip", type=Path, required=True)
+    parser.add_argument("--flitzzip", type=Path, required=True)
     parser.add_argument("--sevenzip", type=Path)
     parser.add_argument("--zstd", type=Path)
     parser.add_argument("--output", type=Path, required=True)
@@ -551,7 +551,7 @@ def tool_preflight(binaries: dict[str, Path], subjects: tuple[str, ...] = ("Sile
     for name, path in binaries.items():
         permission = None
         release_source = None
-        if name != "SuperZip":
+        if name != "FlitzZip":
             release_source = fetch_release_source(name)
             latest = parse_release(name, release_source)
             permission = require_permission(name, "execute", version=latest)
@@ -592,7 +592,7 @@ def result_record(
         "measured_at_utc": datetime.now(UTC).isoformat(),
         "source_commit": commit,
         "source_dirty": False,
-        "superzip_binary_sha256": binary_hash,
+        "flitzzip_binary_sha256": binary_hash,
         "unrelated_dirty_count": len(dirty),
         "host": {
             "os": platform.platform(),
@@ -647,15 +647,15 @@ def main() -> int:
         files = verify_corpus(args.corpus, args.downloads.resolve(strict=True))
         selected_cases, subjects = CASES, ("Silesia",)
     corpus = args.corpus.resolve(strict=True)
-    configured = {"SuperZip": args.superzip, "7-Zip": args.sevenzip, "Zstd": args.zstd}
+    configured = {"FlitzZip": args.flitzzip, "7-Zip": args.sevenzip, "Zstd": args.zstd}
     required_tools = {tool for case in selected_cases for tool in case[3]}
     if any(configured[tool] is None for tool in required_tools):
         raise ValueError("provide every comparator binary required by the corpus cases")
     binaries = {tool: configured[tool].resolve(strict=True) for tool in sorted(required_tools)}
     output = args.output.resolve()
     manifest = {entry["name"]: entry for entry in files}
-    commit, binary_hash, unrelated_dirty = source_identity(binaries["SuperZip"])
-    build = build_identity(binaries["SuperZip"])
+    commit, binary_hash, unrelated_dirty = source_identity(binaries["FlitzZip"])
+    build = build_identity(binaries["FlitzZip"])
     tool_data = tool_preflight(binaries, subjects)
     output.parent.mkdir(parents=True, exist_ok=True)
     host_before = host_snapshot()

@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 class HipHostOutputPool;
 
@@ -230,7 +230,7 @@ void record_gpu_sparse_pattern_blocks(GpuTelemetry* telemetry, std::uint64_t cou
 void record_gpu_kernel_launch(GpuTelemetry* telemetry, double milliseconds);
 
 // Purpose: Account for a measured multi-kernel HIP stage without inventing timings for each launch.
-// Inputs: Optional operation telemetry, explicit SuperZip launch count, and complete device-stage milliseconds.
+// Inputs: Optional operation telemetry, explicit FlitzZip launch count, and complete device-stage milliseconds.
 // Outputs: Adds the known launches and stage time; invalid timing marks the aggregate unavailable.
 void record_gpu_kernel_work(GpuTelemetry* telemetry, std::uint32_t launches, double milliseconds);
 
@@ -262,7 +262,7 @@ GpuInfo query_gpu_info();
 // Outputs: Returns HIP event timing, transfer/allocation counters, and a checksum produced from device-written bytes.
 GpuDiagnosticResult run_gpu_diagnostic(const GpuDiagnosticOptions& options);
 
-// Purpose: Encode a chunk into SuperZip block descriptors and payload bytes.
+// Purpose: Encode a chunk into FlitzZip block descriptors and payload bytes.
 // Inputs: `input` is the uncompressed chunk and `options` selects block size plus required-GPU or forced-CPU behavior.
 // Outputs: Returns descriptors, encoded payload, and whether GPU work was used; throws `GpuError` if GPU is required
 // but unavailable.
@@ -290,7 +290,7 @@ struct EncodedBlockBatch {
 EncodedBlockBatch encode_owned_block_batch(std::vector<std::byte> input, std::span<const std::uint32_t> block_lengths,
                                            const GpuCodecOptions& options);
 
-// Purpose: Decode encoded SuperZip block payload back into caller-provided output memory.
+// Purpose: Decode encoded FlitzZip block payload back into caller-provided output memory.
 // Inputs: `payload` and `blocks` come from validated archive metadata, `output` is the exact uncompressed destination
 // buffer, and `options` controls required-GPU or forced-CPU behavior. Outputs: Writes decoded bytes into `output` and
 // returns true when AMD HIP executed; throws `ArchiveError` or `GpuError` on invalid block layout or unavailable
@@ -305,4 +305,4 @@ bool decode_chunk(std::span<const std::byte> payload, std::span<const BlockDescr
 DecodedChunkCrc crc_decoded_chunk(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                                   std::uint64_t output_size, const GpuCodecOptions& options);
 
-}  // namespace superzip
+}  // namespace flitzzip

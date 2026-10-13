@@ -1,6 +1,6 @@
 # Compression Backend Evaluation
 
-SuperZip's product requirement is AMD-only GPU acceleration with a Windows x64
+FlitzZip's product requirement is AMD-only GPU acceleration with a Windows x64
 application and installer. This document records which GPU-compute options are
 credible for the current architecture and which options would change the
 product boundary.
@@ -40,7 +40,7 @@ are not approved replacement codec paths for this repository.
 hipCOMP-core is worth tracking as an experimental research branch only. Its
 README describes the project as an early-access technology preview and warns
 that production workloads are not recommended. That upstream status is not
-compatible with making it the default SuperZip release codec today.
+compatible with making it the default FlitzZip release codec today.
 
 ## Option Assessment
 
@@ -49,11 +49,11 @@ compatible with making it the default SuperZip release codec today.
 | AMD HIP | Approved production boundary | Directly matches the AMD-only requirement and the existing Windows build, dependency-check, telemetry, and packaging model. |
 | hipCOMP-core | Research only | Promising AMD GPU compression work, but upstream labels it early-access and not recommended for production. It must not be sold as a production-safe dependency without an explicit risk decision. |
 | rocPRIM | Approved building block | HIP-native primitives such as reductions, scans, and segmented operations can support CRC, prefix metadata, and future block analysis without changing the architecture. |
-| rocSPARSE | Not appropriate | A sparse linear-algebra library, not a general archive compression codec. It does not solve SuperZip's ZIP/SUZIP compression problem. |
+| rocSPARSE | Not appropriate | A sparse linear-algebra library, not a general archive compression codec. It does not solve FlitzZip's ZIP/FLZIP compression problem. |
 | OpenCL | Not approved for production | Useful heterogeneous compute standard, but it introduces a separate runtime path and cross-vendor abstraction that conflicts with the current HIP-only product boundary. |
 | SYCL | Not approved for production | SYCL can target AMD through ROCm/HIP toolchains, but it adds a new compiler/runtime abstraction and installer burden. It is not a codec by itself. |
 | OpenMP offload | Not approved for production | LLVM OpenMP offload can target AMDGPU in supported toolchains, but it is compiler technology rather than a complete compression library and is not a stronger Windows app packaging story than HIP. |
-| `std::execution` | CPU-side only for this product | Current mainstream Windows C++ standard-library execution policies do not make SuperZip compression run on AMD GPUs. They can help CPU validation code, not the required GPU codec. |
+| `std::execution` | CPU-side only for this product | Current mainstream Windows C++ standard-library execution policies do not make FlitzZip compression run on AMD GPUs. They can help CPU validation code, not the required GPU codec. |
 
 ## Implementation Rules
 
@@ -76,7 +76,7 @@ compatible with making it the default SuperZip release codec today.
 
 ## Practical Roadmap
 
-The [October 2026 lossless-compression review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/research/modern-compression-research-2026-10-03.md)
+The [October 2026 lossless-compression review](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/research/modern-compression-research-2026-10-03.md)
 adds recent primary research on invariant bits, bitmap layouts, compact lookup
 tables and GPU data movement. Its experiments are hypotheses; resolving open
 security findings remains the immediate priority.

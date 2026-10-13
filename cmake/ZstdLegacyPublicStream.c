@@ -5,7 +5,7 @@ MEM_STATIC size_t ZSTD_decompressLegacyStream(void* legacyContext, U32 version,
                                               ZSTD_outBuffer* output, ZSTD_inBuffer* input)
 {
 #if (ZSTD_LEGACY_SUPPORT <= 4)
-    /* Optional v0.4 retains its historical null-buffer adaptation. SuperZip ships v0.5 and later. */
+    /* Optional v0.4 retains its historical null-buffer adaptation. FlitzZip ships v0.5 and later. */
     static char x;
     /* Avoid passing NULL to legacy decoding. */
     if (output->dst == NULL) {

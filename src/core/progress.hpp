@@ -7,7 +7,7 @@
 #include <mutex>
 #include <string>
 
-namespace superzip {
+namespace flitzzip {
 
 enum class OperationKind {
     Idle,
@@ -102,4 +102,4 @@ ProgressCheckpoint make_cancellation_checkpoint(ProgressState& progress, const P
 // Outputs: Invokes `callback` synchronously with a snapshot; no-op when callback is empty.
 void publish_progress(const ProgressState& progress, const ProgressCallback& callback);
 
-}  // namespace superzip
+}  // namespace flitzzip

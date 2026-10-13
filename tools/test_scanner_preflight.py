@@ -1,5 +1,8 @@
 """Regression contracts for changed-file scanner publication admission."""
 
+import copy
+import csv
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -7,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tools.scanner_hosted_review import canonical, match_snapshot_false_positives
 from tools.scanner_preflight import changed_paths, finding_count, snapshot_inputs
 
 
@@ -17,6 +21,67 @@ class ScannerPreflightTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
+
+    # Purpose: Exercise exact current review admission with independent immutable source/configuration bytes.
+    # Inputs: A real schema row with synthetic context and SARIF identities. Outputs: One isolated fixture tuple.
+    def reviewed_fixture(self):
+        path = Path(__file__).resolve().parents[1] / ".github/scanner-false-positive-reviews.csv"
+        with path.open(encoding="utf-8", newline="") as source:
+            row = next(csv.DictReader(source))
+        blobs = {name: b"independent source context\n" for name in row["context_paths"].split("|")}
+        blobs[row["evidence"].split("#")[0]] = f"### Alert {row['alert']}\n".encode()
+        hashes = {name: hashlib.sha256(payload).hexdigest() for name, payload in blobs.items()}
+        row["input_sha256"] = hashes[row["path"]]
+        row["context_sha256"] = hashlib.sha256(canonical(hashes)).hexdigest()
+        result = {
+            "ruleId": row["rule"],
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": row["path"].replace("/", "\\")},
+                        "region": {
+                            name: int(row[key])
+                            for name, key in (
+                                ("startLine", "start_line"),
+                                ("startColumn", "start_column"),
+                                ("endLine", "end_line"),
+                                ("endColumn", "end_column"),
+                            )
+                        },
+                    }
+                }
+            ],
+        }
+        report = {"runs": [{"tool": {"driver": {"name": row["tool"], "version": row["version"]}}, "results": [result]}]}
+        return row, blobs, report
+
+    # Purpose: Prevent preflight from broadening approved reviews or hiding their raw findings.
+    # Inputs: Exact reviewed report plus changed repository, source, caller, evidence, rule, scanner and location.
+    # Outputs: Accepts only the complete original tuple, rejects every mutation and preserves input reports.
+    def test_current_snapshot_requires_all_reviewed_identities(self):
+        row, blobs, report = self.reviewed_fixture()
+        original = copy.deepcopy(report)
+        accepted = match_snapshot_false_positives([row], report, row["repository"], blobs.__getitem__)
+        self.assertEqual(accepted, [{"run_index": 0, "result_index": 0, "alert": int(row["alert"])}])
+        self.assertEqual(report, original)
+        self.assertEqual(match_snapshot_false_positives([row], report, "unrelated/repo", blobs.__getitem__), [])
+        for name in blobs:
+            with self.subTest(context=name):
+                altered = {**blobs, name: blobs[name] + b"changed\n"}
+                self.assertEqual(
+                    match_snapshot_false_positives([row], report, row["repository"], altered.__getitem__), []
+                )
+        for field in ("name", "version"):
+            altered = copy.deepcopy(report)
+            altered["runs"][0]["tool"]["driver"][field] += "-changed"
+            self.assertEqual(match_snapshot_false_positives([row], altered, row["repository"], blobs.__getitem__), [])
+        for field in ("startLine", "startColumn", "endLine", "endColumn"):
+            altered = copy.deepcopy(report)
+            altered["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"][field] += 1
+            self.assertEqual(match_snapshot_false_positives([row], altered, row["repository"], blobs.__getitem__), [])
+        altered = copy.deepcopy(report)
+        altered["runs"][0]["results"][0]["ruleId"] += "-new"
+        self.assertEqual(match_snapshot_false_positives([row], altered, row["repository"], blobs.__getitem__), [])
 
     # Purpose: Preserve staged, unstaged and new filenames exactly, including spaces.
     # Inputs: An owned Git fixture. Outputs: Complete input selection without deleted paths or option interpretation.

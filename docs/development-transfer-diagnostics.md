@@ -1,6 +1,6 @@
 # Development Transfer Diagnostics
 
-SuperZip's production telemetry already records AMD HIP kernel launches,
+FlitzZip's production telemetry already records AMD HIP kernel launches,
 host-to-device bytes, device-to-host bytes, and device allocation bytes for every
 operation. `tools\transfer_diagnostics.ps1` exposes that data as a development
 diagnostic without adding a product UI path or a separate benchmark

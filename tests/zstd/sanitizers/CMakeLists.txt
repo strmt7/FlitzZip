@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 4.4)
-project(SuperZipZstdSanitizerValidation LANGUAGES C CXX)
+project(FlitzZipZstdSanitizerValidation LANGUAGES C CXX)
 
 if(NOT WIN32
    OR NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC"
@@ -12,7 +12,7 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
-set(SUPERZIP_SOURCE_ROOT "${REPO_ROOT}")
+set(FLITZZIP_SOURCE_ROOT "${REPO_ROOT}")
 set(_archive "${REPO_ROOT}/third_party/upstream/zstd/v1.5.7/zstd-v1.5.7.zip")
 file(SHA256 "${_archive}" archive_hash)
 if(NOT archive_hash STREQUAL
@@ -31,20 +31,20 @@ if(NOT EXISTS "${_source}/lib/zstd.h")
   endif()
 endif()
 include("${REPO_ROOT}/cmake/PatchZstdLegacy.cmake")
-superzip_patch_zstd_legacy("${_source}")
+flitzzip_patch_zstd_legacy("${_source}")
 include("${REPO_ROOT}/cmake/ZstdLibrary.cmake")
-superzip_add_zstd_library("${_source}")
-set(SUPERZIP_ZSTD_RUNTIME_DLL "$<TARGET_FILE:libzstd_shared>")
+flitzzip_add_zstd_library("${_source}")
+set(FLITZZIP_ZSTD_RUNTIME_DLL "$<TARGET_FILE:libzstd_shared>")
 
 # Purpose: Place the exact instrumented validation DLL beside its test consumer.
 # Inputs: target_name is a canonical test target. Outputs: Copies only the
 # validation runtime after linking.
-function(superzip_copy_zstd_runtime target_name)
+function(flitzzip_copy_zstd_runtime target_name)
   add_custom_command(
     TARGET "${target_name}"
     POST_BUILD
     COMMAND
-      "${CMAKE_COMMAND}" -E copy_if_different "${SUPERZIP_ZSTD_RUNTIME_DLL}"
+      "${CMAKE_COMMAND}" -E copy_if_different "${FLITZZIP_ZSTD_RUNTIME_DLL}"
       "$<TARGET_FILE_DIR:${target_name}>/libzstd.dll"
     COMMENT "Copying canonical sanitizer validation runtime"
     VERBATIM)
@@ -52,18 +52,18 @@ endfunction()
 
 enable_testing()
 include("${REPO_ROOT}/cmake/ZstdTests.cmake")
-add_executable(superzip_zstd_asan_control asan_control.cpp)
+add_executable(flitzzip_zstd_asan_control asan_control.cpp)
 foreach(
   target IN
   ITEMS libzstd_shared
-        superzip_zstd_cover_probe
-        superzip_zstd_cover_owner_probe
-        superzip_zstd_legacy_fault_objects
-        superzip_zstd_legacy_buffer_probe
-        superzip_zstd_bounds_tests
-        superzip_zstd_cover_selection_tests
-        superzip_zstd_legacy_tests
-        superzip_zstd_asan_control)
+        flitzzip_zstd_cover_probe
+        flitzzip_zstd_cover_owner_probe
+        flitzzip_zstd_legacy_fault_objects
+        flitzzip_zstd_legacy_buffer_probe
+        flitzzip_zstd_bounds_tests
+        flitzzip_zstd_cover_selection_tests
+        flitzzip_zstd_legacy_tests
+        flitzzip_zstd_asan_control)
   target_compile_options(
     "${target}" PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:/fsanitize=address>"
                         "$<$<COMPILE_LANGUAGE:C,CXX>:/Zi>")
@@ -79,22 +79,22 @@ if(NOT EXISTS "${_asan_runtime}")
     FATAL_ERROR "Installed MSVC x64 AddressSanitizer runtime is unavailable")
 endif()
 add_custom_command(
-  TARGET superzip_zstd_asan_control
+  TARGET flitzzip_zstd_asan_control
   POST_BUILD
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_asan_runtime}"
-          "$<TARGET_FILE_DIR:superzip_zstd_asan_control>"
+          "$<TARGET_FILE_DIR:flitzzip_zstd_asan_control>"
   COMMENT "Copying installed MSVC sanitizer runtime"
   VERBATIM)
 add_test(
-  NAME superzip_zstd_asan_qualification
+  NAME flitzzip_zstd_asan_qualification
   COMMAND
-    "${CMAKE_COMMAND}" "-DCONTROL=$<TARGET_FILE:superzip_zstd_asan_control>" -P
+    "${CMAKE_COMMAND}" "-DCONTROL=$<TARGET_FILE:flitzzip_zstd_asan_control>" -P
     "${REPO_ROOT}/tests/cmake/test_zstd_asan_control.cmake")
-set_tests_properties(superzip_zstd_asan_qualification PROPERTIES TIMEOUT 45)
+set_tests_properties(flitzzip_zstd_asan_qualification PROPERTIES TIMEOUT 45)
 set_tests_properties(
-  superzip_zstd_bounds_tests superzip_zstd_cover_selection_tests
-  superzip_zstd_legacy_tests PROPERTIES DEPENDS
-                                        superzip_zstd_asan_qualification)
+  flitzzip_zstd_bounds_tests flitzzip_zstd_cover_selection_tests
+  flitzzip_zstd_legacy_tests PROPERTIES DEPENDS
+                                        flitzzip_zstd_asan_qualification)
 # Retain the shared composite/child deadlines from ZstdTests.cmake.
 # This standalone project has no product, HIP backend, installer or packaging
 # targets.

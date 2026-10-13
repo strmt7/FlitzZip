@@ -239,7 +239,7 @@ function Invoke-MemoryBenchmarkLane {
 }
 $script:SkipCpu = $false; $script:SkipGpu = $false; $script:InterRunPauseMs = 0
 $script:BenchmarkSampleIdentities = @{}
-$journal = Join-Path $env:TEMP ('superzip-sample-journal-' + [guid]::NewGuid().ToString('N') + '.jsonl')
+$journal = Join-Path $env:TEMP ('flitzzip-sample-journal-' + [guid]::NewGuid().ToString('N') + '.jsonl')
 try {
     Write-BenchmarkJournal -Path $journal -Event @{ event = 'protocol' } -Create
     $plans = @(@{ block_size_kib = 256; confirmation_count = 2 }, @{ block_size_kib = 512; confirmation_count = 1 })
@@ -349,7 +349,7 @@ foreach ($iteration in @(1, 2, 3, 4)) {
     }
 }
 
-$sourceRoot = Join-Path $env:TEMP ("superzip-benchmark-source-" + [guid]::NewGuid().ToString('N'))
+$sourceRoot = Join-Path $env:TEMP ("flitzzip-benchmark-source-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $sourceRoot | Out-Null
 try {
     & git -C $sourceRoot init --quiet
@@ -386,7 +386,7 @@ try {
     }
     & git -C $sourceRoot add -- src tools
     if ($LASTEXITCODE -ne 0) { throw 'Could not stage source-state fixture inputs.' }
-    & git -C $sourceRoot -c user.name='SuperZip fixture' -c user.email='fixture@example.invalid' `
+    & git -C $sourceRoot -c user.name='FlitzZip fixture' -c user.email='fixture@example.invalid' `
         -c commit.gpgsign=false -c core.hooksPath=$fixtureTools commit --quiet -m 'Fixture baseline'
     if ($LASTEXITCODE -ne 0) { throw 'Could not commit source-state fixture inputs.' }
     if (Get-RamBenchmarkSourceDirty -RepositoryRoot $sourceRoot) {
@@ -519,7 +519,7 @@ $studyCalls = @($ast.FindAll({ param($node)
 }, $true))
 if ($studyCalls.Count -ne 1) { throw 'The measurement controller must use the tested shared study exporter.' }
 
-$jsonPath = Join-Path $env:TEMP ("superzip-benchmark-json-" + [guid]::NewGuid().ToString('N') + '.json')
+$jsonPath = Join-Path $env:TEMP ("flitzzip-benchmark-json-" + [guid]::NewGuid().ToString('N') + '.json')
 try {
     Write-BenchmarkJson -Record $record -Path $jsonPath
     $json = Get-Content -LiteralPath $jsonPath -Raw
@@ -772,7 +772,7 @@ $script:RunTimeoutSeconds = 5
 $script:SampleIntervalMs = 50
 foreach ($showStats in @($false, $true)) {
     $script:ShowOperationStatsEnabled = $showStats
-    $records = @(Invoke-SuperZipStat -Arguments @('-NoProfile', '-Command',
+    $records = @(Invoke-FlitzZipStat -Arguments @('-NoProfile', '-Command',
         "Write-Output 'entries=1 seconds=1 memory_only=true disk_write_bytes=0'") 6>$null)
     if ($records.Count -ne 1 -or $records[0] -isnot [hashtable]) {
         throw "Operation diagnostics corrupted the statistics return stream."
@@ -782,7 +782,7 @@ foreach ($showStats in @($false, $true)) {
         throw "Statistics or unavailable counter semantics changed."
     }
     $line = 'plan_only=true input_bytes=10737418240 workers=32 inflight_chunks=25 codec_workers=1 decode_inflight_chunks=4 decode_codec_workers=8'
-    $plans = @(Invoke-SuperZipStat -Arguments @('-NoProfile', '-Command', "Write-Output '$line'") 6>$null)
+    $plans = @(Invoke-FlitzZipStat -Arguments @('-NoProfile', '-Command', "Write-Output '$line'") 6>$null)
     if ($plans.Count -ne 1 -or $plans[0] -isnot [hashtable] -or $plans[0].plan_only -ne 'true' -or
         $plans[0].ContainsKey('seconds') -or $plans[0].ContainsKey('gpu_used')) {
         throw 'Planning output failed the complete subprocess-reader/parser path or fabricated measurement fields.'
@@ -792,7 +792,7 @@ $script:RunTimeoutSeconds = 1
 foreach ($command in @('Start-Sleep -Seconds 10', "[Console]::Write('x' * 70000); Start-Sleep -Seconds 10")) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $cause = $null
-    try { Invoke-SuperZipStat -Arguments @('-NoProfile', '-Command', $command) 6>$null | Out-Null }
+    try { Invoke-FlitzZipStat -Arguments @('-NoProfile', '-Command', $command) 6>$null | Out-Null }
     catch { $cause = $_.Exception.Message }
     if (-not $cause -or $cause -notmatch 'deadline|output' -or $clock.Elapsed.TotalSeconds -gt 8) {
         throw "Benchmark subprocess timeout/output containment failed: $cause"
@@ -845,7 +845,7 @@ foreach ($invalid in @('NaN', 'nan', 'Infinity', '-Infinity')) {
     }
     $checks = @(
         { Assert-GpuProofStat -Stats $stats -Label 'invalid fixture' },
-        { Get-SuperZipStatNumber -Stats $stats -Name 'gpu_kernel_ms' }
+        { Get-FlitzZipStatNumber -Stats $stats -Name 'gpu_kernel_ms' }
     )
     if ($invalid -notin @('NaN', 'nan')) {
         $checks += { Assert-GpuBackendStat -Stats $stats -Label 'invalid fixture' }
@@ -997,12 +997,12 @@ try {
 if (-not $rejected) { throw 'A missing pilot lane silently reduced the wall budget.' }
 
 # Independent temporary bytes exercise mutation detection; they are not executable or performance fixtures.
-$artifactRoot = Join-Path $env:TEMP ('superzip-artifact-state-' + [guid]::NewGuid().ToString('N'))
+$artifactRoot = Join-Path $env:TEMP ('flitzzip-artifact-state-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $artifactRoot | Out-Null
 $artifactSource = Join-Path $artifactRoot 'src/codec.cpp'
-$artifactBinary = Join-Path $artifactRoot 'build/Release/superzip_cli.exe'
+$artifactBinary = Join-Path $artifactRoot 'build/Release/flitzzip_cli.exe'
 $artifactRuntime = Join-Path $artifactRoot 'build/Release/fixture.dll'
-$originalStatFunction = (Get-Item Function:\Invoke-SuperZipStat).ScriptBlock
+$originalStatFunction = (Get-Item Function:\Invoke-FlitzZipStat).ScriptBlock
 try {
     New-Item -ItemType Directory -Path (Split-Path -Parent $artifactSource), (Split-Path -Parent $artifactBinary) | Out-Null
     [IO.File]::WriteAllText($artifactSource, 'source bytes')
@@ -1013,7 +1013,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Artifact fixture Git initialization failed.' }
     & git -C $artifactRoot add -- src/codec.cpp CMakeLists.txt
     if ($LASTEXITCODE -ne 0) { throw 'Artifact fixture source staging failed.' }
-    & git -C $artifactRoot -c user.name='SuperZip Tests' -c user.email='tests@example.invalid' `
+    & git -C $artifactRoot -c user.name='FlitzZip Tests' -c user.email='tests@example.invalid' `
         -c commit.gpgsign=false -c core.hooksPath=.git/no-hooks commit --quiet -m 'Artifact fixture source'
     if ($LASTEXITCODE -ne 0) { throw 'Artifact fixture commit failed.' }
     & py -3 -m tools.test_native_build_receipt --create-fixture $artifactRoot
@@ -1032,7 +1032,7 @@ try {
         [IO.File]::WriteAllBytes($mutationPath, $originalBytes)
         Assert-RamBenchmarkArtifactState -Expected $frozen -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary
     }
-    Set-Item Function:\Invoke-SuperZipStat -Value {
+    Set-Item Function:\Invoke-FlitzZipStat -Value {
         param([string[]]$Arguments)
         if ($Arguments.Count -ne 1 -or $Arguments[0] -ne 'unit-fixture') { throw 'The observation arguments changed.' }
         [IO.File]::WriteAllText($artifactBinary, 'changed during observation')
@@ -1072,7 +1072,7 @@ try {
         }
         foreach ($target in @($artifactSource) + $metadataPaths) {
             $original = [IO.File]::ReadAllBytes($target)
-            Set-Item Function:\Invoke-SuperZipStat -Value {
+            Set-Item Function:\Invoke-FlitzZipStat -Value {
                 param([string[]]$Arguments)
                 if ($Arguments.Count -ne 1 -or $Arguments[0] -ne 'unit-fixture') { throw 'Corpus guard fixture arguments changed.' }
                 $changed = [IO.File]::ReadAllBytes($target); $changed[0] = $changed[0] -bxor 1
@@ -1096,7 +1096,7 @@ try {
         $script:BenchmarkCorpus = $null
     }
 } finally {
-    Set-Item Function:\Invoke-SuperZipStat -Value $originalStatFunction
+    Set-Item Function:\Invoke-FlitzZipStat -Value $originalStatFunction
     $resolvedArtifactRoot = [IO.Path]::GetFullPath($artifactRoot)
     $artifactTempPrefix = [IO.Path]::GetFullPath($env:TEMP).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $resolvedArtifactRoot.StartsWith($artifactTempPrefix, [StringComparison]::OrdinalIgnoreCase)) {

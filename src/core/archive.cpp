@@ -29,7 +29,7 @@
 #include <thread>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kFileStreamBufferBytes = 4U * 1024U * 1024U;
@@ -74,7 +74,7 @@ struct ArchiveValidationSummary {
 };
 
 // Purpose: Identify block kinds that carry bytes in the archive payload.
-// Inputs: `kind` is a native SUZIP block encoding kind.
+// Inputs: `kind` is a native FLZIP block encoding kind.
 // Outputs: Returns true for block kinds whose `encoded_offset`/`encoded_len` reserve payload bytes.
 bool block_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::CpuZstd ||
@@ -155,7 +155,7 @@ PipelineBudget resolve_pipeline_budget(std::uint64_t chunk_size, std::uint32_t r
     const auto automatic_inflight = std::min({workers, memory_limited_inflight, kMaxInflightArchiveChunks});
     const auto inflight = requested_inflight == 0 ? automatic_inflight : requested_inflight;
     if (inflight > memory_limited_inflight) {
-        throw ArchiveError("requested in-flight chunks exceed SuperZip memory budget");
+        throw ArchiveError("requested in-flight chunks exceed FlitzZip memory budget");
     }
     return PipelineBudget{
         .workers = workers,
@@ -168,7 +168,7 @@ PipelineBudget resolve_pipeline_budget(std::uint64_t chunk_size, std::uint32_t r
 // current file entry, counted with the same grouping as execution. Outputs: Returns a positive floor share whose
 // aggregate across admitted windows never exceeds the requested worker budget.
 std::uint32_t resolve_codec_worker_count(const PipelineBudget& budget, std::uint64_t work_windows) {
-    return superzip::resolve_codec_worker_count(budget.workers, budget.inflight_chunks, work_windows);
+    return flitzzip::resolve_codec_worker_count(budget.workers, budget.inflight_chunks, work_windows);
 }
 
 // Purpose: Validate public archive options before any filesystem scan or allocation.
@@ -180,10 +180,10 @@ void validate_archive_options(std::uint64_t chunk_size, std::uint32_t block_size
         throw ArchiveError("chunk size must be greater than zero");
     }
     if (chunk_size > kMaxArchiveChunkBytes) {
-        throw ArchiveError("chunk size exceeds SuperZip resource limit");
+        throw ArchiveError("chunk size exceeds FlitzZip resource limit");
     }
     if (block_size < kMinArchiveBlockBytes || block_size > kMaxArchiveBlockBytes) {
-        throw ArchiveError("block size is outside SuperZip resource limits");
+        throw ArchiveError("block size is outside FlitzZip resource limits");
     }
     if (block_size > chunk_size) {
         throw ArchiveError("block size cannot exceed chunk size");
@@ -192,10 +192,10 @@ void validate_archive_options(std::uint64_t chunk_size, std::uint32_t block_size
         throw ArchiveError("chunk size must be an exact multiple of block size");
     }
     if (worker_count > kMaxArchiveWorkers) {
-        throw ArchiveError("worker count exceeds SuperZip resource limit");
+        throw ArchiveError("worker count exceeds FlitzZip resource limit");
     }
     if (max_inflight_chunks > kMaxInflightArchiveChunks) {
-        throw ArchiveError("in-flight chunk count exceeds SuperZip resource limit");
+        throw ArchiveError("in-flight chunk count exceeds FlitzZip resource limit");
     }
 }
 
@@ -204,7 +204,7 @@ void validate_archive_options(std::uint64_t chunk_size, std::uint32_t block_size
 // Outputs: Returns the bytes read, possibly fewer at EOF; throws `ArchiveError` on read failure.
 std::vector<std::byte> read_file_chunk(std::ifstream& input, std::uint64_t max_bytes) {
     if (max_bytes == 0 || max_bytes > kMaxArchiveChunkBytes) {
-        throw ArchiveError("input chunk request exceeds SuperZip resource limits");
+        throw ArchiveError("input chunk request exceeds FlitzZip resource limits");
     }
     std::vector<std::byte> buffer(static_cast<std::size_t>(max_bytes));
     input.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
@@ -238,23 +238,23 @@ std::uint64_t stream_position(std::istream& stream) {
     return static_cast<std::uint64_t>(pos);
 }
 
-// Purpose: Load the SuperZip index referenced by the archive footer.
+// Purpose: Load the FlitzZip index referenced by the archive footer.
 // Inputs: `input` is an open binary archive stream.
 // Outputs: Returns the parsed index with offset/size populated; throws `ArchiveError` for missing or invalid footer
 // metadata.
 ArchiveIndex read_index_from_file(std::ifstream& input) {
     input.seekg(0, std::ios::end);
     const auto size = stream_position(input);
-    if (size < kSuperZipFooterBytes) {
+    if (size < kFlitzZipFooterBytes) {
         throw ArchiveError("archive is too small");
     }
-    input.seekg(static_cast<std::streamoff>(size - kSuperZipFooterBytes), std::ios::beg);
+    input.seekg(static_cast<std::streamoff>(size - kFlitzZipFooterBytes), std::ios::beg);
     const auto footer_magic = read_u32(input);
-    if (footer_magic != kSuperZipFooterMagic) {
+    if (footer_magic != kFlitzZipFooterMagic) {
         throw ArchiveError("archive footer is missing");
     }
     const auto version = read_u32(input);
-    if (version < kSuperZipMinReadableVersion || version > kSuperZipMaxReadableVersion) {
+    if (version < kFlitzZipMinReadableVersion || version > kFlitzZipMaxReadableVersion) {
         throw ArchiveError("unsupported archive footer version");
     }
     const auto index_offset = read_u64(input);
@@ -263,7 +263,7 @@ ArchiveIndex read_index_from_file(std::ifstream& input) {
         throw ArchiveError("archive index points outside file");
     }
     if (index_size > kMaxArchiveIndexBytes) {
-        throw ArchiveError("archive index exceeds SuperZip resource limit");
+        throw ArchiveError("archive index exceeds FlitzZip resource limit");
     }
     input.seekg(static_cast<std::streamoff>(index_offset), std::ios::beg);
     std::string index_bytes(static_cast<std::size_t>(index_size), '\0');
@@ -293,7 +293,7 @@ std::vector<std::byte> read_payload_window(std::ifstream& input, const ArchiveEn
         throw ArchiveError("entry payload points outside archive");
     }
     if (size > kMaxArchiveChunkBytes) {
-        throw ArchiveError("entry payload window exceeds SuperZip resource limit");
+        throw ArchiveError("entry payload window exceeds FlitzZip resource limit");
     }
     input.seekg(static_cast<std::streamoff>(entry.payload_offset + relative_offset), std::ios::beg);
     std::vector<std::byte> payload(static_cast<std::size_t>(size));
@@ -542,7 +542,7 @@ void validate_block_header_metadata(const ArchiveEntry& entry, const BlockDescri
         throw ArchiveError("archive block has zero decoded length: " + entry.path);
     }
     if (block.uncompressed_len > kMaxArchiveBlockBytes) {
-        throw ArchiveError("archive block exceeds SuperZip block size limit: " + entry.path);
+        throw ArchiveError("archive block exceeds FlitzZip block size limit: " + entry.path);
     }
 }
 
@@ -688,7 +688,7 @@ void validate_entry_metadata(const ArchiveEntry& entry) {
 }
 
 // Purpose: Validate an archive index and summarize decode memory requirements.
-// Inputs: `index` is parsed untrusted archive metadata from a SUZIP archive.
+// Inputs: `index` is parsed untrusted archive metadata from a FLZIP archive.
 // Outputs: Returns total decoded bytes and largest decoded block size; throws before any extraction output is created.
 ArchiveValidationSummary validate_archive_index_metadata(const ArchiveIndex& index) {
     ArchiveValidationSummary summary;
@@ -719,11 +719,11 @@ std::uint64_t resolve_decode_window_bytes(const ExtractOptions& options, const A
     return std::max<std::uint64_t>(options.chunk_size, summary.largest_decoded_block_bytes);
 }
 
-// Purpose: Append the native SUZIP footer after the serialized index.
+// Purpose: Append the native FLZIP footer after the serialized index.
 // Inputs: `output` is positioned after the index and `index` contains the index offset and size.
 // Outputs: Writes the footer magic, version, index offset, and index size to `output`.
-void write_suzip_footer(std::ofstream& output, const ArchiveIndex& index) {
-    write_u32(output, kSuperZipFooterMagic);
+void write_flzip_footer(std::ofstream& output, const ArchiveIndex& index) {
+    write_u32(output, kFlitzZipFooterMagic);
     write_u32(output, index.version);
     write_u64(output, index.index_offset);
     write_u64(output, index.index_size);
@@ -763,7 +763,7 @@ void write_one_encoded_chunk(std::deque<PendingEncode>& pending, ArchiveEntry& e
     }
 }
 
-// Purpose: Queue one bounded source chunk for asynchronous native SUZIP encoding.
+// Purpose: Queue one bounded source chunk for asynchronous native FLZIP encoding.
 // Inputs: `pending` receives the future, `chunk` owns uncompressed bytes, and `gpu_options` defines the CPU/GPU codec
 // policy. Outputs: Appends one future that returns encoded blocks, payload bytes, CRC, and decoded byte count.
 void enqueue_encode_chunk(std::deque<PendingEncode>& pending, std::vector<std::byte> chunk,
@@ -786,7 +786,7 @@ void enqueue_encode_chunk(std::deque<PendingEncode>& pending, std::vector<std::b
     });
 }
 
-// Purpose: Compress one regular manifest file into a SUZIP entry while keeping memory bounded.
+// Purpose: Compress one regular manifest file into a FLZIP entry while keeping memory bounded.
 // Inputs: `manifest_entry` identifies the source file, `options` and `budget` bound chunking and concurrency,
 // `gpu_telemetry` receives HIP metrics, `output` receives payload bytes, `entry` receives metadata, `stats` records
 // telemetry, `archive_block_count` tracks global limits, and `progress_callback` receives progress. Outputs: Mutates
@@ -852,7 +852,7 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
 // Inputs: A completed archive index with all file block descriptors.
 // Outputs: Returns version three through eleven without downgrading a new block kind.
 std::uint32_t required_archive_version(const ArchiveIndex& index) {
-    std::uint32_t version = kSuperZipVersion;
+    std::uint32_t version = kFlitzZipVersion;
     for (const auto& entry : index.entries) {
         for (const auto& block : entry.blocks) {
             if (block.kind == BlockKind::GpuBytePlaneContexts) {
@@ -880,12 +880,12 @@ std::uint32_t required_archive_version(const ArchiveIndex& index) {
 
 }  // namespace
 
-// Purpose: Create a native SUZIP archive from validated filesystem sources.
+// Purpose: Create a native FLZIP archive from validated filesystem sources.
 // Inputs: `sources` are input roots, `output_archive` is replaced, `options` controls CPU/GPU codec policy and resource
 // bounds, and `progress_callback` receives progress snapshots. Outputs: Writes the archive and returns operation
 // telemetry; optional read-back verification completes before publication. Throws without replacing the destination
 // on invalid inputs, resource limits, cancellation, codec/verification failure, or write failure.
-OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
+OperationStats compress_flzip(const std::vector<std::filesystem::path>& sources,
                               const std::filesystem::path& output_archive, const CompressOptions& options,
                               const ProgressCallback& callback) {
     validate_archive_options(options.chunk_size, options.block_size, options.worker_count, options.max_inflight_chunks);
@@ -962,7 +962,7 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
     index.index_offset = stream_position(output);
     write_archive_index(output, index);
     index.index_size = stream_position(output) - index.index_offset;
-    write_suzip_footer(output, index);
+    write_flzip_footer(output, index);
     output.flush();
     if (!output) {
         throw ArchiveError("failed to finalize archive");
@@ -976,7 +976,7 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
 
     // Read back private output through the normal bounded decoder before replacing the final archive.
     if (options.verify_after_write) {
-        const auto verified = verify_suzip(publication.staging_path(),
+        const auto verified = verify_flzip(publication.staging_path(),
                                            ExtractOptions{
                                                .gpu_required = options.gpu_required,
                                                .force_cpu = options.force_cpu,
@@ -995,10 +995,10 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
     return stats;
 }
 
-// Purpose: Extract a native SUZIP archive while publishing each file only after verification.
+// Purpose: Extract a native FLZIP archive while publishing each file only after verification.
 // Inputs: `archive_path`, `destination`, `options`, and optional `progress_callback` describe the extraction run.
 // Outputs: Restores archive entries into `destination` and returns operation telemetry or throws on validation failure.
-OperationStats extract_suzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+OperationStats extract_flzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                              const ExtractOptions& options, const ProgressCallback& progress_callback) {
     validate_archive_options(options.chunk_size, options.block_size, options.worker_count, options.max_inflight_chunks);
     const auto gpu_telemetry = std::make_shared<GpuTelemetry>();
@@ -1109,11 +1109,11 @@ OperationStats extract_suzip(const std::filesystem::path& archive_path, const st
     return stats;
 }
 
-// Purpose: Verify a native SUZIP archive without publishing extraction output.
+// Purpose: Verify a native FLZIP archive without publishing extraction output.
 // Inputs: `archive_path` identifies the archive, `options` controls decode policy, and `progress_callback` observes
 // initialization, entries, and bounded decode windows; callback exceptions cancel the operation.
 // Outputs: Returns verification telemetry; throws on malformed metadata, decode failure, CRC mismatch, or cancellation.
-OperationStats verify_suzip(const std::filesystem::path& archive_path, const ExtractOptions& options,
+OperationStats verify_flzip(const std::filesystem::path& archive_path, const ExtractOptions& options,
                             const ProgressCallback& progress_callback) {
     validate_archive_options(options.chunk_size, options.block_size, options.worker_count, options.max_inflight_chunks);
     const auto gpu_telemetry = std::make_shared<GpuTelemetry>();
@@ -1173,4 +1173,4 @@ OperationStats verify_suzip(const std::filesystem::path& archive_path, const Ext
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

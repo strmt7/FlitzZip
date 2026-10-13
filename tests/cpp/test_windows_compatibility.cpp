@@ -40,10 +40,10 @@ TEST_CASE(windows_embedded_compatibility_manifest_parity) {
     const auto directory = std::filesystem::path(executable).parent_path();
     constexpr std::string_view identity = "{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}";
     constexpr const wchar_t* names[] = {
-        L"superzip_tests.exe",
-        L"superzip_cli.exe",
-#if SUPERZIP_TEST_GUI_BUILT
-        L"SuperZip.exe",
+        L"flitzzip_tests.exe",
+        L"flitzzip_cli.exe",
+#if FLITZZIP_TEST_GUI_BUILT
+        L"FlitzZip.exe",
 #endif
     };
     for (const auto* name : names) {
@@ -51,7 +51,7 @@ TEST_CASE(windows_embedded_compatibility_manifest_parity) {
         const auto position = manifest.find(identity);
         REQUIRE_TRUE(position != std::string::npos);
         REQUIRE_EQ(manifest.find(identity, position + identity.size()), std::string::npos);
-        if (std::wstring_view(name) == L"SuperZip.exe") {
+        if (std::wstring_view(name) == L"FlitzZip.exe") {
             REQUIRE_TRUE(manifest.find("PerMonitorV2") != std::string::npos);
         }
     }

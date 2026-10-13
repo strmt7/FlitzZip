@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "repository": "strmt7/SuperZip",
+  "repository": "strmt7/FlitzZip",
   "rationale": "The maintainer accepts these exact repository-governance observations as a passing baseline. They are not source vulnerabilities or evidence that peer review or certification has been completed.",
   "accepted_governance": [
     {

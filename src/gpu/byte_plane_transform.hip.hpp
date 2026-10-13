@@ -3,7 +3,7 @@
 #include "core/byte_plane_block.hpp"
 #include "gpu/hip_kernel_api.hpp"
 
-namespace superzip::hip_detail {
+namespace flitzzip::hip_detail {
 
 // Purpose: Execute the reversible transform exclusively on HIP with operation-owned admitted buffers.
 // Inputs: Equal bounded host spans, admitted width/direction, caller checkpoints and actual device telemetry.
@@ -43,4 +43,4 @@ inline void transform_byte_planes_hip(std::span<const std::byte> source, std::sp
     }
 }
 
-}  // namespace superzip::hip_detail
+}  // namespace flitzzip::hip_detail

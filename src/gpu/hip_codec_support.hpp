@@ -27,7 +27,7 @@
 #include <hip/hip_runtime.h>
 #include <hip/hip_ext.h>
 
-namespace superzip::hip_detail {
+namespace flitzzip::hip_detail {
 
 constexpr std::uint32_t kPatternSampleBytes = 2U * kMaxGpuPatternBytes;
 constexpr std::uint32_t kAnalyzeSegmentBytes = 64U * 1024U;
@@ -58,7 +58,7 @@ struct DeviceCrcSegment {
 };
 
 // Purpose: Identify native GPU prefix blocks in a decoded block table.
-// Inputs: `block` is one parsed SUZIP block descriptor.
+// Inputs: `block` is one parsed FLZIP block descriptor.
 // Outputs: Returns true when the descriptor uses static or adaptive GPU-prefix encoding.
 inline bool is_gpu_prefix_block(const BlockDescriptor& block) {
     return block.kind == BlockKind::GpuPrefix || block.kind == BlockKind::GpuAdaptivePrefix ||
@@ -119,7 +119,7 @@ struct HipEventPair {
     }
 };
 
-// Purpose: Convert a HIP status into a SuperZip GPU exception.
+// Purpose: Convert a HIP status into a FlitzZip GPU exception.
 // Inputs: `status` is a HIP API result and `action` labels the failing operation.
 // Outputs: Returns on success; throws `GpuError` with the HIP error string on failure.
 inline void check_hip(hipError_t status, const char* action) {
@@ -558,7 +558,7 @@ inline std::size_t checked_gpu_decoded_length(const BlockDescriptor& block, std:
                                               std::size_t output_len) {
     const auto len = static_cast<std::size_t>(block.uncompressed_len);
     if (len == 0U || len > kMaxArchiveBlockBytes) {
-        throw ArchiveError("decode block length is outside SuperZip resource limits");
+        throw ArchiveError("decode block length is outside FlitzZip resource limits");
     }
     if (out_pos > output_len || len > output_len - out_pos) {
         throw ArchiveError("decode block exceeds output buffer");
@@ -834,4 +834,4 @@ encode_entropy_prefix_chunk_device(const std::byte* device_input, std::span<cons
                                    std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
                                    const EncodedChunk* baseline, int compression_level, GpuTelemetry* telemetry);
 
-}  // namespace superzip::hip_detail
+}  // namespace flitzzip::hip_detail

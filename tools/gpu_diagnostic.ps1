@@ -6,18 +6,18 @@ param(
     [ValidateRange(50, 1000)] [int]$SampleIntervalMs = 50
 )
 
-# Purpose: Run a HIP-only SuperZip diagnostic while independently sampling Windows GPU counters.
+# Purpose: Run a HIP-only FlitzZip diagnostic while independently sampling Windows GPU counters.
 # Inputs: `Configuration` selects the CLI binary, diagnostic parameters control device work, and `SampleIntervalMs` controls external sampling cadence.
 # Outputs: Prints HIP event telemetry plus independent CPU/GPU/memory samples; throws when HIP execution is not proven.
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
+$cli = Join-Path $repo "build\$Configuration\flitzzip_cli.exe"
 if (-not (Test-Path $cli)) {
     throw "CLI binary not found. Run tools/build.ps1 first."
 }
 
 # Purpose: Parse a key/value block emitted by the diagnostic CLI.
-# Inputs: `Lines` is stdout from `superzip_cli gpu-diagnostic`.
+# Inputs: `Lines` is stdout from `flitzzip_cli gpu-diagnostic`.
 # Outputs: Returns a dictionary of parsed keys and values.
 function ConvertFrom-KeyValueBlock {
     param([Parameter(Mandatory = $true)][string[]]$Lines)

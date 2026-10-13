@@ -2,7 +2,7 @@
 
 #include "app/main_window_state.hpp"
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Gate the separate Neutron option using actual capability and the user's required-GPU policy.
 // Inputs: Native-format selection, cached HIP availability, and the user's GPU requirement.
@@ -19,7 +19,7 @@ inline int compression_selection_count(bool neutron_eligible) {
 }
 
 // Purpose: Remove an unavailable Neutron selection without silently running its work on the CPU.
-// Inputs: Mutable UI state and whether its selected format is native SUZIP.
+// Inputs: Mutable UI state and whether its selected format is native FLZIP.
 // Outputs: Returns whether selection changed; selects ordinary level 9 with an explicit status when necessary.
 inline bool normalize_neutron_selection(UiState& state, bool native_format) {
     if (state.compression_level_index != kNeutronCompressionLevelIndex ||
@@ -27,8 +27,8 @@ inline bool normalize_neutron_selection(UiState& state, bool native_format) {
         return false;
     }
     state.compression_level_index = kCompressionLevelOptionCount - 1;
-    state.status = "Neutron star mode requires SUZIP, a compatible AMD GPU, and AMD HIP required; level 9 selected";
+    state.status = "Neutron star mode requires FLZIP, a compatible AMD GPU, and AMD HIP required; level 9 selected";
     return true;
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 enum class ArchivePathEncoding { HostCodePage, Utf8 };
 
@@ -39,4 +39,4 @@ std::filesystem::path safe_join_archive_path(const std::filesystem::path& destin
 // Outputs: Returns a slash-separated entry name; throws `SecurityError` when the normalized name would be unsafe.
 std::string normalize_entry_name(const std::filesystem::path& relative_path);
 
-}  // namespace superzip
+}  // namespace flitzzip

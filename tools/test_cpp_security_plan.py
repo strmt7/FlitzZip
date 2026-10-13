@@ -87,7 +87,7 @@ class CppSecurityContracts(unittest.TestCase):
 
     def test_real_cancelled_native_analysis_survives_later_documentation_push(self):
         """Purpose: Reproduce lost coverage. Inputs: Native then docs commits. Outputs: Stale HIP reselects both."""
-        with tempfile.TemporaryDirectory(prefix="superzip-cancelled-analysis-") as directory:
+        with tempfile.TemporaryDirectory(prefix="flitzzip-cancelled-analysis-") as directory:
             root = Path(directory)
             subprocess.run(["git", "init", "--quiet", directory], check=True)
             for key, value in [("user.name", "Contract Fixture"), ("user.email", "fixture@example.invalid")]:
@@ -249,7 +249,7 @@ class CppSecurityContracts(unittest.TestCase):
 
     def test_real_git_delete_rename_and_missing_history(self):
         """Purpose: Bind complete ranges. Inputs: Real Git mutations. Outputs: Deleted/renamed source still selects."""
-        with tempfile.TemporaryDirectory(prefix="superzip-cpp-plan-") as directory:
+        with tempfile.TemporaryDirectory(prefix="flitzzip-cpp-plan-") as directory:
             root = Path(directory)
             subprocess.run(["git", "init", "--quiet", str(root)], check=True)
             for key, value in [("user.name", "Contract Fixture"), ("user.email", "fixture@example.invalid")]:
@@ -270,7 +270,7 @@ class CppSecurityContracts(unittest.TestCase):
 
     def test_output_and_workflow_enforce_the_actual_selector(self):
         """Purpose: Check the consumer. Inputs: CLI/output and workflow. Outputs: Required gate and full queries."""
-        with tempfile.TemporaryDirectory(prefix="superzip-cpp-output-") as directory:
+        with tempfile.TemporaryDirectory(prefix="flitzzip-cpp-output-") as directory:
             output = Path(directory) / "job-output"
             with mock.patch.object(sys, "argv", ["cpp-plan", "--event", "schedule", "--github-output", str(output)]):
                 cpp.main()

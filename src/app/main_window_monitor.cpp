@@ -18,7 +18,7 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 namespace {
 
 // Purpose: Build one English PDH LogicalDisk counter path.
@@ -196,7 +196,7 @@ double MainWindow::sample_gpu_utilization() {
     return system_gpu_utilization(samples).value_or(-1.0);
 }
 
-// Purpose: Sample SuperZip process CPU use since the previous monitor tick.
+// Purpose: Sample FlitzZip process CPU use since the previous monitor tick.
 // Inputs: `elapsed_seconds` is the interval from the previous sample.
 // Outputs: Returns total-system-capacity CPU percentage and updates previous process FILETIME state.
 double MainWindow::sample_process_cpu_percent(double elapsed_seconds) {
@@ -260,7 +260,7 @@ double MainWindow::sample_system_cpu_percent(double elapsed_seconds) {
     return std::clamp(cpu_percent, 0.0, 100.0);
 }
 
-// Purpose: Sample Windows GPU dedicated memory assigned to the SuperZip process.
+// Purpose: Sample Windows GPU dedicated memory assigned to the FlitzZip process.
 // Inputs: None; uses current-process PDH counters matching the cached HIP adapter LUID.
 // Outputs: Returns dedicated GPU memory bytes or zero when Windows does not expose the counter.
 std::uint64_t MainWindow::sample_process_dedicated_vram_bytes() const {
@@ -621,4 +621,4 @@ int MainWindow::scale(int value) const {
     return MulDiv(value, static_cast<int>(dpi_), 96);
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

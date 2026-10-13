@@ -17,7 +17,7 @@ extern "C" {
 #include "xz.h"
 }
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kXzStreamBufferBytes = 64U * 1024U;
@@ -48,7 +48,7 @@ const char* xz_status_name(enum xz_ret status) {
     case XZ_MEM_ERROR:
         return "memory allocation failed";
     case XZ_MEMLIMIT_ERROR:
-        return "dictionary exceeds SuperZip limit";
+        return "dictionary exceeds FlitzZip limit";
     case XZ_FORMAT_ERROR:
         return "not an XZ stream";
     case XZ_OPTIONS_ERROR:
@@ -71,7 +71,7 @@ std::uint64_t xz_file_size(const std::filesystem::path& path) {
         throw ArchiveError("cannot read XZ file size: " + path.string());
     }
     if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("XZ file size exceeds SuperZip limits: " + path.string());
+        throw ArchiveError("XZ file size exceeds FlitzZip limits: " + path.string());
     }
     return static_cast<std::uint64_t>(size);
 }
@@ -262,4 +262,4 @@ std::uint64_t XzInputStream::output_bytes() const {
     return buffer_->output_bytes();
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

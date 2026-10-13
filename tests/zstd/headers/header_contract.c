@@ -26,7 +26,7 @@ typedef char hash_state_was_complete[(sizeof(XXH32_state_t) > 0) ? 1 : -1];
 #include "dictBuilder/cover.h"
 #include "compress/hist.h"
 
-#if SUPERZIP_REPEAT_PRIVATE_HEADERS
+#if FLITZZIP_REPEAT_PRIVATE_HEADERS
 #include "dictBuilder/cover.h"
 #include "compress/hist.h"
 #endif

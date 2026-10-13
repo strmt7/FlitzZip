@@ -140,7 +140,7 @@ void write_iso_payload(std::vector<unsigned char>& image, std::uint32_t sector, 
 
 // Purpose: Write Primary Volume Descriptor and terminator sectors for a fixture.
 // Inputs: `image` receives descriptor bytes and `root_record` is the encoded root directory record.
-// Outputs: Creates enough ISO metadata for SuperZip format detection and parsing.
+// Outputs: Creates enough ISO metadata for FlitzZip format detection and parsing.
 void write_iso_descriptors(std::vector<unsigned char>& image, const std::vector<unsigned char>& root_record) {
     const auto pvd_offset = sector_offset(kTestIsoPvdSector);
     image[pvd_offset] = 1U;
@@ -225,19 +225,19 @@ TEST_CASE(iso_extraction_reads_basic_iso9660_files_and_directories) {
     const auto archive = root / "sample.iso";
     write_iso_fixture(archive, IsoFixtureMode::Good);
 
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Iso);
-    const auto info = superzip::archive_format_info(superzip::ArchiveFormat::Iso);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Iso);
+    const auto info = flitzzip::archive_format_info(flitzzip::ArchiveFormat::Iso);
     REQUIRE_TRUE(!info.can_create);
     REQUIRE_TRUE(info.can_extract);
     REQUIRE_TRUE(info.bundled_native);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_iso(archive, output, false);
+    const auto stats = flitzzip::extract_iso(archive, output, false);
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(std::string_view("root payload\n").size() +
                                                               std::string_view("nested payload\n").size()));
     REQUIRE_EQ(read_text_file(output / "ROOT.TXT"), "root payload\n");
     REQUIRE_EQ(read_text_file(output / "DIR" / "README"), "nested payload\n");
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify ISO extraction refuses overwriting existing files unless explicitly allowed.
@@ -253,8 +253,8 @@ TEST_CASE(iso_extraction_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_iso(archive, output, false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_iso(archive, output, false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -271,8 +271,8 @@ TEST_CASE(iso_extraction_rejects_truncated_file_extent_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_iso(archive, root / "out", false));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_iso(archive, root / "out", false));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -289,8 +289,8 @@ TEST_CASE(iso_extraction_rejects_multi_extent_records_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_iso(archive, root / "out", false));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_iso(archive, root / "out", false));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -307,8 +307,8 @@ TEST_CASE(iso_extraction_rejects_reserved_windows_names_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_iso(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_iso(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -325,8 +325,8 @@ TEST_CASE(iso_extraction_rejects_directory_extent_cycles_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_iso(archive, root / "out", false));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_iso(archive, root / "out", false));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

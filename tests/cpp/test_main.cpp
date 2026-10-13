@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#if defined(_WIN32) && SUPERZIP_ENABLE_HIP
+#if defined(_WIN32) && FLITZZIP_ENABLE_HIP
 #include <windows.h>
 #endif
 
@@ -37,9 +37,9 @@ void register_test(std::string name, TestFunction fn) {
 // Inputs: `argc`/`argv` may contain one filter; a leading '=' requests exact selection.
 // Outputs: Returns zero for passing selected tests, one for failures, or two for invalid arguments/selections.
 int main(int argc, char** argv) {
-#if defined(_WIN32) && SUPERZIP_ENABLE_HIP
-    if (GetModuleHandleA(SUPERZIP_HIP_RUNTIME_DLL_NAME) != nullptr ||
-        GetModuleHandleA(SUPERZIP_HIP_KERNEL_DLL_NAME) != nullptr) {
+#if defined(_WIN32) && FLITZZIP_ENABLE_HIP
+    if (GetModuleHandleA(FLITZZIP_HIP_RUNTIME_DLL_NAME) != nullptr ||
+        GetModuleHandleA(FLITZZIP_HIP_KERNEL_DLL_NAME) != nullptr) {
         std::cerr << "HIP runtime/kernel registration occurred before explicit admission\n";
         return 1;
     }

@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <limits>
 
-namespace superzip::dictionary::optimal {
+namespace flitzzip::dictionary::optimal {
 
 inline constexpr std::uint32_t kLanes = 256U;
 inline constexpr std::uint32_t kTreeWords = 2U * kSegmentBytes;
@@ -30,4 +30,4 @@ struct EmitCursor {
     std::uint32_t written;
 };
 
-}  // namespace superzip::dictionary::optimal
+}  // namespace flitzzip::dictionary::optimal

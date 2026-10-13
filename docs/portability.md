@@ -1,6 +1,6 @@
 # Portability And Installation Model
 
-SuperZip is portable across supported Windows hosts, not across GPU vendors.
+FlitzZip is portable across supported Windows hosts, not across GPU vendors.
 The supported runtime boundary is Windows x64 with an AMD GPU and an AMD driver
 that provides the HIP runtime required by the build.
 
@@ -8,8 +8,8 @@ that provides the HIP runtime required by the build.
 
 The portable ZIP and MSI are functionally identical:
 
-- Same HIP-enabled `SuperZip.exe`.
-- Same HIP-enabled `superzip_cli.exe`.
+- Same HIP-enabled `FlitzZip.exe`.
+- Same HIP-enabled `flitzzip_cli.exe`.
 - Same security behavior, archive formats, and dependency manifest.
 - Same requirement for an AMD driver-provided HIP runtime.
 
@@ -17,11 +17,11 @@ The portable ZIP avoids MSI registration and uninstall state. It does not avoid
 or remove GPU requirements.
 
 The product MSI defaults to per-machine installation under
-`C:\Program Files\SuperZip`. Installing that MSI uses the standard Windows
+`C:\Program Files\FlitzZip`. Installing that MSI uses the standard Windows
 elevation prompt when the user lacks administrator rights.
 
-That elevation prompt belongs to Windows, not to SuperZip's MSI UI. SuperZip
-cannot enforce a countdown inside an unanswered UAC prompt. SuperZip-owned
+That elevation prompt belongs to Windows, not to FlitzZip's MSI UI. FlitzZip
+cannot enforce a countdown inside an unanswered UAC prompt. FlitzZip-owned
 automation and future installer wrappers must instead bound their wait around
 the installer process and fail clearly when the prompt or installer remains
 unanswered for too long.
@@ -38,10 +38,10 @@ Runtime hosts need:
 - Windows 11 x64.
 - A supported AMD GPU.
 - An AMD GPU driver that provides the HIP runtime DLL recorded in
-  `superzip-runtime-dependencies.json`.
+  `flitzzip-runtime-dependencies.json`.
 
-SuperZip delay-loads the HIP runtime so missing prerequisites are reported by
-`superzip_cli.exe dependency-check` and the GUI AMD GPU page instead of a Windows
+FlitzZip delay-loads the HIP runtime so missing prerequisites are reported by
+`flitzzip_cli.exe dependency-check` and the GUI AMD GPU page instead of a Windows
 loader dialog.
 
 ## Build Discovery
@@ -82,7 +82,7 @@ not establish correctness or performance on hardware that has not been tested.
 Use this command for automation and installer smoke tests:
 
 ```powershell
-superzip_cli.exe dependency-check
+flitzzip_cli.exe dependency-check
 ```
 
 Exit codes:
@@ -130,8 +130,8 @@ developer-machine locations.
 
 Archive operations are designed around bounded chunks:
 
-- `.suzip` compression reads source files in configurable chunks.
-- `.suzip` verification and extraction decode bounded block windows.
+- `.flzip` compression reads source files in configurable chunks.
+- `.flzip` verification and extraction decode bounded block windows.
 - ZIP compatibility delegates file I/O to miniz file streaming APIs.
 - TAR compatibility streams file payloads and scans archive metadata before
   output creation.
@@ -146,7 +146,7 @@ same generated data set:
 tools\gpu_proof.ps1 -Configuration Release
 tools\storage_smoke.ps1 -Configuration Release
 tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
-build\Release\superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
+build\Release\flitzzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
 ```
 
 Record the workload size, iteration count, GPU model, driver/runtime version,
@@ -167,7 +167,7 @@ claim sustained storage throughput. The benchmark must also report
 `CodecWorkers`, which is resolved with the same per-entry worker allocation rule
 used by production archive operations. Do not introduce benchmark-only
 parallelism that is absent from the product path. Required-HIP benchmark lanes
-must use HIP-supported SUZIP block kinds only; CPU-deflate blocks belong to the
+must use HIP-supported FLZIP block kinds only; CPU-deflate blocks belong to the
 forced-CPU lane and must not be decoded by miniz inside a required-HIP
 operation. Failed optional HIP attempts must not be counted as completed GPU
 encode/decode chunks, kernel launches, transfer bytes, or device allocations in
@@ -181,7 +181,7 @@ If the filesystem mode in `tools\bench.ps1` is used at all, it is capped to a
 
 Windows Task Manager and `\GPU Engine(*)\Utilization Percentage` can miss or
 understate short AMD HIP bursts. Use `tools\gpu_proof.ps1` and the `gpu_*`
-fields emitted by `superzip_cli` to prove whether the required-GPU path actually
+fields emitted by `flitzzip_cli` to prove whether the required-GPU path actually
 submitted HIP kernels. A valid required-GPU proof must show nonzero
 `gpu_kernel_launches`, `gpu_kernel_ms`, `gpu_h2d_bytes`, and
 `gpu_device_allocation_bytes`; verification and extraction must also show

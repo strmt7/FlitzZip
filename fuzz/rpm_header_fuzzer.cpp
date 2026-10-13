@@ -34,7 +34,7 @@ const std::filesystem::path& fuzz_root() {
 #else
         const auto process_id = static_cast<unsigned long long>(getpid());
 #endif
-        auto path = std::filesystem::temp_directory_path() / ("superzip-rpm-fuzz-" + std::to_string(process_id));
+        auto path = std::filesystem::temp_directory_path() / ("flitzzip-rpm-fuzz-" + std::to_string(process_id));
         std::filesystem::create_directories(path);
         return path;
     }();
@@ -65,8 +65,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 
     try {
         write_fuzz_input(data, size, archive);
-        (void)superzip::scan_rpm_payload(archive);
-    } catch (const superzip::Error&) {
+        (void)flitzzip::scan_rpm_payload(archive);
+    } catch (const flitzzip::Error&) {
     } catch (const std::filesystem::filesystem_error&) {
     }
 

@@ -24,7 +24,7 @@ extern "C" {
 #include "lha_reader.h"
 }
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kLhaReadBufferBytes = 256U * 1024U;
@@ -51,7 +51,7 @@ std::uint64_t checked_add_lha_bytes(std::uint64_t total, std::uint64_t size) {
     }
     total += size;
     if (total > kMaxLhaTotalFileBytes) {
-        throw ArchiveError("LHA uncompressed payload exceeds SuperZip resource limit");
+        throw ArchiveError("LHA uncompressed payload exceeds FlitzZip resource limit");
     }
     return total;
 }
@@ -87,7 +87,7 @@ int lha_stream_skip(void* handle, std::size_t bytes) {
     return *input ? 1 : 0;
 }
 
-const LHAInputStreamType kSuperZipLhaInputStreamType{
+const LHAInputStreamType kFlitzZipLhaInputStreamType{
     lha_stream_read,
     lha_stream_skip,
     nullptr,
@@ -103,7 +103,7 @@ class LhaReaderSession {
         if (!input_ || !*input_) {
             throw ArchiveError("cannot open LHA archive: " + archive_path.string());
         }
-        stream_ = lha_input_stream_new(&kSuperZipLhaInputStreamType, input_.get());
+        stream_ = lha_input_stream_new(&kFlitzZipLhaInputStreamType, input_.get());
         if (stream_ == nullptr) {
             throw ArchiveError("failed to initialize LHA input stream");
         }
@@ -162,14 +162,14 @@ std::string bounded_lha_string(const char* value, std::size_t max_bytes, const c
         ++length;
     }
     if (length > max_bytes) {
-        throw ArchiveError(std::string("LHA ") + label + " exceeds SuperZip path limits");
+        throw ArchiveError(std::string("LHA ") + label + " exceeds FlitzZip path limits");
     }
     return std::string(value, length);
 }
 
 // Purpose: Build the full archive path from Lhasa's split path/name fields.
 // Inputs: `header` is untrusted archive metadata decoded by Lhasa.
-// Outputs: Returns the raw archive path string for strict SuperZip normalization.
+// Outputs: Returns the raw archive path string for strict FlitzZip normalization.
 std::string lha_header_path(const LHAFileHeader& header) {
     if (header.symlink_target != nullptr) {
         throw SecurityError("LHA symbolic links are not supported");
@@ -182,12 +182,12 @@ std::string lha_header_path(const LHAFileHeader& header) {
     }
     if (!path.empty() && path.back() != '/') {
         if (path.size() >= kMaxArchivePathBytes) {
-            throw ArchiveError("LHA member path exceeds SuperZip path limits");
+            throw ArchiveError("LHA member path exceeds FlitzZip path limits");
         }
         path.push_back('/');
     }
     if (filename.size() > kMaxArchivePathBytes - path.size()) {
-        throw ArchiveError("LHA member path exceeds SuperZip path limits");
+        throw ArchiveError("LHA member path exceeds FlitzZip path limits");
     }
     path.append(filename);
     return path;
@@ -209,7 +209,7 @@ LhaMetadata scan_lha_metadata(const std::filesystem::path& archive_path) {
             break;
         }
         if (entry_count >= kMaxArchiveEntries) {
-            throw ArchiveError("LHA entry count exceeds SuperZip resource limit");
+            throw ArchiveError("LHA entry count exceeds FlitzZip resource limit");
         }
         ++entry_count;
 
@@ -242,7 +242,7 @@ LhaMetadata scan_lha_metadata(const std::filesystem::path& archive_path) {
     return metadata;
 }
 
-// Purpose: Write one decoded LHA payload through SuperZip's atomic publication path.
+// Purpose: Write one decoded LHA payload through FlitzZip's atomic publication path.
 // Inputs: `reader` is positioned on `entry`, `destination` is the extraction root, and `overwrite` controls
 // replacement. Outputs: Publishes the verified file or throws after cleanup.
 void publish_lha_payload(LHAReader* reader, const LhaEntry& entry, const std::filesystem::path& destination,
@@ -354,4 +354,4 @@ OperationStats extract_lha(const std::filesystem::path& archive_path, const std:
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

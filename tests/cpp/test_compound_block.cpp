@@ -2,7 +2,7 @@
 #include "core/checksum.hpp"
 #include "core/compound_block.hpp"
 #include "gpu/gpu_codec.hpp"
-#include "test_suzip_helpers.hpp"
+#include "test_flzip_helpers.hpp"
 #include "test_util.hpp"
 #include "lz4.h"
 
@@ -15,19 +15,19 @@ namespace {
 // Purpose: Supply independently framed compound payloads instead of testing only writer-produced bytes.
 // Inputs: Fill, pattern or independently encoded LZ4 is the second stage; the first is a repeated motif.
 // Outputs: Returns canonical version-nine bytes that expand to alternating A/B or all-A source bytes.
-std::vector<std::byte> compound_fixture(superzip::BlockKind inner) {
+std::vector<std::byte> compound_fixture(flitzzip::BlockKind inner) {
     constexpr std::uint32_t intermediate_size = 1024U;
     std::vector<std::byte> payload{static_cast<std::byte>(inner),
                                    std::byte{3},
-                                   inner == superzip::BlockKind::Fill ? std::byte{'A'} : std::byte{0},
+                                   inner == flitzzip::BlockKind::Fill ? std::byte{'A'} : std::byte{0},
                                    std::byte{0},
                                    std::byte{0},
                                    std::byte{4},
                                    std::byte{0},
                                    std::byte{0}};
-    if (inner == superzip::BlockKind::Pattern) {
+    if (inner == flitzzip::BlockKind::Pattern) {
         payload.insert(payload.end(), {std::byte{'A'}, std::byte{'B'}});
-    } else if (inner == superzip::BlockKind::GpuDictionary) {
+    } else if (inner == flitzzip::BlockKind::GpuDictionary) {
         std::vector<char> motif(intermediate_size);
         for (std::size_t byte = 0U; byte < motif.size(); ++byte) {
             motif[byte] = byte % 2U == 0U ? 'A' : 'B';
@@ -51,8 +51,8 @@ std::vector<std::byte> compound_fixture(superzip::BlockKind inner) {
 // Purpose: Describe the exact independently framed fixture output.
 // Inputs: Complete fixture bytes, never an untrusted external allocation request.
 // Outputs: Returns one bounded GPU compound descriptor.
-superzip::BlockDescriptor compound_descriptor(std::span<const std::byte> payload) {
-    return {.kind = superzip::BlockKind::GpuCompound,
+flitzzip::BlockDescriptor compound_descriptor(std::span<const std::byte> payload) {
+    return {.kind = flitzzip::BlockKind::GpuCompound,
             .uncompressed_len = 4096U,
             .encoded_len = static_cast<std::uint32_t>(payload.size())};
 }
@@ -62,23 +62,23 @@ superzip::BlockDescriptor compound_descriptor(std::span<const std::byte> payload
 // Purpose: Independently exercise both-stage CPU/HIP decoding and GPU integrity for every admitted fixture.
 // Inputs: Handcrafted fill/pattern/LZ4 compositions plus mixed raw/fill layouts and actual device availability.
 // Outputs: Requires byte-exact CPU output, real HIP telemetry and equal GPU CRC when HIP is present.
-TEST_CASE(suzip_compound_independent_readers_and_gpu_crc) {
+TEST_CASE(flzip_compound_independent_readers_and_gpu_crc) {
     for (const auto inner :
-         {superzip::BlockKind::Fill, superzip::BlockKind::Pattern, superzip::BlockKind::GpuDictionary}) {
+         {flitzzip::BlockKind::Fill, flitzzip::BlockKind::Pattern, flitzzip::BlockKind::GpuDictionary}) {
         auto payload = compound_fixture(inner);
         const auto compound = compound_descriptor(payload);
         payload.push_back(std::byte{'Z'});
         const std::array blocks{compound,
-                                superzip::BlockDescriptor{.kind = superzip::BlockKind::Raw,
+                                flitzzip::BlockDescriptor{.kind = flitzzip::BlockKind::Raw,
                                                           .uncompressed_len = 1U,
                                                           .encoded_offset = compound.encoded_len,
                                                           .encoded_len = 1U},
-                                superzip::BlockDescriptor{.kind = superzip::BlockKind::Fill,
+                                flitzzip::BlockDescriptor{.kind = flitzzip::BlockKind::Fill,
                                                           .fill_value = 'Q',
                                                           .uncompressed_len = 3U,
                                                           .encoded_offset = std::numeric_limits<std::uint64_t>::max()}};
         std::vector<std::byte> expected(4100U, std::byte{'A'});
-        if (inner != superzip::BlockKind::Fill) {
+        if (inner != flitzzip::BlockKind::Fill) {
             for (std::size_t byte = 1U; byte < 4096U; byte += 2U) {
                 expected[byte] = std::byte{'B'};
             }
@@ -86,18 +86,18 @@ TEST_CASE(suzip_compound_independent_readers_and_gpu_crc) {
         expected[4096] = std::byte{'Z'};
         std::fill(expected.begin() + 4097, expected.end(), std::byte{'Q'});
         for (const bool hip : {false, true}) {
-            if (hip && !superzip::query_gpu_info().available) {
+            if (hip && !flitzzip::query_gpu_info().available) {
                 continue;
             }
-            superzip::GpuCodecOptions options{
-                .require_gpu = hip, .force_cpu = !hip, .telemetry = std::make_shared<superzip::GpuTelemetry>()};
+            flitzzip::GpuCodecOptions options{
+                .require_gpu = hip, .force_cpu = !hip, .telemetry = std::make_shared<flitzzip::GpuTelemetry>()};
             std::vector<std::byte> decoded(expected.size());
-            REQUIRE_EQ(superzip::decode_chunk(payload, blocks, decoded, options), hip);
+            REQUIRE_EQ(flitzzip::decode_chunk(payload, blocks, decoded, options), hip);
             REQUIRE_EQ(decoded, expected);
-            const auto verified = superzip::crc_decoded_chunk(payload, blocks, expected.size(), options);
-            REQUIRE_EQ(verified.crc32, superzip::crc32(expected));
+            const auto verified = flitzzip::crc_decoded_chunk(payload, blocks, expected.size(), options);
+            REQUIRE_EQ(verified.crc32, flitzzip::crc32(expected));
             REQUIRE_EQ(verified.gpu_used, hip);
-            const auto stats = superzip::snapshot_gpu_telemetry(*options.telemetry);
+            const auto stats = flitzzip::snapshot_gpu_telemetry(*options.telemetry);
             REQUIRE_EQ(stats.kernel_launches > 0U, hip);
         }
     }
@@ -106,20 +106,20 @@ TEST_CASE(suzip_compound_independent_readers_and_gpu_crc) {
 // Purpose: Reject recursive/CPU/unknown stages, bad extents and noncanonical headers before HIP dispatch.
 // Inputs: Independently mutated fixture headers, every kind byte, and the bounded public codec entry point.
 // Outputs: Every invalid case throws and leaves device telemetry at zero.
-TEST_CASE(suzip_compound_rejects_malformed_framing_before_device_work) {
-    const auto valid = compound_fixture(superzip::BlockKind::Pattern);
+TEST_CASE(flzip_compound_rejects_malformed_framing_before_device_work) {
+    const auto valid = compound_fixture(flitzzip::BlockKind::Pattern);
     std::vector<std::vector<std::byte>> malformed;
-    for (std::size_t bytes = 0U; bytes < superzip::kGpuCompoundHeaderBytes; ++bytes) {
+    for (std::size_t bytes = 0U; bytes < flitzzip::kGpuCompoundHeaderBytes; ++bytes) {
         malformed.emplace_back(valid.begin(), valid.begin() + static_cast<std::ptrdiff_t>(bytes));
     }
     for (unsigned int byte = 0U; byte < 256U; ++byte) {
-        const auto kind = static_cast<superzip::BlockKind>(byte);
-        if (!superzip::is_gpu_compound_stage(kind) && kind != superzip::BlockKind::Fill) {
+        const auto kind = static_cast<flitzzip::BlockKind>(byte);
+        if (!flitzzip::is_gpu_compound_stage(kind) && kind != flitzzip::BlockKind::Fill) {
             auto changed = valid;
             changed[0] = static_cast<std::byte>(byte);
             malformed.push_back(changed);
         }
-        if (!superzip::is_gpu_compound_stage(kind)) {
+        if (!flitzzip::is_gpu_compound_stage(kind)) {
             auto changed = valid;
             changed[1] = static_cast<std::byte>(byte);
             malformed.push_back(changed);
@@ -137,24 +137,24 @@ TEST_CASE(suzip_compound_rejects_malformed_framing_before_device_work) {
         }
         malformed.push_back(changed);
     }
-    const bool hip_available = superzip::query_gpu_info().available;
+    const bool hip_available = flitzzip::query_gpu_info().available;
     for (const auto& payload : malformed) {
         const auto descriptor = compound_descriptor(payload);
         for (const bool hip : {false, true}) {
             if (hip && !hip_available) {
                 continue;
             }
-            superzip::GpuCodecOptions options{
-                .require_gpu = hip, .force_cpu = !hip, .telemetry = std::make_shared<superzip::GpuTelemetry>()};
+            flitzzip::GpuCodecOptions options{
+                .require_gpu = hip, .force_cpu = !hip, .telemetry = std::make_shared<flitzzip::GpuTelemetry>()};
             std::vector<std::byte> output(4096U);
             bool rejected = false;
             try {
-                (void)superzip::decode_chunk(payload, std::span(&descriptor, 1U), output, options);
-            } catch (const superzip::ArchiveError&) {
+                (void)flitzzip::decode_chunk(payload, std::span(&descriptor, 1U), output, options);
+            } catch (const flitzzip::ArchiveError&) {
                 rejected = true;
             }
             REQUIRE_TRUE(rejected);
-            REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).kernel_launches, 0U);
+            REQUIRE_EQ(flitzzip::snapshot_gpu_telemetry(*options.telemetry).kernel_launches, 0U);
         }
     }
 }
@@ -162,34 +162,34 @@ TEST_CASE(suzip_compound_rejects_malformed_framing_before_device_work) {
 // Purpose: Exercise real version-nine container verification, detection and CPU extraction.
 // Inputs: A handcrafted compound file with independently computed source CRC and exact index/footer versions.
 // Outputs: Requires public container consumers to recover the source and required HIP to verify it when present.
-TEST_CASE(suzip_compound_container_readback) {
-    using namespace superzip_test;
+TEST_CASE(flzip_compound_container_readback) {
+    using namespace flitzzip_test;
     const auto root = test_temp_dir("compound-container");
-    const auto archive = root / "data.suzip";
-    const auto payload = compound_fixture(superzip::BlockKind::Fill);
+    const auto archive = root / "data.flzip";
+    const auto payload = compound_fixture(flitzzip::BlockKind::Fill);
     const std::vector<std::byte> expected(4096U, std::byte{'A'});
     {
         std::ofstream file(archive, std::ios::binary);
         file.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
-        superzip::ArchiveIndex index;
+        flitzzip::ArchiveIndex index;
         index.version = 9U;
         index.entries.push_back({.path = "data.bin",
                                  .uncompressed_size = expected.size(),
                                  .payload_size = payload.size(),
-                                 .crc32 = superzip::crc32(expected),
+                                 .crc32 = flitzzip::crc32(expected),
                                  .blocks = {compound_descriptor(payload)}});
         const auto offset = static_cast<std::uint64_t>(file.tellp());
-        superzip::write_archive_index(file, index);
+        flitzzip::write_archive_index(file, index);
         write_test_footer(file, offset, static_cast<std::uint64_t>(file.tellp()) - offset, index.version);
     }
-    const superzip::ExtractOptions cpu{.gpu_required = false, .force_cpu = true};
-    REQUIRE_EQ(superzip::verify_suzip(archive, cpu).entries, 1U);
-    REQUIRE_EQ(superzip::extract_suzip(archive, root / "restored", cpu).entries, 1U);
+    const flitzzip::ExtractOptions cpu{.gpu_required = false, .force_cpu = true};
+    REQUIRE_EQ(flitzzip::verify_flzip(archive, cpu).entries, 1U);
+    REQUIRE_EQ(flitzzip::extract_flzip(archive, root / "restored", cpu).entries, 1U);
     std::ifstream restored(root / "restored" / "data.bin", std::ios::binary);
     REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), {}), std::string(4096U, 'A'));
     restored.close();
-    if (superzip::query_gpu_info().available) {
-        const auto verified = superzip::verify_suzip(archive, {.gpu_required = true});
+    if (flitzzip::query_gpu_info().available) {
+        const auto verified = flitzzip::verify_flzip(archive, {.gpu_required = true});
         REQUIRE_TRUE(verified.gpu_used);
         REQUIRE_TRUE(verified.gpu_runtime.kernel_launches > 0U);
     }
@@ -199,8 +199,8 @@ TEST_CASE(suzip_compound_container_readback) {
 // Purpose: Verify production Neutron preserves numeric-level results whether its best result uses composition or not.
 // Inputs: A deterministic bounded low-alphabet motif and actual required-HIP creation, decode and CRC paths.
 // Outputs: Requires a strictly smaller winner, byte-exact dual readback and deterministic ordinary bytes.
-TEST_CASE(suzip_neutron_composition_writer_is_gpu_only_and_isolated) {
-    if (!superzip::query_gpu_info().available) {
+TEST_CASE(flzip_neutron_composition_writer_is_gpu_only_and_isolated) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     std::vector<std::byte> input(65536U);
@@ -211,23 +211,23 @@ TEST_CASE(suzip_neutron_composition_writer_is_gpu_only_and_isolated) {
         random ^= random << 5U;
         input[index] = index < 2048U ? static_cast<std::byte>(random & 3U) : input[index % 2048U];
     }
-    const superzip::GpuCodecOptions ordinary{.require_gpu = true, .block_size = 262144U, .compression_level = 9};
-    const auto baseline = superzip::encode_chunk(input, ordinary);
+    const flitzzip::GpuCodecOptions ordinary{.require_gpu = true, .block_size = 262144U, .compression_level = 9};
+    const auto baseline = flitzzip::encode_chunk(input, ordinary);
     auto neutron = ordinary;
-    neutron.compression_mode = superzip::NativeCompressionMode::NeutronStar;
-    neutron.telemetry = std::make_shared<superzip::GpuTelemetry>();
-    const auto encoded = superzip::encode_chunk(input, neutron);
+    neutron.compression_mode = flitzzip::NativeCompressionMode::NeutronStar;
+    neutron.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+    const auto encoded = flitzzip::encode_chunk(input, neutron);
     REQUIRE_TRUE(encoded.payload.size() < baseline.payload.size());
-    REQUIRE_TRUE(superzip::snapshot_gpu_telemetry(*neutron.telemetry).kernel_launches > 0U);
+    REQUIRE_TRUE(flitzzip::snapshot_gpu_telemetry(*neutron.telemetry).kernel_launches > 0U);
     for (const bool hip : {false, true}) {
         std::vector<std::byte> decoded(input.size());
-        superzip::GpuCodecOptions options{.require_gpu = hip, .force_cpu = !hip};
-        REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options), hip);
+        flitzzip::GpuCodecOptions options{.require_gpu = hip, .force_cpu = !hip};
+        REQUIRE_EQ(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options), hip);
         REQUIRE_EQ(decoded, input);
-        REQUIRE_EQ(superzip::crc_decoded_chunk(encoded.payload, encoded.blocks, input.size(), options).crc32,
-                   superzip::crc32(input));
+        REQUIRE_EQ(flitzzip::crc_decoded_chunk(encoded.payload, encoded.blocks, input.size(), options).crc32,
+                   flitzzip::crc32(input));
     }
-    const auto after = superzip::encode_chunk(input, ordinary);
+    const auto after = flitzzip::encode_chunk(input, ordinary);
     REQUIRE_EQ(after.payload, baseline.payload);
     REQUIRE_EQ(after.blocks.size(), baseline.blocks.size());
     for (std::size_t index = 0U; index < after.blocks.size(); ++index) {
@@ -237,15 +237,15 @@ TEST_CASE(suzip_neutron_composition_writer_is_gpu_only_and_isolated) {
     int checkpoints = 0;
     neutron.encode_checkpoint = [&] {
         if (++checkpoints >= 2) {
-            throw superzip::ArchiveError("cancel composition test");
+            throw flitzzip::ArchiveError("cancel composition test");
         }
     };
     bool cancelled = false;
     try {
-        (void)superzip::encode_chunk(input, neutron);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::encode_chunk(input, neutron);
+    } catch (const flitzzip::ArchiveError&) {
         cancelled = true;
     }
     REQUIRE_TRUE(cancelled);
-    REQUIRE_EQ(superzip::encode_chunk(input, ordinary).payload, baseline.payload);
+    REQUIRE_EQ(flitzzip::encode_chunk(input, ordinary).payload, baseline.payload);
 }

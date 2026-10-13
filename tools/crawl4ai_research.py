@@ -107,12 +107,12 @@ async def execute(args) -> int:
         async with crawler() as owner:
             result = await asyncio.wait_for(
                 owner.arun(
-                    url=("raw:<html><body><h1>SuperZip crawler contract</h1><p>Local extraction.</p></body></html>"),
+                    url=("raw:<html><body><h1>FlitzZip crawler contract</h1><p>Local extraction.</p></body></html>"),
                     config=CrawlerRunConfig(cache_mode=CacheMode.DISABLED, word_count_threshold=0),
                 ),
                 timeout=45,
             )
-        passed = result.success and "SuperZip crawler contract" in str(result.markdown)
+        passed = result.success and "FlitzZip crawler contract" in str(result.markdown)
         print(
             json.dumps({"doctor_passed": bool(passed), "version": VERSION, "browser_configuration": "upstream-default"})
         )

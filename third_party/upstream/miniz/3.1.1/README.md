@@ -7,5 +7,5 @@ provenance and audit comparison.
 - Stored archive: `miniz-3.1.1-source.zip`
 - Integrity file: `SHA256SUMS`
 
-The build does not compile this archive directly. SuperZip builds the reviewed
+The build does not compile this archive directly. FlitzZip builds the reviewed
 and patched production copy in `third_party/miniz`.

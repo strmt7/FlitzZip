@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::array<unsigned char, 2U> kArjHeaderId{0x60U, 0xEAU};
@@ -74,7 +74,7 @@ std::uint32_t read_le32(const unsigned char* bytes) {
            (static_cast<std::uint32_t>(bytes[2]) << 16U) | (static_cast<std::uint32_t>(bytes[3]) << 24U);
 }
 
-// Purpose: Compute the SuperZip CRC-32 over unsigned ARJ bytes.
+// Purpose: Compute the FlitzZip CRC-32 over unsigned ARJ bytes.
 // Inputs: `bytes` is a bounded byte span and `seed` is the prior finalized CRC state.
 // Outputs: Returns the finalized CRC-32 value used by ARJ metadata and payload checks.
 std::uint32_t crc32_unsigned(std::span<const unsigned char> bytes, std::uint32_t seed = 0) {
@@ -168,7 +168,7 @@ void skip_arj_extended_headers(std::ifstream& input) {
         total_extended_bytes =
             checked_add_arj_bytes(total_extended_bytes, size, "ARJ extended header byte count overflows");
         if (total_extended_bytes > kMaxArjExtendedHeaderBytes) {
-            throw ArchiveError("ARJ extended headers exceed SuperZip resource limits");
+            throw ArchiveError("ARJ extended headers exceed FlitzZip resource limits");
         }
         std::vector<unsigned char> bytes(size);
         read_exact(input, reinterpret_cast<char*>(bytes.data()), bytes.size(), "ARJ extended header");
@@ -305,7 +305,7 @@ ArjEntryMetadata scan_arj_entry(std::ifstream& input, const ArjHeader& header, s
         }
     } else {
         if (header.method != kArjMethodStored) {
-            throw ArchiveError("compressed ARJ methods are not supported by this SuperZip build");
+            throw ArchiveError("compressed ARJ methods are not supported by this FlitzZip build");
         }
         validate_stored_payload(input, header, archive_size);
     }
@@ -350,7 +350,7 @@ ArjScanResult scan_arj(const std::filesystem::path& archive_path) {
         result.total_file_bytes = checked_add_arj_bytes(result.total_file_bytes, entry.directory ? 0U : entry.size,
                                                         "ARJ extracted byte count overflows");
         if (result.total_file_bytes > kMaxPipelineMemoryBytes) {
-            throw ArchiveError("ARJ extracted payload exceeds SuperZip resource limits");
+            throw ArchiveError("ARJ extracted payload exceeds FlitzZip resource limits");
         }
         result.entries.push_back(entry);
     }
@@ -439,4 +439,4 @@ OperationStats extract_arj(const std::filesystem::path& archive_path, const std:
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

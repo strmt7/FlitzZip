@@ -20,7 +20,7 @@
 #include <windows.h>
 #endif
 
-namespace superzip {
+namespace flitzzip {
 
 class ManifestSourceLockState {
   public:
@@ -42,7 +42,7 @@ namespace {
 
 // Purpose: Ensure another manifest entry can be added without unbounded memory growth.
 // Inputs: `manifest` is the current archive plan and `path` labels the entry for diagnostics.
-// Outputs: Returns normally while the manifest stays inside SuperZip resource limits; throws `ArchiveError` otherwise.
+// Outputs: Returns normally while the manifest stays inside FlitzZip resource limits; throws `ArchiveError` otherwise.
 void reject_manifest_entry_overflow(const Manifest& manifest, const std::filesystem::path& path) {
     if (manifest.entries.size() >= kMaxArchiveEntries) {
         throw ArchiveError("too many input entries for one archive: " + path_diagnostic_utf8(path));
@@ -54,7 +54,7 @@ void reject_manifest_entry_overflow(const Manifest& manifest, const std::filesys
 // Outputs: Mutates `manifest.total_file_bytes`; throws `ArchiveError` when the total would overflow.
 void add_total_file_bytes(Manifest& manifest, std::uint64_t size) {
     if (size > std::numeric_limits<std::uint64_t>::max() - manifest.total_file_bytes) {
-        throw ArchiveError("input file sizes exceed SuperZip accounting limits");
+        throw ArchiveError("input file sizes exceed FlitzZip accounting limits");
     }
     manifest.total_file_bytes += size;
 }
@@ -64,7 +64,7 @@ void add_total_file_bytes(Manifest& manifest, std::uint64_t size) {
 // Outputs: Updates the total or throws before the aggregate path budget is exceeded.
 void add_manifest_path_bytes(Manifest& manifest, std::string_view archive_path) {
     if (archive_path.size() > kMaxArchivePathMetadataBytes - manifest.path_metadata_bytes) {
-        throw ArchiveError("source path metadata exceeds SuperZip resource limits");
+        throw ArchiveError("source path metadata exceeds FlitzZip resource limits");
     }
     manifest.path_metadata_bytes += archive_path.size();
 }
@@ -190,7 +190,7 @@ bool source_identity_matches(const SourceFileIdentity& expected, const SourceFil
 void add_path(Manifest& manifest, const std::filesystem::path& root_parent, const std::filesystem::path& path,
               std::uint32_t depth) {
     if (depth > kMaxSourceDirectoryDepth) {
-        throw ArchiveError("source directory depth exceeds SuperZip resource limits: " + path_diagnostic_utf8(path));
+        throw ArchiveError("source directory depth exceeds FlitzZip resource limits: " + path_diagnostic_utf8(path));
     }
     std::error_code ec;
     const auto status = std::filesystem::symlink_status(path, ec);
@@ -224,7 +224,7 @@ void add_path(Manifest& manifest, const std::filesystem::path& root_parent, cons
         std::vector<std::filesystem::path> children;
         for (const auto& child : std::filesystem::directory_iterator(path)) {
             if (children.size() >= kMaxArchiveEntries) {
-                throw ArchiveError("directory fanout exceeds SuperZip resource limits: " + path_diagnostic_utf8(path));
+                throw ArchiveError("directory fanout exceeds FlitzZip resource limits: " + path_diagnostic_utf8(path));
             }
             children.push_back(child.path());
         }
@@ -331,4 +331,4 @@ PinnedSourceFile pin_source_file(const std::filesystem::path& path) {
     return PinnedSourceFile(entry.source_path, entry.size, lock_manifest_source(entry));
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

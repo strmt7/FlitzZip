@@ -26,11 +26,11 @@ std::vector<std::byte> dictionary_framing_fixture(std::array<std::uint32_t, 3> o
 std::string dictionary_framing_error(std::span<const std::byte> payload, std::uint32_t decoded_size, bool collect) {
     try {
         if (collect) {
-            static_cast<void>(superzip::parse_dictionary_segments(payload, decoded_size));
+            static_cast<void>(flitzzip::parse_dictionary_segments(payload, decoded_size));
         } else {
-            superzip::scan_dictionary_segments(payload, decoded_size);
+            flitzzip::scan_dictionary_segments(payload, decoded_size);
         }
-    } catch (const superzip::ArchiveError& error) {
+    } catch (const flitzzip::ArchiveError& error) {
         return error.what();
     }
     throw std::runtime_error("Malformed dictionary framing was accepted");
@@ -43,22 +43,22 @@ std::string dictionary_framing_error(std::span<const std::byte> payload, std::ui
 // Outputs: Both APIs accept identical extents; collection preserves the sentinel and advertised capacity.
 TEST_CASE(dictionary_block_scan_preserves_extents_and_existing_scratch) {
     const auto payload = dictionary_framing_fixture({0U, 3U, 7U});
-    constexpr auto decoded_size = superzip::kGpuDictionarySegmentBytes + 11U;
-    superzip::scan_dictionary_segments(payload, decoded_size);
-    const auto spans = superzip::parse_dictionary_segments(payload, decoded_size);
+    constexpr auto decoded_size = flitzzip::kGpuDictionarySegmentBytes + 11U;
+    flitzzip::scan_dictionary_segments(payload, decoded_size);
+    const auto spans = flitzzip::parse_dictionary_segments(payload, decoded_size);
     REQUIRE_EQ(spans.size(), 2U);
     REQUIRE_EQ(spans[0].encoded_offset, 12U);
     REQUIRE_EQ(spans[0].encoded_size, 3U);
     REQUIRE_EQ(spans[0].decoded_offset, 0U);
-    REQUIRE_EQ(spans[0].decoded_size, superzip::kGpuDictionarySegmentBytes);
+    REQUIRE_EQ(spans[0].decoded_size, flitzzip::kGpuDictionarySegmentBytes);
     REQUIRE_EQ(spans[1].encoded_offset, 15U);
     REQUIRE_EQ(spans[1].encoded_size, 4U);
-    REQUIRE_EQ(spans[1].decoded_offset, superzip::kGpuDictionarySegmentBytes);
+    REQUIRE_EQ(spans[1].decoded_offset, flitzzip::kGpuDictionarySegmentBytes);
     REQUIRE_EQ(spans[1].decoded_size, 11U);
-    std::vector<superzip::DictionarySegmentSpan> scratch{{123U, 4U, 456U, 5U}};
+    std::vector<flitzzip::DictionarySegmentSpan> scratch{{123U, 4U, 456U, 5U}};
     scratch.reserve(3U);
     const auto* storage = scratch.data();
-    superzip::scan_dictionary_segments(payload, decoded_size, &scratch);
+    flitzzip::scan_dictionary_segments(payload, decoded_size, &scratch);
     REQUIRE_TRUE(scratch.data() == storage);
     REQUIRE_EQ(scratch.size(), 3U);
     REQUIRE_EQ(scratch.front().encoded_offset, 123U);
@@ -75,7 +75,7 @@ TEST_CASE(dictionary_block_scan_preserves_extents_and_existing_scratch) {
 // Inputs: Zero/oversized decoded extents, incomplete tables, invalid offsets, oversized tails and trailing bytes.
 // Outputs: Both modes reject every fixture with the independently expected error category.
 TEST_CASE(dictionary_block_scan_rejects_malformed_framing_in_both_modes) {
-    constexpr auto size = superzip::kGpuDictionarySegmentBytes + 11U;
+    constexpr auto size = flitzzip::kGpuDictionarySegmentBytes + 11U;
     struct Fixture {
         std::vector<std::byte> payload;
         std::uint32_t decoded_size;
@@ -84,7 +84,7 @@ TEST_CASE(dictionary_block_scan_rejects_malformed_framing_in_both_modes) {
     const std::array cases{
         Fixture{{}, size, "metadata is invalid"},
         Fixture{dictionary_framing_fixture({0U, 3U, 7U}), 0U, "decoded size is invalid"},
-        Fixture{dictionary_framing_fixture({0U, 3U, 7U}), superzip::kMaxArchiveBlockBytes + 1U,
+        Fixture{dictionary_framing_fixture({0U, 3U, 7U}), flitzzip::kMaxArchiveBlockBytes + 1U,
                 "decoded size is invalid"},
         Fixture{dictionary_framing_fixture({0U, 3U, 7U}, 0U), size, "metadata is invalid"},
         Fixture{dictionary_framing_fixture({1U, 3U, 7U}), size, "table must start at zero"},

@@ -79,7 +79,7 @@ static size_t ZSTDvXX_execSequence(BYTE* op, BYTE* const oend, seq_t sequence, c
     return sequenceLength;
 }
 
-#ifdef SUPERZIP_ZSTD_BUFFER_PROBES
+#ifdef FLITZZIP_ZSTD_BUFFER_PROBES
 /* Purpose: Exercise the canonical sequence helper with actual independent history.
  * Inputs: Complete output and dictionary extents, initialized prefix and padded literal storage.
  * Outputs: Canonical result and matching owner cleanup, including allocation failure. */

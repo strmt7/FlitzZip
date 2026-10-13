@@ -84,7 +84,7 @@ def home() -> Path:
         base = (
             os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
         )
-        selected = (Path(base) / "SuperZip" / "agent-code").resolve()
+        selected = (Path(base) / "FlitzZip" / "agent-code").resolve()
     if selected.is_relative_to(ROOT):
         raise ValueError("agent index state must remain outside the checkout")
     return selected

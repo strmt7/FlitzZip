@@ -8,7 +8,7 @@
 #include <string_view>
 #include <utility>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Select a completed job's primary result without selecting an older job or an auxiliary check.
 // Inputs: history contains session rows, first is the job's starting row count, operation is its primary category.
@@ -53,4 +53,4 @@ class OperationSummarySelection {
     std::optional<int> pending_;
 };
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

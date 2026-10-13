@@ -1,4 +1,4 @@
-#ifdef SUPERZIP_ZSTD_BUFFER_PROBES
+#ifdef FLITZZIP_ZSTD_BUFFER_PROBES
 /* Purpose: Prepare and clone actual decoder state before external source storage expires.
  * Inputs: Complete dictionary/raw-literal extents and an optional v07 destination allocator.
  * Outputs: Independent destination or NULL, with complete rollback and source-context release. */
@@ -10,7 +10,7 @@ void* sz_legacy_vXX_prepare_owned(const void* dictionary, size_t dictionaryBytes
     if (dictionaryBytes > PTRDIFF_MAX || (dictionary == NULL && dictionaryBytes != 0) ||
         literalBytes < MIN_CBLOCK_SIZE || literalBytes > PTRDIFF_MAX || literals == NULL)
         return NULL;
-#if SUPERZIP_LEGACY_DECODER_VERSION != 7
+#if FLITZZIP_LEGACY_DECODER_VERSION != 7
     if (allocator.allocate != NULL || allocator.release != NULL)
         return NULL;
 #endif
@@ -21,7 +21,7 @@ void* sz_legacy_vXX_prepare_owned(const void* dictionary, size_t dictionaryBytes
     if (ZSTDvXX_isError(initialized) ||
         ZSTDvXX_isError(ZSTDvXX_decodeRawLiterals(source, (const BYTE*)literals, literalBytes)))
         goto failure;
-#if SUPERZIP_LEGACY_DECODER_VERSION == 7
+#if FLITZZIP_LEGACY_DECODER_VERSION == 7
     {
         ZSTDvXX_customMem const memory = {allocator.allocate, allocator.release, allocator.opaque};
         destination = ZSTDvXX_createDCtx_advanced(memory);

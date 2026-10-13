@@ -6,7 +6,7 @@
 #include <span>
 #include <string>
 
-namespace superzip::cli {
+namespace flitzzip::cli {
 
 struct MemoryBenchmarkOptions {
     // Borrowed immutable snapshot; caller retains it through all joined tasks. Empty requires metadata or generated
@@ -23,8 +23,8 @@ struct MemoryBenchmarkOptions {
     // Zero selects admission automatically; nonzero depths are exact and never silently reduced.
     std::uint32_t inflight_chunks = 0;
     std::uint32_t decode_inflight_chunks = 0;
-    std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
-    int compression_level = superzip::kDefaultCompressionLevel;
+    std::uint32_t block_size = flitzzip::kDefaultArchiveBlockBytes;
+    int compression_level = flitzzip::kDefaultCompressionLevel;
     NativeCompressionMode compression_mode = NativeCompressionMode::Standard;
 };
 
@@ -41,13 +41,13 @@ struct MemoryBenchmarkPlan {
 
 struct MemoryBenchmarkResult {
     std::string source_sha256;
-    superzip::OperationStats stats;
+    flitzzip::OperationStats stats;
     std::uint64_t archive_bytes = 0;
     std::uint32_t codec_workers = 1;
     std::uint32_t decode_inflight_chunks = 1;
     std::uint32_t decode_codec_workers = 1;
-    std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
-    int compression_level = superzip::kDefaultCompressionLevel;
+    std::uint32_t block_size = flitzzip::kDefaultArchiveBlockBytes;
+    int compression_level = flitzzip::kDefaultCompressionLevel;
     NativeCompressionMode compression_mode = NativeCompressionMode::Standard;
     double compress_seconds = 0.0;
     // Summed task time, including overlap; neither field is elapsed wall time.
@@ -65,8 +65,8 @@ struct BenchmarkSuiteOptions {
     std::uint64_t size_mib = 10240;
     std::string profile = "Mixed";
     std::uint32_t workers = 0;
-    std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
-    int compression_level = superzip::kDefaultCompressionLevel;
+    std::uint32_t block_size = flitzzip::kDefaultArchiveBlockBytes;
+    int compression_level = flitzzip::kDefaultCompressionLevel;
     bool tune = false;
     bool tune_levels = false;
 };
@@ -86,7 +86,7 @@ MemoryBenchmarkPlan plan_memory_benchmark(const MemoryBenchmarkOptions& options)
 // Outputs: Writes one parseable plan_only=true line to stdout.
 void print_memory_benchmark_plan(const MemoryBenchmarkPlan& plan);
 
-// Purpose: Print memory-only benchmark statistics in the stable SuperZip CLI key/value format.
+// Purpose: Print memory-only benchmark statistics in the stable FlitzZip CLI key/value format.
 // Inputs: `result` is the completed memory benchmark result.
 // Outputs: Writes one parseable line to stdout.
 void print_memory_benchmark_stats(const MemoryBenchmarkResult& result);
@@ -96,4 +96,4 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result);
 // Outputs: Prints candidate results and one recommendation; throws on invalid settings or hidden CPU fallback.
 void run_benchmark_suite(const BenchmarkSuiteOptions& options);
 
-}  // namespace superzip::cli
+}  // namespace flitzzip::cli

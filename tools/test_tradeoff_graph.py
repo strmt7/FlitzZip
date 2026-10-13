@@ -82,11 +82,11 @@ class TradeoffGraphTests(unittest.TestCase):
     # Outputs: Only the two non-dominated identities are returned.
     def test_frontier(self) -> None:
         points = [
-            {"tool": "SuperZip", "level": 1, "bytes": 100, "seconds": (1.0, 0.9, 1.1)},
-            {"tool": "SuperZip", "level": 3, "bytes": 90, "seconds": (2.0, 1.9, 2.1)},
+            {"tool": "FlitzZip", "level": 1, "bytes": 100, "seconds": (1.0, 0.9, 1.1)},
+            {"tool": "FlitzZip", "level": 3, "bytes": 90, "seconds": (2.0, 1.9, 2.1)},
             {"tool": "7-Zip", "level": 5, "bytes": 110, "seconds": (3.0, 2.9, 3.1)},
         ]
-        self.assertEqual(frontier(points), {("SuperZip", 1), ("SuperZip", 3)})
+        self.assertEqual(frontier(points), {("FlitzZip", 1), ("FlitzZip", 3)})
 
 
 if __name__ == "__main__":

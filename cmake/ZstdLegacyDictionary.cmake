@@ -5,7 +5,7 @@
 # Inputs: content owns a verified history revision; version is v05-v07. Outputs:
 # Returns the complete proposed source through output without writing files or
 # changing the dictionary's borrowed lifetime.
-function(superzip_zstd_rewrite_legacy_dictionary content version output)
+function(flitzzip_zstd_rewrite_legacy_dictionary content version output)
   if(version STREQUAL v05)
     set(decode ZSTDv05_decompress_continueDCtx)
   else()
@@ -31,7 +31,7 @@ size_t ZSTD@version@_decompress_usingDict(ZSTD@version@_DCtx* dctx,
 
 ]=])
   string(CONFIGURE "${one_shot}" one_shot @ONLY)
-  superzip_zstd_replace_owned_region(
+  flitzzip_zstd_replace_owned_region(
     "${content}" "size_t ZSTD${version}_decompress_usingDict("
     "size_t ZSTD${version}_decompressDCtx(" "${one_shot}" content)
   if(NOT version STREQUAL v07)
@@ -62,7 +62,7 @@ static size_t ZSTD@version@_decompress_insertDictionary(
 
 ]=])
     string(CONFIGURE "${insertion}" insertion @ONLY)
-    superzip_zstd_replace_owned_region(
+    flitzzip_zstd_replace_owned_region(
       "${content}" "static size_t ZSTD${version}_decompress_insertDictionary("
       "size_t ZSTD${version}_decompressBegin_usingDict(" "${insertion}" content)
   endif()

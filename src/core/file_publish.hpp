@@ -4,7 +4,7 @@
 #include <functional>
 #include <memory>
 
-namespace superzip {
+namespace flitzzip {
 
 class FilePublishReservationState;
 
@@ -108,4 +108,4 @@ void extract_with_publication(const ExtractionPublicationOptions& options,
                               const std::function<void(const std::filesystem::path&)>& inspect = {},
                               const std::function<void()>& checkpoint = {});
 
-}  // namespace superzip
+}  // namespace flitzzip

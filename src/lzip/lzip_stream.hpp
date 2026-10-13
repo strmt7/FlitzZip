@@ -5,7 +5,7 @@
 #include <istream>
 #include <memory>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Stream-decompress an `.lz` lzip file through `std::istream` with bounded LZMA SDK state.
 // Inputs: Construct with `archive_path`; callers read uncompressed bytes through the `std::istream` interface.
@@ -39,4 +39,4 @@ class LzipInputStream final : public std::istream {
     std::unique_ptr<Buffer> buffer_;
 };
 
-}  // namespace superzip
+}  // namespace flitzzip

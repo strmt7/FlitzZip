@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 
-namespace superzip {
+namespace flitzzip {
 
 using HipRuntimeVersion = std::array<std::uint16_t, 4>;
 
@@ -28,4 +28,4 @@ inline std::string hip_runtime_version_text(const std::optional<HipRuntimeVersio
            "." + std::to_string((*version)[3]);
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

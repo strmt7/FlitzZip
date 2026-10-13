@@ -46,13 +46,13 @@ void register_test(std::string name, TestFunction fn);
 // Outputs: Removes any prior generated directory, recreates it, and returns the path.
 inline std::filesystem::path test_temp_dir(const std::string& name) {
     auto dir = std::filesystem::temp_directory_path() /
-               ("superzip-test-" + name + "-" + std::to_string(GetCurrentProcessId()));
+               ("flitzzip-test-" + name + "-" + std::to_string(GetCurrentProcessId()));
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
     return dir;
 }
 
-namespace superzip_test {
+namespace flitzzip_test {
 
 // Purpose: Create a Windows directory junction for reparse-point security tests.
 // Inputs: `junction` is the empty directory to convert and `target` is an existing directory target.
@@ -140,4 +140,4 @@ inline void remove_test_directory_junction(const std::filesystem::path& junction
     std::filesystem::remove(junction, ignored);
 }
 
-}  // namespace superzip_test
+}  // namespace flitzzip_test

@@ -1,4 +1,4 @@
-# SuperZip Agent Instructions
+# FlitzZip Agent Instructions
 
 This is the repository entry point. Detailed rules remain normative in
 [the operating guide](docs/agent-operating-guide.md); use the reading map below
@@ -9,12 +9,18 @@ domain, not after every unchanged checkpoint.
 
 ## Mission And Boundaries
 
-SuperZip is a Windows-native C++20 archive application. AMD HIP is the only
-approved GPU compute boundary. `.suzip` is its versioned native format;
+FlitzZip is a Windows-native C++20 archive application. AMD HIP is the only
+approved GPU compute boundary. `.flzip` is its versioned native format;
 compatibility formats use their documented in-process adapters. CPU fallback
 must never masquerade as required-HIP compression. Preserve format semantics
 and capability limits in `docs/archive-format-support.md` and
-`docs/native-suzip-format.md`.
+`docs/native-flzip-format.md`.
+
+Use FlitzZip and `.flzip` consistently in active interfaces, artifacts and
+documentation. Predecessor names belong only to explicitly tested migration
+inputs or immutable evidence; do not reintroduce old command aliases. Preserve
+wire signatures and upgrade identities when a naming change does not change
+the underlying format or product lineage.
 
 - Use Windows-native PowerShell, CMake, MSVC, and optional HIP. Do not use WSL
   unless the maintainer explicitly requests it.
@@ -41,7 +47,7 @@ and capability limits in `docs/archive-format-support.md` and
   behind the documented OIDC broker, never directly in workflow YAML.
 - Use pinned, provenance-recorded dependencies. New runtime dependencies need
   maintainer approval and rationale. Do not edit upstream provenance archives.
-- Preserve the canonical `superzip-logo-mark` artwork. Product text must use
+- Preserve the canonical `flitzzip-logo-mark` artwork. Product text must use
   the existing native rendering system; read the GUI rules before UI changes.
 - Do not launch the GUI for routine automated work. For requested UI work,
   announce the smoke test first and do not build/package while its GUI runs.
@@ -71,7 +77,7 @@ means its rules do not apply.
 | Any source change | Non-Negotiable Boundaries; Engineering Quality Baseline; Coding Standards; Required Function Documentation |
 | Locating modules or dependencies | Project Map; Mission for exact adapter and vendored-version boundaries |
 | GUI, state, input, drawing, settings | GUI Rules; `docs/debugging-strategy.md`; `docs/design.md` |
-| Archive formats, parsing, create/extract, overwrite | Mission; Security Rules; `docs/archive-format-support.md`; `docs/native-suzip-format.md` when native format/detection changes |
+| Archive formats, parsing, create/extract, overwrite | Mission; Security Rules; `docs/archive-format-support.md`; `docs/native-flzip-format.md` when native format/detection changes |
 | CPU/GPU performance, compression policy, benchmarks | Non-Negotiable Boundaries; Build And Test Commands; `docs/performance-block-size-validation.md`; `docs/compression-level-and-benchmark-suite.md`; `docs/gpu-accelerated-ui-and-codec-research.md` |
 | Alternative GPU building blocks | Performance row plus `docs/compression-backend-evaluation.md` |
 | Tools, workflows, MCP, skills, agent routing | Non-Negotiable Boundaries; Security Rules; Git Workflow; `docs/engineering-learning-loop.md` |

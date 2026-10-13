@@ -38,20 +38,20 @@ BY_HANDLE_FILE_INFORMATION publication_file_identity(const std::filesystem::path
 // Inputs: Normal drive, UNC, already-extended, relative-component, and device-namespace paths.
 // Outputs: Preserves filesystem meaning with extended syntax and rejects non-filesystem namespaces.
 TEST_CASE(windows_api_path_normalizes_filesystem_roots) {
-    REQUIRE_EQ(superzip::windows_api_path(L"C:/root/one/../file.txt"), L"\\\\?\\C:\\root\\file.txt");
-    REQUIRE_EQ(superzip::windows_api_path(L"\\\\server\\share\\file.txt"), L"\\\\?\\UNC\\server\\share\\file.txt");
-    REQUIRE_EQ(superzip::windows_api_path(L"\\\\?\\C:\\root\\file.txt"), L"\\\\?\\C:\\root\\file.txt");
-    REQUIRE_EQ(superzip::windows_api_path(L"\\\\?\\C:\\root\\nested/file.txt"), L"\\\\?\\C:\\root\\nested\\file.txt");
-    REQUIRE_EQ(superzip::windows_api_path(L"\\\\?\\UNC\\server\\share\\file.txt"),
+    REQUIRE_EQ(flitzzip::windows_api_path(L"C:/root/one/../file.txt"), L"\\\\?\\C:\\root\\file.txt");
+    REQUIRE_EQ(flitzzip::windows_api_path(L"\\\\server\\share\\file.txt"), L"\\\\?\\UNC\\server\\share\\file.txt");
+    REQUIRE_EQ(flitzzip::windows_api_path(L"\\\\?\\C:\\root\\file.txt"), L"\\\\?\\C:\\root\\file.txt");
+    REQUIRE_EQ(flitzzip::windows_api_path(L"\\\\?\\C:\\root\\nested/file.txt"), L"\\\\?\\C:\\root\\nested\\file.txt");
+    REQUIRE_EQ(flitzzip::windows_api_path(L"\\\\?\\UNC\\server\\share\\file.txt"),
                L"\\\\?\\UNC\\server\\share\\file.txt");
-    REQUIRE_EQ(superzip::windows_regular_path(L"\\\\?\\C:\\root\\file.txt"), L"C:\\root\\file.txt");
-    REQUIRE_EQ(superzip::windows_regular_path(L"\\\\?\\UNC\\server\\share\\file.txt"), L"\\\\server\\share\\file.txt");
-    REQUIRE_EQ(superzip::windows_regular_path(L"\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1"),
+    REQUIRE_EQ(flitzzip::windows_regular_path(L"\\\\?\\C:\\root\\file.txt"), L"C:\\root\\file.txt");
+    REQUIRE_EQ(flitzzip::windows_regular_path(L"\\\\?\\UNC\\server\\share\\file.txt"), L"\\\\server\\share\\file.txt");
+    REQUIRE_EQ(flitzzip::windows_regular_path(L"\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1"),
                L"\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1");
     for (const auto* path : {L"\\\\.\\PhysicalDrive0", L"\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1"}) {
         bool rejected = false;
         try {
-            static_cast<void>(superzip::windows_api_path(path));
+            static_cast<void>(flitzzip::windows_api_path(path));
         } catch (const std::invalid_argument&) {
             rejected = true;
         }
@@ -69,7 +69,7 @@ TEST_CASE(windows_api_path_rejects_unrepresentable_paths) {
     for (const auto& path : {embedded_nul, L"C:\\" + std::wstring(32764U, L'a')}) {
         bool refused = false;
         try {
-            static_cast<void>(superzip::windows_api_path(std::filesystem::path(path)));
+            static_cast<void>(flitzzip::windows_api_path(std::filesystem::path(path)));
         } catch (const std::invalid_argument&) {
             refused = true;
         }
@@ -89,9 +89,9 @@ TEST_CASE(file_publish_rejects_nul_before_path_resolution) {
         bool refused = false;
         try {
             if (directory) {
-                const superzip::DirectoryPublishTransaction transaction{std::filesystem::path(name)};
+                const flitzzip::DirectoryPublishTransaction transaction{std::filesystem::path(name)};
             } else {
-                const superzip::FilePublishTransaction transaction{std::filesystem::path(name)};
+                const flitzzip::FilePublishTransaction transaction{std::filesystem::path(name)};
             }
         } catch (const std::invalid_argument&) {
             refused = true;
@@ -111,9 +111,9 @@ TEST_CASE(file_publish_long_paths_preserve_identity_and_cleanup) {
     while (parent.native().size() < 320U)
         parent /= std::wstring(60U, L'p');
     const auto target = parent / L"\u65e5\u672c-\U0001f680.txt";
-    const auto target_io = std::filesystem::path(superzip::windows_api_path(target));
+    const auto target_io = std::filesystem::path(flitzzip::windows_api_path(target));
     for (const bool overwrite : {false, true}) {
-        superzip::FilePublishTransaction transaction(target);
+        flitzzip::FilePublishTransaction transaction(target);
         const auto stage = transaction.staging_path();
         REQUIRE_TRUE(stage.native().size() > 320U);
         std::ofstream(stage, std::ios::binary) << (overwrite ? "replacement" : "original");
@@ -131,13 +131,13 @@ TEST_CASE(file_publish_long_paths_preserve_identity_and_cleanup) {
         std::filesystem::path stage;
         bool refused = false;
         {
-            superzip::FilePublishTransaction transaction(target);
+            flitzzip::FilePublishTransaction transaction(target);
             stage = transaction.staging_path();
             std::ofstream(stage, std::ios::binary) << "unpublished";
             if (commit) {
                 try {
                     transaction.commit(false);
-                } catch (const superzip::SecurityError&) {
+                } catch (const flitzzip::SecurityError&) {
                     refused = true;
                 }
             }
@@ -150,7 +150,7 @@ TEST_CASE(file_publish_long_paths_preserve_identity_and_cleanup) {
     REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(target_io.parent_path()),
                              std::filesystem::directory_iterator{}),
                1);
-    std::filesystem::remove_all(std::filesystem::path(superzip::windows_api_path(root)));
+    std::filesystem::remove_all(std::filesystem::path(flitzzip::windows_api_path(root)));
 }
 
 // Purpose: Prove private publication moves the original file rather than rewriting its payload.
@@ -160,7 +160,7 @@ TEST_CASE(directory_publish_moves_payload_without_copying) {
     const auto root = test_temp_dir("publish-identity");
     for (const bool overwrite : {false, true}) {
         const auto destination = root / (overwrite ? "replace" : "new");
-        superzip::DirectoryPublishTransaction transaction(destination);
+        flitzzip::DirectoryPublishTransaction transaction(destination);
         const auto stage = transaction.staging_directory();
         const auto relative = std::filesystem::path(u8"\u65e5\u672c/caf\u00e9.txt").lexically_normal();
         std::filesystem::create_directories((stage / relative).parent_path());
@@ -196,7 +196,7 @@ TEST_CASE(directory_publish_moves_payload_without_copying) {
 TEST_CASE(directory_publish_accepts_read_only_payload) {
     const auto root = test_temp_dir("publish-readonly");
     const auto destination = root / "output";
-    superzip::DirectoryPublishTransaction transaction(destination);
+    flitzzip::DirectoryPublishTransaction transaction(destination);
     const auto stage = transaction.staging_directory();
     const auto source = stage / "readonly.txt";
     std::ofstream(source, std::ios::binary) << "read-only payload";
@@ -225,11 +225,11 @@ TEST_CASE(directory_publish_read_only_alias_keeps_attributes) {
     REQUIRE_TRUE(SetFileAttributesW(outside.c_str(), FILE_ATTRIBUTE_READONLY) != 0);
     bool rejected = false;
     {
-        superzip::DirectoryPublishTransaction transaction(root / "output");
+        flitzzip::DirectoryPublishTransaction transaction(root / "output");
         std::filesystem::create_hard_link(outside, transaction.staging_directory() / "alias.txt");
         try {
             transaction.publish(false);
-        } catch (const superzip::SecurityError&) {
+        } catch (const flitzzip::SecurityError&) {
             rejected = true;
         }
         const auto attributes = GetFileAttributesW(outside.c_str());
@@ -251,11 +251,11 @@ TEST_CASE(directory_publish_rejects_shared_file_identity) {
     const auto destination = root / "output";
     bool rejected = false;
     {
-        superzip::DirectoryPublishTransaction transaction(destination);
+        flitzzip::DirectoryPublishTransaction transaction(destination);
         std::filesystem::create_hard_link(outside, transaction.staging_directory() / "alias.txt");
         try {
             transaction.publish(false);
-        } catch (const superzip::SecurityError&) {
+        } catch (const flitzzip::SecurityError&) {
             rejected = true;
         }
     }
@@ -287,7 +287,7 @@ TEST_CASE(extraction_publication_decodes_once_with_captured_policy) {
                     REQUIRE_EQ(std::filesystem::file_size(path / "file.txt"), 7U);
                 };
             }
-            superzip::extract_with_publication(
+            flitzzip::extract_with_publication(
                 {.destination = destination, .overwrite = true, .validate_before_publish = validate},
                 [&](const auto& path, bool overwrite) {
                     ++decodes;
@@ -321,7 +321,7 @@ TEST_CASE(extraction_publication_failure_keeps_final_files_unchanged) {
         bool cancelled = false;
         bool rejected = false;
         try {
-            superzip::extract_with_publication(
+            flitzzip::extract_with_publication(
                 {.destination = destination, .overwrite = true, .validate_before_publish = true},
                 [&](const auto& path, bool overwrite) {
                     REQUIRE_TRUE(!overwrite);
@@ -330,18 +330,18 @@ TEST_CASE(extraction_publication_failure_keeps_final_files_unchanged) {
                     std::ofstream(path / "existing.txt", std::ios::binary) << "new";
                     std::ofstream(path / "added.txt", std::ios::binary) << "added";
                     if (failure == 0)
-                        throw superzip::ArchiveError("late decode failure");
+                        throw flitzzip::ArchiveError("late decode failure");
                 },
                 [&](const auto&) {
                     if (failure == 1)
-                        throw superzip::ArchiveError("inspection failure");
+                        throw flitzzip::ArchiveError("inspection failure");
                     cancelled = true;
                 },
                 [&] {
                     if (cancelled)
-                        throw superzip::ArchiveError("operation cancelled");
+                        throw flitzzip::ArchiveError("operation cancelled");
                 });
-        } catch (const superzip::ArchiveError&) {
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -362,8 +362,8 @@ TEST_CASE(file_publication_unicode_overwrite_diagnostics) {
     const std::u8string utf8_name = u8"\u65e5\u672c-\U0001f680.txt";
     const std::string expected_name(utf8_name.begin(), utf8_name.end());
     const std::filesystem::path name(utf8_name);
-    REQUIRE_EQ(superzip::path_diagnostic_utf8(name), expected_name);
-    REQUIRE_EQ(superzip::path_diagnostic_utf8(std::filesystem::path{}), "");
+    REQUIRE_EQ(flitzzip::path_diagnostic_utf8(name), expected_name);
+    REQUIRE_EQ(flitzzip::path_diagnostic_utf8(std::filesystem::path{}), "");
     for (const bool directory : {false, true}) {
         const auto output = root / (directory ? "directory" : "file");
         std::filesystem::create_directories(output);
@@ -372,15 +372,15 @@ TEST_CASE(file_publication_unicode_overwrite_diagnostics) {
         bool refused = false;
         try {
             if (directory) {
-                superzip::DirectoryPublishTransaction transaction(output);
+                flitzzip::DirectoryPublishTransaction transaction(output);
                 std::ofstream(transaction.staging_directory() / name, std::ios::binary) << "new";
                 transaction.publish(false);
             } else {
-                superzip::FilePublishTransaction transaction(target);
+                flitzzip::FilePublishTransaction transaction(target);
                 std::ofstream(transaction.staging_path(), std::ios::binary) << "new";
                 transaction.commit(false);
             }
-        } catch (const superzip::SecurityError& error) {
+        } catch (const flitzzip::SecurityError& error) {
             const std::string message(error.what());
             REQUIRE_TRUE(message.find("refusing to overwrite existing file:") != std::string::npos);
             REQUIRE_TRUE(message.find(expected_name) != std::string::npos);
@@ -392,11 +392,11 @@ TEST_CASE(file_publication_unicode_overwrite_diagnostics) {
             REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "old");
         }
         if (directory) {
-            superzip::DirectoryPublishTransaction transaction(output);
+            flitzzip::DirectoryPublishTransaction transaction(output);
             std::ofstream(transaction.staging_directory() / name, std::ios::binary) << "new";
             transaction.publish(true);
         } else {
-            superzip::FilePublishTransaction transaction(target);
+            flitzzip::FilePublishTransaction transaction(target);
             std::ofstream(transaction.staging_path(), std::ios::binary) << "new";
             transaction.commit(true);
         }
@@ -421,14 +421,14 @@ TEST_CASE(path_set_rejects_unicode_case_aliases) {
         std::array{upper, lower + "/child.txt"},
     };
     for (const auto& paths : cases) {
-        const std::array<superzip::ArchivePathValidationEntry, 2> entries{{
-            {.path = paths[0], .directory = false, .encoding = superzip::ArchivePathEncoding::Utf8},
-            {.path = paths[1], .directory = false, .encoding = superzip::ArchivePathEncoding::Utf8},
+        const std::array<flitzzip::ArchivePathValidationEntry, 2> entries{{
+            {.path = paths[0], .directory = false, .encoding = flitzzip::ArchivePathEncoding::Utf8},
+            {.path = paths[1], .directory = false, .encoding = flitzzip::ArchivePathEncoding::Utf8},
         }};
         bool rejected = false;
         try {
-            superzip::validate_archive_path_set(entries);
-        } catch (const superzip::SecurityError&) {
+            flitzzip::validate_archive_path_set(entries);
+        } catch (const flitzzip::SecurityError&) {
             rejected = true;
         }
 #ifdef _WIN32
@@ -444,21 +444,21 @@ TEST_CASE(path_set_rejects_unicode_case_aliases) {
 // Outputs: Requires rejection of every file-parent set and acceptance of the corresponding directory-parent set.
 TEST_CASE(path_set_rejects_nonadjacent_file_descendants) {
     for (const auto* sibling : {"root/a-sibling", "root/a.sibling", "root/a sibling", "root/a!sibling"}) {
-        const std::array<superzip::ArchivePathValidationEntry, 3> entries{{
+        const std::array<flitzzip::ArchivePathValidationEntry, 3> entries{{
             {.path = "root/a", .directory = false},
             {.path = sibling, .directory = false},
             {.path = "root/a/b.txt", .directory = false},
         }};
         std::array<std::size_t, 3> order{0U, 1U, 2U};
         do {
-            std::vector<superzip::ArchivePathValidationEntry> permuted;
+            std::vector<flitzzip::ArchivePathValidationEntry> permuted;
             for (const auto index : order) {
                 permuted.push_back(entries[index]);
             }
             bool rejected = false;
             try {
-                superzip::validate_archive_path_set(permuted);
-            } catch (const superzip::SecurityError&) {
+                flitzzip::validate_archive_path_set(permuted);
+            } catch (const flitzzip::SecurityError&) {
                 rejected = true;
             }
             REQUIRE_TRUE(rejected);
@@ -467,7 +467,7 @@ TEST_CASE(path_set_rejects_nonadjacent_file_descendants) {
                     entry.directory = true;
                 }
             }
-            superzip::validate_archive_path_set(permuted);
+            flitzzip::validate_archive_path_set(permuted);
         } while (std::next_permutation(order.begin(), order.end()));
     }
 }
@@ -479,8 +479,8 @@ TEST_CASE(path_safety_rejects_traversal) {
     const auto root = test_temp_dir("path-safety");
     bool rejected = false;
     try {
-        (void)superzip::safe_join_archive_path(root, "../escape.txt");
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::safe_join_archive_path(root, "../escape.txt");
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -494,8 +494,8 @@ TEST_CASE(path_safety_rejects_reserved_windows_names) {
     const auto root = test_temp_dir("reserved");
     bool rejected = false;
     try {
-        (void)superzip::safe_join_archive_path(root, "CON.txt");
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::safe_join_archive_path(root, "CON.txt");
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -532,8 +532,8 @@ TEST_CASE(path_safety_rejects_windows_unsafe_forms) {
     for (const auto& path : unsafe_paths) {
         bool rejected = false;
         try {
-            (void)superzip::safe_join_archive_path(root, path);
-        } catch (const superzip::SecurityError&) {
+            (void)flitzzip::safe_join_archive_path(root, path);
+        } catch (const flitzzip::SecurityError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -546,7 +546,7 @@ TEST_CASE(path_safety_rejects_windows_unsafe_forms) {
 // Outputs: Throws if the normalized target is not the expected child path.
 TEST_CASE(path_safety_accepts_nested_relative_path) {
     const auto root = test_temp_dir("nested");
-    const auto target = superzip::safe_join_archive_path(root, "dir/file.txt");
+    const auto target = flitzzip::safe_join_archive_path(root, "dir/file.txt");
     REQUIRE_EQ(target.filename().string(), "file.txt");
     std::filesystem::remove_all(root);
 }
@@ -559,10 +559,10 @@ TEST_CASE(path_safety_utf8_filename_roundtrip) {
     const auto canonical_root = std::filesystem::weakly_canonical(root);
     for (const auto* name : {u8"caf\u00e9/file.txt", u8"\u65e5\u672c/\U0001f4c1.txt", u8"e\u0301.txt"}) {
         const std::filesystem::path relative(name);
-        const auto archive_name = superzip::normalize_entry_name(relative);
-        const auto target = superzip::safe_join_archive_path(root, archive_name, superzip::ArchivePathEncoding::Utf8);
+        const auto archive_name = flitzzip::normalize_entry_name(relative);
+        const auto target = flitzzip::safe_join_archive_path(root, archive_name, flitzzip::ArchivePathEncoding::Utf8);
         REQUIRE_EQ(target, canonical_root / relative);
-        REQUIRE_EQ(superzip::normalize_entry_name(target.lexically_relative(canonical_root)), archive_name);
+        REQUIRE_EQ(flitzzip::normalize_entry_name(target.lexically_relative(canonical_root)), archive_name);
     }
     std::filesystem::remove_all(root);
 }
@@ -574,7 +574,7 @@ TEST_CASE(directory_publish_preserves_unicode_names) {
     const auto root = test_temp_dir("unicode-publication");
     const auto destination = root / "output";
     const auto relative = std::filesystem::path(u8"\u65e5\u672c/caf\u00e9-\U0001f4c1.txt").lexically_normal();
-    superzip::DirectoryPublishTransaction transaction(destination);
+    flitzzip::DirectoryPublishTransaction transaction(destination);
     std::filesystem::create_directories((transaction.staging_directory() / relative).parent_path());
     std::ofstream(transaction.staging_directory() / relative, std::ios::binary) << "Unicode payload";
     transaction.publish(false);
@@ -590,7 +590,7 @@ TEST_CASE(path_safety_rejects_existing_reparse_parent_escape) {
     const auto root = test_temp_dir("path-safety-reparse-root");
     const auto outside = test_temp_dir("path-safety-reparse-outside");
     const auto junction = root / "linked";
-    if (!superzip_test::try_create_test_directory_junction(junction, outside)) {
+    if (!flitzzip_test::try_create_test_directory_junction(junction, outside)) {
         std::filesystem::remove_all(root);
         std::filesystem::remove_all(outside);
         return;
@@ -598,12 +598,12 @@ TEST_CASE(path_safety_rejects_existing_reparse_parent_escape) {
 
     bool rejected = false;
     try {
-        (void)superzip::safe_join_archive_path(root, "linked/payload.txt");
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::safe_join_archive_path(root, "linked/payload.txt");
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
-    superzip_test::remove_test_directory_junction(junction);
+    flitzzip_test::remove_test_directory_junction(junction);
     std::filesystem::remove_all(root);
     std::filesystem::remove_all(outside);
 }
@@ -612,7 +612,7 @@ TEST_CASE(path_safety_rejects_existing_reparse_parent_escape) {
 // Inputs: A path with redundant separators and `.` components.
 // Outputs: Throws if the normalized key is not the deterministic archive key used for collision checks.
 TEST_CASE(path_safety_normalizes_archive_path_key) {
-    REQUIRE_EQ(superzip::normalize_archive_path_key("dir//./nested/file.txt"), std::string("dir/nested/file.txt"));
+    REQUIRE_EQ(flitzzip::normalize_archive_path_key("dir//./nested/file.txt"), std::string("dir/nested/file.txt"));
 }
 
 // Purpose: Verify a publication reservation prevents its final parent from being renamed during commit.
@@ -621,15 +621,15 @@ TEST_CASE(path_safety_normalizes_archive_path_key) {
 TEST_CASE(file_publish_pins_parent_identity_until_commit) {
     const auto root = test_temp_dir("file-publish-parent-pin");
     const auto target = root / "nested" / "payload.txt";
-    const auto reservation = superzip::reserve_file_publish_target(target);
+    const auto reservation = flitzzip::reserve_file_publish_target(target);
     std::ofstream(reservation.file, std::ios::binary) << "verified payload";
 
     const auto parent_text = target.parent_path().wstring();
     const auto moved_text = (root / "moved-parent").wstring();
     REQUIRE_TRUE(MoveFileExW(parent_text.c_str(), moved_text.c_str(), MOVEFILE_WRITE_THROUGH) == 0);
 
-    superzip::commit_verified_file(reservation, target, false);
-    superzip::cleanup_file_publish_target(reservation);
+    flitzzip::commit_verified_file(reservation, target, false);
+    flitzzip::cleanup_file_publish_target(reservation);
     std::ifstream input(target, std::ios::binary);
     REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()),
                std::string("verified payload"));
@@ -643,19 +643,19 @@ TEST_CASE(file_publish_rejects_target_not_bound_to_reservation) {
     const auto root = test_temp_dir("file-publish-target-binding");
     const auto target = root / "expected.txt";
     const auto redirected = root / "redirected.txt";
-    const auto reservation = superzip::reserve_file_publish_target(target);
+    const auto reservation = flitzzip::reserve_file_publish_target(target);
     std::ofstream(reservation.file, std::ios::binary) << "verified payload";
 
     bool rejected = false;
     try {
-        superzip::commit_verified_file(reservation, redirected, false);
-    } catch (const superzip::SecurityError&) {
+        flitzzip::commit_verified_file(reservation, redirected, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_TRUE(!std::filesystem::exists(target));
     REQUIRE_TRUE(!std::filesystem::exists(redirected));
-    superzip::cleanup_file_publish_target(reservation);
+    flitzzip::cleanup_file_publish_target(reservation);
 }
 
 // Purpose: Verify publication never traverses a preexisting output-parent junction.
@@ -665,18 +665,18 @@ TEST_CASE(file_publish_rejects_reparse_parent_chain) {
     const auto root = test_temp_dir("file-publish-reparse-root");
     const auto outside = test_temp_dir("file-publish-reparse-outside");
     const auto junction = root / "linked";
-    if (!superzip_test::try_create_test_directory_junction(junction, outside)) {
+    if (!flitzzip_test::try_create_test_directory_junction(junction, outside)) {
         return;
     }
     bool rejected = false;
     try {
-        static_cast<void>(superzip::reserve_file_publish_target(junction / "payload.txt"));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::reserve_file_publish_target(junction / "payload.txt"));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_TRUE(!std::filesystem::exists(outside / "payload.txt"));
-    superzip_test::remove_test_directory_junction(junction);
+    flitzzip_test::remove_test_directory_junction(junction);
 }
 
 // Purpose: Verify quarantined extraction bytes remain private until explicit publication.
@@ -685,7 +685,7 @@ TEST_CASE(file_publish_rejects_reparse_parent_chain) {
 TEST_CASE(directory_publish_quarantines_until_explicit_publish) {
     const auto root = test_temp_dir("directory-publish-success");
     const auto destination = root / "output";
-    superzip::DirectoryPublishTransaction transaction(destination);
+    flitzzip::DirectoryPublishTransaction transaction(destination);
     std::filesystem::create_directories(transaction.staging_directory() / "nested");
     std::ofstream(transaction.staging_directory() / "nested" / "payload.txt", std::ios::binary) << "clean payload";
     REQUIRE_TRUE(!std::filesystem::exists(destination / "nested" / "payload.txt"));
@@ -704,7 +704,7 @@ TEST_CASE(directory_publish_abandonment_removes_quarantine) {
     const auto destination = root / "output";
     std::filesystem::path quarantine;
     {
-        superzip::DirectoryPublishTransaction transaction(destination);
+        flitzzip::DirectoryPublishTransaction transaction(destination);
         quarantine = transaction.staging_directory();
         std::ofstream(quarantine / "detected.bin", std::ios::binary) << "detected payload";
     }
@@ -723,11 +723,11 @@ TEST_CASE(directory_publish_preflights_overwrite_conflicts) {
 
     bool rejected = false;
     try {
-        superzip::DirectoryPublishTransaction transaction(destination);
+        flitzzip::DirectoryPublishTransaction transaction(destination);
         std::ofstream(transaction.staging_directory() / "a.txt", std::ios::binary) << "new a";
         std::ofstream(transaction.staging_directory() / "b.txt", std::ios::binary) << "new b";
         transaction.publish(false);
-    } catch (const superzip::SecurityError&) {
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -742,24 +742,24 @@ TEST_CASE(directory_publish_preflights_overwrite_conflicts) {
 // Outputs: Requires exact UTF-8 names, preserved lzip TAR aliases, and rejection of unsafe output names.
 TEST_CASE(single_stream_names_preserve_suffix_and_path_safety_rules) {
     const auto unicode = std::filesystem::path(u8"\u6E2C\u8A66\U0001F4E6");
-    const auto expected = superzip::path_diagnostic_utf8(unicode);
+    const auto expected = flitzzip::path_diagnostic_utf8(unicode);
     for (const auto* suffix : {".gz", ".bz2", ".xz", ".lzma", ".zst", ".zstd", ".z"}) {
         auto archive = unicode;
         archive += std::string(".bin") + suffix;
-        REQUIRE_EQ(superzip::single_stream_entry_name(archive, {{suffix, ""}}), expected + ".bin");
+        REQUIRE_EQ(flitzzip::single_stream_entry_name(archive, {{suffix, ""}}), expected + ".bin");
     }
-    REQUIRE_EQ(superzip::single_stream_entry_name("payload.TAR.LZ", {{".tlz", ".tar"}, {".lz", ""}}),
+    REQUIRE_EQ(flitzzip::single_stream_entry_name("payload.TAR.LZ", {{".tlz", ".tar"}, {".lz", ""}}),
                std::string("payload.TAR"));
-    REQUIRE_EQ(superzip::single_stream_entry_name("payload.TLZ", {{".tlz", ".tar"}, {".lz", ""}}),
+    REQUIRE_EQ(flitzzip::single_stream_entry_name("payload.TLZ", {{".tlz", ".tar"}, {".lz", ""}}),
                std::string("payload.tar"));
-    REQUIRE_EQ(superzip::single_stream_entry_name(".gz", {{".gz", ""}}), std::string(".gz"));
-    REQUIRE_EQ(superzip::single_stream_entry_name("", {{".gz", ""}}), std::string("payload"));
-    REQUIRE_EQ(superzip::single_stream_entry_name("payload.other", {{".gz", ""}}), std::string("payload"));
+    REQUIRE_EQ(flitzzip::single_stream_entry_name(".gz", {{".gz", ""}}), std::string(".gz"));
+    REQUIRE_EQ(flitzzip::single_stream_entry_name("", {{".gz", ""}}), std::string("payload"));
+    REQUIRE_EQ(flitzzip::single_stream_entry_name("payload.other", {{".gz", ""}}), std::string("payload"));
     for (const auto* unsafe : {"CON.gz", "NUL.zst", "payload .bz2"}) {
         bool refused = false;
         try {
-            (void)superzip::single_stream_entry_name(unsafe, {{".gz", ""}, {".zst", ""}, {".bz2", ""}});
-        } catch (const superzip::SecurityError&) {
+            (void)flitzzip::single_stream_entry_name(unsafe, {{".gz", ""}, {".zst", ""}, {".bz2", ""}});
+        } catch (const flitzzip::SecurityError&) {
             refused = true;
         }
         REQUIRE_TRUE(refused);
@@ -774,12 +774,12 @@ TEST_CASE(regular_file_size_preserves_unicode_error_diagnostics) {
     const auto path = root / std::filesystem::path(u8"\u6E2C\u8A66\U0001F4E6.bin");
     bool refused = false;
     try {
-        (void)superzip::regular_file_size(path);
-    } catch (const superzip::ArchiveError& error) {
+        (void)flitzzip::regular_file_size(path);
+    } catch (const flitzzip::ArchiveError& error) {
         refused = true;
-        REQUIRE_EQ(std::string(error.what()), "cannot read file size: " + superzip::path_diagnostic_utf8(path));
+        REQUIRE_EQ(std::string(error.what()), "cannot read file size: " + flitzzip::path_diagnostic_utf8(path));
     }
     REQUIRE_TRUE(refused);
     std::ofstream(path, std::ios::binary) << "size";
-    REQUIRE_EQ(superzip::regular_file_size(path), std::uint64_t{4});
+    REQUIRE_EQ(flitzzip::regular_file_size(path), std::uint64_t{4});
 }

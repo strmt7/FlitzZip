@@ -9,15 +9,15 @@ if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyCo
 }
 
 $repo = Split-Path -Parent $PSScriptRoot
-$cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
+$cli = Join-Path $repo "build\$Configuration\flitzzip_cli.exe"
 $source = Join-Path $repo "README.md"
 if (-not (Test-Path -LiteralPath $cli)) {
     throw "CLI binary not found. Run tools/build.ps1 first."
 }
 
 $nonce = [guid]::NewGuid().ToString('N')
-$control = Join-Path $env:TEMP "superzip-defender-control-$nonce.zip"
-$flagged = Join-Path $env:TEMP "superzip-defender-flagged-$nonce.zip"
+$control = Join-Path $env:TEMP "flitzzip-defender-control-$nonce.zip"
+$flagged = Join-Path $env:TEMP "flitzzip-defender-flagged-$nonce.zip"
 if ((Test-Path -LiteralPath $control) -or (Test-Path -LiteralPath $flagged)) {
     throw "Defender test output path already exists."
 }

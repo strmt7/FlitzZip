@@ -261,7 +261,7 @@ TEST_CASE(zip_unicode_paths_roundtrip_all_efforts) {
     std::ofstream(source / std::filesystem::path(u8"\u00e9.txt"), std::ios::binary);
     for (int effort = 1; effort <= 9; ++effort) {
         const auto archive = root / std::filesystem::path(u8"\u03a9.zip");
-        const auto compressed = superzip::compress_zip({source}, archive, effort);
+        const auto compressed = flitzzip::compress_zip({source}, archive, effort);
         REQUIRE_EQ(compressed.input_bytes, payload.size());
         mz_zip_archive reader{};
         const auto encoded = archive.generic_u8string();
@@ -274,7 +274,7 @@ TEST_CASE(zip_unicode_paths_roundtrip_all_efforts) {
         REQUIRE_TRUE(mz_zip_reader_end(&reader));
         const auto destination = root / std::to_string(effort) / std::filesystem::path(u8"\u00e9");
         for (const bool overwrite : {false, true}) {
-            const auto extracted = superzip::extract_zip(archive, destination, overwrite);
+            const auto extracted = flitzzip::extract_zip(archive, destination, overwrite);
             REQUIRE_EQ(extracted.output_bytes, payload.size());
             std::ifstream restored(destination / source.filename() / relative, std::ios::binary);
             REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), std::istreambuf_iterator<char>()),
@@ -297,7 +297,7 @@ TEST_CASE(zip_cp437_filename_roundtrip) {
     const auto archive = root / "legacy.zip";
     write_stored_zip_with_name(archive, "caf\x82.txt", "CP437 payload");
     const auto destination = root / "output";
-    (void)superzip::extract_zip(archive, destination, false);
+    (void)flitzzip::extract_zip(archive, destination, false);
     std::ifstream restored(destination / std::filesystem::path(u8"caf\u00e9.txt"), std::ios::binary);
     REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), std::istreambuf_iterator<char>()),
                std::string("CP437 payload"));
@@ -314,10 +314,10 @@ TEST_CASE(zip_compat_roundtrip) {
     std::filesystem::create_directories(input);
     std::ofstream(input / "hello.txt") << "hello zip";
     const auto archive = root / "archive.zip";
-    const auto stats = superzip::compress_zip({input}, archive);
+    const auto stats = flitzzip::compress_zip({input}, archive);
     REQUIRE_TRUE(stats.output_bytes > 0);
     const auto output = root / "out";
-    (void)superzip::extract_zip(archive, output, true);
+    (void)flitzzip::extract_zip(archive, output, true);
     REQUIRE_TRUE(std::filesystem::exists(output / "input" / "hello.txt"));
     std::filesystem::remove_all(root);
 }
@@ -332,17 +332,17 @@ TEST_CASE(zipx_extracts_zip_compatible_records) {
     std::ofstream(input / "hello.txt") << "hello zipx";
     const auto zip_archive = root / "archive.zip";
     const auto zipx_archive = root / "archive.zipx";
-    (void)superzip::compress_zip({input}, zip_archive);
+    (void)flitzzip::compress_zip({input}, zip_archive);
     std::filesystem::copy_file(zip_archive, zipx_archive);
 
-    REQUIRE_EQ(superzip::detect_archive_format(zipx_archive), superzip::ArchiveFormat::Zipx);
+    REQUIRE_EQ(flitzzip::detect_archive_format(zipx_archive), flitzzip::ArchiveFormat::Zipx);
     const auto output = root / "out";
-    (void)superzip::extract_zip(zipx_archive, output, false);
+    (void)flitzzip::extract_zip(zipx_archive, output, false);
     std::ifstream extracted(output / "input" / "hello.txt", std::ios::binary);
     const std::string payload((std::istreambuf_iterator<char>(extracted)), std::istreambuf_iterator<char>());
     REQUIRE_EQ(payload, std::string("hello zipx"));
     extracted.close();
-    superzip_test::export_compat_fixture(zipx_archive, output);
+    flitzzip_test::export_compat_fixture(zipx_archive, output);
     std::filesystem::remove_all(root);
 }
 
@@ -361,8 +361,8 @@ TEST_CASE(zip_extract_rejects_traversal_entry) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_zip(archive, root / "out", true);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_zip(archive, root / "out", true);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -385,8 +385,8 @@ TEST_CASE(zip_extract_rejects_windows_unsafe_entries) {
 
         bool rejected = false;
         try {
-            (void)superzip::extract_zip(archive, root / "out", true);
-        } catch (const superzip::SecurityError&) {
+            (void)flitzzip::extract_zip(archive, root / "out", true);
+        } catch (const flitzzip::SecurityError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -407,8 +407,8 @@ TEST_CASE(zip_extract_rejects_duplicate_normalized_entry_paths) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_zip(archive, root / "out", true);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_zip(archive, root / "out", true);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -429,8 +429,8 @@ TEST_CASE(zip_extract_rejects_file_entry_with_child_entry) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_zip(archive, root / "out", true);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_zip(archive, root / "out", true);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -447,15 +447,15 @@ TEST_CASE(zip_extract_rejects_overwrite_by_default) {
     std::filesystem::create_directories(input);
     std::ofstream(input / "hello.txt") << "from zip";
     const auto archive = root / "archive.zip";
-    (void)superzip::compress_zip({input / "hello.txt"}, archive);
+    (void)flitzzip::compress_zip({input / "hello.txt"}, archive);
     const auto output = root / "out";
     std::filesystem::create_directories(output);
     std::ofstream(output / "hello.txt") << "existing";
 
     bool rejected = false;
     try {
-        (void)superzip::extract_zip(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_zip(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -481,8 +481,8 @@ TEST_CASE(zip_extract_removes_partial_file_after_crc_failure) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_zip(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_zip(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -498,8 +498,8 @@ TEST_CASE(zip_extract_removes_partial_file_after_crc_failure) {
     }
     rejected = false;
     try {
-        (void)superzip::extract_zip(archive, overwrite_output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_zip(archive, overwrite_output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -553,7 +553,7 @@ TEST_CASE(miniz_png_rejects_invalid_dimensions_before_reading_pixels) {
 // Outputs: Throws if reader initialization succeeds or reports any error other than the metadata-size limit.
 TEST_CASE(zip_reader_rejects_central_directory_over_metadata_budget_before_allocation) {
     VirtualZipArchive archive;
-    const auto central_size = static_cast<std::uint32_t>(superzip::kMaxArchiveIndexBytes + 1U);
+    const auto central_size = static_cast<std::uint32_t>(flitzzip::kMaxArchiveIndexBytes + 1U);
     archive.eocd_offset = central_size;
     archive.archive_size = archive.eocd_offset + archive.eocd.size();
     set_zip_u32(archive.eocd, 0U, 0x06054B50U);

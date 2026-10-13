@@ -2,7 +2,7 @@
 
 #include "gpu/hip_codec_support.hpp"
 
-namespace superzip::hip_detail {
+namespace flitzzip::hip_detail {
 
 // Purpose: Checksum bounded device input using compact ordered CRC metadata.
 // Inputs: Live device bytes, extent, telemetry and diagnostic action.
@@ -23,4 +23,4 @@ std::uint32_t compute_decoded_crc32_device(const std::byte* device_payload, cons
                                            std::uint32_t block_count, std::uint64_t output_len, GpuTelemetry* telemetry,
                                            const char* action);
 
-}  // namespace superzip::hip_detail
+}  // namespace flitzzip::hip_detail

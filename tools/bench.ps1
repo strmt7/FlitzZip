@@ -30,12 +30,12 @@ param(
     [switch]$AllowLargeDiskWrites
 )
 
-# Purpose: Compare forced-CPU and required-AMD-HIP performance on identical generated or reviewed exact-file SUZIP inputs.
+# Purpose: Compare forced-CPU and required-AMD-HIP performance on identical generated or reviewed exact-file FLZIP inputs.
 # Inputs: Workload, level and blocks prescribe cases. Iterations is the confirmation minimum; pilot duration/variance determines a fixed count within MaxIterations. FixedIterations bypasses planning. Descriptive time/variability/RSE limits, process/suite deadlines and resource cadence are configurable. Skip switches select lanes; JsonOutput reserves final evidence. Filesystem mode remains a capped correctness smoke.
 # Outputs: Prints descriptive throughput, exact sizes and measurement quality; preserves all samples in a journal and optionally creates final JSON. Correctness, telemetry-contract, subprocess or deadline failures abort without replacing prior evidence.
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
+$cli = Join-Path $repo "build\$Configuration\flitzzip_cli.exe"
 $MaxFilesystemSmokeMiB = 64
 $script:ShowOperationStatsEnabled = [bool]$ShowOperationStats
 . (Join-Path $PSScriptRoot 'benchmark_statistics.ps1')
@@ -81,12 +81,12 @@ if ($JsonOutput -and (Test-Path -LiteralPath $JsonOutput)) {
 }
 
 try {
-    if (-not ([System.Management.Automation.PSTypeName]"SuperZipProcessIoCounters").Type) {
+    if (-not ([System.Management.Automation.PSTypeName]"FlitzZipProcessIoCounters").Type) {
         Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 
-public static class SuperZipProcessIoCounters
+public static class FlitzZipProcessIoCounters
 {
     [StructLayout(LayoutKind.Sequential)]
     public struct IO_COUNTERS
@@ -156,8 +156,8 @@ function Get-ProcessIoTransfer {
         }
     }
     try {
-        $counters = New-Object SuperZipProcessIoCounters+IO_COUNTERS
-        if ([SuperZipProcessIoCounters]::GetProcessIoCounters($Process.Handle, [ref]$counters)) {
+        $counters = New-Object FlitzZipProcessIoCounters+IO_COUNTERS
+        if ([FlitzZipProcessIoCounters]::GetProcessIoCounters($Process.Handle, [ref]$counters)) {
             return [pscustomobject]@{
                 ReadBytes = [double]$counters.ReadTransferCount
                 WriteBytes = [double]$counters.WriteTransferCount
@@ -493,7 +493,7 @@ function Assert-GpuBackendStat {
 # Purpose: Run a CLI command, sample resource utilization, and parse operation statistics.
 # Inputs: Arguments is the exact CLI vector; RunTimeoutSeconds bounds its owned process and each pipe is capped at 65536 characters.
 # Outputs: Returns parsed statistics and optional counters; terminates its owned CLI and throws on failure, timeout or excess output.
-function Invoke-SuperZipStat {
+function Invoke-FlitzZipStat {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = $cli
@@ -538,7 +538,7 @@ function Invoke-SuperZipStat {
         $stdout = $stdoutTask.GetAwaiter().GetResult()
         $stderr = $stderrTask.GetAwaiter().GetResult()
         $process.WaitForExit()
-        if ($process.ExitCode -ne 0) { throw "superzip_cli failed with exit code $($process.ExitCode): $stderr" }
+        if ($process.ExitCode -ne 0) { throw "flitzzip_cli failed with exit code $($process.ExitCode): $stderr" }
         $statsLine = $stdout -split "`r?`n" | Where-Object { $_ -match '^(entries|plan_only)=' } | Select-Object -Last 1
         if ($script:ShowOperationStatsEnabled) {
             Write-Information "operation_stats $($Arguments -join ' ') :: $statsLine" -InformationAction Continue
@@ -617,7 +617,7 @@ function Write-BenchmarkFile {
     if ($Kind -eq "Random") {
         $rng = [System.Random]::new(1234567)
     } elseif ($Kind -eq "Text") {
-        $line = [Text.Encoding]::UTF8.GetBytes("SuperZip benchmark line: archive metadata, mixed file sizes, AMD HIP comparison.`n")
+        $line = [Text.Encoding]::UTF8.GetBytes("FlitzZip benchmark line: archive metadata, mixed file sizes, AMD HIP comparison.`n")
         for ($i = 0; $i -lt $buffer.Length; $i++) {
             $buffer[$i] = $line[$i % $line.Length]
         }
@@ -679,7 +679,7 @@ function Initialize-BenchmarkDataset {
 
     for ($i = 0; $i -lt 256; ++$i) {
         $smallPath = Join-Path $Root ("small\entry-{0:D4}.txt" -f $i)
-        Set-Content -LiteralPath $smallPath -Value ("entry={0}; SuperZip benchmark metadata fanout" -f $i) -NoNewline
+        Set-Content -LiteralPath $smallPath -Value ("entry={0}; FlitzZip benchmark metadata fanout" -f $i) -NoNewline
     }
 }
 
@@ -738,7 +738,7 @@ function Invoke-BenchmarkLane {
         [Parameter(Mandatory = $true)][int]$Iteration,
         [Parameter(Mandatory = $true)][int]$BlockSizeKiB
     )
-    $archive = Join-Path $Work ("{0}-{1}-{2}kib.suzip" -f $Lane.ToLowerInvariant(), $Iteration, $BlockSizeKiB)
+    $archive = Join-Path $Work ("{0}-{1}-{2}kib.flzip" -f $Lane.ToLowerInvariant(), $Iteration, $BlockSizeKiB)
     $outRoot = Join-Path $Work ("{0}-out-{1}-{2}kib" -f $Lane.ToLowerInvariant(), $Iteration, $BlockSizeKiB)
     $pipelineArgs = @("--workers", "$script:BenchmarkWorkerCount")
     $compressionArgs = @("--compression-level", "$CompressionLevel", "--block-size-kib", "$BlockSizeKiB")
@@ -746,9 +746,9 @@ function Invoke-BenchmarkLane {
     Remove-Item -LiteralPath $outRoot -Recurse -Force -ErrorAction SilentlyContinue
 
     try {
-        $compress = Invoke-SuperZipStat -Arguments (@("compress", "--format", "suzip", $ModeFlag) + $pipelineArgs + $compressionArgs + @("--output", $archive, $SourceRoot))
-        $verify = Invoke-SuperZipStat -Arguments (@("verify", $ModeFlag) + $pipelineArgs + @($archive))
-        $extract = Invoke-SuperZipStat -Arguments (@("extract", "--format", "suzip", $ModeFlag) + $pipelineArgs + @("--output", $outRoot, $archive))
+        $compress = Invoke-FlitzZipStat -Arguments (@("compress", "--format", "flzip", $ModeFlag) + $pipelineArgs + $compressionArgs + @("--output", $archive, $SourceRoot))
+        $verify = Invoke-FlitzZipStat -Arguments (@("verify", $ModeFlag) + $pipelineArgs + @($archive))
+        $extract = Invoke-FlitzZipStat -Arguments (@("extract", "--format", "flzip", $ModeFlag) + $pipelineArgs + @("--output", $outRoot, $archive))
 
         $expectedGpu = if ($ModeFlag -eq "--require-gpu") { "true" } else { "false" }
         foreach ($item in @($compress, $verify, $extract)) {
@@ -884,7 +884,7 @@ function Invoke-MemoryBenchmarkLane {
     $geometry = $script:BenchmarkGeometryPlans["${Lane}:$BlockSizeKiB"]
     if ($null -eq $geometry) { throw "No frozen admission plan for ${Lane}:$BlockSizeKiB." }
     $arguments = @(Get-MemoryBenchmarkArgument -ModeFlag $ModeFlag -BlockSizeKiB $BlockSizeKiB -Geometry $geometry)
-    $preflight = Invoke-SuperZipStat -Arguments @($arguments + '--plan-only')
+    $preflight = Invoke-FlitzZipStat -Arguments @($arguments + '--plan-only')
     Assert-StandardBenchmarkMode -Stats $preflight
     Assert-BenchmarkGeometry -Stats $preflight -Expected $geometry -PlanOnly
     $observation = Invoke-FrozenMemoryBenchmark -Arguments $arguments -Expected $script:BenchmarkArtifactState `
@@ -1172,7 +1172,7 @@ function ConvertTo-RamBenchmarkRecord {
     $orderedRuns = @($Runs | ForEach-Object { ConvertTo-RamBenchmarkObservation -Run $_ -SizeMiB $SizeMiB })
     $record = [ordered]@{
         schema_version = 2
-        benchmark_kind = "suzip_ram"
+        benchmark_kind = "flzip_ram"
         gpu_utilization_metric = "process_busiest_engine_pct"
         lane_order = "alternating_when_both"
         inter_run_pause_ms = $InterRunPauseMs
@@ -1283,7 +1283,7 @@ function Get-RamBenchmarkSourceDirty {
 function Get-RamBenchmarkArtifactState {
     param([string]$RepositoryRoot, [string]$BinaryPath, [ref]$Receipt)
     $configuration = Split-Path -Leaf (Split-Path -Parent $BinaryPath)
-    $expectedBinary = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot "build/$configuration/superzip_cli.exe"))
+    $expectedBinary = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot "build/$configuration/flitzzip_cli.exe"))
     if (-not $expectedBinary.Equals([IO.Path]::GetFullPath($BinaryPath), [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Benchmark requires the CLI bound by the native build receipt.'
     }
@@ -1324,7 +1324,7 @@ function Invoke-FrozenMemoryBenchmark {
         [string]$JournalPath, [Collections.IDictionary]$JournalContext)
     Assert-RamBenchmarkArtifactState -Expected $Expected -RepositoryRoot $RepositoryRoot -BinaryPath $BinaryPath
     Assert-BenchmarkCorpusIdentity
-    $stats = Invoke-SuperZipStat -Arguments $Arguments
+    $stats = Invoke-FlitzZipStat -Arguments $Arguments
     $raw = @{ event = 'raw_operation'; stats = $stats; expected_measurement_identity = $Expected }
     if ($null -ne $JournalContext) {
         foreach ($key in @('lane', 'block_size_kib', 'iteration')) { $raw[$key] = $JournalContext[$key] }
@@ -1374,7 +1374,7 @@ if ($Mode -eq "Memory") {
     $script:BenchmarkBuildReceipt = $null
     $script:BenchmarkArtifactState = Get-RamBenchmarkArtifactState -RepositoryRoot $repo -BinaryPath $cli `
         -Receipt ([ref]$script:BenchmarkBuildReceipt)
-    if (-not $SkipGpu -and $script:BenchmarkBuildReceipt.recipe.SUPERZIP_ENABLE_HIP -ne 'ON') {
+    if (-not $SkipGpu -and $script:BenchmarkBuildReceipt.recipe.FLITZZIP_ENABLE_HIP -ne 'ON') {
         throw 'Required-HIP measurements cannot use a CPU-only native receipt.'
     }
     Write-BenchmarkJournal -Path $journalPath -Create -Event @{ event = 'protocol'; sampling_policy = $samplingPolicy
@@ -1391,7 +1391,7 @@ if ($Mode -eq "Memory") {
             $flag = if ($lane -eq 'CPU') { '--force-cpu' } else { '--require-gpu' }
             $arguments = @(Get-MemoryBenchmarkArgument -ModeFlag $flag -BlockSizeKiB $block -RequestedDepth $InflightChunks)
             try {
-                $geometry = Invoke-SuperZipStat -Arguments @($arguments + '--plan-only')
+                $geometry = Invoke-FlitzZipStat -Arguments @($arguments + '--plan-only')
                 Assert-BenchmarkGeometry -Stats $geometry -Expected $geometry -PlanOnly
             } catch {
                 Write-BenchmarkJournal -Path $journalPath -Event @{ event = 'planning_failure'; lane = $lane
@@ -1511,7 +1511,7 @@ if ($Mode -eq "Memory") {
     }
 
     Write-BenchmarkMessage ""
-    Write-BenchmarkMessage "SuperZip benchmark: $(Get-BenchmarkInputByteCount $SizeMiB) bytes $benchmarkProfile SUZIP memory-only workload, compression level $CompressionLevel, block sizes $($BlockSizeKiB -join ',') KiB; confirmation counts fixed before measurement."
+    Write-BenchmarkMessage "FlitzZip benchmark: $(Get-BenchmarkInputByteCount $SizeMiB) bytes $benchmarkProfile FLZIP memory-only workload, compression level $CompressionLevel, block sizes $($BlockSizeKiB -join ',') KiB; confirmation counts fixed before measurement."
     Write-BenchmarkMessage 'All pilot and confirmation samples are retained. Statistics below describe confirmation only; no confidence or significance claim is made.'
     foreach ($case in $quality) {
         $cv = ($case.metrics.Values | ForEach-Object { $_.relative_std_dev_pct } | Measure-Object -Maximum).Maximum
@@ -1610,7 +1610,7 @@ if ($script:BenchmarkDiskInstance) {
 }
 Assert-BenchmarkDiskBudget -Path $WorkRoot -SizeMiB $SizeMiB -LaneCount $laneCount
 
-$work = Join-Path $WorkRoot ("superzip-bench-" + [guid]::NewGuid().ToString("N"))
+$work = Join-Path $WorkRoot ("flitzzip-bench-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 try {
     $sourceRoot = Join-Path $work "input"
@@ -1687,7 +1687,7 @@ try {
     }
 
     Write-BenchmarkMessage ""
-    Write-BenchmarkMessage "SuperZip benchmark: $SizeMiB MiB $WorkloadProfile SUZIP workload, compression level $CompressionLevel, block sizes $($BlockSizeKiB -join ',') KiB, $([Math]::Max(1, $Iterations)) iteration(s)"
+    Write-BenchmarkMessage "FlitzZip benchmark: $SizeMiB MiB $WorkloadProfile FLZIP workload, compression level $CompressionLevel, block sizes $($BlockSizeKiB -join ',') KiB, $([Math]::Max(1, $Iterations)) iteration(s)"
     if ($NoResourceCounters) {
         Write-BenchmarkMessage "Resource sampling: disabled"
     } else {

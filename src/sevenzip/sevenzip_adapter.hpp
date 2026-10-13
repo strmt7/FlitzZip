@@ -4,9 +4,9 @@
 
 #include <filesystem>
 
-namespace superzip {
+namespace flitzzip {
 
-// Purpose: Extract files from a 7z archive with SuperZip path-safety checks.
+// Purpose: Extract files from a 7z archive with FlitzZip path-safety checks.
 // Inputs: `archive_path` is a 7z archive, `destination` is the extraction root, `overwrite` allows existing targets
 // only when true, and `progress_callback` receives extraction progress snapshots. Outputs: Returns operation
 // statistics; throws on malformed 7z metadata, unsafe paths, unsupported 7z features, refused overwrite, decode
@@ -14,4 +14,4 @@ namespace superzip {
 OperationStats extract_7z(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                           bool overwrite, const ProgressCallback& progress_callback = {});
 
-}  // namespace superzip
+}  // namespace flitzzip

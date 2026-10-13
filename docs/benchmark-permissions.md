@@ -24,7 +24,7 @@ Use **lzbench only for explicitly selected LZ4 and Zstd codec context**. Its
 cover every integrated codec. The selected libraries have their own
 [LZ4](https://github.com/inikep/lzbench/blob/v2.4/lz/lz4/lib/LICENSE) and
 [Zstd](https://github.com/inikep/lzbench/blob/v2.4/lz/zstd/LICENSE) notices.
-It cannot substitute for SuperZip application or GPU measurements.
+It cannot substitute for FlitzZip application or GPU measurements.
 
 | Candidate | Execution / original numeric results | Decision and source |
 | --- | --- | --- |

@@ -18,11 +18,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "ctest failed with exit code $LASTEXITCODE."
 }
 
-$testRunner = Join-Path $build "$Configuration/superzip_tests.exe"
+$testRunner = Join-Path $build "$Configuration/flitzzip_tests.exe"
 foreach ($arguments in @(
-    "__superzip_no_test_must_match_this_filter__",
+    "__flitzzip_no_test_must_match_this_filter__",
     "compression_stream_gzip_read_failure_is_terminal compression_stream_zstd_read_failure_is_terminal",
-    '"" __superzip_unexpected_second_argument__'
+    '"" __flitzzip_unexpected_second_argument__'
 )) {
     $selectionStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $selectionStartInfo.FileName = $testRunner
@@ -51,19 +51,19 @@ foreach ($arguments in @(
     }
 }
 
-$configuredPackageVersion = Read-SuperZipCMakeCacheValue -BuildRoot $build -Name "SUPERZIP_PACKAGE_VERSION"
-Assert-SuperZipPackageVersionMatchesBuild -BuildRoot $build -PackageVersion $configuredPackageVersion
+$configuredPackageVersion = Read-FlitzZipCMakeCacheValue -BuildRoot $build -Name "FLITZZIP_PACKAGE_VERSION"
+Assert-FlitzZipPackageVersionMatchesBuild -BuildRoot $build -PackageVersion $configuredPackageVersion
 
-$cli = Join-Path $build "$Configuration/superzip_cli.exe"
+$cli = Join-Path $build "$Configuration/flitzzip_cli.exe"
 $cliVersion = & $cli --version
-if ($LASTEXITCODE -ne 0 -or $cliVersion -ne "SuperZip $configuredPackageVersion") {
+if ($LASTEXITCODE -ne 0 -or $cliVersion -ne "FlitzZip $configuredPackageVersion") {
     throw "CLI --version must report the configured package version and exit successfully."
 }
 $cliHelp = & $cli --help
-if ($LASTEXITCODE -ne 0 -or -not ($cliHelp -match "superzip_cli --version")) {
+if ($LASTEXITCODE -ne 0 -or -not ($cliHelp -match "flitzzip_cli --version")) {
     throw "CLI --help must advertise --version and exit successfully."
 }
-if ((Read-SuperZipCMakeCacheValue -BuildRoot $build -Name 'SUPERZIP_ENABLE_HIP') -eq 'ON') {
+if ((Read-FlitzZipCMakeCacheValue -BuildRoot $build -Name 'FLITZZIP_ENABLE_HIP') -eq 'ON') {
     & (Join-Path $PSScriptRoot 'test_hip_kernel_boundary.ps1') -Configuration $Configuration
 }
 & (Join-Path $PSScriptRoot 'test_memory_benchmark_plan.ps1') -Configuration $Configuration
@@ -72,7 +72,7 @@ if ((Read-SuperZipCMakeCacheValue -BuildRoot $build -Name 'SUPERZIP_ENABLE_HIP')
 foreach ($invalidVersion in @("01.0.0", "0.1.0+build.1", "v0.1.0", "latest")) {
     $acceptedInvalidVersion = $false
     try {
-        Resolve-SuperZipPackageVersion -RepoRoot $repo -RequestedVersion $invalidVersion | Out-Null
+        Resolve-FlitzZipPackageVersion -RepoRoot $repo -RequestedVersion $invalidVersion | Out-Null
         $acceptedInvalidVersion = $true
     } catch {
         $acceptedInvalidVersion = $false

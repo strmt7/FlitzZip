@@ -2,23 +2,23 @@
 
 ## miniz 3.1.2
 
-SuperZip vendors miniz release `3.1.2` for standards-oriented ZIP compatibility.
+FlitzZip vendors miniz release `3.1.2` for standards-oriented ZIP compatibility.
 
 - Upstream: <https://github.com/richgel999/miniz>
 - Tag: `3.1.2`
 - Commit: `77d0dce8627735138c51770d1799a1ef48f2117d`
 - License: MIT, preserved at `third_party/miniz/LICENSE`
 
-SuperZip uses miniz for bounded CPU-codec purposes: standards-oriented `.zip`
+FlitzZip uses miniz for bounded CPU-codec purposes: standards-oriented `.zip`
 compatibility, Gzip/TAR.GZ streams, XAR zlib TOC/payload inflation for the
 read-only safe subset, and per-block deflate payloads inside CPU-authored
-native `.suzip` archives. The `.suzip` required-GPU boundary remains AMD
+native `.flzip` archives. The `.flzip` required-GPU boundary remains AMD
 HIP-only; miniz does not provide GPU acceleration, does not finish required-HIP
 decode work, and is not an alternate archive pipeline.
 
 The production copy under `third_party/miniz/` carries local hardening patches
 and measured Huffman block-cost selection, documented in
-`third_party/miniz/README.SUPERZIP.md`. The unmodified upstream 3.1.2 source
+`third_party/miniz/README.FLITZZIP.md`. The unmodified upstream 3.1.2 source
 archive and checksum are stored
 under `third_party/upstream/miniz/3.1.2/` for provenance. Do not edit the
 upstream archive; production fixes belong in `third_party/miniz/` and must be
@@ -26,7 +26,7 @@ covered by tests and security scanning.
 
 ## bzip2 1.0.8
 
-SuperZip vendors bzip2/libbzip2 release `1.0.8` for standards-oriented Bzip2
+FlitzZip vendors bzip2/libbzip2 release `1.0.8` for standards-oriented Bzip2
 compatibility.
 
 - Upstream: <https://sourceware.org/bzip2/>
@@ -34,20 +34,20 @@ compatibility.
 - SHA-256: `ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269`
 - License: bzip2 license, preserved at `third_party/bzip2/LICENSE`
 
-SuperZip uses libbzip2 for two bounded CPU-codec purposes: single-file `.bz2`
+FlitzZip uses libbzip2 for two bounded CPU-codec purposes: single-file `.bz2`
 streams and `.tar.bz2`/`.tbz`/`.tbz2` stream filters over the native TAR
-adapter. It does not provide GPU acceleration and is not an alternate SUZIP
+adapter. It does not provide GPU acceleration and is not an alternate FLZIP
 codec path.
 
 The production copy under `third_party/bzip2/` is intended to stay close to
-upstream. The only SuperZip-owned file in that directory is
+upstream. The only FlitzZip-owned file in that directory is
 `bz_internal_error.c`, a required link shim for libbzip2's embedding hook. The
 unmodified upstream 1.0.8 source archive and checksum are stored under
 `third_party/upstream/bzip2/1.0.8/` for provenance.
 
 ## LZ4 1.10.0
 
-SuperZip vendors the LZ4 library for decoding LZ4 native archive blocks.
+FlitzZip vendors the LZ4 library for decoding LZ4 native archive blocks.
 
 - Upstream: <https://github.com/lz4/lz4>
 - Release: `v1.10.0`
@@ -61,7 +61,7 @@ checksum remain under `third_party/upstream/lz4/1.10.0/`.
 
 ## XZ Embedded
 
-SuperZip vendors the XZ Embedded decoder at upstream commit
+FlitzZip vendors the XZ Embedded decoder at upstream commit
 `ae63ae3a36ed01724674e8f3d750dc47bf125410` for extract-only XZ compatibility.
 
 - Upstream: <https://github.com/tukaani-project/xz-embedded>
@@ -69,19 +69,19 @@ SuperZip vendors the XZ Embedded decoder at upstream commit
 - Source archive SHA-256: `def1cc76f59db117245670f334599d70406c5f8a3ea99fb79763a84803420abf`
 - License: 0BSD, preserved at `third_party/xz_embedded/COPYING`
 
-SuperZip uses XZ Embedded only for single-file `.xz` extraction and
+FlitzZip uses XZ Embedded only for single-file `.xz` extraction and
 `.tar.xz`/`.txz` stream filters over the native TAR adapter. It is decode-only,
-does not provide GPU acceleration, and is not an alternate SUZIP codec path.
+does not provide GPU acceleration, and is not an alternate FLZIP codec path.
 
 The production copy under `third_party/xz_embedded/` contains only the
-upstream-documented userspace embedding files plus narrow SuperZip integration
+upstream-documented userspace embedding files plus narrow FlitzZip integration
 hardening. The upstream source archive and checksum are stored under
 `third_party/upstream/xz-embedded/ae63ae3a36ed01724674e8f3d750dc47bf125410/`
 for provenance.
 
 ## Zstandard 1.5.7
 
-SuperZip builds an app-local Zstandard/libzstd `v1.5.7` runtime from the pinned
+FlitzZip builds an app-local Zstandard/libzstd `v1.5.7` runtime from the pinned
 upstream source archive, with multithreading and legacy decoding enabled.
 
 - Upstream: <https://github.com/facebook/zstd>
@@ -92,17 +92,17 @@ upstream source archive, with multithreading and legacy decoding enabled.
   a different runtime is rejected before loading.
 - License: BSD, preserved at `third_party/zstd/LICENSE`
 
-SuperZip uses libzstd for bounded CPU-codec work: single-file
+FlitzZip uses libzstd for bounded CPU-codec work: single-file
 `.zst`/`.zstd` streams and `.tar.zst`/`.tzst` stream filters over the native
-TAR adapter, and CPU Zstandard block candidates in native SUZIP archives.
+TAR adapter, and CPU Zstandard block candidates in native FLZIP archives.
 It does not provide GPU acceleration.
 
 The production copy under `third_party/zstd/` contains only license files and
-SuperZip runtime notes. CMake verifies the source archive, builds `libzstd.dll`
+FlitzZip runtime notes. CMake verifies the source archive, builds `libzstd.dll`
 in the build directory with reproducible legacy-context and custom-allocation repairs
-documented in `third_party/zstd/README.SUPERZIP.md`, and copies it beside each
+documented in `third_party/zstd/README.FLITZZIP.md`, and copies it beside each
 executable. The original archives and license notices remain unchanged. The official
-Win64 package remains pinned for independent CLI comparisons. SuperZip loads
+Win64 package remains pinned for independent CLI comparisons. FlitzZip loads
 its built DLL only from the executable directory,
 validates runtime version `10507` (`1.5.7`), and never shells out to `zstd.exe`.
 The original source archive, official Win64 package, and checksums are stored
@@ -110,7 +110,7 @@ under `third_party/upstream/zstd/v1.5.7/` for provenance.
 
 ## LZMA SDK 26.03
 
-SuperZip vendors the minimal ANSI-C decoder subset from the official LZMA SDK
+FlitzZip vendors the minimal ANSI-C decoder subset from the official LZMA SDK
 release `26.03` for extract-only 7z, LZMA-Alone, and lzip compatibility.
 
 - Upstream: <https://www.7-zip.org/sdk.html>
@@ -119,16 +119,16 @@ release `26.03` for extract-only 7z, LZMA-Alone, and lzip compatibility.
 - License: public domain, as stated in `DOC/lzma-sdk.txt` inside the upstream
   archive
 
-SuperZip uses this SDK for read-only `.7z`, `.lzma`, and `.lz` extraction and
+FlitzZip uses this SDK for read-only `.7z`, `.lzma`, and `.lz` extraction and
 the `.tar.lz` stream adapter. It does not ship or execute SDK sample tools or
-call `7z.exe`, and does not use the SDK as a SUZIP codec or GPU path. The
+call `7z.exe`, and does not use the SDK as a FLZIP codec or GPU path. The
 patched production copy is under `third_party/lzma_sdk/`, while the unmodified
 upstream archive and checksum are stored under
 `third_party/upstream/lzma-sdk/26.03/`. The older 26.01 provenance is retained.
 
 ## Lhasa 0.6.0
 
-SuperZip vendors Lhasa release `0.6.0` for extract-only LHA/LZH compatibility.
+FlitzZip vendors Lhasa release `0.6.0` for extract-only LHA/LZH compatibility.
 
 - Upstream: <https://github.com/fragglet/lhasa>
 - Release tag: `v0.6.0`
@@ -136,20 +136,20 @@ SuperZip vendors Lhasa release `0.6.0` for extract-only LHA/LZH compatibility.
 - Source archive SHA-256: `9840154367f73e9d9c3196f944a121ab4d398d84e921c8fe8fca8a931274aed7`
 - License: ISC, preserved at `third_party/lhasa/COPYING.md`
 
-SuperZip uses Lhasa only as an in-process LHA/LZH decoder and metadata reader.
+FlitzZip uses Lhasa only as an in-process LHA/LZH decoder and metadata reader.
 It does not call Lhasa's extraction helper and does not shell out to `lha` or
-other host tools. The SuperZip adapter validates every decoded entry path,
+other host tools. The FlitzZip adapter validates every decoded entry path,
 rejects symlinks, checks payload CRC/size before destination writes, and
 publishes files through the standard verified temporary-file path.
 
 The production copy under `third_party/lhasa/` carries narrow local hardening
-patches documented in `third_party/lhasa/README.SUPERZIP.md`. The unmodified
+patches documented in `third_party/lhasa/README.FLITZZIP.md`. The unmodified
 upstream source archive and checksum are stored under
 `third_party/upstream/lhasa/0.6.0/` for provenance.
 
 ## wimlib 1.14.5
 
-SuperZip bundles the official wimlib release `1.14.5` Windows x64 runtime for
+FlitzZip bundles the official wimlib release `1.14.5` Windows x64 runtime for
 extract-only standalone WIM compatibility.
 
 - Upstream: <https://wimlib.net/>
@@ -167,18 +167,18 @@ extract-only standalone WIM compatibility.
   The bundled libdivsufsort-lite notice is preserved at
   `third_party/wimlib/COPYING.libdivsufsort-lite.txt`.
 
-SuperZip uses wimlib only through an app-local dynamically loaded
+FlitzZip uses wimlib only through an app-local dynamically loaded
 `libwim-15.dll` and does not call `wimlib-imagex.exe`, DISM, PowerShell, shell
 handlers, or host-installed WIM utilities. CMake verifies the official runtime
 package, extracts only the runtime DLL into the build tree, verifies the DLL
-checksum, and copies the DLL beside each SuperZip executable. The adapter opens
+checksum, and copies the DLL beside each FlitzZip executable. The adapter opens
 WIM files read-only, rejects split WIM sets, validates all paths and unsupported
 entry kinds before staging, extracts into a private temporary directory, then
-publishes approved regular files through SuperZip's verified temporary-file
+publishes approved regular files through FlitzZip's verified temporary-file
 path.
 
 The active header under `third_party/wimlib/wimlib.h` carries a local
-scanner-neutral comment/member-name normalization for declarations SuperZip
+scanner-neutral comment/member-name normalization for declarations FlitzZip
 does not use as security primitives. The original upstream header remains
 unchanged inside the pinned upstream package recorded above.
 
@@ -186,13 +186,13 @@ The unmodified complete source tarball is preserved beside the binary
 provenance package. It contains the library sources, notices, configuration,
 Makefiles, `README.WINDOWS.md` and `tools/windows-build.sh`. The upstream
 Windows source build uses MinGW-w64 through MSYS2; it is not an MSVC build.
-This does not change SuperZip's Windows-native MSVC/HIP product build and does
+This does not change FlitzZip's Windows-native MSVC/HIP product build and does
 not authorize WSL or installation of another toolchain during ordinary work.
 
 For distribution, use the source/rebuild route in LGPL-2.1 sections 6(a)/6(d),
 not a claim that the shipped executable permits every interface-compatible
 DLL to be substituted directly. Its runtime checksum pin deliberately rejects
-modified DLL bytes. The release's exact SuperZip source must be available
+modified DLL bytes. The release's exact FlitzZip source must be available
 alongside the binary release, including this complete wimlib source tarball
 and application build scripts. A recipient rebuilding with a modified library
 must update that build's wimlib package and DLL hash pins in `CMakeLists.txt`
@@ -204,10 +204,10 @@ the rebuild check; adding this archive alone is not proof of that gate.
 
 ## AMD HIP SDK
 
-SuperZip is built against AMD HIP SDK for Windows. AMD's Windows HIP deployment
+FlitzZip is built against AMD HIP SDK for Windows. AMD's Windows HIP deployment
 guidance says the HIP runtime is supplied by the AMD GPU driver, while ISV
 packages may distribute additional dynamically linked HIP SDK libraries they
-use. SuperZip currently links only against the HIP runtime import library and
+use. FlitzZip currently links only against the HIP runtime import library and
 does not redistribute the HIP runtime DLL.
 
 The release manifest records the runtime DLL name observed at build time so the
@@ -233,4 +233,4 @@ not a shipped runtime dependency or a product scanner.
 
 Benchmark-tool execution and result-publication decisions are recorded
 separately in [Benchmark Permissions And Tool Selection](benchmark-permissions.md).
-They do not grant permission to redistribute comparator binaries with SuperZip.
+They do not grant permission to redistribute comparator binaries with FlitzZip.

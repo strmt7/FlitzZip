@@ -567,8 +567,8 @@ cloudpickle==3.1.2 \
     --hash=sha256:9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a
 colorama==0.4.6 \
     --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
-crawl4ai==0.9.4+superzip.portable2 \
-    --hash=sha256:9377774b334eba08a5a79c26127b2d9c74e7d1e8717e0ec1279f0e798cbe196c
+crawl4ai==0.9.4+flitzzip.portable2 \
+    --hash=sha256:3b0673cd30de789a0516a00c682ef7208322d234241785fac982b02a7af3781d
 cryptography==50.0.2 \
     --hash=sha256:0ddc924c04591c2811ca024d62ecad4f7f6f08af8939c211438f48a16bd23602 \
     --hash=sha256:0ec5f09541743261e66e291b4a0cbf0fb2997aeaab6d9e9c740b9dba1b58d1c2 \
@@ -1599,8 +1599,8 @@ multidict==6.9.1 \
     --hash=sha256:fd882aa29bf402b62bf1fd7c19fd5df4b6528cf468a908864b39368572b662a9
 networkx==3.7 \
     --hash=sha256:e3fd2c13a7814cee3746340d8d7f8598a67f16a58bf47fb7f8793fab6efca1b0
-nltk==3.10.3+superzip.security1.g1bd574cfd \
-    --hash=sha256:1de1c723e33695c5847ce1bdee7f451c89c0eca4c3c6be6903db27e7f9ca4b28
+nltk==3.10.3+flitzzip.security1.g1bd574cfd \
+    --hash=sha256:a1ed1e52f00b188efab80e49adf864a9d45405c060c97cc5b551da2b197e57f2
 numpy==2.5.3 \
     --hash=sha256:012e66aca395d795496446e52aeeb5866312a5d4d3f27da270e5a0b43f70dc5c \
     --hash=sha256:09d5a423c71ad5feb5625844ad58050e35df43871004b52ac9c0ad44a56775be \

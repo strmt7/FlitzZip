@@ -43,7 +43,7 @@ It distinguishes reviewed practices from work not yet implemented or measured.
   accessible in the current review; no current run-count policy is inferred.
 - [lzbench](https://github.com/inikep/lzbench) is an in-memory multi-codec
   comparator with timed loops and round-trip verification. It requires codecs
-  to be integrated into its binary; it cannot measure SuperZip's application,
+  to be integrated into its binary; it cannot measure FlitzZip's application,
   archive container, or GPU path without a maintained integration.
   Its results are contextual, not a substitute for archive measurements.
 - The [Silesia corpus author](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia)
@@ -57,7 +57,7 @@ It distinguishes reviewed practices from work not yet implemented or measured.
 PCMag's site was not accessible to the research tools when this protocol was
 written. No PCMag-specific procedure is inferred or attributed here. The
 sources above are examples of disclosed review methods, not authorities that
-make any individual SuperZip result representative.
+make any individual FlitzZip result representative.
 
 ## Scope And Corpus
 
@@ -91,7 +91,7 @@ are useful diagnostics, not substitutes for real-file cases.
 
 `python -m tools.run_archive_comparison --manifest manifest.json --corpus raw`
 selects reviewed replacement inputs instead of the historical Silesia path.
-Also provide `--superzip`, the `--sevenzip` or `--zstd` executable required by
+Also provide `--flitzzip`, the `--sevenzip` or `--zstd` executable required by
 each case, and a new `--output` beneath ignored `out/benchmarks/`. This path is
 still a bounded filesystem diagnostic, not the large RAM-only throughput lane.
 No payload download, data duplication or trial software is implied.
@@ -106,14 +106,14 @@ download and transformation independently before approving its manifest:
 matching a declared hash does not itself prove that a file came from UCI.
 
 Each case has `name`, `format`, `files` and `tools`. Current implemented pairs
-are `["SuperZip", "7-Zip"]` for `zip` and `["SuperZip", "Zstd"]` for a
+are `["FlitzZip", "7-Zip"]` for `zip` and `["FlitzZip", "Zstd"]` for a
 single-file `zst` case. Every listed file must be used. Bandizip and PeaZip
 remain selected candidates, not implemented adapters or measured series.
 Replacement runs produce schema-two records with the manifest hash; the
 historical graph validators remain schema-one and cannot publish these new
 records until the replacement-series chart review is completed.
 
-For Zstandard diagnostics, the normal SuperZip CLI also reports disjoint
+For Zstandard diagnostics, the normal FlitzZip CLI also reports disjoint
 `setup_seconds`, `stream_seconds`, and `publication_seconds`. Setup includes
 runtime integrity checks and path admission. Streaming includes codec work,
 file reads/writes, frame validation, and stream close; it is not pure codec
@@ -126,14 +126,14 @@ integrity checks or durability guarantees to improve comparison scores.
 
 ## Comparators And Configuration
 
-Use a clean, built SuperZip commit on Windows and the latest stable,
+Use a clean, built FlitzZip commit on Windows and the latest stable,
 provenance-checked official 7-Zip CLI for ZIP. Use the latest stable official
 Zstd CLI for single-file `.zst`
 cases. These are separate format panels: never rank `.zip`, `.zst`, and
-`.suzip` archive bytes as if the containers and semantics were identical.
+`.flzip` archive bytes as if the containers and semantics were identical.
 Record each executable's version, SHA-256, source URL, full arguments, build
 mode, OS version, CPU/GPU models, RAM, storage type, and relevant thread limits.
-No competitor is silently assigned SuperZip's GPU capability. Native SUZIP
+No competitor is silently assigned FlitzZip's GPU capability. Native FLZIP
 CPU and GPU measurements remain a distinct paired study.
 
 Bandizip Standard is the eligible commercial ZIP alternative, subject to
@@ -146,7 +146,7 @@ records these decisions and their sources. Do not copy competitor software,
 branding, manuals or graphs into the product or benchmark publications.
 
 Set both ZIP writers to ZIP Deflate explicitly. This first study selects
-numeric level 5 explicitly in SuperZip, 7-Zip, and Zstd; it is not described as
+numeric level 5 explicitly in FlitzZip, 7-Zip, and Zstd; it is not described as
 each tool's default. Record all actual flags. Optional low/high settings are
 separately labeled tradeoff points.
 Equal numeric levels across tools do **not** mean equal algorithmic effort or
@@ -157,12 +157,12 @@ hardware data only and must not be plotted as product archive throughput.
 The final effort study uses all supported levels 1 through 9. Earlier charts
 with levels 1, 3, 5, 7 and 9 are historical records, not a complete nine-level study.
 Each setting is a **tool-local control**, not equivalent work across tools:
-SuperZip's `.zst` levels map to Zstandard backend efforts differently from
-the official CLI, and `.suzip` selects among static, adaptive, Huffman, and
+FlitzZip's `.zst` levels map to Zstandard backend efforts differently from
+the official CLI, and `.flzip` selects among static, adaptive, Huffman, and
 dictionary HIP candidates by complete encoded size. The
 graph uses achieved whole-archive bytes and whole-command time, not numeric
 level as a proxy for quality. It may show same-size plateaus; no result is
-altered to make every control produce a distinct size. Native `.suzip`
+altered to make every control produce a distinct size. Native `.flzip`
 CPU versus GPU effort sweeps are separately labeled and
 RAM-only, never pooled with compatibility-format sizes.
 
@@ -170,7 +170,7 @@ RAM-only, never pooled with compatibility-format sizes.
 
 ### Machine And Software Disclosure
 
-The published record must identify the exact SuperZip commit and executable
+The published record must identify the exact FlitzZip commit and executable
 SHA-256, x64 Release/HIP build configuration and CMake cache digest, plus each
 comparator's version, executable SHA-256, and official source URL. Report the
 Windows edition/build; CPU model, physical core count, and logical thread
@@ -311,7 +311,7 @@ formats and systems are shown as unmeasured, not as failures or wins.
 
 ## Measurement Cache
 
-Store competitor records separately from SuperZip records. A SuperZip source
+Store competitor records separately from FlitzZip records. A FlitzZip source
 change must not invalidate unchanged competitor timings merely because the
 combined chart changed. Reuse requires an exact content-addressed identity
 covering the methodology, relevant harness/adapter source hashes, immutable

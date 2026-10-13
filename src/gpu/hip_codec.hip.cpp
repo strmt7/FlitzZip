@@ -1,7 +1,7 @@
 #include "gpu/hip_kernel_api.hpp"
 #include "gpu/crc32_device.hpp"
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 using namespace hip_detail;
@@ -266,7 +266,7 @@ __global__ void materialize_blocks_kernel(const std::byte* payload, const Device
     }
 }
 
-// Purpose: Decode fill/raw/pattern metadata over fixed output segments to improve occupancy for large SUZIP blocks.
+// Purpose: Decode fill/raw/pattern metadata over fixed output segments to improve occupancy for large FLZIP blocks.
 // Inputs: `payload`, `blocks`, `block_count`, `output`, and `output_len` are validated device buffers and bounds.
 // Outputs: Writes raw/fill/pattern bytes, skips separate decoder windows, and preserves each lane's byte stride.
 __global__ void materialize_segments_kernel(const std::byte* payload, const DeviceBlock* blocks,
@@ -561,4 +561,4 @@ void bind_codec_kernels(HipKernelApi& api) noexcept {
     api.byte_plane_transform = hip_detail::byte_plane_transform_kernel;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

@@ -2,7 +2,7 @@
 # phases. Inputs: Exact staged header bytes and metadata key. Outputs: Three
 # proposed texts; preserves namespace, language linkage, macros and late opt-in
 # behavior.
-function(superzip_split_zstd_header content key)
+function(flitzzip_split_zstd_header content key)
   string(FIND "${content}" "#ifndef ${${key}_public_guard}" public_begin)
   string(FIND "${content}" "#endif${${key}_public_end}" public_end)
   if(public_begin LESS 0 OR public_end LESS_EQUAL public_begin)
@@ -22,7 +22,7 @@ function(superzip_split_zstd_header content key)
                  static "${static}")
   set(static "${license}${static}")
   if(key STREQUAL "_zstd_header_component_zstd")
-    superzip_zstd_share_default_allocator("${static}" static)
+    flitzzip_zstd_share_default_allocator("${static}" static)
   endif()
   set(public "${public}\n")
   string(
@@ -44,7 +44,7 @@ endfunction()
 # identity. Inputs: Absent or matching component path, expected digest and
 # complete text. Outputs: Matching LF source or rejection; never overwrites
 # unknown components.
-function(superzip_publish_zstd_header_component path expected content)
+function(flitzzip_publish_zstd_header_component path expected content)
   string(SHA256 proposed "${content}")
   if(NOT proposed STREQUAL expected)
     message(FATAL_ERROR "Zstandard header output identity mismatch: ${path}; "
@@ -58,7 +58,7 @@ function(superzip_publish_zstd_header_component path expected content)
     endif()
     return()
   endif()
-  set(temporary "${path}.superzip-component")
+  set(temporary "${path}.flitzzip-component")
   set(raw "${temporary}.raw")
   if(EXISTS "${temporary}" OR EXISTS "${raw}")
     message(FATAL_ERROR "Incomplete or concurrent Zstandard header: ${path}")
@@ -82,7 +82,7 @@ endfunction()
 # components. Outputs: Verified component graph; every unknown, missing or
 # altered output fails closed, including repeated configuration of already
 # dispatched headers.
-function(superzip_patch_zstd_header_components source_dir)
+function(flitzzip_patch_zstd_header_components source_dir)
   foreach(flavor IN ITEMS zstd zdict fse xxhash)
     set(key "_zstd_header_component_${flavor}")
     set(parts public static)
@@ -101,11 +101,11 @@ function(superzip_patch_zstd_header_components source_dir)
         endif()
         file(SHA256 "${component}" component_hash)
         if(flavor STREQUAL "zstd" AND part STREQUAL "static")
-          superzip_zstd_migrate_default_allocator("${component}"
+          flitzzip_zstd_migrate_default_allocator("${component}"
                                                   "${component_hash}")
           file(SHA256 "${component}" component_hash)
         elseif(flavor STREQUAL "xxhash" AND part STREQUAL "implementation")
-          superzip_migrate_zstd_hash_implementation("${component}"
+          flitzzip_migrate_zstd_hash_implementation("${component}"
                                                     "${component_hash}")
           file(SHA256 "${component}" component_hash)
         endif()
@@ -122,18 +122,18 @@ function(superzip_patch_zstd_header_components source_dir)
     endif()
     file(READ "${source}" content)
     if(flavor STREQUAL "xxhash")
-      superzip_split_zstd_hash_header("${content}" "${key}")
-      superzip_specialize_zstd_hash_implementation("${implementation}"
+      flitzzip_split_zstd_hash_header("${content}" "${key}")
+      flitzzip_specialize_zstd_hash_implementation("${implementation}"
                                                    implementation)
     else()
-      superzip_split_zstd_header("${content}" "${key}")
+      flitzzip_split_zstd_header("${content}" "${key}")
     endif()
     foreach(part IN LISTS parts)
-      superzip_publish_zstd_header_component(
+      flitzzip_publish_zstd_header_component(
         "${directory}/${${key}_stem}_${part}.h" "${${key}_${part}_hash}"
         "${${part}}")
     endforeach()
-    superzip_write_verified_zstd_patch("${source}" "${actual}"
+    flitzzip_write_verified_zstd_patch("${source}" "${actual}"
                                        "${${key}_patched}" "${dispatch}")
   endforeach()
 endfunction()

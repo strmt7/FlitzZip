@@ -2,7 +2,7 @@
 # Inputs: Exact predecessor text and optimizer flavor. Outputs: Proposed
 # complete source; adjacent trainer implementations retain their existing
 # contracts.
-function(superzip_rewrite_zstd_work_group content flavor output)
+function(flitzzip_rewrite_zstd_work_group content flavor output)
   if(flavor STREQUAL cover)
     string(
       CONCAT old_geometry "  if ((nbSamples != 0 && samplesSizes == NULL) ||\n"
@@ -107,7 +107,7 @@ endfunction()
 # Purpose: Publish explicit lifetime ownership for both exported optimizers.
 # Inputs: Extracted exact patched dictionary sources. Outputs: Complete known
 # revisions or identity rejection; immutable upstream archives are preserved.
-function(superzip_patch_zstd_work_group source_dir)
+function(flitzzip_patch_zstd_work_group source_dir)
   foreach(flavor IN ITEMS cover fastcover)
     set(key "_zstd_work_group_${flavor}")
     set(source "${source_dir}/lib/dictBuilder/${flavor}.c")
@@ -119,11 +119,11 @@ function(superzip_patch_zstd_work_group source_dir)
       message(FATAL_ERROR "Zstandard patch source identity mismatch: ${source}")
     endif()
     file(READ "${source}" content)
-    superzip_rewrite_zstd_work_group("${content}" "${flavor}" content)
+    flitzzip_rewrite_zstd_work_group("${content}" "${flavor}" content)
     string(CONCAT include "#include \"ZstdCoverWorkGroup.h\"\n")
     string(REPLACE "#include \"cover.h\"" "#include \"cover.h\"\n${include}"
                    content "${content}")
-    superzip_write_verified_zstd_patch("${source}" "${actual}"
+    flitzzip_write_verified_zstd_patch("${source}" "${actual}"
                                        "${${key}_patched}" "${content}")
   endforeach()
 endfunction()

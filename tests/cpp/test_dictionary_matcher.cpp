@@ -28,7 +28,7 @@
 
 namespace {
 
-using namespace superzip::dictionary;
+using namespace flitzzip::dictionary;
 
 // Purpose: Validate every returned match against original bytes, independently of the device's index.
 // Inputs: The immutable source, search result, and requested level.
@@ -132,25 +132,25 @@ std::vector<std::byte> make_segmented_records(std::size_t size, std::size_t reco
 // Inputs: Independently seeded 64 KiB groups with 12 or 16 KiB records, level-five HIP, and production block sizes.
 // Outputs: Requires entropy rejection before launch, one bounded periodic dictionary batch, and exact decoding.
 TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     for (const auto [block_bytes, record_bytes] :
          {std::pair{1024U * 1024U, 16U * 1024U}, std::pair{8U * 1024U * 1024U, 16U * 1024U},
           std::pair{16U * 1024U * 1024U, 16U * 1024U}, std::pair{16U * 1024U * 1024U, 12U * 1024U}}) {
         const auto input = make_segmented_records(block_bytes, record_bytes);
-        superzip::GpuCodecOptions options;
+        flitzzip::GpuCodecOptions options;
         options.block_size = static_cast<std::uint32_t>(block_bytes);
         options.compression_level = 5;
         options.require_gpu = true;
-        options.telemetry = std::make_shared<superzip::GpuTelemetry>();
-        const auto encoded = superzip::encode_chunk(input, options);
+        options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+        const auto encoded = flitzzip::encode_chunk(input, options);
         REQUIRE_TRUE(encoded.gpu_used);
         REQUIRE_EQ(encoded.blocks.size(), 1U);
-        REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+        REQUIRE_EQ(encoded.blocks.front().kind, flitzzip::BlockKind::GpuDictionary);
         REQUIRE_TRUE(encoded.payload.size() < input.size());
         if (block_bytes >= 8U * 1024U * 1024U) {
-            const auto telemetry = superzip::snapshot_gpu_telemetry(*options.telemetry);
+            const auto telemetry = flitzzip::snapshot_gpu_telemetry(*options.telemetry);
             std::cout << "dictionary_segmented_launches block_bytes=" << block_bytes << " record_bytes=" << record_bytes
                       << " launches=" << telemetry.kernel_launches << '\n';
             REQUIRE_EQ(telemetry.kernel_launches, 4U);
@@ -161,7 +161,7 @@ TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
             decode_options.require_gpu = hip;
             decode_options.force_cpu = !hip;
             std::vector<std::byte> decoded(input.size());
-            REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, decode_options), hip);
+            REQUIRE_EQ(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, decode_options), hip);
             REQUIRE_EQ(decoded, input);
         }
     }
@@ -171,18 +171,18 @@ TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
 // Inputs: Independently seeded 13,003-byte records within 64 KiB segments of a 1 MiB required-HIP block.
 // Outputs: Requires a materially smaller dictionary block at low/default/high effort and exact CPU/HIP read-back.
 TEST_CASE(dictionary_off_grid_segmented_records_roundtrip) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     const auto input = make_segmented_records(1024U * 1024U, 13003U);
     for (const int level : {1, 5, 9}) {
-        superzip::GpuCodecOptions options;
+        flitzzip::GpuCodecOptions options;
         options.block_size = static_cast<std::uint32_t>(input.size());
         options.compression_level = level;
         options.require_gpu = true;
-        const auto encoded = superzip::encode_chunk(input, options);
+        const auto encoded = flitzzip::encode_chunk(input, options);
         REQUIRE_EQ(encoded.blocks.size(), 1U);
-        REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+        REQUIRE_EQ(encoded.blocks.front().kind, flitzzip::BlockKind::GpuDictionary);
         REQUIRE_TRUE(encoded.payload.size() < input.size() / 2U);
         std::cout << "dictionary_off_grid_case level=" << level << " input_bytes=" << input.size()
                   << " payload_bytes=" << encoded.payload.size() << " memory_only=true disk_write_bytes=0\n";
@@ -191,7 +191,7 @@ TEST_CASE(dictionary_off_grid_segmented_records_roundtrip) {
             decode_options.require_gpu = hip;
             decode_options.force_cpu = !hip;
             std::vector<std::byte> decoded(input.size());
-            REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, decode_options), hip);
+            REQUIRE_EQ(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, decode_options), hip);
             REQUIRE_EQ(decoded, input);
         }
     }
@@ -201,22 +201,22 @@ TEST_CASE(dictionary_off_grid_segmented_records_roundtrip) {
 // Inputs: Two adjacent 8 MiB segmented-record blocks at balanced and maximum effort.
 // Outputs: Grouped payload bytes equal separate encodes, and both decoders restore the source exactly.
 TEST_CASE(dictionary_adjacent_periodic_blocks_preserve_encoded_bytes) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     constexpr std::size_t block_bytes = 8U * 1024U * 1024U;
     const auto input = make_segmented_records(2U * block_bytes);
     for (const int level : {5, 9}) {
-        superzip::GpuCodecOptions options;
+        flitzzip::GpuCodecOptions options;
         options.block_size = static_cast<std::uint32_t>(block_bytes);
         options.compression_level = level;
         options.require_gpu = true;
-        const auto grouped = superzip::encode_chunk(input, options);
+        const auto grouped = flitzzip::encode_chunk(input, options);
         REQUIRE_EQ(grouped.blocks.size(), 2U);
         std::vector<std::byte> separately_encoded;
         for (std::size_t block = 0U; block < 2U; ++block) {
             const auto source = std::span(input).subspan(block * block_bytes, block_bytes);
-            const auto separate = superzip::encode_chunk(source, options);
+            const auto separate = flitzzip::encode_chunk(source, options);
             REQUIRE_EQ(separate.blocks.size(), 1U);
             REQUIRE_EQ(grouped.blocks[block].kind, separate.blocks.front().kind);
             REQUIRE_EQ(grouped.blocks[block].encoded_len, separate.blocks.front().encoded_len);
@@ -228,7 +228,7 @@ TEST_CASE(dictionary_adjacent_periodic_blocks_preserve_encoded_bytes) {
             decode_options.require_gpu = hip;
             decode_options.force_cpu = !hip;
             std::vector<std::byte> decoded(input.size());
-            REQUIRE_EQ(superzip::decode_chunk(grouped.payload, grouped.blocks, decoded, decode_options), hip);
+            REQUIRE_EQ(flitzzip::decode_chunk(grouped.payload, grouped.blocks, decoded, decode_options), hip);
             REQUIRE_EQ(decoded, input);
         }
     }
@@ -238,7 +238,7 @@ TEST_CASE(dictionary_adjacent_periodic_blocks_preserve_encoded_bytes) {
 // Inputs: Two 8 MiB dictionary-friendly blocks with a disrupted record in the second block.
 // Outputs: Group-attempt fallback leaves complete per-block payload bytes unchanged and decodes exactly.
 TEST_CASE(dictionary_periodic_group_probe_falls_back_without_byte_changes) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     constexpr std::size_t block_bytes = 8U * 1024U * 1024U;
@@ -248,16 +248,16 @@ TEST_CASE(dictionary_periodic_group_probe_falls_back_without_byte_changes) {
     for (std::size_t offset = 0U; offset < 16384U; ++offset) {
         input[disrupted + offset] ^= static_cast<std::byte>((offset * 29U + 17U) & 0xFFU);
     }
-    superzip::GpuCodecOptions options;
+    flitzzip::GpuCodecOptions options;
     options.block_size = static_cast<std::uint32_t>(block_bytes);
     options.compression_level = 5;
     options.require_gpu = true;
-    const auto grouped = superzip::encode_chunk(input, options);
+    const auto grouped = flitzzip::encode_chunk(input, options);
     REQUIRE_EQ(grouped.blocks.size(), 2U);
     std::vector<std::byte> separately_encoded;
     for (std::size_t block = 0U; block < 2U; ++block) {
         const auto source = std::span(input).subspan(block * block_bytes, block_bytes);
-        const auto separate = superzip::encode_chunk(source, options);
+        const auto separate = flitzzip::encode_chunk(source, options);
         REQUIRE_EQ(separate.blocks.size(), 1U);
         REQUIRE_EQ(grouped.blocks[block].kind, separate.blocks.front().kind);
         REQUIRE_EQ(grouped.blocks[block].encoded_len, separate.blocks.front().encoded_len);
@@ -265,7 +265,7 @@ TEST_CASE(dictionary_periodic_group_probe_falls_back_without_byte_changes) {
     }
     REQUIRE_EQ(grouped.payload, separately_encoded);
     std::vector<std::byte> decoded(input.size());
-    REQUIRE_TRUE(superzip::decode_chunk(grouped.payload, grouped.blocks, decoded, options));
+    REQUIRE_TRUE(flitzzip::decode_chunk(grouped.payload, grouped.blocks, decoded, options));
     REQUIRE_EQ(decoded, input);
 }
 
@@ -273,21 +273,21 @@ TEST_CASE(dictionary_periodic_group_probe_falls_back_without_byte_changes) {
 // Inputs: One deterministic 16 MiB block with a changing 16 KiB record in each segment.
 // Outputs: Requires byte-exact CPU read-back and six distinct low/mid-effort sizes without high-effort growth.
 TEST_CASE(dictionary_periodic_efforts_preserve_size_order) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     const auto input = make_segmented_records(16U * 1024U * 1024U);
     std::size_t previous = input.size();
     for (int level = 1; level <= 9; ++level) {
-        superzip::GpuCodecOptions options;
+        flitzzip::GpuCodecOptions options;
         options.block_size = static_cast<std::uint32_t>(input.size());
         options.compression_level = level;
         options.require_gpu = true;
-        const auto encoded = superzip::encode_chunk(input, options);
+        const auto encoded = flitzzip::encode_chunk(input, options);
         REQUIRE_EQ(encoded.blocks.size(), 1U);
-        REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+        REQUIRE_EQ(encoded.blocks.front().kind, flitzzip::BlockKind::GpuDictionary);
         std::vector<std::byte> decoded(input.size());
-        REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded,
+        REQUIRE_TRUE(!flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded,
                                              {.require_gpu = false, .force_cpu = true}));
         REQUIRE_EQ(decoded, input);
         if (level <= 6) {
@@ -430,7 +430,7 @@ std::size_t first_dictionary_literals(const EncodedSegment& segment) {
 // Inputs: `path` belongs to the opt-in export root and `bytes` holds the complete bounded fixture.
 // Outputs: Publishes complete bytes atomically without following reparse parents or replacing an existing file.
 void write_dictionary_interop_file(const std::filesystem::path& path, std::span<const std::byte> bytes) {
-    superzip::FilePublishTransaction transaction(path);
+    flitzzip::FilePublishTransaction transaction(path);
     std::ofstream file(transaction.staging_path(), std::ios::binary);
     file.exceptions(std::ios::badbit | std::ios::failbit);
     if (!bytes.empty()) {
@@ -444,13 +444,13 @@ void write_dictionary_interop_file(const std::filesystem::path& path, std::span<
 // Inputs: A bounded segment, its decoded bytes, and an optional harness-owned environment export directory.
 // Outputs: Ordinary tests write nothing; opt-in runs emit numbered block/raw pairs, capped at 64 MiB per process.
 void export_dictionary_interop_fixture(const EncodedSegment& segment, std::span<const std::byte> decoded) {
-    const DWORD needed = GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_INTEROP_EXPORT", nullptr, 0);
+    const DWORD needed = GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_INTEROP_EXPORT", nullptr, 0);
     if (needed == 0U) {
         return;
     }
     REQUIRE_TRUE(needed <= 32768U);
     std::wstring root(needed, L'\0');
-    const auto copied = GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_INTEROP_EXPORT", root.data(), needed);
+    const auto copied = GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_INTEROP_EXPORT", root.data(), needed);
     REQUIRE_TRUE(copied > 0U && copied < needed);
     root.resize(copied);
     static std::size_t exported_bytes = 0;
@@ -502,7 +502,7 @@ std::size_t require_valid_encoded_batch(std::span<const std::byte> input, const 
 // Inputs: A bounded, nonperiodic RAM corpus at low, balanced, and high effort on an available HIP device.
 // Outputs: Requires finite stage measurements, exact diagnostic matches, and independent LZ4/HIP read-back.
 TEST_CASE(dictionary_dispatch_bound_stage_timing) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     const auto input = make_near_identical_records(4U * kSegmentBytes);
@@ -530,7 +530,7 @@ TEST_CASE(dictionary_dispatch_bound_stage_timing) {
 // Outputs: Requires independently decodable dictionary blocks within the four/five-launch effort policy;
 // level-five export supports an external reader.
 TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     for (const auto [record_bytes, input_bytes] :
@@ -538,24 +538,24 @@ TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
           std::pair{16U * 1024U, 16U * 1024U * 1024U}}) {
         const auto input = make_segmented_records(input_bytes, record_bytes);
         for (const int level : {1, 5, 9}) {
-            superzip::GpuCodecOptions options;
+            flitzzip::GpuCodecOptions options;
             options.block_size = static_cast<std::uint32_t>(input.size());
             options.compression_level = level;
             options.require_gpu = true;
-            options.telemetry = std::make_shared<superzip::GpuTelemetry>();
-            const auto encoded = superzip::encode_chunk(input, options);
-            const auto telemetry = superzip::snapshot_gpu_telemetry(*options.telemetry);
+            options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+            const auto encoded = flitzzip::encode_chunk(input, options);
+            const auto telemetry = flitzzip::snapshot_gpu_telemetry(*options.telemetry);
             REQUIRE_TRUE(std::isfinite(telemetry.kernel_ms) && telemetry.kernel_ms > 0.0);
             std::cout << "dictionary_periodic_launches input_bytes=" << input_bytes << " record_bytes=" << record_bytes
                       << " level=" << level << " launches=" << telemetry.kernel_launches << '\n';
             const bool measures_entropy = level == 9;
             REQUIRE_EQ(telemetry.kernel_launches, measures_entropy ? 5U : 4U);
             REQUIRE_EQ(encoded.blocks.size(), 1U);
-            REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+            REQUIRE_EQ(encoded.blocks.front().kind, flitzzip::BlockKind::GpuDictionary);
             REQUIRE_EQ(encoded.blocks.front().encoded_offset, 0U);
             REQUIRE_EQ(encoded.blocks.front().encoded_len, encoded.payload.size());
             const auto spans =
-                superzip::parse_dictionary_segments(encoded.payload, static_cast<std::uint32_t>(input.size()));
+                flitzzip::parse_dictionary_segments(encoded.payload, static_cast<std::uint32_t>(input.size()));
             for (const auto& span : spans) {
                 EncodedSegment segment;
                 segment.input_bytes = span.decoded_size;
@@ -575,7 +575,7 @@ TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
 // Inputs: Alternating 12 and 16 KiB records in independently seeded 64 KiB segments.
 // Outputs: Requires the periodic path and exact independent LZ4, CPU, and HIP decoding.
 TEST_CASE(dictionary_mixed_periodic_distances_roundtrip) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     constexpr std::size_t kInputBytes = 1024U * 1024U;
@@ -586,16 +586,16 @@ TEST_CASE(dictionary_mixed_periodic_distances_roundtrip) {
         std::copy_n(non_power_input.begin() + static_cast<std::ptrdiff_t>(offset), kSegmentBytes,
                     input.begin() + static_cast<std::ptrdiff_t>(offset));
     }
-    superzip::GpuCodecOptions options;
+    flitzzip::GpuCodecOptions options;
     options.block_size = static_cast<std::uint32_t>(kInputBytes);
     options.compression_level = 5;
     options.require_gpu = true;
-    options.telemetry = std::make_shared<superzip::GpuTelemetry>();
-    const auto encoded = superzip::encode_chunk(input, options);
+    options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+    const auto encoded = flitzzip::encode_chunk(input, options);
     REQUIRE_EQ(encoded.blocks.size(), 1U);
-    REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
-    REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).kernel_launches, 4U);
-    const auto spans = superzip::parse_dictionary_segments(encoded.payload, static_cast<std::uint32_t>(input.size()));
+    REQUIRE_EQ(encoded.blocks.front().kind, flitzzip::BlockKind::GpuDictionary);
+    REQUIRE_EQ(flitzzip::snapshot_gpu_telemetry(*options.telemetry).kernel_launches, 4U);
+    const auto spans = flitzzip::parse_dictionary_segments(encoded.payload, static_cast<std::uint32_t>(input.size()));
     for (const auto& span : spans) {
         EncodedSegment segment;
         segment.input_bytes = span.decoded_size;
@@ -609,7 +609,7 @@ TEST_CASE(dictionary_mixed_periodic_distances_roundtrip) {
         decode_options.require_gpu = hip;
         decode_options.force_cpu = !hip;
         std::vector<std::byte> decoded(input.size());
-        REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, decode_options), hip);
+        REQUIRE_EQ(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, decode_options), hip);
         REQUIRE_EQ(decoded, input);
     }
 }
@@ -667,7 +667,7 @@ TEST_CASE(dictionary_interop_export_rejects_reparse_parent) {
     const auto root = test_temp_dir("dictionary-export-root");
     const auto outside = test_temp_dir("dictionary-export-outside");
     const auto junction = root / "linked";
-    if (!superzip_test::try_create_test_directory_junction(junction, outside)) {
+    if (!flitzzip_test::try_create_test_directory_junction(junction, outside)) {
         std::cout << "[SKIP] directory junction creation is unavailable on this filesystem\n";
         return;
     }
@@ -675,14 +675,14 @@ TEST_CASE(dictionary_interop_export_rejects_reparse_parent) {
         std::filesystem::path path;
         // Purpose: Remove the owned junction; Inputs: saved junction path; Outputs: never follows its target.
         ~JunctionCleanup() {
-            superzip_test::remove_test_directory_junction(path);
+            flitzzip_test::remove_test_directory_junction(path);
         }
     } cleanup{junction};
     const std::array<std::byte, 4> bytes{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
     bool rejected = false;
     try {
         write_dictionary_interop_file(junction / "nested" / "fixture.raw", bytes);
-    } catch (const superzip::SecurityError&) {
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -700,7 +700,7 @@ TEST_CASE(dictionary_interop_export_preserves_bytes_and_refuses_overwrite) {
     bool rejected = false;
     try {
         write_dictionary_interop_file(path, {});
-    } catch (const superzip::SecurityError&) {
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -730,7 +730,7 @@ TEST_CASE(dictionary_interop_export_concurrent_writers_do_not_overwrite) {
                 const auto payload = payloads[index];
                 write_dictionary_interop_file(path, std::as_bytes(std::span(payload.data(), payload.size())));
                 ++committed;
-            } catch (const superzip::SecurityError&) {
+            } catch (const flitzzip::SecurityError&) {
                 ++refused;
             } catch (...) {
                 unexpected[index] = std::current_exception();
@@ -760,7 +760,7 @@ TEST_CASE(dictionary_interop_export_concurrent_writers_do_not_overwrite) {
 // Inputs: All nine efforts and seeded mixed data across cache and segment boundaries, plus the depth fixture.
 // Outputs: Requires byte-exact reference packing, CPU/HIP roundtrips, and exact workspace savings.
 TEST_CASE(dictionary_encoder_agrees_with_dense_reference) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     std::vector<std::vector<std::byte>> fixtures{make_dictionary_depth_fixture()};
@@ -795,7 +795,7 @@ TEST_CASE(dictionary_encoder_agrees_with_dense_reference) {
 // Inputs: Deterministic small-alphabet and full-alphabet fixtures at three search efforts, entirely in RAM.
 // Outputs: Requires exact independent CPU/HIP decoding of each result.
 TEST_CASE(dictionary_encoder_preserves_edge_cases) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     for (const std::size_t size : {1U, 3U, 4U, 11U, 12U, 13U, 255U, 256U, 257U, 65535U, 65536U, 65537U}) {
@@ -817,7 +817,7 @@ TEST_CASE(dictionary_encoder_preserves_edge_cases) {
 // Inputs: Former crossover boundaries at levels seven through nine, within the 4 MiB batch limit.
 // Outputs: Every result decodes exactly and stays below the declared GPU workspace cap.
 TEST_CASE(dictionary_encoder_workspace_boundaries) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     for (const int level : {7, 8, 9}) {
@@ -833,17 +833,17 @@ TEST_CASE(dictionary_encoder_workspace_boundaries) {
 }
 
 // Purpose: Measure the actual experimental encoder only when a resource-monitoring harness explicitly opts in.
-// Inputs: SUPERZIP_DICTIONARY_BENCHMARK=1; deterministic RAM-only profiles, efforts, and batch sizes.
+// Inputs: FLITZZIP_DICTIONARY_BENCHMARK=1; deterministic RAM-only profiles, efforts, and batch sizes.
 // Outputs: Prints host-wall encoding time and real resource/size counters after independent CPU/HIP verification.
 TEST_CASE(dictionary_encoder_benchmark_opt_in) {
     wchar_t enabled[2]{};
-    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_BENCHMARK", enabled, 2U) != 1U || enabled[0] != L'1') {
+    if (GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_BENCHMARK", enabled, 2U) != 1U || enabled[0] != L'1') {
         return;
     }
-    REQUIRE_EQ(GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_INTEROP_EXPORT", nullptr, 0U), 0U);
-    REQUIRE_TRUE(superzip::query_gpu_info().available);
+    REQUIRE_EQ(GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_INTEROP_EXPORT", nullptr, 0U), 0U);
+    REQUIRE_TRUE(flitzzip::query_gpu_info().available);
     const bool extended =
-        GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_BENCHMARK_EXTENDED", enabled, 2U) == 1U && enabled[0] == L'1';
+        GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_BENCHMARK_EXTENDED", enabled, 2U) == 1U && enabled[0] == L'1';
     const std::vector<std::size_t> sizes =
         extended ? std::vector<std::size_t>{65536U, 131072U, 524288U, 1048576U, 2097152U, 4194304U}
                  : std::vector<std::size_t>{kSegmentBytes, kMaxBatchBytes};
@@ -896,10 +896,10 @@ TEST_CASE(dictionary_encoder_benchmark_opt_in) {
 // Outputs: Prints median host times and exact sizes after byte-exact decode and GPU-native selection.
 TEST_CASE(dictionary_production_benchmark_opt_in) {
     wchar_t enabled[2]{};
-    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_PRODUCTION_BENCHMARK", enabled, 2U) != 1U || enabled[0] != L'1') {
+    if (GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_PRODUCTION_BENCHMARK", enabled, 2U) != 1U || enabled[0] != L'1') {
         return;
     }
-    REQUIRE_TRUE(superzip::query_gpu_info().available);
+    REQUIRE_TRUE(flitzzip::query_gpu_info().available);
     const auto input = make_near_identical_records(kMaxBatchBytes);
     std::uint32_t state = 0x31674325U;
     for (const int level : {1, 5, 9}) {
@@ -910,29 +910,29 @@ TEST_CASE(dictionary_production_benchmark_opt_in) {
         for (int iteration = -1; iteration < 3; ++iteration) {
             for (int order = 0; order < 2; ++order) {
                 const bool hip = (order + std::max(iteration, 0)) % 2 != 0;
-                superzip::GpuCodecOptions options;
+                flitzzip::GpuCodecOptions options;
                 options.block_size = 1024U * 1024U;
                 options.compression_level = level;
                 options.force_cpu = !hip;
                 options.require_gpu = hip;
                 const auto started = std::chrono::steady_clock::now();
-                const auto encoded = superzip::encode_chunk(input, options);
+                const auto encoded = flitzzip::encode_chunk(input, options);
                 const auto milliseconds =
                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
                 std::vector<std::byte> decoded(input.size());
-                REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options), hip);
+                REQUIRE_EQ(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options), hip);
                 REQUIRE_EQ(decoded, input);
                 if (iteration >= 0) {
                     times[hip][iteration] = milliseconds;
                     sizes[hip] = encoded.payload.size();
                     if (hip) {
                         dictionary_blocks = static_cast<std::size_t>(
-                            std::ranges::count_if(encoded.blocks, [](const superzip::BlockDescriptor& block) {
-                                return block.kind == superzip::BlockKind::GpuDictionary;
+                            std::ranges::count_if(encoded.blocks, [](const flitzzip::BlockDescriptor& block) {
+                                return block.kind == flitzzip::BlockKind::GpuDictionary;
                             }));
                         sparse_blocks = static_cast<std::size_t>(
-                            std::ranges::count_if(encoded.blocks, [](const superzip::BlockDescriptor& block) {
-                                return block.kind == superzip::BlockKind::GpuSparsePattern;
+                            std::ranges::count_if(encoded.blocks, [](const flitzzip::BlockDescriptor& block) {
+                                return block.kind == flitzzip::BlockKind::GpuSparsePattern;
                             }));
                         REQUIRE_TRUE(dictionary_blocks + sparse_blocks > 0U);
                     }
@@ -965,13 +965,13 @@ TEST_CASE(dictionary_production_benchmark_opt_in) {
         state ^= state << 5U;
         nonrepeating[index] = static_cast<std::byte>(state >> 24U);
     }
-    superzip::GpuCodecOptions baseline_options;
+    flitzzip::GpuCodecOptions baseline_options;
     baseline_options.compression_level = 5;
     baseline_options.block_size = 1024U * 1024U;
     std::array<double, 3> baseline_times{};
     for (int iteration = -1; iteration < 3; ++iteration) {
         const auto started = std::chrono::steady_clock::now();
-        const auto encoded = superzip::encode_chunk(nonrepeating, baseline_options);
+        const auto encoded = flitzzip::encode_chunk(nonrepeating, baseline_options);
         const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started);
         REQUIRE_EQ(encoded.payload, nonrepeating);
         if (iteration >= 0) {
@@ -988,7 +988,7 @@ TEST_CASE(dictionary_production_benchmark_opt_in) {
 // Outputs: Prints exact payload/table sizes only after independent LZ4 roundtrips; changes no archive behavior.
 TEST_CASE(dictionary_segment_size_reference_opt_in) {
     wchar_t enabled[2]{};
-    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_SEGMENT_RESEARCH", enabled, 2U) != 1U || enabled[0] != L'1') {
+    if (GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_SEGMENT_RESEARCH", enabled, 2U) != 1U || enabled[0] != L'1') {
         return;
     }
     constexpr std::size_t block_bytes = 1024U * 1024U;
@@ -1020,10 +1020,10 @@ TEST_CASE(dictionary_segment_size_reference_opt_in) {
 // Outputs: Prints candidate and actual CPU/HIP sizes after byte-exact reconstruction; writes no files.
 TEST_CASE(dictionary_sparse_pattern_reference_opt_in) {
     wchar_t enabled[2]{};
-    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_SPARSE_RESEARCH", enabled, 2U) != 1U || enabled[0] != L'1') {
+    if (GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_SPARSE_RESEARCH", enabled, 2U) != 1U || enabled[0] != L'1') {
         return;
     }
-    REQUIRE_TRUE(superzip::query_gpu_info().available);
+    REQUIRE_TRUE(flitzzip::query_gpu_info().available);
     constexpr std::size_t record_bytes = 16384U;
     constexpr std::size_t block_bytes = 1024U * 1024U;
     for (const auto extra_patches : {0U, 15U, 255U}) {
@@ -1058,20 +1058,20 @@ TEST_CASE(dictionary_sparse_pattern_reference_opt_in) {
         }
         std::array<std::size_t, 2> production_bytes{};
         for (const bool hip : {false, true}) {
-            superzip::GpuCodecOptions options;
+            flitzzip::GpuCodecOptions options;
             options.block_size = static_cast<std::uint32_t>(block_bytes);
             options.compression_level = 5;
             options.force_cpu = !hip;
             options.require_gpu = hip;
-            const auto encoded = superzip::encode_chunk(input, options);
+            const auto encoded = flitzzip::encode_chunk(input, options);
             std::vector<std::byte> decoded(input.size());
-            REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options), hip);
+            REQUIRE_EQ(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options), hip);
             REQUIRE_EQ(decoded, input);
             production_bytes[hip] = encoded.payload.size();
             if (hip) {
                 REQUIRE_EQ(encoded.blocks.size(), input.size() / block_bytes);
                 for (const auto& block : encoded.blocks) {
-                    REQUIRE_EQ(block.kind, superzip::BlockKind::GpuSparsePattern);
+                    REQUIRE_EQ(block.kind, flitzzip::BlockKind::GpuSparsePattern);
                 }
                 REQUIRE_EQ(production_bytes[hip], total_bytes);
             }
@@ -1098,10 +1098,10 @@ TEST_CASE(dictionary_sparse_pattern_reference_opt_in) {
 // Outputs: Prints a byte-exact sparse reference and verified production CPU/HIP payload sizes in RAM.
 TEST_CASE(dictionary_long_period_reference_opt_in) {
     wchar_t enabled[2]{};
-    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_LONG_PERIOD_RESEARCH", enabled, 2U) != 1U || enabled[0] != L'1') {
+    if (GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_LONG_PERIOD_RESEARCH", enabled, 2U) != 1U || enabled[0] != L'1') {
         return;
     }
-    REQUIRE_TRUE(superzip::query_gpu_info().available);
+    REQUIRE_TRUE(flitzzip::query_gpu_info().available);
     constexpr std::size_t block_bytes = 4U * 1024U * 1024U;
     for (const auto record_bytes : {256U * 1024U, 1024U * 1024U}) {
         std::vector<std::byte> input(block_bytes);
@@ -1123,19 +1123,19 @@ TEST_CASE(dictionary_long_period_reference_opt_in) {
         REQUIRE_TRUE(reference_bytes.has_value());
         std::array<std::size_t, 2> production_bytes{};
         for (const bool hip : {false, true}) {
-            superzip::GpuCodecOptions options;
+            flitzzip::GpuCodecOptions options;
             options.block_size = static_cast<std::uint32_t>(block_bytes);
             options.compression_level = 5;
             options.force_cpu = !hip;
             options.require_gpu = hip;
-            const auto encoded = superzip::encode_chunk(input, options);
+            const auto encoded = flitzzip::encode_chunk(input, options);
             std::vector<std::byte> decoded(input.size());
-            REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options), hip);
+            REQUIRE_EQ(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options), hip);
             REQUIRE_EQ(decoded, input);
             production_bytes[hip] = encoded.payload.size();
             if (hip) {
                 REQUIRE_EQ(encoded.blocks.size(), 1U);
-                REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::GpuLongSparsePattern);
+                REQUIRE_EQ(encoded.blocks[0].kind, flitzzip::BlockKind::GpuLongSparsePattern);
                 REQUIRE_EQ(production_bytes[hip], *reference_bytes);
             }
         }
@@ -1149,7 +1149,7 @@ TEST_CASE(dictionary_long_period_reference_opt_in) {
 // Inputs: Repeated records across the 8 MiB CRC policy boundary and up to the 128 MiB chunk limit.
 // Outputs: CPU/HIP CRC and decoded bytes match source bytes for every encoded chunk.
 TEST_CASE(dictionary_production_chunk_crc_and_decode) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     for (const std::size_t size : {4U * 1024U * 1024U, 8U * 1024U * 1024U - 1U, 8U * 1024U * 1024U,
@@ -1171,29 +1171,29 @@ TEST_CASE(dictionary_production_chunk_crc_and_decode) {
             for (std::size_t index = 16384U; index < input.size(); ++index) {
                 input[index] = input[index % 16384U];
             }
-            superzip::GpuCodecOptions gpu;
+            flitzzip::GpuCodecOptions gpu;
             gpu.block_size = 1024U * 1024U;
             gpu.compression_level = 5;
-            gpu.telemetry = std::make_shared<superzip::GpuTelemetry>();
-            const auto expected_crc = superzip::crc32(input);
-            const auto encoded = superzip::encode_owned_chunk(std::vector<std::byte>(input), gpu);
-            const auto encode_stats = superzip::snapshot_gpu_telemetry(*gpu.telemetry);
+            gpu.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+            const auto expected_crc = flitzzip::crc32(input);
+            const auto encoded = flitzzip::encode_owned_chunk(std::vector<std::byte>(input), gpu);
+            const auto encode_stats = flitzzip::snapshot_gpu_telemetry(*gpu.telemetry);
             REQUIRE_TRUE(encode_stats.kernel_launches > 0U);
             REQUIRE_TRUE(encoded.gpu_used && encoded.source_crc32_available);
             REQUIRE_EQ(encoded.source_crc32, expected_crc);
-            superzip::GpuCodecOptions cpu;
+            flitzzip::GpuCodecOptions cpu;
             cpu.require_gpu = false;
             cpu.force_cpu = true;
-            const auto cpu_crc = superzip::crc_decoded_chunk(encoded.payload, encoded.blocks, size, cpu);
-            const auto gpu_crc = superzip::crc_decoded_chunk(encoded.payload, encoded.blocks, size, gpu);
+            const auto cpu_crc = flitzzip::crc_decoded_chunk(encoded.payload, encoded.blocks, size, cpu);
+            const auto gpu_crc = flitzzip::crc_decoded_chunk(encoded.payload, encoded.blocks, size, gpu);
             std::cout << "dictionary_chunk_crc_case size=" << size << " benchmark_record=" << benchmark_record
                       << " source=" << expected_crc << " cpu=" << cpu_crc.crc32 << " gpu=" << gpu_crc.crc32 << "\n";
             REQUIRE_EQ(cpu_crc.crc32, expected_crc);
             REQUIRE_EQ(gpu_crc.crc32, expected_crc);
             std::vector<std::byte> decoded(size);
-            REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, cpu));
+            REQUIRE_TRUE(!flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, cpu));
             REQUIRE_EQ(decoded, input);
-            REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, gpu));
+            REQUIRE_TRUE(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, gpu));
             REQUIRE_EQ(decoded, input);
         }
     }
@@ -1204,8 +1204,8 @@ TEST_CASE(dictionary_production_chunk_crc_and_decode) {
 // Outputs: Every complete encoded payload is byte-identical to the serial reference.
 TEST_CASE(dictionary_concurrent_equal_input_encoding) {
     wchar_t enabled[2]{};
-    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_STRESS", enabled, 2U) != 1U || enabled[0] != L'1' ||
-        !superzip::query_gpu_info().available) {
+    if (GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_STRESS", enabled, 2U) != 1U || enabled[0] != L'1' ||
+        !flitzzip::query_gpu_info().available) {
         return;
     }
     std::vector<std::byte> input(128U * 1024U * 1024U);
@@ -1217,15 +1217,15 @@ TEST_CASE(dictionary_concurrent_equal_input_encoding) {
         value ^= value >> 31U;
         input[index] = static_cast<std::byte>(value >> 56U);
     }
-    superzip::GpuCodecOptions gpu;
+    flitzzip::GpuCodecOptions gpu;
     gpu.block_size = 1024U * 1024U;
     gpu.compression_level = 5;
-    const auto reference = superzip::encode_owned_chunk(std::vector<std::byte>(input), gpu);
-    std::vector<std::future<superzip::EncodedChunk>> pending;
+    const auto reference = flitzzip::encode_owned_chunk(std::vector<std::byte>(input), gpu);
+    std::vector<std::future<flitzzip::EncodedChunk>> pending;
     pending.reserve(16U);
     for (std::size_t index = 0; index < 16U; ++index) {
         pending.push_back(std::async(std::launch::async, [&input, gpu] {
-            return superzip::encode_owned_chunk(std::vector<std::byte>(input), gpu);
+            return flitzzip::encode_owned_chunk(std::vector<std::byte>(input), gpu);
         }));
     }
     for (auto& task : pending) {
@@ -1250,7 +1250,7 @@ TEST_CASE(dictionary_concurrent_equal_input_encoding) {
 // Inputs: Four callers by default, or thirty-two opt-in callers, encode the same 4 MiB source repeatedly.
 // Outputs: Every independent LZ4 segment matches the serial reference exactly.
 TEST_CASE(dictionary_concurrent_repeated_batch_encoding) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     std::vector<std::byte> input(4U * 1024U * 1024U);
@@ -1264,7 +1264,7 @@ TEST_CASE(dictionary_concurrent_repeated_batch_encoding) {
     }
     const auto reference = encode_segments(input, 5);
     wchar_t enabled[2]{};
-    const bool stress = GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_STRESS", enabled, 2U) == 1U && enabled[0] == L'1';
+    const bool stress = GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_STRESS", enabled, 2U) == 1U && enabled[0] == L'1';
     const std::size_t workers = stress ? 32U : 4U;
     const std::size_t repetitions = stress ? 32U : 4U;
     std::vector<std::future<void>> pending;
@@ -1303,8 +1303,8 @@ TEST_CASE(dictionary_concurrent_repeated_batch_encoding) {
 // Outputs: Every dense GPU match record matches the serial reference exactly.
 TEST_CASE(dictionary_concurrent_dense_match_table) {
     wchar_t enabled[2]{};
-    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_STRESS", enabled, 2U) != 1U || enabled[0] != L'1' ||
-        !superzip::query_gpu_info().available) {
+    if (GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_STRESS", enabled, 2U) != 1U || enabled[0] != L'1' ||
+        !flitzzip::query_gpu_info().available) {
         return;
     }
     std::vector<std::byte> input(4U * 1024U * 1024U);
@@ -1355,27 +1355,27 @@ TEST_CASE(dictionary_decoder_admission) {
         bool rejected = false;
         try {
             (void)decode_segments(segments);
-        } catch (const superzip::ArchiveError&) {
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
     }
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         bool rejected = false;
         try {
             (void)decode_segments(std::span{&valid, 1U});
-        } catch (const superzip::GpuError&) {
+        } catch (const flitzzip::GpuError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
     }
 }
 
-// Purpose: Decode a golden block produced by python-lz4 4.4.5, not the SuperZip encoder.
+// Purpose: Decode a golden block produced by python-lz4 4.4.5, not the FlitzZip encoder.
 // Inputs: The raw block for (b'abcdefg' * 137) + bytes(range(32)), including a 952-byte distance-seven copy.
 // Outputs: Requires byte-exact HIP output across the overlapping period and final literal extension.
 TEST_CASE(dictionary_decoder_independent_writer_fixture) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     const std::array<unsigned char, 48> encoded{0x7f, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x07, 0x00, 0xff, 0xff,
@@ -1400,7 +1400,7 @@ TEST_CASE(dictionary_decoder_independent_writer_fixture) {
 // Inputs: All sixteen low-nibble values on literal-only and match-following final sequences.
 // Outputs: Requires identical decoded bytes without consuming nonexistent offset or match-extension fields.
 TEST_CASE(dictionary_decoder_final_token_unused_bits) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     for (unsigned int nibble = 0; nibble < 16U; ++nibble) {
@@ -1417,7 +1417,7 @@ TEST_CASE(dictionary_decoder_final_token_unused_bits) {
 // Inputs: A python-lz4 full-segment run and a hand-derived maximum-distance block with exact expected bytes.
 // Outputs: Requires 65530-byte overlapping matches and distance 65524 without cross-segment reads or output changes.
 TEST_CASE(dictionary_decoder_long_match_and_maximum_distance) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     EncodedSegment repeated{{std::byte{0x1f}, std::byte{'A'}, std::byte{1}, std::byte{0}}, kSegmentBytes};
@@ -1464,7 +1464,7 @@ TEST_CASE(dictionary_decoder_long_match_and_maximum_distance) {
 // Inputs: Invalid tokens, extensions, distances, tail rules, and declared sizes between valid neighboring blocks.
 // Outputs: Requires explicit decode errors and a succeeding valid decode after every rejected batch.
 TEST_CASE(dictionary_decoder_rejects_incomplete_sequences) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     const EncodedSegment valid{{std::byte{0x10}, std::byte{'A'}}, 1U};
@@ -1494,7 +1494,7 @@ TEST_CASE(dictionary_decoder_rejects_incomplete_sequences) {
         bool rejected = false;
         try {
             (void)decode_segments(batch);
-        } catch (const superzip::ArchiveError&) {
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -1522,7 +1522,7 @@ TEST_CASE(dictionary_effort_and_resource_contracts) {
         bool rejected = false;
         try {
             (void)find_matches({}, level);
-        } catch (const superzip::ArchiveError&) {
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -1538,7 +1538,7 @@ TEST_CASE(dictionary_effort_and_resource_contracts) {
     try {
         const std::vector<std::byte> oversized(kMaxBatchBytes + 1U);
         (void)find_matches(oversized, 9);
-    } catch (const superzip::ArchiveError&) {
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -1563,14 +1563,14 @@ TEST_CASE(dictionary_stage_timing_validity) {
 // Inputs: A searchable four-byte input on a build or host without usable HIP.
 // Outputs: Requires GpuError when HIP is unavailable; hardware-backed execution is covered separately.
 TEST_CASE(dictionary_search_has_no_cpu_fallback) {
-    if (superzip::query_gpu_info().available) {
+    if (flitzzip::query_gpu_info().available) {
         return;
     }
     bool rejected = false;
     try {
         const std::array<std::byte, 4> input{};
         (void)find_matches(input, 1);
-    } catch (const superzip::GpuError&) {
+    } catch (const flitzzip::GpuError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -1580,7 +1580,7 @@ TEST_CASE(dictionary_search_has_no_cpu_fallback) {
 // Inputs: The controlled depth corpus, encoded twice at each level without filesystem writes.
 // Outputs: Requires strictly improving target matches, nearest ties, repeatability, and nondecreasing match lengths.
 TEST_CASE(dictionary_gpu_nine_efforts_find_longer_matches) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     const auto input = make_dictionary_depth_fixture();
@@ -1606,7 +1606,7 @@ TEST_CASE(dictionary_gpu_nine_efforts_find_longer_matches) {
 // Inputs: RAM-only seeded bytes mixed with fill and repeated nontrivial records at three effort levels.
 // Outputs: Requires all matches to stay inside source segments and every returned byte range to agree exactly.
 TEST_CASE(dictionary_gpu_matches_respect_segment_boundaries) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     for (const std::size_t size : {4U, 5U, 31U, 65535U, 65536U, 65537U, 131085U}) {
@@ -1631,7 +1631,7 @@ TEST_CASE(dictionary_gpu_matches_respect_segment_boundaries) {
 // Inputs: Short seeded alphabets and overlapping repeats whose exhaustive work fits strictly inside level-9 budgets.
 // Outputs: Requires every GPU match length and nearest reference to equal an independent exhaustive CPU oracle.
 TEST_CASE(dictionary_gpu_matches_agree_with_exhaustive_reference) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     for (std::uint32_t seed = 1; seed <= 16U; ++seed) {
@@ -1655,7 +1655,7 @@ TEST_CASE(dictionary_gpu_matches_agree_with_exhaustive_reference) {
 // Inputs: Four MiB of deterministic incompressible-shaped bytes followed by overlapping repetitions.
 // Outputs: Requires bounded workspace and exact matches; does not publish performance measurements.
 TEST_CASE(dictionary_gpu_maximum_batch_is_bounded) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     std::vector<std::byte> input(kMaxBatchBytes);
@@ -1685,7 +1685,7 @@ TEST_CASE(dictionary_gpu_maximum_batch_is_bounded) {
 // Inputs: Almost four MiB of 0xFF bytes spanning all 64 segments, including a partial final segment.
 // Outputs: Requires exact level-one match length/distance at segment boundaries and independent encoded read-back.
 TEST_CASE(dictionary_gpu_stable_prefix_order_with_maximum_sentinels) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     const std::vector<std::byte> input(kMaxBatchBytes - 2U, std::byte{0xFF});
@@ -1718,7 +1718,7 @@ TEST_CASE(dictionary_encoder_admission) {
         bool rejected = false;
         try {
             (void)encode_segments({}, level);
-        } catch (const superzip::ArchiveError&) {
+        } catch (const flitzzip::ArchiveError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -1727,16 +1727,16 @@ TEST_CASE(dictionary_encoder_admission) {
     try {
         const std::vector<std::byte> oversized(kMaxBatchBytes + 1U);
         (void)encode_segments(oversized, 5);
-    } catch (const superzip::ArchiveError&) {
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         rejected = false;
         try {
             const std::array<std::byte, 1> input{};
             (void)encode_segments(input, 5);
-        } catch (const superzip::GpuError&) {
+        } catch (const flitzzip::GpuError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -1747,7 +1747,7 @@ TEST_CASE(dictionary_encoder_admission) {
 // Inputs: A one-byte literal and the smallest independently compressible repeated-byte input.
 // Outputs: Requires exact LZ4 token, offset, final-literal bytes and independent roundtrips.
 TEST_CASE(dictionary_encoder_golden_blocks) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     for (const std::size_t length : {1U, 13U}) {
@@ -1767,7 +1767,7 @@ TEST_CASE(dictionary_encoder_golden_blocks) {
 // Inputs: RAM-only seeded and repeated-byte data at boundary lengths and the largest batch, without timing runs.
 // Outputs: Requires independent exact decoding and compact transfer accounting at low and high efforts.
 TEST_CASE(dictionary_encoder_boundaries_and_maximum_batch) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     for (const std::size_t size : {4U, 5U, 12U, 14U, 15U, 16U, 270U, 65535U, 65536U, 65537U, 4194304U}) {
@@ -1791,7 +1791,7 @@ TEST_CASE(dictionary_encoder_boundaries_and_maximum_batch) {
 // Inputs: Seeded full-alphabet bytes with eight-byte copies placed at changing tile offsets.
 // Outputs: Requires exact decoding at low/high effort without assuming sparse matches improve every block's size.
 TEST_CASE(dictionary_encoder_sparse_tile_matches) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     std::vector<std::byte> input(131085U);
@@ -1814,7 +1814,7 @@ TEST_CASE(dictionary_encoder_sparse_tile_matches) {
 // Inputs: A 64 KiB full-alphabet corpus formed by repeating a seeded 16 KiB record four times.
 // Outputs: Requires exact decoding, nine distinct effort sizes on this fixture, and fewer transfers than raw input.
 TEST_CASE(dictionary_encoder_long_repeat_size_gains) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     std::vector<std::byte> input(kSegmentBytes);
@@ -1826,9 +1826,9 @@ TEST_CASE(dictionary_encoder_long_repeat_size_gains) {
         input[index] = index < 16384U ? static_cast<std::byte>(state >> 24U) : input[index % 16384U];
     }
     std::size_t prior_size = input.size();
-    const auto baseline = superzip::encode_chunk(input, {.require_gpu = true, .compression_level = 9});
+    const auto baseline = flitzzip::encode_chunk(input, {.require_gpu = true, .compression_level = 9});
     REQUIRE_TRUE(baseline.gpu_used);
-    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_INTEROP_EXPORT", nullptr, 0) == 0U) {
+    if (GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_INTEROP_EXPORT", nullptr, 0) == 0U) {
         std::cout << "dictionary_existing_codec_case input_bytes=" << input.size()
                   << " payload_bytes=" << baseline.payload.size()
                   << " memory_only=true disk_write_bytes=0 timing_not_evaluated=true\n";
@@ -1839,7 +1839,7 @@ TEST_CASE(dictionary_encoder_long_repeat_size_gains) {
         REQUIRE_TRUE(bytes < prior_size);
         REQUIRE_TRUE(result.d2h_bytes < input.size());
         prior_size = bytes;
-        if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_INTEROP_EXPORT", nullptr, 0) == 0U) {
+        if (GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_INTEROP_EXPORT", nullptr, 0) == 0U) {
             std::cout << "dictionary_encoded_case level=" << level << " input_bytes=" << input.size()
                       << " payload_bytes=" << bytes << " d2h_bytes=" << result.d2h_bytes
                       << " memory_only=true disk_write_bytes=0 timing_not_evaluated=true\n";

@@ -16,7 +16,7 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 namespace {
 
@@ -159,7 +159,7 @@ bool MainWindow::handle_compress_click(const RECT& content, int x, int y) {
         bool enabled = false;
         {
             std::lock_guard lock(mutex_);
-            enabled = compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index));
+            enabled = compression_format_uses_flzip_tuning(compression_format_value(state_.compression_format_index));
         }
         if (enabled) {
             open_dropdown(DropdownId::CompressMethod);
@@ -170,7 +170,7 @@ bool MainWindow::handle_compress_click(const RECT& content, int x, int y) {
         bool enabled = false;
         {
             std::lock_guard lock(mutex_);
-            enabled = compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index));
+            enabled = compression_format_uses_flzip_tuning(compression_format_value(state_.compression_format_index));
         }
         if (enabled) {
             open_dropdown(DropdownId::CompressBlockSize);
@@ -609,4 +609,4 @@ bool MainWindow::handle_active_dropdown_click(int x, int y) {
 // Inputs: `id` identifies the dropdown to open.
 // Outputs: Updates UI state and queues a repaint.
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

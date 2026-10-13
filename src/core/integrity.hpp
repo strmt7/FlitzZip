@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <string>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Hash an immutable in-memory snapshot without reading a pathname again.
 // Inputs: Borrowed bytes remain stable until return; empty input is valid.
@@ -40,4 +40,4 @@ IntegrityResult hash_file(const std::filesystem::path& path, IntegrityMode mode)
 // targets.
 IntegrityResult hash_path(const std::filesystem::path& path, IntegrityMode mode);
 
-}  // namespace superzip
+}  // namespace flitzzip

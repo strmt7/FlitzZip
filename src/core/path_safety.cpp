@@ -16,7 +16,7 @@
 #include <Windows.h>
 #endif
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 // Purpose: Detect Windows-reserved device names in archive path components.
@@ -165,7 +165,7 @@ std::filesystem::path safe_join_archive_path(const std::filesystem::path& destin
     return target;
 }
 
-// Purpose: Normalize an untrusted archive entry path into SuperZip's slash-separated safe key.
+// Purpose: Normalize an untrusted archive entry path into FlitzZip's slash-separated safe key.
 // Inputs: `archive_path` is attacker-controlled archive metadata.
 // Outputs: Returns a safe relative key, or throws `SecurityError` for traversal, absolute, reserved, or invalid forms.
 std::string normalize_archive_path_key(const std::string& archive_path) {
@@ -173,7 +173,7 @@ std::string normalize_archive_path_key(const std::string& archive_path) {
         throw SecurityError("archive entry path is empty");
     }
     if (archive_path.size() > kMaxArchivePathBytes) {
-        throw SecurityError("archive entry path exceeds SuperZip path length limit");
+        throw SecurityError("archive entry path exceeds FlitzZip path length limit");
     }
     if (archive_path.starts_with('/') || archive_path.starts_with('\\') || archive_path.starts_with("//") ||
         archive_path.starts_with("\\\\") || has_drive_prefix(archive_path)) {
@@ -192,10 +192,10 @@ std::string normalize_archive_path_key(const std::string& archive_path) {
             throw SecurityError("archive entry attempts path traversal: " + archive_path);
         }
         if (component.size() > kMaxArchivePathComponentBytes) {
-            throw SecurityError("archive entry component exceeds SuperZip path length limit");
+            throw SecurityError("archive entry component exceeds FlitzZip path length limit");
         }
         if (component_count >= kMaxArchivePathComponents) {
-            throw SecurityError("archive entry path exceeds SuperZip component-depth limit");
+            throw SecurityError("archive entry path exceeds FlitzZip component-depth limit");
         }
         if (contains_windows_control_character(component)) {
             throw SecurityError("archive entry component contains a Windows control character");
@@ -292,4 +292,4 @@ std::string normalize_entry_name(const std::filesystem::path& relative_path) {
     return normalize_archive_path_key(out);
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

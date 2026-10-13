@@ -1,4 +1,4 @@
-"""Render reviewed SuperZip RAM benchmark records as a deterministic SVG chart."""
+"""Render reviewed FlitzZip RAM benchmark records as a deterministic SVG chart."""
 
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ from collections import defaultdict
 from pathlib import Path
 
 try:
-    from tools.native_build_receipt import validate_receipt
+    from tools.native_build_receipt import receipt_product_name, validate_receipt
     from tools.render_svg_graph import SVG, append_range_whisker, new_document
 except ModuleNotFoundError:
-    from native_build_receipt import validate_receipt
+    from native_build_receipt import receipt_product_name, validate_receipt
     from render_svg_graph import SVG, append_range_whisker, new_document
 
 MAX_CONFIRMATION_COUNT = 1024
@@ -384,9 +384,10 @@ def validate_native_receipt_record(record: dict) -> tuple:
     if record.get("native_build_receipt_sha256") != digest or record.get("native_inputs_sha256") != inputs_digest:
         raise ValueError("native receipt or input digest differs from measured identity")
     configuration = receipt["recipe"]["configuration"]
+    product = receipt_product_name(receipt, allow_historical=True)
     outputs = receipt["outputs_sha256"]
     prefix = f"build/{configuration}/"
-    if outputs[prefix + "superzip_cli.exe"] != record.get("binary_sha256"):
+    if outputs[prefix + product.lower() + "_cli.exe"] != record.get("binary_sha256"):
         raise ValueError("measured CLI differs from its native build receipt")
     dependencies = {
         name[len(prefix) :]: value
@@ -395,7 +396,7 @@ def validate_native_receipt_record(record: dict) -> tuple:
     }
     if dependencies != record.get("binary_dependencies_sha256"):
         raise ValueError("measured app-local DLLs differ from their native build receipt")
-    if receipt["recipe"]["SUPERZIP_ENABLE_HIP"] != "ON" and any(
+    if receipt["recipe"][product.upper() + "_ENABLE_HIP"] != "ON" and any(
         run.get("lane") == "GPU" for run in record.get("runs", []) + record.get("pilot_runs", [])
     ):
         raise ValueError("required-HIP observations have a CPU-only build receipt")
@@ -407,7 +408,11 @@ def validate_native_receipt_record(record: dict) -> tuple:
 # Outputs: Returns normalized run groups or raises ValueError with the invalid field.
 def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
     schema = record.get("schema_version")
-    if type(schema) is not int or schema not in (1, 2, 3) or record.get("benchmark_kind") != "suzip_ram":
+    if (
+        type(schema) is not int
+        or schema not in (1, 2, 3)
+        or record.get("benchmark_kind") not in ("flzip_ram", "suzip_ram")
+    ):
         raise ValueError("unsupported RAM benchmark schema or kind")
     if schema >= 2 and record.get("gpu_utilization_metric") != "process_busiest_engine_pct":
         raise ValueError("unsupported GPU utilization metric")
@@ -632,12 +637,12 @@ def render_svg(identity: tuple, rows: list[dict]) -> bytes:
         raise ValueError("README chart is limited to 16 explicit cases; split larger studies")
     height = 182 + len(rows) * 92
     description = (
-        "Paired forced-CPU and required-AMD-HIP SUZIP results. Left: exact encoded payload size, lower is better. "
+        "Paired forced-CPU and required-AMD-HIP FLZIP results. Left: exact encoded payload size, lower is better. "
         "Right: median encode, verify, and decode throughput, higher is better. Synthetic workloads only."
     )
     if identity[5] == 3:
         description = (
-            "Paired forced-CPU and required-HIP RAM-only synthetic SUZIP results. "
+            "Paired forced-CPU and required-HIP RAM-only synthetic FLZIP results. "
             "Left: exact encoded payload bytes, excluding archive metadata. "
             "Right: throughput from median elapsed time; "
             "whiskers retain every confirmation sample's min-max range, not confidence intervals."
@@ -651,10 +656,10 @@ def render_svg(identity: tuple, rows: list[dict]) -> bytes:
             "role": "img",
             "aria-labelledby": "title desc",
         },
-        "SuperZip RAM-only benchmark",
+        "FlitzZip RAM-only benchmark",
         description,
     )
-    add_text(root, 32, 42, "SuperZip | measured native-format performance", 25, "bold", "#17252b")
+    add_text(root, 32, 42, "FlitzZip | measured native-format performance", 25, "bold", "#17252b")
     subtitle = "RAM-only synthetic workloads. Paired runs; no archive disk writes."
     if identity[4]:
         subtitle += " DIRTY SOURCE - LOCAL PREVIEW ONLY."

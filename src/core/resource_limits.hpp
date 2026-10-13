@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace superzip {
+namespace flitzzip {
 
 // Archive chunk and block limits bound host allocations and GPU launch sizes.
 constexpr std::uint64_t kMaxArchiveChunkBytes = 128ULL * 1024ULL * 1024ULL;
@@ -27,7 +27,7 @@ constexpr std::uint32_t kMaxArchivePathComponents = 256U;
 constexpr std::uint64_t kMaxArchivePathMetadataBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr std::uint32_t kMaxSourceDirectoryDepth = 256U;
 
-// Host and device memory policy keeps SuperZip below resource-exhaustion thresholds.
+// Host and device memory policy keeps FlitzZip below resource-exhaustion thresholds.
 constexpr std::uint32_t kHostMemoryTargetUsagePercent = 80U;
 constexpr std::uint64_t kMaxPipelineMemoryBytes = 64ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kMaxExtractedOutputBytes = kMaxPipelineMemoryBytes;
@@ -49,9 +49,9 @@ constexpr std::uint32_t kGpuAdaptivePrefixLargeSymbols = 64U;
 constexpr std::uint32_t kGpuAdaptivePrefixCodebookBytes =
     kGpuAdaptivePrefixSmallSymbols + kGpuAdaptivePrefixMediumSymbols + kGpuAdaptivePrefixLargeSymbols;
 
-// SUZIP CPU codec levels map to bounded Deflate or Zstandard effort without a store-only mode.
+// FLZIP CPU codec levels map to bounded Deflate or Zstandard effort without a store-only mode.
 constexpr int kMinCompressionLevel = 1;
 constexpr int kDefaultCompressionLevel = 5;
 constexpr int kMaxCompressionLevel = 9;
 
-}  // namespace superzip
+}  // namespace flitzzip

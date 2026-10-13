@@ -19,7 +19,7 @@
 void require_balanced_ranges(std::size_t count, std::uint32_t workers) {
     std::vector<std::pair<std::size_t, std::size_t>> ranges;
     std::mutex mutex;
-    superzip::run_parallel_ranges(count, workers, [&](std::size_t begin, std::size_t end) {
+    flitzzip::run_parallel_ranges(count, workers, [&](std::size_t begin, std::size_t end) {
         std::lock_guard lock(mutex);
         ranges.emplace_back(begin, end);
     });
@@ -41,16 +41,16 @@ void require_balanced_ranges(std::size_t count, std::uint32_t workers) {
 // Inputs: Empty work, uneven queue depths, short entries, and extreme unsigned counts.
 // Outputs: Requires exact floor allocation and the same worker-capped queue limit.
 TEST_CASE(shared_codec_worker_budget_boundaries) {
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(32U, 32U, 80U), 1U);
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(32U, 4U, 80U), 8U);
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(32U, 4U, 1U), 32U);
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(32U, 0U, 0U), 32U);
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(64U, 17U, 80U), 3U);
-    REQUIRE_EQ(superzip::resolve_worker_inflight_limit(32U, 64U, 80U), 32U);
-    REQUIRE_EQ(superzip::resolve_worker_inflight_limit(0U, 0U, 0U), 1U);
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(std::numeric_limits<std::uint32_t>::max(), 1U, 1U),
+    REQUIRE_EQ(flitzzip::resolve_codec_worker_count(32U, 32U, 80U), 1U);
+    REQUIRE_EQ(flitzzip::resolve_codec_worker_count(32U, 4U, 80U), 8U);
+    REQUIRE_EQ(flitzzip::resolve_codec_worker_count(32U, 4U, 1U), 32U);
+    REQUIRE_EQ(flitzzip::resolve_codec_worker_count(32U, 0U, 0U), 32U);
+    REQUIRE_EQ(flitzzip::resolve_codec_worker_count(64U, 17U, 80U), 3U);
+    REQUIRE_EQ(flitzzip::resolve_worker_inflight_limit(32U, 64U, 80U), 32U);
+    REQUIRE_EQ(flitzzip::resolve_worker_inflight_limit(0U, 0U, 0U), 1U);
+    REQUIRE_EQ(flitzzip::resolve_codec_worker_count(std::numeric_limits<std::uint32_t>::max(), 1U, 1U),
                std::numeric_limits<std::uint32_t>::max());
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(std::numeric_limits<std::uint32_t>::max(),
+    REQUIRE_EQ(flitzzip::resolve_codec_worker_count(std::numeric_limits<std::uint32_t>::max(),
                                                     std::numeric_limits<std::uint32_t>::max(),
                                                     std::numeric_limits<std::uint64_t>::max()),
                1U);
@@ -63,8 +63,8 @@ TEST_CASE(shared_codec_worker_budget_aggregate_matrix) {
     for (std::uint32_t workers = 0; workers <= 64U; ++workers) {
         for (std::uint32_t inflight = 0; inflight <= 64U; ++inflight) {
             for (std::uint64_t windows = 0; windows <= 80U; ++windows) {
-                const auto active = superzip::resolve_worker_inflight_limit(workers, inflight, windows);
-                const auto share = superzip::resolve_codec_worker_count(workers, inflight, windows);
+                const auto active = flitzzip::resolve_worker_inflight_limit(workers, inflight, windows);
+                const auto share = flitzzip::resolve_codec_worker_count(workers, inflight, windows);
                 REQUIRE_TRUE(active >= 1U && share >= 1U);
                 REQUIRE_TRUE(active <= std::max(1U, workers));
                 REQUIRE_TRUE(active <= std::max(1U, inflight));
@@ -96,7 +96,7 @@ TEST_CASE(parallel_ranges_join_before_exception_escape) {
         std::atomic<std::uint32_t> completed{0};
         bool threw = false;
         try {
-            superzip::run_parallel_ranges(8U, 4U, [&](std::size_t begin, std::size_t) {
+            flitzzip::run_parallel_ranges(8U, 4U, [&](std::size_t begin, std::size_t) {
                 if (begin == failing_begin) {
                     throw std::runtime_error("range failure");
                 }
@@ -114,7 +114,7 @@ TEST_CASE(parallel_ranges_join_before_exception_escape) {
 // Inputs: Ten mixed blocks plus a short tail; serial encoding and worker counts 1,2,3,4,9 at effort five.
 // Outputs: Requires identical payload/descriptors and exact full/selective decode without touching other block kinds.
 TEST_CASE(cpu_codec_worker_geometry_preserves_encoded_bytes) {
-    constexpr auto block_size = superzip::kMinArchiveBlockBytes;
+    constexpr auto block_size = flitzzip::kMinArchiveBlockBytes;
     std::vector<std::byte> input(10U * block_size + 127U);
     std::uint32_t state = 0x92F71461U;
     for (std::size_t i = 0; i < input.size(); ++i) {
@@ -124,13 +124,13 @@ TEST_CASE(cpu_codec_worker_geometry_preserves_encoded_bytes) {
         const auto family = (i / block_size) % 3U;
         input[i] = family == 0U ? std::byte{'F'} : static_cast<std::byte>(family == 1U ? i % 7U : state & 255U);
     }
-    superzip::ArchiveCodecOptions options{.block_size = block_size, .worker_count = 1U, .compression_level = 5};
-    const auto baseline = superzip::encode_chunk_cpu(input, options);
+    flitzzip::ArchiveCodecOptions options{.block_size = block_size, .worker_count = 1U, .compression_level = 5};
+    const auto baseline = flitzzip::encode_chunk_cpu(input, options);
     REQUIRE_TRUE(std::ranges::any_of(baseline.blocks,
-                                     [](const auto& block) { return block.kind == superzip::BlockKind::CpuZstd; }));
+                                     [](const auto& block) { return block.kind == flitzzip::BlockKind::CpuZstd; }));
     for (const auto workers : {1U, 2U, 3U, 4U, 9U}) {
         options.worker_count = workers;
-        const auto encoded = superzip::encode_chunk_cpu(input, options);
+        const auto encoded = flitzzip::encode_chunk_cpu(input, options);
         REQUIRE_EQ(encoded.payload, baseline.payload);
         REQUIRE_EQ(encoded.blocks.size(), baseline.blocks.size());
         for (std::size_t i = 0; i < encoded.blocks.size(); ++i) {
@@ -143,15 +143,15 @@ TEST_CASE(cpu_codec_worker_geometry_preserves_encoded_bytes) {
             REQUIRE_EQ(actual.encoded_len, expected.encoded_len);
         }
         std::vector<std::byte> output(input.size());
-        superzip::decode_chunk_cpu(encoded.payload, encoded.blocks, output, options);
+        flitzzip::decode_chunk_cpu(encoded.payload, encoded.blocks, output, options);
         REQUIRE_EQ(output, input);
         std::ranges::fill(output, std::byte{0xCD});
-        superzip::decode_cpu_only_blocks_cpu(encoded.payload, encoded.blocks, output, options);
+        flitzzip::decode_cpu_only_blocks_cpu(encoded.payload, encoded.blocks, output, options);
         std::size_t offset = 0;
         for (const auto& block : encoded.blocks) {
             const auto count = static_cast<std::size_t>(block.uncompressed_len);
             const auto actual = std::span(output).subspan(offset, count);
-            if (block.kind == superzip::BlockKind::CpuZstd || block.kind == superzip::BlockKind::Deflate) {
+            if (block.kind == flitzzip::BlockKind::CpuZstd || block.kind == flitzzip::BlockKind::Deflate) {
                 REQUIRE_TRUE(std::equal(actual.begin(), actual.end(), input.begin() + offset));
             } else {
                 REQUIRE_TRUE(std::ranges::all_of(actual, [](std::byte value) { return value == std::byte{0xCD}; }));
@@ -165,33 +165,33 @@ TEST_CASE(cpu_codec_worker_geometry_preserves_encoded_bytes) {
 // Inputs: Seven six-byte blocks under a ten-byte window, exact fits, empty blocks, and extreme byte bounds.
 // Outputs: Requires exact count/extent and rejects zero or oversized lengths without unsigned wraparound.
 TEST_CASE(decode_block_window_exact_admission) {
-    std::array<superzip::BlockDescriptor, 7> blocks{};
+    std::array<flitzzip::BlockDescriptor, 7> blocks{};
     for (auto& block : blocks) {
         block.uncompressed_len = 6U;
     }
-    REQUIRE_EQ(superzip::count_decode_block_windows(blocks, 10U), 7U);
-    REQUIRE_EQ(superzip::count_decode_block_windows(blocks, 12U), 4U);
-    REQUIRE_EQ(superzip::count_decode_block_windows(blocks, 42U), 1U);
-    const auto first = superzip::resolve_decode_block_window(blocks, 0, 12U);
+    REQUIRE_EQ(flitzzip::count_decode_block_windows(blocks, 10U), 7U);
+    REQUIRE_EQ(flitzzip::count_decode_block_windows(blocks, 12U), 4U);
+    REQUIRE_EQ(flitzzip::count_decode_block_windows(blocks, 42U), 1U);
+    const auto first = flitzzip::resolve_decode_block_window(blocks, 0, 12U);
     REQUIRE_EQ(first.end, 2U);
     REQUIRE_EQ(first.uncompressed_size, 12U);
-    REQUIRE_EQ(superzip::count_decode_block_windows({}, 1U), 0U);
+    REQUIRE_EQ(flitzzip::count_decode_block_windows({}, 1U), 0U);
     bool invalid_index = false;
     try {
-        (void)superzip::resolve_decode_block_window(blocks, blocks.size() + 1U, 12U);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::resolve_decode_block_window(blocks, blocks.size() + 1U, 12U);
+    } catch (const flitzzip::ArchiveError&) {
         invalid_index = true;
     }
     REQUIRE_TRUE(invalid_index);
     for (auto& block : blocks) {
         block.uncompressed_len = std::numeric_limits<std::uint32_t>::max();
     }
-    REQUIRE_EQ(superzip::count_decode_block_windows(blocks, std::numeric_limits<std::uint64_t>::max()), 1U);
+    REQUIRE_EQ(flitzzip::count_decode_block_windows(blocks, std::numeric_limits<std::uint64_t>::max()), 1U);
     for (const auto bad_limit : {0ULL, 1ULL}) {
         bool threw = false;
         try {
-            (void)superzip::count_decode_block_windows(blocks, bad_limit);
-        } catch (const superzip::ArchiveError&) {
+            (void)flitzzip::count_decode_block_windows(blocks, bad_limit);
+        } catch (const flitzzip::ArchiveError&) {
             threw = true;
         }
         REQUIRE_TRUE(threw);
@@ -199,8 +199,8 @@ TEST_CASE(decode_block_window_exact_admission) {
     blocks.front().uncompressed_len = 0U;
     bool threw = false;
     try {
-        (void)superzip::count_decode_block_windows(blocks, std::numeric_limits<std::uint64_t>::max());
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::count_decode_block_windows(blocks, std::numeric_limits<std::uint64_t>::max());
+    } catch (const flitzzip::ArchiveError&) {
         threw = true;
     }
     REQUIRE_TRUE(threw);
@@ -213,7 +213,7 @@ TEST_CASE(decode_block_window_exact_admission) {
 void require_pipeline_worker_cap_roundtrip(bool use_gpu) {
     const auto root = test_temp_dir(use_gpu ? "gpu-worker-cap-roundtrip" : "cpu-worker-cap-roundtrip");
     const auto source = root / "input.bin";
-    const auto archive = root / "input.suzip";
+    const auto archive = root / "input.flzip";
     std::vector<std::byte> input(3U * 1024U * 1024U + 17U);
     for (std::size_t i = 0; i < input.size(); ++i) {
         input[i] = static_cast<std::byte>(i % 251U);
@@ -223,29 +223,29 @@ void require_pipeline_worker_cap_roundtrip(bool use_gpu) {
         file.write(reinterpret_cast<const char*>(input.data()), static_cast<std::streamsize>(input.size()));
         REQUIRE_TRUE(file.good());
     }
-    superzip::CompressOptions compress;
+    flitzzip::CompressOptions compress;
     compress.force_cpu = !use_gpu;
     compress.gpu_required = use_gpu;
     compress.worker_count = 2U;
     compress.max_inflight_chunks = 8U;
     compress.chunk_size = 1024U * 1024U;
-    compress.block_size = superzip::kMinArchiveBlockBytes;
+    compress.block_size = flitzzip::kMinArchiveBlockBytes;
     compress.verify_after_write = true;
-    const auto created = superzip::compress_suzip({source}, archive, compress);
+    const auto created = flitzzip::compress_flzip({source}, archive, compress);
     REQUIRE_EQ(created.inflight_chunks, 2U);
     REQUIRE_EQ(created.gpu_used, use_gpu);
     if (use_gpu) {
         REQUIRE_TRUE(created.gpu_runtime.kernel_launches > 0U);
     }
-    superzip::ExtractOptions extract;
+    flitzzip::ExtractOptions extract;
     extract.force_cpu = !use_gpu;
     extract.gpu_required = use_gpu;
     extract.worker_count = 2U;
     extract.max_inflight_chunks = 8U;
-    extract.chunk_size = superzip::kMinArchiveBlockBytes;
-    extract.block_size = superzip::kMinArchiveBlockBytes;
-    REQUIRE_EQ(superzip::verify_suzip(archive, extract).inflight_chunks, 2U);
-    REQUIRE_EQ(superzip::extract_suzip(archive, root / "decoded", extract).inflight_chunks, 2U);
+    extract.chunk_size = flitzzip::kMinArchiveBlockBytes;
+    extract.block_size = flitzzip::kMinArchiveBlockBytes;
+    REQUIRE_EQ(flitzzip::verify_flzip(archive, extract).inflight_chunks, 2U);
+    REQUIRE_EQ(flitzzip::extract_flzip(archive, root / "decoded", extract).inflight_chunks, 2U);
     {
         std::ifstream decoded(root / "decoded" / "input.bin", std::ios::binary);
         std::vector<std::byte> output(input.size());
@@ -259,9 +259,9 @@ void require_pipeline_worker_cap_roundtrip(bool use_gpu) {
 // Purpose: Verify worker-capped production queues in CPU-only CI and on available HIP development systems.
 // Inputs: Both backend policies; required HIP runs only when the backend and device are available.
 // Outputs: Requires byte-exact creation, verification, and extraction without a CPU fallback in the GPU lane.
-TEST_CASE(suzip_pipeline_worker_cap_roundtrip) {
+TEST_CASE(flzip_pipeline_worker_cap_roundtrip) {
     require_pipeline_worker_cap_roundtrip(false);
-    if (superzip::query_gpu_info().available) {
+    if (flitzzip::query_gpu_info().available) {
         require_pipeline_worker_cap_roundtrip(true);
     }
 }

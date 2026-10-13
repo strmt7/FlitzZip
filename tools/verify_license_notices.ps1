@@ -17,7 +17,7 @@ function Test-LicenseNoticeGeneration {
     }
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     $requiredTitles = @(
-        "SuperZip",
+        "FlitzZip",
         "miniz 3.1.2",
         "bzip2 1.0.8",
         "XZ Embedded",
@@ -36,16 +36,16 @@ function Test-LicenseNoticeGeneration {
             throw "License notice manifest is missing required notice '$title'."
         }
     }
-    $superZipNotice = @($manifest.notices | Where-Object { $_.title -eq "SuperZip" } | Select-Object -First 1)
-    if (-not $superZipNotice -or [string]$superZipNotice.source -ne "LICENSE") {
-        throw "The SuperZip license notice must be generated from the root LICENSE file."
+    $flitzZipNotice = @($manifest.notices | Where-Object { $_.title -eq "FlitzZip" } | Select-Object -First 1)
+    if (-not $flitzZipNotice -or [string]$flitzZipNotice.source -ne "LICENSE") {
+        throw "The FlitzZip license notice must be generated from the root LICENSE file."
     }
-    if ([string]$superZipNotice.group -ne "SuperZip") {
-        throw "The root SuperZip license must be the only notice in the SuperZip tab."
+    if ([string]$flitzZipNotice.group -ne "FlitzZip") {
+        throw "The root FlitzZip license must be the only notice in the FlitzZip tab."
     }
     $misgrouped = @($manifest.notices | Where-Object {
-            ($_.title -ne "SuperZip" -and [string]$_.group -ne "Other") -or
-            ($_.title -eq "SuperZip" -and [string]$_.group -ne "SuperZip")
+            ($_.title -ne "FlitzZip" -and [string]$_.group -ne "Other") -or
+            ($_.title -eq "FlitzZip" -and [string]$_.group -ne "FlitzZip")
         })
     if ($misgrouped.Count -ne 0) {
         throw "Every non-root license notice must be grouped under the Other tab."
@@ -63,7 +63,7 @@ function Test-LicenseNoticeGeneration {
     if (-not $lzmaNotice -or [string]$lzmaNotice.source -ne "third_party/lzma_sdk/LICENSE") {
         throw "The LZMA SDK notice must use the checked-in upstream license text."
     }
-    $tempHeader = Join-Path $env:TEMP ("superzip-license-notices-" + [guid]::NewGuid().ToString("N") + ".hpp")
+    $tempHeader = Join-Path $env:TEMP ("flitzzip-license-notices-" + [guid]::NewGuid().ToString("N") + ".hpp")
     try {
         & $generatorPath -ManifestPath $manifestPath -RepoRoot $repo -OutputPath $tempHeader
         if (-not (Test-Path -LiteralPath $tempHeader)) {
@@ -80,7 +80,7 @@ function Test-LicenseNoticeGeneration {
     }
 }
 
-# Purpose: Assert that the About page exposes generated notices through the SuperZip modal system.
+# Purpose: Assert that the About page exposes generated notices through the FlitzZip modal system.
 # Inputs: None; scans GUI source contracts.
 # Outputs: Throws when the GUI can drift to handwritten notices or platform-default dialogs.
 function Test-LicenseNoticeGuiContract {
@@ -96,7 +96,7 @@ function Test-LicenseNoticeGuiContract {
         }
     }
     $dialogSource = Get-Content -LiteralPath (Join-Path $repo "src\app\main_window_license_dialog.cpp") -Raw
-    if ($dialogSource -notmatch '#include "superzip_license_notices\.hpp"') {
+    if ($dialogSource -notmatch '#include "flitzzip_license_notices\.hpp"') {
         throw "License dialog must include the generated notice header."
     }
     if ($dialogSource -match 'GNU GENERAL PUBLIC LICENSE|BSD License|ISC License|public domain by Igor Pavlov') {
@@ -107,7 +107,7 @@ function Test-LicenseNoticeGuiContract {
     }
     foreach ($requiredSnippet in @('license_notices_tab_rects', 'select_license_notices_tab', 'notice.group')) {
         if (-not $dialogSource.Contains($requiredSnippet)) {
-            throw "License dialog must expose data-driven SuperZip/Other notice tabs; missing $requiredSnippet."
+            throw "License dialog must expose data-driven FlitzZip/Other notice tabs; missing $requiredSnippet."
         }
     }
     if ($dialogSource -match 'CreateWindowExW.*(EDIT|RICHEDIT)|OpenClipboard|SetClipboardData|WM_COPY') {

@@ -61,7 +61,7 @@ class TestSurface {
 
 TEST_CASE(gdi_back_buffer_reuses_surface_and_presents_changed_pixels) {
     TestSurface target;
-    superzip::app::GdiBackBuffer buffer;
+    flitzzip::app::GdiBackBuffer buffer;
     for (int frame = 0; frame < 200; ++frame) {
         const auto color = RGB(frame, 20, 30);
         REQUIRE_TRUE(
@@ -80,7 +80,7 @@ TEST_CASE(gdi_back_buffer_reuses_surface_and_presents_changed_pixels) {
 
 TEST_CASE(gdi_back_buffer_restores_state_and_font_lifetime_between_frames) {
     TestSurface target;
-    superzip::app::GdiBackBuffer buffer;
+    flitzzip::app::GdiBackBuffer buffer;
     HFONT font = CreateFontW(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                              CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, L"Segoe UI");
     REQUIRE_TRUE(font != nullptr);
@@ -105,7 +105,7 @@ TEST_CASE(gdi_back_buffer_restores_state_and_font_lifetime_between_frames) {
 
 TEST_CASE(gdi_back_buffer_recovers_after_callback_exception_and_invalid_dimensions) {
     TestSurface target;
-    superzip::app::GdiBackBuffer buffer;
+    flitzzip::app::GdiBackBuffer buffer;
     bool threw = false;
     try {
         (void)buffer.render(target.dc, 100, 80, nullptr, [](HDC dc) {
@@ -134,7 +134,7 @@ TEST_CASE(gdi_back_buffer_releases_handles_after_repeated_resize_and_destruction
     const auto before = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
     REQUIRE_TRUE(before > 0);
     for (int i = 0; i < 50; ++i) {
-        superzip::app::GdiBackBuffer buffer;
+        flitzzip::app::GdiBackBuffer buffer;
         REQUIRE_TRUE(buffer.render(target.dc, 100, 80, nullptr, [](HDC) {}));
         REQUIRE_TRUE(buffer.render(target.dc, 110, 90, nullptr, [](HDC) {}));
     }
@@ -143,7 +143,7 @@ TEST_CASE(gdi_back_buffer_releases_handles_after_repeated_resize_and_destruction
 
 TEST_CASE(gdi_back_buffer_invalidates_monitor_identity_and_preserves_destination_clip) {
     TestSurface target;
-    superzip::app::GdiBackBuffer buffer;
+    flitzzip::app::GdiBackBuffer buffer;
     const auto monitor = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
     REQUIRE_TRUE(monitor != nullptr);
     REQUIRE_TRUE(buffer.render(target.dc, 100, 80, nullptr, [](HDC) {}));

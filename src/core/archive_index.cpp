@@ -10,7 +10,7 @@
 #include <ostream>
 #include <sstream>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::uint64_t kMinimumEntryMetadataBytes = 35U;
@@ -87,13 +87,13 @@ void reject_count_exceeding_stream(std::istream& input, std::uint64_t count, std
 // emission.
 void reject_unbounded_index_shape(const ArchiveIndex& index) {
     if (index.entries.size() > kMaxArchiveEntries) {
-        throw ArchiveError("archive entry count exceeds SuperZip resource limit");
+        throw ArchiveError("archive entry count exceeds FlitzZip resource limit");
     }
     std::uint64_t total_blocks = 0;
     std::uint64_t total_path_bytes = 0;
     for (const auto& entry : index.entries) {
         if (entry.path.size() > kMaxArchivePathBytes) {
-            throw ArchiveError("archive path exceeds SuperZip resource limit");
+            throw ArchiveError("archive path exceeds FlitzZip resource limit");
         }
         total_path_bytes =
             checked_add_archive_path_metadata_bytes(total_path_bytes, entry.path.size(), "archive index");
@@ -210,7 +210,7 @@ BlockDescriptor read_block_descriptor(std::istream& input, std::uint32_t version
         throw ArchiveError("archive block is truncated");
     }
     const auto kind = static_cast<BlockKind>(kind_raw);
-    if (!block_kind_supported_in_version(kind, kSuperZipMaxReadableVersion)) {
+    if (!block_kind_supported_in_version(kind, kFlitzZipMaxReadableVersion)) {
         throw ArchiveError("archive block has unknown encoding kind");
     }
     if (!block_kind_supported_in_version(kind, version)) {
@@ -234,10 +234,10 @@ BlockDescriptor read_block_descriptor(std::istream& input, std::uint32_t version
 // Outputs: Writes the index or throws `ArchiveError` for invalid versions, kinds, or stream failures.
 void write_archive_index(std::ostream& output, const ArchiveIndex& index) {
     reject_unbounded_index_shape(index);
-    if (index.version < kSuperZipMinReadableVersion || index.version > kSuperZipMaxReadableVersion) {
-        throw ArchiveError("unsupported SuperZip archive version");
+    if (index.version < kFlitzZipMinReadableVersion || index.version > kFlitzZipMaxReadableVersion) {
+        throw ArchiveError("unsupported FlitzZip archive version");
     }
-    write_u32(output, kSuperZipMagic);
+    write_u32(output, kFlitzZipMagic);
     write_u32(output, index.version);
     write_u32(output, static_cast<std::uint32_t>(index.entries.size()));
     for (const auto& entry : index.entries) {
@@ -269,18 +269,18 @@ void write_archive_index(std::ostream& output, const ArchiveIndex& index) {
     }
 }
 
-// Purpose: Read and validate a serialized SUZIP archive index.
+// Purpose: Read and validate a serialized FLZIP archive index.
 // Inputs: `input` is positioned at the beginning of the serialized index.
 // Outputs: Returns parsed metadata or throws `ArchiveError` for malformed or unsupported indexes.
 ArchiveIndex read_archive_index(std::istream& input) {
     ArchiveIndex index;
     const auto magic = read_u32(input);
-    if (magic != kSuperZipMagic) {
-        throw ArchiveError("not a SuperZip archive");
+    if (magic != kFlitzZipMagic) {
+        throw ArchiveError("not a FlitzZip archive");
     }
     const auto version = read_u32(input);
-    if (version < kSuperZipMinReadableVersion || version > kSuperZipMaxReadableVersion) {
-        throw ArchiveError("unsupported SuperZip archive version");
+    if (version < kFlitzZipMinReadableVersion || version > kFlitzZipMaxReadableVersion) {
+        throw ArchiveError("unsupported FlitzZip archive version");
     }
     index.version = version;
     const auto entry_count = read_u32(input);
@@ -295,7 +295,7 @@ ArchiveIndex read_archive_index(std::istream& input) {
     for (std::uint32_t i = 0; i < entry_count; ++i) {
         const auto path_len = read_u16(input);
         if (path_len > kMaxArchivePathBytes) {
-            throw ArchiveError("archive path exceeds SuperZip resource limit");
+            throw ArchiveError("archive path exceeds FlitzZip resource limit");
         }
         total_path_bytes = checked_add_archive_path_metadata_bytes(total_path_bytes, path_len, "archive index");
         std::string path(path_len, '\0');
@@ -332,4 +332,4 @@ ArchiveIndex read_archive_index(std::istream& input) {
     return index;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

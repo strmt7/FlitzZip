@@ -7,7 +7,7 @@
 #include <map>
 #include <mutex>
 
-namespace superzip {
+namespace flitzzip {
 
 // Process-owned reservations are independent for each runtime device ordinal.
 // This is admission accounting, not a physical VRAM reservation or a driver guarantee.
@@ -75,4 +75,4 @@ class DeviceMemoryBudget {
     std::map<int, State> devices_;
 };
 
-}  // namespace superzip
+}  // namespace flitzzip

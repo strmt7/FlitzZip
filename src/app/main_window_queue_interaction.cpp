@@ -16,7 +16,7 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Dispatch a content-area click to the active page or modal prompt.
 // Inputs: `x` and `y` are client mouse coordinates.
@@ -414,4 +414,4 @@ void MainWindow::end_history_column_resize() {
 // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
 // Outputs: Returns true when a queue control or row selection consumed the click.
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

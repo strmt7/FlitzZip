@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 struct SourceFileIdentity {
     std::uint64_t volume_serial = 0;
@@ -95,4 +95,4 @@ ManifestSourceLock lock_manifest_source(const ManifestEntry& entry);
 // Outputs: Returns its normalized path, exact size, and an RAII lock that prevents mutation or replacement.
 PinnedSourceFile pin_source_file(const std::filesystem::path& path);
 
-}  // namespace superzip
+}  // namespace flitzzip

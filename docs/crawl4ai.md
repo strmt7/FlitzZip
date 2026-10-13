@@ -1,17 +1,17 @@
 # Self-Hosted Research With Crawl4AI
 
-SuperZip uses [Crawl4AI](https://github.com/unclecode/crawl4ai) as a local
+FlitzZip uses [Crawl4AI](https://github.com/unclecode/crawl4ai) as a local
 development tool for reading and crawling web pages. It is separate from the
 archive application and requires no cloud account, API key, paid service or
 public server. The [latest stable release reviewed on 5 October 2026](https://github.com/unclecode/crawl4ai/releases/tag/v0.9.4)
 is 0.9.4. Its base package and dependency wheels are pinned with upstream
 SHA-256 digests in [the installation lock](../tools/requirements/crawl4ai.txt).
-The installed crawler is the explicitly identified `0.9.4+superzip.portable2`
+The installed crawler is the explicitly identified `0.9.4+flitzzip.portable2`
 source build. It repairs the upstream HTTP download opener on Windows while
-preserving POSIX no-follow behavior; see [the repair and qualification](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/development/crawl4ai-portable-download-repair-2026-10-05.md).
+preserving POSIX no-follow behavior; see [the repair and qualification](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/development/crawl4ai-portable-download-repair-2026-10-05.md).
 NLTK uses an explicitly identified upstream-source security build because the
 latest published NLTK release remains affected by a model-artifact sandbox
-bypass. See [the source repair and evidence](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/nltk-model-artifact-source-repair.md).
+bypass. See [the source repair and evidence](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/nltk-model-artifact-source-repair.md).
 
 Normal research invokes Crawl4AI's own `crwl crawl` command, forwarding its
 documented options without an alternative URL parser or extraction pipeline.
@@ -60,7 +60,7 @@ installation step is needed for ordinary use. The installer creates a dedicated
 environment in the user's OS cache and installs
 Chromium through the [official Playwright setup path](https://docs.crawl4ai.com/core/installation/).
 No optional Torch, cosine-model or transformer extra is requested. A cache
-override is available through `SUPERZIP_CRAWL4AI_HOME` or `--home <absolute-path>`;
+override is available through `FLITZZIP_CRAWL4AI_HOME` or `--home <absolute-path>`;
 it must stay outside the source checkout. Browser downloads, package files and
 local Crawl4AI caches are installation data and are not committed or packaged.
 The environment identity includes Python's version, the complete lock hash and
@@ -78,7 +78,7 @@ caches from overriding admitted source and prevents new cache writes. The
 temporary directory remains alive until the contained command exits; setup
 and package installation retain their normal cache behavior. NLTK admission
 also rejects native modules and sourceless bytecode in its pure-Python package.
-See [the source-import qualification](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/nltk-model-artifact-source-repair.md#executed-source-integrity).
+See [the source-import qualification](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/nltk-model-artifact-source-repair.md#executed-source-integrity).
 An updated regression contract rechecks the existing installed dependencies and updates
 its admission receipt only after success; it does not reinstall an unchanged
 dependency graph or browser.
@@ -93,7 +93,7 @@ Neither installation nor crawling requires a change to the archive application.
 
 OSV is given explicit parser/path arguments for both development dependency
 locks. Dependabot covers their directory. The pinned revision passed a
-[one-time fresh-install qualification](https://github.com/strmt7/SuperZip/actions/runs/37342384453)
+[one-time fresh-install qualification](https://github.com/strmt7/FlitzZip/actions/runs/37342384453)
 on Windows and macOS with Python 3.13, and Linux with Python 3.13 and 3.14.
 That run built and admitted both repaired wheels, resolved dependencies normally,
 ran `pip check`, and passed the model and download consumers. The dedicated
@@ -114,7 +114,7 @@ and visible browser modes are not part of this unattended research workflow.
 On Linux, missing Chromium system libraries must be provisioned by the host's
 normal administrator or container-image process. The documented upstream command
 is `<environment-python> -m playwright install-deps chromium`; do not silently
-escalate privileges. The Python tool is portable; SuperZip's native application
+escalate privileges. The Python tool is portable; FlitzZip's native application
 still has its separate Windows-only build requirements. Linux/macOS package
 installation and API execution were validated by the hosted qualification above;
 public browser extraction was qualified on Windows.
@@ -196,7 +196,7 @@ terms **and an appended attribution requirement**. Preserve the entire file;
 do not describe that combined text as an unmodified Apache-2.0 license.
 Installed dependencies and Chromium retain their own upstream notices.
 The repository only installs these tools; it does not redistribute their
-binaries in SuperZip releases.
+binaries in FlitzZip releases.
 
 This product includes software developed by UncleCode (https://x.com/unclecode)
 as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai).

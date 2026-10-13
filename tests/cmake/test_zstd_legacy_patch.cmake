@@ -10,12 +10,12 @@ include("${REPO_ROOT}/cmake/PatchZstdLegacy.cmake")
 if(DEFINED COMPONENT_SOURCE_FILE)
   include("${REPO_ROOT}/cmake/ZstdHeaderComponents.cmake")
   file(READ "${COMPONENT_SOURCE_FILE}" component_content)
-  superzip_publish_zstd_header_component(
+  flitzzip_publish_zstd_header_component(
     "${COMPONENT_OUTPUT_FILE}" "${COMPONENT_EXPECTED}" "${component_content}")
   return()
 endif()
 if(DEFINED PATCH_SOURCE_DIR)
-  superzip_patch_zstd_legacy("${PATCH_SOURCE_DIR}")
+  flitzzip_patch_zstd_legacy("${PATCH_SOURCE_DIR}")
   return()
 endif()
 if(NOT DEFINED BINARY_DIR)
@@ -178,7 +178,7 @@ function(require_rejection root cause)
   set(component_arguments)
   if(ARGC GREATER 3)
     file(SHA256 "${ARGV3}" component_expected)
-    string(REGEX REPLACE "\\.superzip-component(\\.raw)?$" "" component_output
+    string(REGEX REPLACE "\\.flitzzip-component(\\.raw)?$" "" component_output
                          "${source}")
     list(APPEND component_arguments "-DCOMPONENT_SOURCE_FILE=${ARGV3}"
          "-DCOMPONENT_OUTPUT_FILE=${component_output}"
@@ -228,7 +228,7 @@ if(NOT previous_hash STREQUAL
    "ee643222919c3a354da6f71d69f55c681ae0647a274384f2143afbe63dd5d9be")
   message(FATAL_ERROR "Earlier constructor-repair fixture identity mismatch")
 endif()
-superzip_patch_zstd_legacy("${previous}")
+flitzzip_patch_zstd_legacy("${previous}")
 
 prepare_fixture(fresh fresh)
 # Ordinary caller variables must not change component selection in CMake's
@@ -237,24 +237,26 @@ prepare_fixture(fresh fresh)
 foreach(component_name IN ITEMS owner sequence literals continue block one_shot)
   set(${component_name} "unrelated caller value")
 endforeach()
-superzip_patch_zstd_legacy("${fresh}")
+flitzzip_patch_zstd_legacy("${fresh}")
+include("${REPO_ROOT}/tests/cmake/test_zstd_product_identity.cmake")
+check_zstd_product_identity("${fresh}" "${SCRATCH}")
 foreach(component_name IN ITEMS owner sequence literals continue block one_shot)
   unset(${component_name})
 endforeach()
 
 prepare_fixture(previous-literals previous_literals)
 prepare_historical_decoder_stage("${previous_literals}" "literals")
-superzip_patch_zstd_legacy("${previous_literals}")
+flitzzip_patch_zstd_legacy("${previous_literals}")
 
 prepare_fixture(previous-bufferless previous_bufferless)
-superzip_patch_zstd_foundation("${previous_bufferless}")
+flitzzip_patch_zstd_foundation("${previous_bufferless}")
 file(SHA256 "${previous_bufferless}/lib/decompress/zstd_decompress.c"
      previous_bufferless_hash)
 if(NOT previous_bufferless_hash STREQUAL
    "8ef204750636b93311fe4f0e6e2db66990e399ae78fc837dcf5c6c4c0d636354")
   message(FATAL_ERROR "Previous bufferless fixture identity mismatch")
 endif()
-superzip_patch_zstd_legacy("${previous_bufferless}")
+flitzzip_patch_zstd_legacy("${previous_bufferless}")
 
 # Purpose: Reconstruct exact historical stream bytes to test migration from both
 # preceding revisions. Inputs: root owns a freshly patched fixture and
@@ -326,12 +328,12 @@ endfunction()
 prepare_fixture(previous-stream previous_stream)
 prepare_historical_decoder_stage("${previous_stream}" "stream")
 prepare_previous_stream("${previous_stream}" FALSE)
-superzip_patch_zstd_legacy("${previous_stream}")
+flitzzip_patch_zstd_legacy("${previous_stream}")
 
 prepare_fixture(previous-empty-stream previous_empty_stream)
 prepare_historical_decoder_stage("${previous_empty_stream}" "stream")
 prepare_previous_stream("${previous_empty_stream}" TRUE)
-superzip_patch_zstd_legacy("${previous_empty_stream}")
+flitzzip_patch_zstd_legacy("${previous_empty_stream}")
 
 # Migrate the exact last stream revision before explicit history extents.
 prepare_fixture(previous-history previous_history)
@@ -344,7 +346,7 @@ foreach(version IN ITEMS v05 v06 v07)
     message(FATAL_ERROR "Previous legacy history fixture identity mismatch")
   endif()
 endforeach()
-superzip_patch_zstd_legacy("${previous_history}")
+flitzzip_patch_zstd_legacy("${previous_history}")
 
 # Migrate the exact history rewrite before dictionary error propagation.
 prepare_fixture(previous-dictionary previous_dictionary)
@@ -358,7 +360,7 @@ foreach(version IN ITEMS v05 v06 v07)
     message(FATAL_ERROR "Previous legacy dictionary fixture identity mismatch")
   endif()
 endforeach()
-superzip_patch_zstd_legacy("${previous_dictionary}")
+flitzzip_patch_zstd_legacy("${previous_dictionary}")
 
 # Migrate the exact previously published canonical decoder cache into
 # independent history ownership. This fixture is reconstructed from immutable
@@ -377,7 +379,7 @@ foreach(version IN ITEMS v05 v06 v07)
         "Previous canonical decoder ownership fixture identity mismatch")
   endif()
 endforeach()
-superzip_patch_zstd_legacy("${previous_decoder_owner}")
+flitzzip_patch_zstd_legacy("${previous_decoder_owner}")
 
 # Migrate the fully owned canonical sources published before generator
 # consolidation.
@@ -390,10 +392,10 @@ foreach(version IN ITEMS v05 v06 v07)
     message(FATAL_ERROR "Historical canonical fixture identity mismatch")
   endif()
 endforeach()
-superzip_patch_zstd_legacy("${previous_canonical}")
+flitzzip_patch_zstd_legacy("${previous_canonical}")
 
 prepare_fixture(previous-allocator previous_allocator)
-superzip_patch_zstd_legacy("${previous_allocator}")
+flitzzip_patch_zstd_legacy("${previous_allocator}")
 set(_previous_allocator_source "${previous_allocator}/lib/common/allocations.h")
 file(READ "${_previous_allocator_source}" allocator_content)
 set(_allocator_guard
@@ -411,7 +413,7 @@ endif()
 file(WRITE "${_previous_allocator_source}.fixture" "${allocator_content}")
 configure_file("${_previous_allocator_source}.fixture"
                "${_previous_allocator_source}" @ONLY NEWLINE_STYLE LF)
-superzip_patch_zstd_legacy("${previous_allocator}")
+flitzzip_patch_zstd_legacy("${previous_allocator}")
 
 # Recreate the exact preceding COVER cleanup revision independently of the new
 # migration branch, then require migration to match a fresh provenance repair.
@@ -428,7 +430,7 @@ string(SUBSTRING "${original_cover}" ${original_begin} ${original_length}
 file(READ "${REPO_ROOT}/cmake/ZstdCoverSelection.c" repaired_selection)
 # Build the exact preceding full repair directly from the immutable fixture;
 # later evaluation changes must not alter this historical migration control.
-superzip_patch_zstd_base("${previous_cover}")
+flitzzip_patch_zstd_base("${previous_cover}")
 file(READ "${_previous_cover_source}" repaired_cover)
 string(REPLACE "${repaired_selection}\n" "${original_selection}"
                previous_cover_content "${repaired_cover}")
@@ -453,7 +455,7 @@ if(NOT previous_cover_hash STREQUAL
    "89a86e4217d306fd236bfb41cbdb7081e13082d88acc0f780a713df46da3b0da")
   message(FATAL_ERROR "Earlier COVER cleanup fixture identity mismatch")
 endif()
-superzip_patch_zstd_legacy("${previous_cover}")
+flitzzip_patch_zstd_legacy("${previous_cover}")
 file(SHA256 "${_previous_cover_source}" migrated_cover_hash)
 file(SHA256 "${fresh}/lib/dictBuilder/cover.c" fresh_cover_hash)
 if(NOT migrated_cover_hash STREQUAL fresh_cover_hash)
@@ -505,7 +507,7 @@ set(BOUNDARIES
     "lib/legacy/zstd_v07.c"
     "lib/zdict.h")
 prepare_fixture(prior_comments prior_comments)
-superzip_patch_zstd_foundation("${prior_comments}")
+flitzzip_patch_zstd_foundation("${prior_comments}")
 include("${REPO_ROOT}/cmake/ZstdCommentClarifications.cmake")
 math(EXPR last_comment_file "${_zstd_comment_file_count} - 1")
 foreach(comment_file RANGE 0 ${last_comment_file} 1)
@@ -532,7 +534,7 @@ foreach(comment_file RANGE 0 ${last_comment_file} 1)
     message(FATAL_ERROR "Previous comment fixture write identity mismatch")
   endif()
 endforeach()
-superzip_patch_zstd_legacy("${prior_comments}")
+flitzzip_patch_zstd_legacy("${prior_comments}")
 foreach(boundary IN LISTS BOUNDARIES)
   string(MAKE_C_IDENTIFIER "${boundary}" key)
   file(SHA256 "${fresh}/${boundary}" "before_${key}")
@@ -592,7 +594,7 @@ foreach(boundary IN LISTS BOUNDARIES)
     message(FATAL_ERROR "Previous comment migration differs from fresh source")
   endif()
 endforeach()
-superzip_patch_zstd_legacy("${fresh}")
+flitzzip_patch_zstd_legacy("${fresh}")
 foreach(boundary IN LISTS BOUNDARIES)
   string(MAKE_C_IDENTIFIER "${boundary}" key)
   file(SHA256 "${fresh}/${boundary}" repeated)
@@ -609,7 +611,7 @@ foreach(boundary IN LISTS BOUNDARIES)
   foreach(phase IN ITEMS input output)
     string(MAKE_C_IDENTIFIER "${boundary}" boundary_name)
     prepare_fixture("interrupted-${boundary_name}-${phase}" interrupted)
-    set(PARTIAL "${interrupted}/${boundary}.superzip-patch")
+    set(PARTIAL "${interrupted}/${boundary}.flitzzip-patch")
     if(phase STREQUAL "input")
       string(APPEND PARTIAL ".raw")
     endif()
@@ -653,7 +655,7 @@ foreach(component IN LISTS COMPONENT_BOUNDARIES)
   foreach(phase IN ITEMS input output)
     prepare_component_fixture("component-interrupted-${key}-${phase}"
                               interrupted)
-    set(PARTIAL "${interrupted}/${component}.superzip-component")
+    set(PARTIAL "${interrupted}/${component}.flitzzip-component")
     if(phase STREQUAL "input")
       string(APPEND PARTIAL ".raw")
     endif()

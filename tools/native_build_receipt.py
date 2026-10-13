@@ -42,13 +42,13 @@ SHA256 = r"[0-9a-f]{64}"
 RECIPE_KEYS = (
     "CMAKE_GENERATOR",
     "CMAKE_GENERATOR_PLATFORM",
-    "SUPERZIP_ENABLE_HIP",
-    "SUPERZIP_HIP_ARCH",
-    "SUPERZIP_VCVARS_VERSION",
-    "SUPERZIP_PACKAGE_VERSION",
-    "SUPERZIP_MSI_INSTALL_SCOPE",
-    "SUPERZIP_BUILD_GUI",
-    "SUPERZIP_BUILD_TESTS",
+    "FLITZZIP_ENABLE_HIP",
+    "FLITZZIP_HIP_ARCH",
+    "FLITZZIP_VCVARS_VERSION",
+    "FLITZZIP_PACKAGE_VERSION",
+    "FLITZZIP_MSI_INSTALL_SCOPE",
+    "FLITZZIP_BUILD_GUI",
+    "FLITZZIP_BUILD_TESTS",
 )
 
 
@@ -76,9 +76,18 @@ def validate_hash_map(value: object, maximum: int, prefix: str = "") -> dict:
     return value
 
 
-# Purpose: Share strict receipt schema validation between local consumers and offline graph publication.
-# Inputs: Untrusted metadata; explicit historical mode reads existing evidence without qualifying current builds.
-# Outputs: Canonical digest; current consumers reject narrower historical toolchain scopes.
+# Purpose: Identify the exact product schema used by an immutable exported receipt.
+# Inputs: Receipt and explicit historical-reading permission. Outputs: Current name or the known predecessor name.
+def receipt_product_name(value: dict, *, allow_historical: bool = False) -> str:
+    recipe = value.get("recipe") if isinstance(value, dict) else None
+    if allow_historical and isinstance(recipe, dict) and "SUPERZIP_ENABLE_HIP" in recipe:
+        return "SuperZip"
+    return "FlitzZip"
+
+
+# Purpose: Validate complete native build identities without modifying historical evidence.
+# Inputs: Untrusted receipt and explicit permission for historical exported schemas.
+# Outputs: Original canonical receipt digest; live build admission accepts only the current product schema.
 def validate_receipt(value: dict, *, allow_historical_toolchain: bool = False) -> str:
     keys = {
         "schema_version",
@@ -113,36 +122,43 @@ def validate_receipt(value: dict, *, allow_historical_toolchain: bool = False) -
     ):
         raise ValueError("unsupported native input manifest")
     files = validate_hash_map(inputs["files"], 20000)
+    product = receipt_product_name(value, allow_historical=allow_historical_toolchain)
+    current_names = [name.replace(product, "FlitzZip").replace(product.lower(), "flitzzip") for name in files]
     if any(
-        name not in INPUT_FILES and not any(name.startswith(prefix + "/") for prefix in INPUT_ROOTS) for name in files
+        name not in INPUT_FILES and not any(name.startswith(prefix + "/") for prefix in INPUT_ROOTS)
+        for name in current_names
     ):
         raise ValueError("native input manifest exceeds its declared projection")
     if "CMakeLists.txt" not in files or hashlib.sha256(canonical(files)).hexdigest() != inputs["inputs_sha256"]:
         raise ValueError("native input manifest digest is inconsistent")
-    recipe = value["recipe"]
+    if not isinstance(value["recipe"], dict) or any(not isinstance(key, str) for key in value["recipe"]):
+        raise ValueError("invalid native configured recipe schema")
+    recipe = {key.replace(product.upper(), "FLITZZIP"): item for key, item in value["recipe"].items()}
+    if len(recipe) != len(value["recipe"]):
+        raise ValueError("ambiguous native configured recipe schema")
     if not isinstance(recipe, dict) or set(recipe) != {*RECIPE_KEYS, "configuration", "configured_flags_sha256"}:
         raise ValueError("invalid native configured recipe schema")
     if any(not isinstance(item, str) or "/" in item or "\\" in item for item in recipe.values()):
         raise ValueError("native recipe contains invalid or private metadata")
     if (
         recipe["configuration"] not in CONFIGURATIONS
-        or recipe["SUPERZIP_ENABLE_HIP"] not in ("ON", "OFF")
+        or recipe["FLITZZIP_ENABLE_HIP"] not in ("ON", "OFF")
         or recipe["CMAKE_GENERATOR"] not in ("Visual Studio 17 2022", "Visual Studio 18 2026")
         or recipe["CMAKE_GENERATOR_PLATFORM"] != "x64"
-        or recipe["SUPERZIP_BUILD_GUI"] != "ON"
-        or recipe["SUPERZIP_BUILD_TESTS"] != "ON"
-        or not re.fullmatch(r"gfx[0-9a-f]+(?:,gfx[0-9a-f]+)*", recipe["SUPERZIP_HIP_ARCH"])
+        or recipe["FLITZZIP_BUILD_GUI"] != "ON"
+        or recipe["FLITZZIP_BUILD_TESTS"] != "ON"
+        or not re.fullmatch(r"gfx[0-9a-f]+(?:,gfx[0-9a-f]+)*", recipe["FLITZZIP_HIP_ARCH"])
         or not re.fullmatch(SHA256, recipe["configured_flags_sha256"])
     ):
         raise ValueError("invalid native recipe scope")
     validate_toolchain_schema(
-        value["toolchain"], recipe["SUPERZIP_ENABLE_HIP"] == "ON", allow_historical=allow_historical_toolchain
+        value["toolchain"], recipe["FLITZZIP_ENABLE_HIP"] == "ON", allow_historical=allow_historical_toolchain
     )
     outputs = validate_hash_map(value["outputs_sha256"], 256, "build/")
     required = {
-        f"build/{recipe['configuration']}/superzip_cli.exe",
-        f"build/{recipe['configuration']}/SuperZip.exe",
-        "build/superzip-runtime-dependencies.json",
+        f"build/{recipe['configuration']}/{product.lower()}_cli.exe",
+        f"build/{recipe['configuration']}/{product}.exe",
+        f"build/{product.lower()}-runtime-dependencies.json",
     }
     if not required <= outputs.keys():
         raise ValueError("native receipt lacks required outputs")
@@ -342,11 +358,11 @@ def configured_recipe(root: Path, configuration: str) -> tuple[dict, dict]:
     recipe["configuration"] = configuration
     if recipe["CMAKE_GENERATOR"] not in ("Visual Studio 17 2022", "Visual Studio 18 2026"):
         raise ValueError("native receipt requires a supported Windows generator")
-    if recipe["CMAKE_GENERATOR_PLATFORM"] != "x64" or recipe["SUPERZIP_ENABLE_HIP"] not in ("ON", "OFF"):
+    if recipe["CMAKE_GENERATOR_PLATFORM"] != "x64" or recipe["FLITZZIP_ENABLE_HIP"] not in ("ON", "OFF"):
         raise ValueError("invalid native platform or HIP scope")
-    if recipe["SUPERZIP_BUILD_GUI"] != "ON" or recipe["SUPERZIP_BUILD_TESTS"] != "ON":
+    if recipe["FLITZZIP_BUILD_GUI"] != "ON" or recipe["FLITZZIP_BUILD_TESTS"] != "ON":
         raise ValueError("native receipt requires the complete app and test build")
-    if not re.fullmatch(r"gfx[0-9a-f]+(?:,gfx[0-9a-f]+)*", recipe["SUPERZIP_HIP_ARCH"]):
+    if not re.fullmatch(r"gfx[0-9a-f]+(?:,gfx[0-9a-f]+)*", recipe["FLITZZIP_HIP_ARCH"]):
         raise ValueError("native receipt requires concrete HIP architecture targets")
     if any("/" in value or "\\" in value for value in recipe.values()):
         raise ValueError("configured recipe must not contain installation paths")
@@ -402,8 +418,8 @@ def observe_toolchain(root: Path, cache: dict, cmake: Path) -> dict:
         "host_compiler_version": values["CMAKE_CXX_COMPILER_VERSION"],
         "host_compiler_files_sha256": host_files,
     }
-    if cache["SUPERZIP_ENABLE_HIP"] == "ON":
-        sdk = Path(cache["SUPERZIP_HIP_PATH"])
+    if cache["FLITZZIP_ENABLE_HIP"] == "ON":
+        sdk = Path(cache["FLITZZIP_HIP_PATH"])
         names = ("bin/hipcc.exe", "lib/llvm/bin/clang.exe", "lib/amdhip64.lib", "include/hip/hip_version.h")
         bitcode = input_path(sdk, "lib/llvm/amdgcn/bitcode/ocml.bc").parent
         names = sorted(set(names) | {path.relative_to(sdk).as_posix() for path in bitcode.glob("*.bc")})
@@ -455,8 +471,8 @@ def capture_outputs(root: Path, configuration: str) -> dict:
     if configuration not in CONFIGURATIONS:
         raise ValueError("unsupported native output configuration")
     prefix = f"build/{configuration}"
-    names = {f"{prefix}/superzip_cli.exe", f"{prefix}/SuperZip.exe", "build/superzip-runtime-dependencies.json"}
-    runtime = read_metadata(root, "build/superzip-runtime-dependencies.json")
+    names = {f"{prefix}/flitzzip_cli.exe", f"{prefix}/FlitzZip.exe", "build/flitzzip-runtime-dependencies.json"}
+    runtime = read_metadata(root, "build/flitzzip-runtime-dependencies.json")
     dependencies = runtime.get("packaged_runtime_files")
     if not isinstance(dependencies, list) or not dependencies:
         raise ValueError("native runtime manifest lacks packaged dependencies")
@@ -528,7 +544,7 @@ def validate_current(root: Path, configuration: str, require_hip: bool) -> dict:
         recipe, _ = configured_recipe(root, configuration)
         if recipe != receipt.get("recipe"):
             raise ValueError("native build receipt configuration is stale")
-        if require_hip and recipe["SUPERZIP_ENABLE_HIP"] != "ON":
+        if require_hip and recipe["FLITZZIP_ENABLE_HIP"] != "ON":
             raise ValueError("required-HIP measurement cannot use a CPU-only build receipt")
         if capture_inputs(root) != receipt.get("inputs") or capture_outputs(root, configuration) != receipt.get(
             "outputs_sha256"

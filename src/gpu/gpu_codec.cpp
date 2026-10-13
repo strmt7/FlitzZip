@@ -12,7 +12,7 @@
 #include <string>
 #include <utility>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr auto kUnavailableKernelTime = std::numeric_limits<std::uint64_t>::max();
@@ -60,7 +60,7 @@ ArchiveCodecOptions archive_codec_options(const GpuCodecOptions& options) {
 // Outputs: Returns normally for bounded settings; throws `ArchiveError` otherwise.
 void validate_gpu_codec_options(const GpuCodecOptions& options) {
     if (options.block_size < kMinArchiveBlockBytes || options.block_size > kMaxArchiveBlockBytes) {
-        throw ArchiveError("codec block size is outside SuperZip resource limits");
+        throw ArchiveError("codec block size is outside FlitzZip resource limits");
     }
     validate_native_compression_policy(options.compression_mode, options.compression_level, options.require_gpu,
                                        options.force_cpu);
@@ -71,7 +71,7 @@ void validate_gpu_codec_options(const GpuCodecOptions& options) {
 // Outputs: Returns normally while bounded; throws `ArchiveError` before large allocations.
 void reject_oversized_codec_span(std::size_t size, const char* label) {
     if (size > kMaxArchiveChunkBytes) {
-        throw ArchiveError(std::string(label) + " exceeds SuperZip codec resource limit");
+        throw ArchiveError(std::string(label) + " exceeds FlitzZip codec resource limit");
     }
 }
 
@@ -136,21 +136,21 @@ bool select_hip_codec(const GpuCodecOptions& options, std::span<const BlockDescr
     }
     if (block_table_contains_cpu_only(blocks)) {
         if (options.require_gpu) {
-            throw GpuError("required AMD HIP cannot process CPU-compressed SUZIP blocks; use the CPU codec");
+            throw GpuError("required AMD HIP cannot process CPU-compressed FLZIP blocks; use the CPU codec");
         }
         return false;
     }
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     return options.require_gpu || hip_device_available();
 #else
     if (options.require_gpu) {
-        throw GpuError("SuperZip was built without HIP acceleration");
+        throw GpuError("FlitzZip was built without HIP acceleration");
     }
     return false;
 #endif
 }
 
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
 // Purpose: Add one telemetry counter into another without losing concurrent atomic updates.
 // Inputs: `counter` is the destination telemetry field and `value` is the source count.
 // Outputs: Atomically adds nonzero source values to the operation telemetry.
@@ -432,7 +432,7 @@ void record_gpu_kernel_launch(GpuTelemetry* telemetry, double milliseconds) {
     record_gpu_kernel_work(telemetry, 1U, milliseconds);
 }
 
-// Purpose: Accumulate measured multi-kernel work while counting only explicit SuperZip HIP dispatches.
+// Purpose: Accumulate measured multi-kernel work while counting only explicit FlitzZip HIP dispatches.
 // Inputs: Optional counters, the known dispatch count, and the aggregate HIP event duration.
 // Outputs: Updates launch/time counters; rocPRIM internal dispatches are intentionally not estimated.
 void record_gpu_kernel_work(GpuTelemetry* telemetry, std::uint32_t launches, double milliseconds) {
@@ -484,8 +484,11 @@ void record_owned_decode_stage_time(GpuTelemetry* telemetry, OwnedDecodeStage st
     record_worker_duration(telemetry->owned_decode_stage_worker_microseconds[index], elapsed);
 }
 
+// Purpose: Report the capabilities of the compiled GPU backend.
+// Inputs: No caller state; the HIP implementation probes the local runtime when present.
+// Outputs: Explicit GPU availability and status, including a CPU-only build diagnosis.
 GpuInfo query_gpu_info() {
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     return query_hip_gpu_info();
 #else
     return GpuInfo{
@@ -509,10 +512,10 @@ GpuDiagnosticResult run_gpu_diagnostic(const GpuDiagnosticOptions& options) {
     if (options.inner_iterations == 0U || options.inner_iterations > 4096U) {
         throw ArchiveError("GPU diagnostic inner iterations must be between 1 and 4096");
     }
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     return run_gpu_diagnostic_hip(options);
 #else
-    throw GpuError("SuperZip was built without HIP acceleration");
+    throw GpuError("FlitzZip was built without HIP acceleration");
 #endif
 }
 
@@ -525,7 +528,7 @@ EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOption
     const auto cpu_options = archive_codec_options(options);
 
     const bool use_hip = select_hip_codec(options);
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     if (use_hip) {
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
@@ -549,7 +552,7 @@ EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOpti
     const auto cpu_options = archive_codec_options(options);
 
     const bool use_hip = select_hip_codec(options);
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     if (use_hip) {
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
@@ -576,7 +579,7 @@ EncodedBlockBatch encode_owned_block_batch(std::vector<std::byte> input, std::sp
     reject_oversized_codec_span(input.size(), "codec batch input");
     validate_encode_batch(input.size(), block_lengths, options.block_size);
     const bool use_hip = select_hip_codec(options);
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     if (use_hip) {
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
@@ -591,7 +594,7 @@ EncodedBlockBatch encode_owned_block_batch(std::vector<std::byte> input, std::sp
     return encode_block_batch_cpu(input, block_lengths, archive_codec_options(options));
 }
 
-// Purpose: Decode one native SUZIP chunk through HIP when allowed, otherwise through the CPU codec.
+// Purpose: Decode one native FLZIP chunk through HIP when allowed, otherwise through the CPU codec.
 // Inputs: `payload`/`blocks` describe encoded bytes, `output` is exact decoded storage, and `options` selects backend.
 // Outputs: Writes output and returns true only for nonempty HIP work; malformed metadata or required-GPU absence
 // throws.
@@ -601,12 +604,12 @@ bool decode_chunk(std::span<const std::byte> payload, std::span<const BlockDescr
     reject_oversized_codec_span(payload.size(), "codec payload");
     reject_oversized_codec_span(output.size(), "codec output");
     if (blocks.size() > kMaxBlocksPerEntry) {
-        throw ArchiveError("codec block table exceeds SuperZip resource limit");
+        throw ArchiveError("codec block table exceeds FlitzZip resource limit");
     }
     const auto cpu_options = archive_codec_options(options);
 
     const bool use_hip = select_hip_codec(options, blocks);
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     if (use_hip) {
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
@@ -621,7 +624,7 @@ bool decode_chunk(std::span<const std::byte> payload, std::span<const BlockDescr
     return false;
 }
 
-// Purpose: Compute one decoded SUZIP chunk CRC through HIP when allowed, otherwise through CPU decode and CRC.
+// Purpose: Compute one decoded FLZIP chunk CRC through HIP when allowed, otherwise through CPU decode and CRC.
 // Inputs: `payload`/`blocks` describe encoded bytes, `output_size` is decoded bytes, and `options` selects backend.
 // Outputs: Returns CRC and a nonempty-GPU-work flag; malformed metadata, oversized output or required-GPU absence
 // throws.
@@ -630,15 +633,15 @@ DecodedChunkCrc crc_decoded_chunk(std::span<const std::byte> payload, std::span<
     validate_gpu_codec_options(options);
     reject_oversized_codec_span(payload.size(), "codec payload");
     if (output_size > kMaxArchiveChunkBytes) {
-        throw ArchiveError("codec output exceeds SuperZip resource limit");
+        throw ArchiveError("codec output exceeds FlitzZip resource limit");
     }
     if (blocks.size() > kMaxBlocksPerEntry) {
-        throw ArchiveError("codec block table exceeds SuperZip resource limit");
+        throw ArchiveError("codec block table exceeds FlitzZip resource limit");
     }
     const auto cpu_options = archive_codec_options(options);
 
     const bool use_hip = select_hip_codec(options, blocks);
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     if (use_hip) {
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
@@ -660,4 +663,4 @@ DecodedChunkCrc crc_decoded_chunk(std::span<const std::byte> payload, std::span<
     };
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

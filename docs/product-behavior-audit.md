@@ -4,7 +4,7 @@ Checked on 2026-06-17 against an official help corpus from a mature Windows
 archive application. The reviewed section contained 66 same-site help pages,
 and every page fetched successfully. The external product name, URLs, and page
 text are intentionally not recorded here. This document captures only
-product-quality logic that is useful for SuperZip.
+product-quality logic that is useful for FlitzZip.
 
 ## Audit Coverage
 
@@ -74,9 +74,9 @@ The reviewed help corpus clustered into:
   driver, unavailable destination, locked file, mapped-drive failure, invalid
   code page, and corrupt split set.
 
-## SuperZip Decisions
+## FlitzZip Decisions
 
-- GPU acceleration is a native SUZIP capability. Compatibility formats must not
+- GPU acceleration is a native FLZIP capability. Compatibility formats must not
   imply GPU acceleration unless their production implementation actually uses
   the AMD HIP path and tests prove it.
 - Unsupported convenience features must fail clearly instead of being implied by
@@ -136,11 +136,11 @@ The reviewed help corpus clustered into:
 ## Regression Gate
 
 When adding a feature that appears in a mature archive application, apply this
-gate before exposing it in SuperZip:
+gate before exposing it in FlitzZip:
 
 ```mermaid
 flowchart TD
-    A["Feature idea"] --> B{"Native SUZIP, compatibility, or shell/install?"}
+    A["Feature idea"] --> B{"Native FLZIP, compatibility, or shell/install?"}
     B --> C["Define trust boundary and resource limits"]
     C --> D{"Implemented in process?"}
     D -- "No" --> E["Keep recognized-only or not exposed"]
@@ -150,6 +150,6 @@ flowchart TD
     G -- "Yes" --> H["Expose feature without overclaiming"]
 ```
 
-Do not copy another product's terminology or behavior blindly. SuperZip's
+Do not copy another product's terminology or behavior blindly. FlitzZip's
 native differentiator is AMD-only HIP acceleration, and its enterprise baseline
 is explicit behavior, bounded resources, and verifiable security properties.

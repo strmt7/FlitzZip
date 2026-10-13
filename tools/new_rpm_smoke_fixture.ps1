@@ -119,7 +119,7 @@ $rpm[4] = 3
 $rpm[5] = 0
 $rpm[6] = 0
 $rpm[7] = 0
-$nameBytes = [Text.Encoding]::ASCII.GetBytes("superzip-release-smoke")
+$nameBytes = [Text.Encoding]::ASCII.GetBytes("flitzzip-release-smoke")
 for ($index = 0; $index -lt $nameBytes.Length -and $index -lt 66; ++$index) {
     $rpm[10 + $index] = $nameBytes[$index]
 }

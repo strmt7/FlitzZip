@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Return the visible log-retention label for a Settings dropdown row.
 // Inputs: `index` is the zero-based retention selection.
@@ -71,4 +71,4 @@ void prune_log_entries(std::vector<Entry>& entries, std::chrono::system_clock::t
     }
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

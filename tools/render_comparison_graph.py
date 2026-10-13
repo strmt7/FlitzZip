@@ -60,10 +60,10 @@ def summarize(record: dict, expected_level: int = 5) -> tuple[str, list[dict]]:
         or not HEX40.fullmatch(record["source_commit"])
     ):
         raise ValueError("comparison requires a clean, full source identity")
-    if not isinstance(record.get("superzip_binary_sha256"), str) or not HEX64.fullmatch(
-        record["superzip_binary_sha256"]
+    if not isinstance(record.get("flitzzip_binary_sha256"), str) or not HEX64.fullmatch(
+        record["flitzzip_binary_sha256"]
     ):
-        raise ValueError("missing tested SuperZip binary SHA-256")
+        raise ValueError("missing tested FlitzZip binary SHA-256")
     build = record.get("build")
     if (
         not isinstance(build, dict)
@@ -105,7 +105,7 @@ def summarize(record: dict, expected_level: int = 5) -> tuple[str, list[dict]]:
         raise ValueError("invalid host numeric specification")
     tools = record.get("tools")
     if not isinstance(tools, list) or {tool.get("name") for tool in tools if isinstance(tool, dict)} != {
-        "SuperZip",
+        "FlitzZip",
         "7-Zip",
         "Zstd",
     }:
@@ -119,8 +119,8 @@ def summarize(record: dict, expected_level: int = 5) -> tuple[str, list[dict]]:
             or not str(tool.get("source_url", "")).startswith("https://")
         ):
             raise ValueError("tool version or provenance is missing")
-    if next(tool["binary_sha256"] for tool in tools if tool["name"] == "SuperZip") != record["superzip_binary_sha256"]:
-        raise ValueError("SuperZip binary identity differs")
+    if next(tool["binary_sha256"] for tool in tools if tool["name"] == "FlitzZip") != record["flitzzip_binary_sha256"]:
+        raise ValueError("FlitzZip binary identity differs")
     corpus = record.get("corpus")
     if (
         not isinstance(corpus, dict)
@@ -294,7 +294,7 @@ def render(commit: str, rows: list[dict]) -> bytes:
             "aria-labelledby": "title desc",
             "font-family": "Segoe UI, Arial, sans-serif",
         },
-        "SuperZip application comparison on Silesia files",
+        "FlitzZip application comparison on Silesia files",
         "Same-host, same-format ZIP and Zstandard comparisons. Exact archive sizes and median full CLI "
         "compression times. Both extraction times in a case use the same comparator-created archive. "
         "Time whiskers show observed minimum and maximum. Lower is better.",
@@ -332,7 +332,7 @@ def render(commit: str, rows: list[dict]) -> bytes:
         )
         for lane, metric in enumerate(row["metrics"]):
             y = top + 50 + lane * 37
-            color = "#087f8c" if metric["tool"] == "SuperZip" else "#46545b"
+            color = "#087f8c" if metric["tool"] == "FlitzZip" else "#46545b"
             label(root, 38, y + 1, metric["tool"], 13)
             bar(
                 root,

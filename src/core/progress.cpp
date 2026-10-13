@@ -3,7 +3,7 @@
 
 #include <memory>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Reset the synchronized state and clock for a new operation.
 // Inputs: operation identifies the job; total_bytes and total_entries are expected, nonnegative totals.
@@ -147,4 +147,4 @@ ProgressCheckpoint make_cancellation_checkpoint(ProgressState& progress, const P
     };
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

@@ -1,6 +1,6 @@
 #include "gpu/hip_kernel_api.hpp"
 
-namespace superzip::hip_detail {
+namespace flitzzip::hip_detail {
 namespace {
 
 using namespace hip_detail;
@@ -79,7 +79,7 @@ __global__ void prefix_segment_lengths_batch_kernel(const std::byte* input, cons
     }
 }
 
-// Purpose: Pack a batched list of byte segments with SuperZip's static GPU prefix code.
+// Purpose: Pack a batched list of byte segments with FlitzZip's static GPU prefix code.
 // Inputs: `input` is a device chunk, `plans` maps launched blocks to source segments, `segment_offsets` contains
 // 4-byte-aligned output offsets, and `encoded` is zeroed output storage. Outputs: Writes prefix bitstreams.
 __global__ void prefix_pack_segments_batch_kernel(const std::byte* input, const PrefixEncodeSegmentPlan* plans,
@@ -132,4 +132,4 @@ void bind_static_prefix_kernels(HipKernelApi& api) noexcept {
     api.prefix_pack_segments_batch_kernel = prefix_pack_segments_batch_kernel;
 }
 
-}  // namespace superzip::hip_detail
+}  // namespace flitzzip::hip_detail

@@ -2,7 +2,7 @@
 # state. Inputs: source is the verified generated compression header; output
 # belongs to the test build. Outputs: Preserves the complete writer and exact
 # upstream declarations, with separate provenance for each imported region.
-function(superzip_generate_zstd_raw_block_probe source output)
+function(flitzzip_generate_zstd_raw_block_probe source output)
   file(SHA256 "${source}" source_hash)
   if(NOT source_hash STREQUAL
      "94551c31098dd5029efd64d7fc3e7688a75e5d774c59cc9f2f1b82fc4ecb4662"

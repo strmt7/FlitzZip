@@ -46,13 +46,13 @@ levels 0, 10, and both signed integer extremes.
 ## Shared IEEE Integrity Backend
 
 ZIP and Gzip use Miniz's documented external-CRC hook to share the existing
-capability-aware IEEE backend with SUZIP and 7z. TAR.GZ and CPIO.GZ receive
+capability-aware IEEE backend with FLZIP and 7z. TAR.GZ and CPIO.GZ receive
 the same implementation. There is one thread-safe initialization guard, no new
 dependency, no CRC32C substitution, and no change to required checks, effort,
 or durable publication. The C ABI resets on null initialization and preserves
 a non-null empty range's low 32 seed bits. Bitwise-oracle, fragmentation,
 alignment, and concurrent-first-use tests verify the contract.
-See the [controls and measurement limits](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/benchmarks/2026-10-01-compatibility-crc-hook.md);
+See the [controls and measurement limits](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/benchmarks/2026-10-01-compatibility-crc-hook.md);
 an isolated checksum gain is not an end-to-end performance guarantee.
 
 ## Lifetime And Byte Identity
@@ -156,7 +156,7 @@ The encoding boundary follows the
 
 ## Native, ZIP, And CLI Unicode Boundaries
 
-SUZIP extraction explicitly decodes its existing UTF-8 index paths. ZIP passes
+FLZIP extraction explicitly decodes its existing UTF-8 index paths. ZIP passes
 UTF-8 filesystem paths into the bundled miniz Windows stdio implementation,
 which already opens wide-character paths. ZIP writers retain the EFS filename
 flag. Readers decode EFS names as UTF-8 and unmarked names as CP437 before
@@ -178,7 +178,7 @@ valid Unicode archive reads.
 Native tests cover Unicode source/archive/destination paths, empty ZIP entries,
 all nine ZIP efforts, overwrite, CP437, and native CPU/available required-HIP
 roundtrips. The CLI format matrix adds Unicode process arguments and entry-name
-checks for SUZIP, ZIP, TAR, TAR.GZ, TAR.BZ2 and TAR.ZST. Independent Python ZIP
+checks for FLZIP, ZIP, TAR, TAR.GZ, TAR.BZ2 and TAR.ZST. Independent Python ZIP
 decoding covers all nine writer efforts; independently produced unmarked ZIPs
 exercise all 128 high-byte CP437 values. These are correctness results, not
 compression-speed measurements or proof of Unicode support in every adapter.

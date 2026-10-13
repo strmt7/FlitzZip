@@ -118,7 +118,7 @@ std::vector<unsigned char> read_binary_file(const std::filesystem::path& path) {
 // Outputs: Creates a valid Gzip stream.
 void gzip_file(const std::filesystem::path& source, const std::filesystem::path& target) {
     std::ifstream input(source, std::ios::binary);
-    superzip::GzipOutputStream output(target);
+    flitzzip::GzipOutputStream output(target);
     std::array<char, 64U * 1024U> buffer{};
     while (input) {
         input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
@@ -144,7 +144,7 @@ void write_rpm_fixture(const std::filesystem::path& archive, const std::filesyst
     bytes[5] = 0U;
     bytes[6] = 0U;
     bytes[7] = 0U;
-    const std::string name = "superzip-test";
+    const std::string name = "flitzzip-test";
     std::copy(name.begin(), name.end(), bytes.begin() + 10);
 
     const auto signature = make_rpm_header({});
@@ -171,7 +171,7 @@ std::filesystem::path make_cpio_payload(const std::filesystem::path& root, std::
     std::filesystem::create_directories(input);
     std::ofstream(input / "alpha.txt") << "rpm payload\n";
     const auto cpio = root / (std::string(name) + ".cpio");
-    (void)superzip::compress_cpio({input}, cpio);
+    (void)flitzzip::compress_cpio({input}, cpio);
     return cpio;
 }
 
@@ -236,13 +236,13 @@ TEST_CASE(rpm_member_names_encoding_forwarding) {
             const auto output = root / archive.stem();
             write_rpm_fixture(archive, compressed ? gzip : cpio, compressed ? "gzip" : "none");
             const auto stats =
-                system ? superzip::extract_rpm(archive, output, false, {}, superzip::ArchivePathEncoding::HostCodePage)
-                       : superzip::extract_rpm(archive, output, false);
+                system ? flitzzip::extract_rpm(archive, output, false, {}, flitzzip::ArchivePathEncoding::HostCodePage)
+                       : flitzzip::extract_rpm(archive, output, false);
             REQUIRE_EQ(stats.entries, 1U);
             REQUIRE_EQ(read_text_file(output / expected), "rpm");
             REQUIRE_EQ(count_regular_files(output), 1U);
             if (system && compressed) {
-                superzip_test::export_compat_fixture(archive, output);
+                flitzzip_test::export_compat_fixture(archive, output);
             }
         }
     }
@@ -257,12 +257,12 @@ TEST_CASE(rpm_extraction_reads_uncompressed_cpio_payload) {
     const auto archive = root / "package.rpm";
     write_rpm_fixture(archive, cpio, "none");
 
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Rpm);
-    const auto info = superzip::scan_rpm_payload(archive);
-    REQUIRE_EQ(info.compression, superzip::RpmPayloadCompression::None);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Rpm);
+    const auto info = flitzzip::scan_rpm_payload(archive);
+    REQUIRE_EQ(info.compression, flitzzip::RpmPayloadCompression::None);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_rpm(archive, output, false);
+    const auto stats = flitzzip::extract_rpm(archive, output, false);
     REQUIRE_TRUE(stats.entries >= 2);
     REQUIRE_EQ(read_text_file(output / "input" / "alpha.txt"), read_text_file(root / "input" / "alpha.txt"));
 }
@@ -278,14 +278,14 @@ TEST_CASE(rpm_extraction_reads_gzip_cpio_payload) {
     const auto archive = root / "package.rpm";
     write_rpm_fixture(archive, gzip, "gzip");
 
-    const auto info = superzip::scan_rpm_payload(archive);
-    REQUIRE_EQ(info.compression, superzip::RpmPayloadCompression::Gzip);
+    const auto info = flitzzip::scan_rpm_payload(archive);
+    REQUIRE_EQ(info.compression, flitzzip::RpmPayloadCompression::Gzip);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_rpm(archive, output, false);
+    const auto stats = flitzzip::extract_rpm(archive, output, false);
     REQUIRE_TRUE(stats.entries >= 2);
     REQUIRE_EQ(read_text_file(output / "input" / "alpha.txt"), read_text_file(root / "input" / "alpha.txt"));
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify an RPM header compressor is selected without evaluating an absent magic fallback.
@@ -298,13 +298,13 @@ TEST_CASE(rpm_scanner_uses_recognized_header_when_payload_magic_is_unknown) {
     const auto archive = root / "package.rpm";
     write_rpm_fixture(archive, payload, "gzip");
 
-    const auto info = superzip::scan_rpm_payload(archive);
-    REQUIRE_EQ(info.compression, superzip::RpmPayloadCompression::Gzip);
+    const auto info = flitzzip::scan_rpm_payload(archive);
+    REQUIRE_EQ(info.compression, flitzzip::RpmPayloadCompression::Gzip);
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_rpm(archive, root / "out", false));
-    } catch (const superzip::Error&) {
+        static_cast<void>(flitzzip::extract_rpm(archive, root / "out", false));
+    } catch (const flitzzip::Error&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -325,8 +325,8 @@ TEST_CASE(rpm_extraction_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_rpm(archive, output, false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_rpm(archive, output, false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -344,8 +344,8 @@ TEST_CASE(rpm_extraction_rejects_unsupported_payload_compressor_before_output) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_rpm(archive, root / "out", false));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::extract_rpm(archive, root / "out", false));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -374,8 +374,8 @@ TEST_CASE(rpm_scanner_rejects_oversized_header_entry_count) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::scan_rpm_payload(archive));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::scan_rpm_payload(archive));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -400,8 +400,8 @@ TEST_CASE(rpm_scanner_rejects_invalid_lead_version) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::scan_rpm_payload(archive));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::scan_rpm_payload(archive));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -429,8 +429,8 @@ TEST_CASE(rpm_scanner_rejects_header_reserved_bytes) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::scan_rpm_payload(archive));
-    } catch (const superzip::ArchiveError&) {
+        static_cast<void>(flitzzip::scan_rpm_payload(archive));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

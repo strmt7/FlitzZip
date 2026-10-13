@@ -10,7 +10,7 @@
 #include <knownfolders.h>
 #include <shlobj.h>
 
-namespace superzip::app {
+namespace flitzzip::app {
 namespace {
 
 // Purpose: Resolve a Windows known folder without fixed path buffers.
@@ -45,12 +45,12 @@ DWORD window_style() {
 }
 
 // Purpose: Read the optional GUI-smoke auto-close timeout.
-// Inputs: Uses `SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS` from the process environment.
+// Inputs: Uses `FLITZZIP_GUI_SMOKE_AUTO_CLOSE_MS` from the process environment.
 // Outputs: Returns a bounded timer interval in milliseconds, or zero when disabled.
 UINT smoke_auto_close_ms() {
     wchar_t buffer[32]{};
     constexpr DWORD capacity = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
-    const DWORD length = GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", buffer, capacity);
+    const DWORD length = GetEnvironmentVariableW(L"FLITZZIP_GUI_SMOKE_AUTO_CLOSE_MS", buffer, capacity);
     if (length == 0 || length >= capacity) {
         return 0;
     }
@@ -63,12 +63,12 @@ UINT smoke_auto_close_ms() {
 }
 
 // Purpose: Read the optional GUI-smoke close-marker file path.
-// Inputs: Uses `SUPERZIP_GUI_SMOKE_CLOSE_FILE` from the process environment.
+// Inputs: Uses `FLITZZIP_GUI_SMOKE_CLOSE_FILE` from the process environment.
 // Outputs: Returns the marker path, or an empty path when smoke close polling is disabled.
 std::filesystem::path smoke_close_marker_path() {
     wchar_t buffer[32768]{};
     constexpr DWORD capacity = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
-    const DWORD length = GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_CLOSE_FILE", buffer, capacity);
+    const DWORD length = GetEnvironmentVariableW(L"FLITZZIP_GUI_SMOKE_CLOSE_FILE", buffer, capacity);
     if (length == 0 || length >= capacity) {
         return {};
     }
@@ -108,13 +108,13 @@ std::filesystem::path current_user_downloads_directory() {
 
     auto local_app_data = known_folder_or_empty(FOLDERID_LocalAppData, KF_FLAG_CREATE);
     if (!local_app_data.empty()) {
-        return local_app_data / L"SuperZip" / L"Downloads";
+        return local_app_data / L"FlitzZip" / L"Downloads";
     }
 
     std::error_code ec;
     auto temp = std::filesystem::temp_directory_path(ec);
     if (!ec && !temp.empty()) {
-        return temp / L"SuperZip" / L"Downloads";
+        return temp / L"FlitzZip" / L"Downloads";
     }
 
     return std::filesystem::path(L"C:\\Users\\Public\\Downloads");
@@ -130,4 +130,4 @@ std::vector<std::filesystem::path> paths_from_hdrop(HDROP drop) {
     return paths_from_dropfiles_global(reinterpret_cast<HGLOBAL>(drop));
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

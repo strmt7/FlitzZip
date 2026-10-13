@@ -9,14 +9,14 @@
 #ifndef XZ_CONFIG_H
 #define XZ_CONFIG_H
 
-/* SuperZip decodes standalone .xz files, including concatenated streams. */
+/* FlitzZip decodes standalone .xz files, including concatenated streams. */
 #define XZ_DEC_CONCATENATED
 
 /* The reference xz tool writes CRC64 by default; keep verification enabled. */
 #define XZ_USE_CRC64
 
 /*
- * BCJ filter decoders are intentionally disabled in the SuperZip production
+ * BCJ filter decoders are intentionally disabled in the FlitzZip production
  * build. The extraction path accepts plain LZMA2 streams and rejects archives
  * requiring unsupported executable-code filters with XZ_OPTIONS_ERROR.
  */
@@ -35,17 +35,23 @@
 
 #include "xz.h"
 
-static inline void *superzip_xz_alloc(size_t size)
+/* Purpose: Allocate zero-initialized decoder storage.
+ * Inputs: A requested byte count. Outputs: An owned allocation or NULL for zero/failure. */
+static inline void *flitzzip_xz_alloc(size_t size)
 {
 	return size == 0 ? NULL : calloc(1, size);
 }
 
-static inline void superzip_xz_release(void *ptr)
+/* Purpose: Release decoder storage.
+ * Inputs: A matching allocation or NULL. Outputs: Releases that allocation once. */
+static inline void flitzzip_xz_release(void *ptr)
 {
 	free(ptr);
 }
 
-static inline void superzip_xz_copy(void *dest, const void *src, size_t size)
+/* Purpose: Copy decoder bytes between non-overlapping live extents.
+ * Inputs: Source/destination buffers of at least size bytes. Outputs: Copies exactly size bytes. */
+static inline void flitzzip_xz_copy(void *dest, const void *src, size_t size)
 {
 	unsigned char *d = dest;
 	const unsigned char *s = src;
@@ -54,7 +60,10 @@ static inline void superzip_xz_copy(void *dest, const void *src, size_t size)
 		*d++ = *s++;
 }
 
-static inline void superzip_xz_move(void *dest, const void *src, size_t size)
+/* Purpose: Move decoder bytes within an overlapping dictionary buffer.
+ * Inputs: Live regions in the same allocation, each spanning size bytes.
+ * Outputs: Preserves original source bytes during a forward or backward transfer. */
+static inline void flitzzip_xz_move(void *dest, const void *src, size_t size)
 {
 	unsigned char *d = dest;
 	const unsigned char *s = src;
@@ -70,10 +79,10 @@ static inline void superzip_xz_move(void *dest, const void *src, size_t size)
 	}
 }
 
-#define kmalloc(size, flags) superzip_xz_alloc(size)
-#define kfree(ptr) superzip_xz_release(ptr)
-#define vmalloc(size) superzip_xz_alloc(size)
-#define vfree(ptr) superzip_xz_release(ptr)
+#define kmalloc(size, flags) flitzzip_xz_alloc(size)
+#define kfree(ptr) flitzzip_xz_release(ptr)
+#define vmalloc(size) flitzzip_xz_alloc(size)
+#define vfree(ptr) flitzzip_xz_release(ptr)
 
 #define memeq(a, b, size) (memcmp(a, b, size) == 0)
 #define memzero(buf, size) memset(buf, 0, size)

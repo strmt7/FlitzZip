@@ -13,7 +13,7 @@ from tools.render_comparison_graph import SVG, label, summarize
 from tools.render_svg_graph import append_range_whisker, new_document
 
 LEVELS = (1, 3, 5, 7, 9)
-COLORS = {"SuperZip": "#087e83", "7-Zip": "#b15a22", "Zstd": "#b15a22"}
+COLORS = {"FlitzZip": "#087e83", "7-Zip": "#b15a22", "Zstd": "#b15a22"}
 
 
 # Purpose: Validate a complete same-host, same-binary effort sweep.
@@ -40,7 +40,7 @@ def collect(records: list[dict]) -> tuple[str, list[dict]]:
     }
     identity = (
         first.get("source_commit"),
-        first.get("superzip_binary_sha256"),
+        first.get("flitzzip_binary_sha256"),
         first.get("build"),
         first.get("corpus"),
         first.get("tools"),
@@ -51,7 +51,7 @@ def collect(records: list[dict]) -> tuple[str, list[dict]]:
         record = indexed[level]
         actual_identity = (
             record.get("source_commit"),
-            record.get("superzip_binary_sha256"),
+            record.get("flitzzip_binary_sha256"),
             record.get("build"),
             record.get("corpus"),
             record.get("tools"),
@@ -240,7 +240,7 @@ def render(commit: str, panels: list[dict]) -> bytes:
         label(root, 683, top + 67, "Tool / effort", 12, "bold")
         label(root, 854, top + 67, "Archive bytes", 12, "bold")
         label(root, 998, top + 67, "Create s [min-max]", 12, "bold")
-        ordered = sorted(points, key=lambda point: (point["tool"] != "SuperZip", point["level"]))
+        ordered = sorted(points, key=lambda point: (point["tool"] != "FlitzZip", point["level"]))
         for row_index, point in enumerate(ordered):
             row_y = top + 92 + row_index * 23
             ET.SubElement(

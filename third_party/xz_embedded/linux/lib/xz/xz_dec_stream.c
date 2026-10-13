@@ -185,12 +185,15 @@ static const uint8_t check_sizes[16] = {
  * we are supposed to copy into s->temp.buf. Return true once s->temp.pos
  * has reached s->temp.size.
  */
+/* Purpose: Accumulate the pending fixed-size decoder field.
+ * Inputs: Valid input cursors and a temporary extent within the decoder buffer.
+ * Outputs: Advances cursors and returns true only when the complete field is available. */
 static bool fill_temp(struct xz_dec *s, struct xz_buf *b)
 {
 	size_t copy_size = min_t(size_t,
 			b->in_size - b->in_pos, s->temp.size - s->temp.pos);
 
-	superzip_xz_copy(s->temp.buf + s->temp.pos, b->in + b->in_pos, copy_size);
+	flitzzip_xz_copy(s->temp.buf + s->temp.pos, b->in + b->in_pos, copy_size);
 	b->in_pos += copy_size;
 	s->temp.pos += copy_size;
 

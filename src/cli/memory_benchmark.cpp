@@ -28,20 +28,20 @@
 #include <thread>
 #include <vector>
 
-namespace superzip::cli {
+namespace flitzzip::cli {
 namespace {
 
 constexpr std::uint64_t kCliMiB = 1024ULL * 1024ULL;
 // Reserve the independent validation output and reference scratch in addition to normal benchmark headroom.
-constexpr std::uint64_t kMemoryBenchmarkReserveBytes = 1024ULL * 1024ULL * 1024ULL + superzip::kMaxArchiveChunkBytes +
-                                                       superzip::kMaxArchiveWorkers * kMemoryBenchmarkReferenceBytes;
-constexpr std::array<int, 5> kBenchmarkCompressionLevels{1, 3, superzip::kDefaultCompressionLevel, 7, 9};
+constexpr std::uint64_t kMemoryBenchmarkReserveBytes = 1024ULL * 1024ULL * 1024ULL + flitzzip::kMaxArchiveChunkBytes +
+                                                       flitzzip::kMaxArchiveWorkers * kMemoryBenchmarkReferenceBytes;
+constexpr std::array<int, 5> kBenchmarkCompressionLevels{1, 3, flitzzip::kDefaultCompressionLevel, 7, 9};
 constexpr std::array<std::uint32_t, 7> kBenchmarkBlockSizes{
     256U * 1024U, 512U * 1024U, 1024U * 1024U, 2048U * 1024U, 4096U * 1024U, 8192U * 1024U, 16384U * 1024U,
 };
 
 struct MemoryArchiveChunk {
-    superzip::EncodedChunk encoded;
+    flitzzip::EncodedChunk encoded;
     std::uint32_t crc32 = 0;
     std::uint64_t uncompressed_size = 0;
     double source_generation_worker_seconds = 0.0;
@@ -55,7 +55,7 @@ struct PendingMemoryEncode {
 
 struct PendingMemoryCrc {
     std::size_t index = 0;
-    std::future<superzip::DecodedChunkCrc> result;
+    std::future<flitzzip::DecodedChunkCrc> result;
 };
 
 struct MemoryDecodeResult {
@@ -69,8 +69,8 @@ struct PendingMemoryDecode {
 };
 
 struct BenchmarkSuiteCase {
-    int compression_level = superzip::kDefaultCompressionLevel;
-    std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
+    int compression_level = flitzzip::kDefaultCompressionLevel;
+    std::uint32_t block_size = flitzzip::kDefaultArchiveBlockBytes;
     MemoryBenchmarkResult cpu;
     MemoryBenchmarkResult gpu;
     double cpu_score = 0.0;
@@ -115,7 +115,7 @@ double benchmark_score(const MemoryBenchmarkResult& result) {
 // Outputs: Returns the sum or throws `ArchiveError` before wraparound.
 std::uint64_t checked_add_cli_u64(std::uint64_t lhs, std::uint64_t rhs, const char* message) {
     if (rhs > std::numeric_limits<std::uint64_t>::max() - lhs) {
-        throw superzip::ArchiveError(message);
+        throw flitzzip::ArchiveError(message);
     }
     return lhs + rhs;
 }
@@ -125,7 +125,7 @@ std::uint64_t checked_add_cli_u64(std::uint64_t lhs, std::uint64_t rhs, const ch
 // Outputs: Returns the product or throws `ArchiveError` before wraparound.
 std::uint64_t checked_multiply_cli_u64(std::uint64_t lhs, std::uint64_t rhs, const char* message) {
     if (lhs != 0 && rhs > std::numeric_limits<std::uint64_t>::max() / lhs) {
-        throw superzip::ArchiveError(message);
+        throw flitzzip::ArchiveError(message);
     }
     return lhs * rhs;
 }
@@ -134,23 +134,23 @@ std::uint64_t checked_multiply_cli_u64(std::uint64_t lhs, std::uint64_t rhs, con
 // Inputs: Aggregate workers and options; metadata-only corpus planning also reserves future resident source bytes.
 // Outputs: Returns a depth admitted by production workspace policy plus benchmark reserve, or throws ArchiveError.
 std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers, const MemoryBenchmarkOptions& options) {
-    superzip::HostPipelineWorkspace workspace;
+    flitzzip::HostPipelineWorkspace workspace;
     if (options.compression_mode == NativeCompressionMode::NeutronStar) {
-        workspace.per_window_bytes = superzip::kMaxArchiveChunkBytes * 5U;
+        workspace.per_window_bytes = flitzzip::kMaxArchiveChunkBytes * 5U;
     }
     if (!options.require_gpu) {
-        workspace = superzip::cpu_encode_workspace_estimate(
-            superzip::kMaxArchiveChunkBytes,
+        workspace = flitzzip::cpu_encode_workspace_estimate(
+            flitzzip::kMaxArchiveChunkBytes,
             {.block_size = options.block_size, .compression_level = options.compression_level}, workers);
     }
-    const auto limit = superzip::resolve_host_pipeline_inflight_limit(
-        superzip::query_host_memory_snapshot(), superzip::kMaxArchiveChunkBytes,
+    const auto limit = flitzzip::resolve_host_pipeline_inflight_limit(
+        flitzzip::query_host_memory_snapshot(), flitzzip::kMaxArchiveChunkBytes,
         checked_add_cli_u64(kMemoryBenchmarkReserveBytes, options.source.empty() ? options.corpus_bytes : 0U,
                             "benchmark source reserve overflows"),
         workspace);
-    const auto admitted = superzip::resolve_worker_inflight_limit(workers, limit);
+    const auto admitted = flitzzip::resolve_worker_inflight_limit(workers, limit);
     if (options.inflight_chunks > admitted) {
-        throw superzip::ArchiveError("requested benchmark inflight depth exceeds current host/worker admission; "
+        throw flitzzip::ArchiveError("requested benchmark inflight depth exceeds current host/worker admission; "
                                      "configuration was not reduced");
     }
     return options.inflight_chunks == 0 ? admitted : options.inflight_chunks;
@@ -161,21 +161,21 @@ std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers, const Mem
 // workload chunk count.
 // Outputs: Returns at least one codec worker per chunk, using more workers only when fewer chunks can be active.
 std::uint32_t resolve_memory_codec_workers(std::uint32_t workers, std::uint32_t inflight, std::size_t chunk_count) {
-    return superzip::resolve_codec_worker_count(workers, inflight, chunk_count);
+    return flitzzip::resolve_codec_worker_count(workers, inflight, chunk_count);
 }
 
 // Purpose: Resolve the worker count used by in-memory codec benchmarks.
 // Inputs: `requested` is the user-provided worker count, where zero means automatic.
 // Outputs: Returns a bounded worker count accepted by codec resource limits.
 std::uint32_t resolve_memory_benchmark_workers(std::uint32_t requested) {
-    if (requested > superzip::kMaxArchiveWorkers) {
-        throw superzip::ArchiveError("worker count exceeds SuperZip resource limit");
+    if (requested > flitzzip::kMaxArchiveWorkers) {
+        throw flitzzip::ArchiveError("worker count exceeds FlitzZip resource limit");
     }
     if (requested != 0) {
         return requested;
     }
     return std::min<std::uint32_t>(
-        superzip::kMaxArchiveWorkers,
+        flitzzip::kMaxArchiveWorkers,
         std::max<std::uint32_t>(1U, static_cast<std::uint32_t>(std::max(1U, std::thread::hardware_concurrency()))));
 }
 
@@ -199,10 +199,10 @@ void flush_one_memory_encode(std::deque<PendingMemoryEncode>& pending_encode, st
 // Purpose: Model one native file's serialized block table while bounded benchmark windows are still resident.
 // Inputs: `archive` owns completed chunks and `entry` tracks the virtual file's preceding payload and CRC.
 // Outputs: Appends offset-adjusted descriptors and combines CRCs, or throws before index/resource overflow.
-void append_memory_archive_index(std::span<const MemoryArchiveChunk> archive, superzip::ArchiveEntry& entry) {
+void append_memory_archive_index(std::span<const MemoryArchiveChunk> archive, flitzzip::ArchiveEntry& entry) {
     for (const auto& chunk : archive) {
-        if (chunk.encoded.blocks.size() > superzip::kMaxArchiveBlocks - entry.blocks.size()) {
-            throw superzip::ArchiveError("memory benchmark archive exceeds the native block limit");
+        if (chunk.encoded.blocks.size() > flitzzip::kMaxArchiveBlocks - entry.blocks.size()) {
+            throw flitzzip::ArchiveError("memory benchmark archive exceeds the native block limit");
         }
         for (auto block : chunk.encoded.blocks) {
             block.encoded_offset = checked_add_cli_u64(block.encoded_offset, entry.payload_size,
@@ -211,7 +211,7 @@ void append_memory_archive_index(std::span<const MemoryArchiveChunk> archive, su
         }
         entry.payload_size = checked_add_cli_u64(entry.payload_size, chunk.encoded.payload.size(),
                                                  "memory benchmark archive payload overflows");
-        entry.crc32 = superzip::crc32_combine(entry.crc32, chunk.crc32, chunk.uncompressed_size);
+        entry.crc32 = flitzzip::crc32_combine(entry.crc32, chunk.crc32, chunk.uncompressed_size);
     }
 }
 
@@ -222,14 +222,14 @@ void append_memory_archive_index(std::span<const MemoryArchiveChunk> archive, su
 std::vector<MemoryArchiveChunk> encode_memory_benchmark_window(std::uint64_t window_offset, std::uint64_t window_bytes,
                                                                std::uint64_t total_bytes, std::uint32_t inflight,
                                                                const MemoryBenchmarkOptions& options,
-                                                               const superzip::GpuCodecOptions& codec_options,
+                                                               const flitzzip::GpuCodecOptions& codec_options,
                                                                MemoryBenchmarkResult& result) {
-    const auto chunk_count = static_cast<std::size_t>((window_bytes + superzip::kMaxArchiveChunkBytes - 1U) /
-                                                      superzip::kMaxArchiveChunkBytes);
+    const auto chunk_count = static_cast<std::size_t>((window_bytes + flitzzip::kMaxArchiveChunkBytes - 1U) /
+                                                      flitzzip::kMaxArchiveChunkBytes);
     std::vector<MemoryArchiveChunk> archive(chunk_count);
     std::deque<PendingMemoryEncode> pending_encode;
     for (std::uint64_t offset = 0, index = 0; offset < window_bytes; ++index) {
-        const auto want = std::min<std::uint64_t>(superzip::kMaxArchiveChunkBytes, window_bytes - offset);
+        const auto want = std::min<std::uint64_t>(flitzzip::kMaxArchiveChunkBytes, window_bytes - offset);
         const auto chunk_offset = window_offset + offset;
         const auto profile = options.profile;
         const auto source = options.source;
@@ -241,10 +241,10 @@ std::vector<MemoryArchiveChunk> encode_memory_benchmark_window(std::uint64_t win
                                      std::vector<std::byte> input(static_cast<std::size_t>(want));
                                      fill_memory_benchmark_chunk(input, chunk_offset, total_bytes, profile, source);
                                      const auto codec_started = std::chrono::steady_clock::now();
-                                     auto encoded = superzip::encode_owned_chunk(std::move(input), codec_options);
+                                     auto encoded = flitzzip::encode_owned_chunk(std::move(input), codec_options);
                                      const auto encoded_at = std::chrono::steady_clock::now();
                                      if (!encoded.source_crc32_available) {
-                                         throw superzip::ArchiveError(
+                                         throw flitzzip::ArchiveError(
                                              "owned memory benchmark encode did not return a source CRC");
                                      }
                                      const auto chunk_crc = encoded.source_crc32;
@@ -284,7 +284,7 @@ void verify_repeated_record_payloads(const std::vector<MemoryArchiveChunk>& arch
             continue;
         }
         if (candidate.encoded.payload.size() != reference.encoded.payload.size()) {
-            throw superzip::ArchiveError("repeated-record encoding differs at chunk " + std::to_string(index) +
+            throw flitzzip::ArchiveError("repeated-record encoding differs at chunk " + std::to_string(index) +
                                          ": reference_bytes=" + std::to_string(reference.encoded.payload.size()) +
                                          " candidate_bytes=" + std::to_string(candidate.encoded.payload.size()));
         }
@@ -292,7 +292,7 @@ void verify_repeated_record_payloads(const std::vector<MemoryArchiveChunk>& arch
                                             candidate.encoded.payload.begin());
         if (mismatch.first != reference.encoded.payload.end()) {
             const auto offset = static_cast<std::size_t>(mismatch.first - reference.encoded.payload.begin());
-            throw superzip::ArchiveError("repeated-record encoding differs at chunk " + std::to_string(index) +
+            throw flitzzip::ArchiveError("repeated-record encoding differs at chunk " + std::to_string(index) +
                                          " encoded_byte=" + std::to_string(offset) +
                                          " reference=" + std::to_string(static_cast<std::uint8_t>(*mismatch.first)) +
                                          " candidate=" + std::to_string(static_cast<std::uint8_t>(*mismatch.second)));
@@ -312,16 +312,16 @@ void flush_one_memory_crc(std::deque<PendingMemoryCrc>& pending_crc, const std::
     const auto& chunk = archive[pending.index];
     result.stats.gpu_used = result.stats.gpu_used || decoded_crc.gpu_used;
     if (decoded_crc.crc32 != chunk.crc32) {
-        superzip::GpuCodecOptions cpu_options;
+        flitzzip::GpuCodecOptions cpu_options;
         cpu_options.require_gpu = false;
         cpu_options.force_cpu = true;
         cpu_options.block_size = result.block_size;
-        const auto cpu_crc = superzip::crc_decoded_chunk(chunk.encoded.payload, chunk.encoded.blocks,
+        const auto cpu_crc = flitzzip::crc_decoded_chunk(chunk.encoded.payload, chunk.encoded.blocks,
                                                          chunk.uncompressed_size, cpu_options);
         std::string location;
         if (profile == "RepeatedRecord" && cpu_crc.crc32 != chunk.crc32) {
             const auto owner =
-                superzip::decode_owned_chunk(chunk.encoded.payload, chunk.encoded.blocks,
+                flitzzip::decode_owned_chunk(chunk.encoded.payload, chunk.encoded.blocks,
                                              static_cast<std::size_t>(chunk.uncompressed_size), cpu_options);
             const auto decoded = owner.bytes();
             std::vector<std::byte> reference(16U * 1024U);
@@ -343,7 +343,7 @@ void flush_one_memory_crc(std::deque<PendingMemoryCrc>& pending_crc, const std::
             }
             location += " bad_bytes=" + std::to_string(bad_count) + " last_bad_byte=" + std::to_string(last_bad);
         }
-        throw superzip::ArchiveError("memory benchmark verification CRC mismatch at chunk " +
+        throw flitzzip::ArchiveError("memory benchmark verification CRC mismatch at chunk " +
                                      std::to_string(pending.index) + ": source=" + std::to_string(chunk.crc32) +
                                      " hip=" + std::to_string(decoded_crc.crc32) +
                                      " cpu=" + std::to_string(cpu_crc.crc32) + location);
@@ -355,7 +355,7 @@ void flush_one_memory_crc(std::deque<PendingMemoryCrc>& pending_crc, const std::
 // receives GPU usage.
 // Outputs: Returns normally when every chunk CRC matches; throws on decode or integrity failure.
 void verify_memory_benchmark_archive(const std::vector<MemoryArchiveChunk>& archive, std::uint32_t inflight,
-                                     const std::string& profile, const superzip::GpuCodecOptions& codec_options,
+                                     const std::string& profile, const flitzzip::GpuCodecOptions& codec_options,
                                      MemoryBenchmarkResult& result) {
     std::deque<PendingMemoryCrc> pending_crc;
     for (std::size_t index = 0; index < archive.size(); ++index) {
@@ -364,10 +364,10 @@ void verify_memory_benchmark_archive(const std::vector<MemoryArchiveChunk>& arch
             .result = std::async(std::launch::async,
                                  [&archive, index, codec_options] {
                                      const auto& chunk = archive[index];
-                                     return superzip::crc_decoded_chunk(
+                                     return flitzzip::crc_decoded_chunk(
                                          std::span<const std::byte>(chunk.encoded.payload.data(),
                                                                     chunk.encoded.payload.size()),
-                                         std::span<const superzip::BlockDescriptor>(chunk.encoded.blocks.data(),
+                                         std::span<const flitzzip::BlockDescriptor>(chunk.encoded.blocks.data(),
                                                                                     chunk.encoded.blocks.size()),
                                          chunk.uncompressed_size, codec_options);
                                  }),
@@ -392,7 +392,7 @@ void flush_one_memory_decode(std::deque<PendingMemoryDecode>& pending_decode,
     const auto decoded = pending.result.get();
     result.stats.gpu_used = result.stats.gpu_used || decoded.gpu_used;
     if (decoded.crc32 != archive[pending.index].crc32) {
-        throw superzip::ArchiveError("memory benchmark extraction CRC mismatch");
+        throw flitzzip::ArchiveError("memory benchmark extraction CRC mismatch");
     }
 }
 
@@ -401,7 +401,7 @@ void flush_one_memory_decode(std::deque<PendingMemoryDecode>& pending_decode,
 // usage.
 // Outputs: Returns normally when every decoded chunk matches the original CRC.
 void extract_memory_benchmark_archive(const std::vector<MemoryArchiveChunk>& archive, std::uint32_t inflight,
-                                      const superzip::GpuCodecOptions& codec_options, MemoryBenchmarkResult& result) {
+                                      const flitzzip::GpuCodecOptions& codec_options, MemoryBenchmarkResult& result) {
     std::deque<PendingMemoryDecode> pending_decode;
     for (std::size_t index = 0; index < archive.size(); ++index) {
         pending_decode.push_back(PendingMemoryDecode{
@@ -409,7 +409,7 @@ void extract_memory_benchmark_archive(const std::vector<MemoryArchiveChunk>& arc
             .result = std::async(std::launch::async,
                                  [&archive, index, codec_options] {
                                      const auto& chunk = archive[index];
-                                     const auto decoded = superzip::decode_owned_chunk(
+                                     const auto decoded = flitzzip::decode_owned_chunk(
                                          chunk.encoded.payload, chunk.encoded.blocks,
                                          static_cast<std::size_t>(chunk.uncompressed_size), codec_options);
                                      return MemoryDecodeResult{
@@ -428,7 +428,7 @@ void extract_memory_benchmark_archive(const std::vector<MemoryArchiveChunk>& arc
 }
 
 // Purpose: Execute one benchmark-suite candidate with separate forced-CPU and required-GPU lanes.
-// Inputs: `options` supplies shared workload settings, `level` is the compression level, and `block_size` is the SUZIP
+// Inputs: `options` supplies shared workload settings, `level` is the compression level, and `block_size` is the FLZIP
 // block size.
 // Outputs: Returns CPU/GPU timings, scores, speedup, and compression ratio; throws if required HIP is unavailable.
 BenchmarkSuiteCase run_benchmark_suite_case(const BenchmarkSuiteOptions& options, int level, std::uint32_t block_size) {
@@ -502,8 +502,8 @@ const BenchmarkSuiteCase& choose_benchmark_suite_recommendation(const std::vecto
                                                                 bool tune_levels) {
     const BenchmarkSuiteCase* baseline = nullptr;
     for (const auto& candidate : candidates) {
-        if (candidate.compression_level == superzip::kDefaultCompressionLevel &&
-            candidate.block_size == superzip::kDefaultArchiveBlockBytes) {
+        if (candidate.compression_level == flitzzip::kDefaultCompressionLevel &&
+            candidate.block_size == flitzzip::kDefaultArchiveBlockBytes) {
             baseline = &candidate;
             break;
         }
@@ -531,43 +531,43 @@ const BenchmarkSuiteCase& choose_benchmark_suite_recommendation(const std::vecto
 std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& options) {
     const bool corpus = options.corpus_bytes != 0U || !options.source.empty();
     if (!corpus && options.size_mib < 10240U) {
-        throw superzip::ArchiveError("memory benchmark workload must be at least 10240 MiB (10 GiB)");
+        throw flitzzip::ArchiveError("memory benchmark workload must be at least 10240 MiB (10 GiB)");
     }
     constexpr std::array<std::string_view, 7> profiles{"Mixed",           "Compressible", "Incompressible",
                                                        "RepeatedRecord",  "SparseRecord", "LongSparseRecord",
                                                        "SegmentedRecords"};
     if ((!corpus && std::ranges::find(profiles, options.profile) == profiles.end()) ||
         (corpus && options.profile != "Corpus")) {
-        throw superzip::ArchiveError("unknown memory benchmark profile: " + options.profile);
+        throw flitzzip::ArchiveError("unknown memory benchmark profile: " + options.profile);
     }
-    superzip::validate_native_compression_policy(options.compression_mode, options.compression_level,
+    flitzzip::validate_native_compression_policy(options.compression_mode, options.compression_level,
                                                  options.require_gpu, options.force_cpu);
-    if (options.block_size < superzip::kMinArchiveBlockBytes || options.block_size > superzip::kMaxArchiveBlockBytes) {
-        throw superzip::ArchiveError("memory benchmark block size is outside SuperZip resource limits");
+    if (options.block_size < flitzzip::kMinArchiveBlockBytes || options.block_size > flitzzip::kMaxArchiveBlockBytes) {
+        throw flitzzip::ArchiveError("memory benchmark block size is outside FlitzZip resource limits");
     }
-    if ((superzip::kMaxArchiveChunkBytes % options.block_size) != 0) {
-        throw superzip::ArchiveError("memory benchmark block size must divide the 128 MiB chunk size");
+    if ((flitzzip::kMaxArchiveChunkBytes % options.block_size) != 0) {
+        throw flitzzip::ArchiveError("memory benchmark block size must divide the 128 MiB chunk size");
     }
     if (options.require_gpu && options.force_cpu) {
-        throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
+        throw flitzzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
     }
-    if (options.inflight_chunks > superzip::kMaxInflightArchiveChunks ||
-        options.decode_inflight_chunks > superzip::kMaxInflightArchiveChunks) {
-        throw superzip::ArchiveError("benchmark inflight depth exceeds SuperZip resource limit");
+    if (options.inflight_chunks > flitzzip::kMaxInflightArchiveChunks ||
+        options.decode_inflight_chunks > flitzzip::kMaxInflightArchiveChunks) {
+        throw flitzzip::ArchiveError("benchmark inflight depth exceeds FlitzZip resource limit");
     }
     if (!corpus) {
         if (!options.expected_source_sha256.empty()) {
-            throw superzip::ArchiveError("source SHA-256 requires a preloaded corpus");
+            throw flitzzip::ArchiveError("source SHA-256 requires a preloaded corpus");
         }
         return checked_multiply_cli_u64(options.size_mib, kCliMiB, "memory benchmark size overflows");
     }
     const auto corpus_bytes = options.source.empty() ? options.corpus_bytes : options.source.size();
     if (options.corpus_bytes != 0U && !options.source.empty() && options.source.size() != options.corpus_bytes) {
-        throw superzip::ArchiveError("corpus size differs from preflight metadata");
+        throw flitzzip::ArchiveError("corpus size differs from preflight metadata");
     }
     if (corpus_bytes > kMemoryBenchmarkCorpusMaxBytes || options.expected_source_sha256.size() != 64U ||
         options.expected_source_sha256.find_first_not_of("0123456789abcdef") != std::string::npos) {
-        throw superzip::ArchiveError("corpus requires a 32-bit extent and a lowercase SHA-256 identity");
+        throw flitzzip::ArchiveError("corpus requires a 32-bit extent and a lowercase SHA-256 identity");
     }
     return corpus_bytes;
 }
@@ -579,9 +579,9 @@ std::string validate_memory_benchmark_source_identity(const MemoryBenchmarkOptio
     if (options.source.empty()) {
         return {};
     }
-    const auto digest = superzip::sha256_bytes(options.source);
+    const auto digest = flitzzip::sha256_bytes(options.source);
     if (digest != options.expected_source_sha256) {
-        throw superzip::ArchiveError("preloaded corpus SHA-256 differs from expected identity");
+        throw flitzzip::ArchiveError("preloaded corpus SHA-256 differs from expected identity");
     }
     return digest;
 }
@@ -598,10 +598,10 @@ MemoryBenchmarkPlan plan_memory_benchmark(const MemoryBenchmarkOptions& options)
     plan.expected_source_sha256 = options.expected_source_sha256;
     plan.workers = resolve_memory_benchmark_workers(options.workers);
     plan.inflight_chunks = resolve_memory_benchmark_inflight(plan.workers, options);
-    const auto chunk_count = plan.input_bytes / superzip::kMaxArchiveChunkBytes +
-                             (plan.input_bytes % superzip::kMaxArchiveChunkBytes != 0 ? 1U : 0U);
+    const auto chunk_count = plan.input_bytes / flitzzip::kMaxArchiveChunkBytes +
+                             (plan.input_bytes % flitzzip::kMaxArchiveChunkBytes != 0 ? 1U : 0U);
     plan.codec_workers = resolve_memory_codec_workers(plan.workers, plan.inflight_chunks, chunk_count);
-    const superzip::GpuCodecOptions codec_options{
+    const flitzzip::GpuCodecOptions codec_options{
         .require_gpu = options.require_gpu,
         .force_cpu = options.force_cpu,
         .block_size = options.block_size,
@@ -610,15 +610,15 @@ MemoryBenchmarkPlan plan_memory_benchmark(const MemoryBenchmarkOptions& options)
         .compression_mode = options.compression_mode,
     };
     const auto admitted_decode =
-        superzip::resolve_owned_decode_inflight(plan.inflight_chunks, superzip::kMaxArchiveChunkBytes, codec_options);
+        flitzzip::resolve_owned_decode_inflight(plan.inflight_chunks, flitzzip::kMaxArchiveChunkBytes, codec_options);
     if (options.decode_inflight_chunks > admitted_decode) {
-        throw superzip::ArchiveError("requested benchmark decode inflight depth exceeds current admission; "
+        throw flitzzip::ArchiveError("requested benchmark decode inflight depth exceeds current admission; "
                                      "configuration was not reduced");
     }
     plan.decode_inflight_chunks =
         options.decode_inflight_chunks == 0 ? admitted_decode : options.decode_inflight_chunks;
     plan.decode_codec_workers =
-        superzip::resolve_codec_worker_count(plan.workers, plan.decode_inflight_chunks, chunk_count);
+        flitzzip::resolve_codec_worker_count(plan.workers, plan.decode_inflight_chunks, chunk_count);
     return plan;
 }
 
@@ -667,28 +667,28 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
         << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks
         << " gpu_dictionary_blocks=" << stats.gpu_runtime.dictionary_blocks
         << " gpu_sparse_pattern_blocks=" << stats.gpu_runtime.sparse_pattern_blocks
-        << " gpu_readiness_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Readiness)]
-        << " gpu_analysis_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::HostAnalysis)]
+        << " gpu_readiness_worker_seconds=" << stages[static_cast<std::size_t>(flitzzip::GpuEncodeStage::Readiness)]
+        << " gpu_analysis_worker_seconds=" << stages[static_cast<std::size_t>(flitzzip::GpuEncodeStage::HostAnalysis)]
         << " gpu_classification_worker_seconds="
-        << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::DeviceClassification)]
+        << stages[static_cast<std::size_t>(flitzzip::GpuEncodeStage::DeviceClassification)]
         << " gpu_classification_allocation_worker_seconds="
-        << classification[static_cast<std::size_t>(superzip::GpuClassificationStage::InputAllocation)]
+        << classification[static_cast<std::size_t>(flitzzip::GpuClassificationStage::InputAllocation)]
         << " gpu_classification_upload_worker_seconds="
-        << classification[static_cast<std::size_t>(superzip::GpuClassificationStage::InputUpload)]
+        << classification[static_cast<std::size_t>(flitzzip::GpuClassificationStage::InputUpload)]
         << " gpu_classification_crc_worker_seconds="
-        << classification[static_cast<std::size_t>(superzip::GpuClassificationStage::SourceChecksum)]
+        << classification[static_cast<std::size_t>(flitzzip::GpuClassificationStage::SourceChecksum)]
         << " gpu_classification_validation_worker_seconds="
-        << classification[static_cast<std::size_t>(superzip::GpuClassificationStage::CandidateValidation)]
-        << " gpu_prefix_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Prefix)]
-        << " gpu_sparse_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Sparse)]
-        << " gpu_dictionary_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Dictionary)]
-        << " gpu_publication_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Publication)]
+        << classification[static_cast<std::size_t>(flitzzip::GpuClassificationStage::CandidateValidation)]
+        << " gpu_prefix_worker_seconds=" << stages[static_cast<std::size_t>(flitzzip::GpuEncodeStage::Prefix)]
+        << " gpu_sparse_worker_seconds=" << stages[static_cast<std::size_t>(flitzzip::GpuEncodeStage::Sparse)]
+        << " gpu_dictionary_worker_seconds=" << stages[static_cast<std::size_t>(flitzzip::GpuEncodeStage::Dictionary)]
+        << " gpu_publication_worker_seconds=" << stages[static_cast<std::size_t>(flitzzip::GpuEncodeStage::Publication)]
         << " decode_allocation_worker_seconds="
-        << decode_stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::OutputAllocation)]
+        << decode_stages[static_cast<std::size_t>(flitzzip::OwnedDecodeStage::OutputAllocation)]
         << " decode_materialization_worker_seconds="
-        << decode_stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::Materialization)]
+        << decode_stages[static_cast<std::size_t>(flitzzip::OwnedDecodeStage::Materialization)]
         << " decode_crc_worker_seconds="
-        << decode_stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::HostChecksum)]
+        << decode_stages[static_cast<std::size_t>(flitzzip::OwnedDecodeStage::HostChecksum)]
         << " seconds=" << stats.seconds << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
         << " compress_seconds=" << result.compress_seconds << " verify_seconds=" << result.verify_seconds
         << " extract_seconds=" << result.extract_seconds
@@ -714,16 +714,16 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
 // Outputs: Accumulates byte-validation cost/count; throws on wrong bytes or hidden required-HIP fallback.
 void validate_memory_benchmark_archive(std::span<const MemoryArchiveChunk> archive, std::uint64_t window_offset,
                                        std::uint64_t total_bytes, std::string_view profile,
-                                       std::span<const std::byte> source, const superzip::GpuCodecOptions& options,
+                                       std::span<const std::byte> source, const flitzzip::GpuCodecOptions& options,
                                        MemoryBenchmarkResult& result) {
     const auto started = std::chrono::steady_clock::now();
     {
         auto offset = window_offset;
         for (const auto& chunk : archive) {
-            auto decoded = superzip::decode_owned_chunk(chunk.encoded.payload, chunk.encoded.blocks,
+            auto decoded = flitzzip::decode_owned_chunk(chunk.encoded.payload, chunk.encoded.blocks,
                                                         static_cast<std::size_t>(chunk.uncompressed_size), options);
             if (decoded.bytes().size() != chunk.uncompressed_size || (options.require_gpu && !decoded.gpu_used)) {
-                throw superzip::ArchiveError("memory benchmark byte validation size/backend mismatch");
+                throw flitzzip::ArchiveError("memory benchmark byte validation size/backend mismatch");
             }
             validate_memory_benchmark_bytes_parallel(decoded.bytes(), offset, total_bytes, profile,
                                                      options.worker_count, source);
@@ -740,15 +740,15 @@ void validate_memory_benchmark_archive(std::span<const MemoryArchiveChunk> archi
 // Outputs: Returns exact size, timing, integrity, and GPU telemetry statistics or throws on any failed phase.
 MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options) {
     if (options.corpus_bytes != 0U && options.source.empty()) {
-        throw superzip::ArchiveError("measured corpus execution requires a resident source snapshot");
+        throw flitzzip::ArchiveError("measured corpus execution requires a resident source snapshot");
     }
     const auto plan = plan_memory_benchmark(options);
     const auto total_bytes = plan.input_bytes;
     const auto workers = plan.workers;
     const auto inflight = plan.inflight_chunks;
     const auto codec_workers = plan.codec_workers;
-    auto telemetry = std::make_shared<superzip::GpuTelemetry>();
-    superzip::GpuCodecOptions codec_options{
+    auto telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+    flitzzip::GpuCodecOptions codec_options{
         .require_gpu = options.require_gpu,
         .force_cpu = options.force_cpu,
         .block_size = options.block_size,
@@ -769,21 +769,21 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     result.block_size = options.block_size;
     result.compression_level = options.compression_level;
     result.compression_mode = options.compression_mode;
-    superzip::ArchiveIndex modeled_index;
-    modeled_index.version = superzip::kSuperZipMaxReadableVersion;
-    modeled_index.entries.push_back(superzip::ArchiveEntry{
+    flitzzip::ArchiveIndex modeled_index;
+    modeled_index.version = flitzzip::kFlitzZipMaxReadableVersion;
+    modeled_index.entries.push_back(flitzzip::ArchiveEntry{
         .path = "memory-benchmark.bin",
         .uncompressed_size = total_bytes,
     });
 
     auto validation_options = codec_options;
     validation_options.worker_count = workers;
-    validation_options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+    validation_options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
     // One output at a time bounds validation storage; no extra retained pinned-output pool.
     validation_options.host_output_pool.reset();
     const auto total_started = std::chrono::steady_clock::now();
     const auto window_chunks = std::max<std::uint64_t>(1U, inflight);
-    const auto window_bytes = checked_multiply_cli_u64(window_chunks, superzip::kMaxArchiveChunkBytes,
+    const auto window_bytes = checked_multiply_cli_u64(window_chunks, flitzzip::kMaxArchiveChunkBytes,
                                                        "memory benchmark window size overflows");
     for (std::uint64_t offset = 0; offset < total_bytes;) {
         const auto current_window = std::min<std::uint64_t>(window_bytes, total_bytes - offset);
@@ -807,7 +807,7 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
         phase_started = std::chrono::steady_clock::now();
         // Retain the owned decode pool across windows, then include its final release in extraction time.
         if (codec_options.require_gpu && !codec_options.host_output_pool) {
-            codec_options.host_output_pool = superzip::make_owned_decode_pool(codec_options);
+            codec_options.host_output_pool = flitzzip::make_owned_decode_pool(codec_options);
         }
         {
             auto decode_options = codec_options;
@@ -824,25 +824,25 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
         offset += current_window;
     }
     if (result.validated_bytes != total_bytes) {
-        throw superzip::ArchiveError("memory benchmark byte validation did not cover the complete source");
+        throw flitzzip::ArchiveError("memory benchmark byte validation did not cover the complete source");
     }
     const auto finalize_started = std::chrono::steady_clock::now();
     if (modeled_index.entries.front().payload_size != result.stats.output_bytes) {
-        throw superzip::ArchiveError("memory benchmark archive payload count differs from encoded chunks");
+        throw flitzzip::ArchiveError("memory benchmark archive payload count differs from encoded chunks");
     }
     std::ostringstream serialized_index(std::ios::out | std::ios::binary);
     // Model the native index/footer in RAM so archive size and finalization cost include container overhead.
-    superzip::write_archive_index(serialized_index, modeled_index);
+    flitzzip::write_archive_index(serialized_index, modeled_index);
     result.archive_bytes = checked_add_cli_u64(result.stats.output_bytes, serialized_index.view().size(),
                                                "memory benchmark archive size overflows");
-    result.archive_bytes = checked_add_cli_u64(result.archive_bytes, superzip::kSuperZipFooterBytes,
+    result.archive_bytes = checked_add_cli_u64(result.archive_bytes, flitzzip::kFlitzZipFooterBytes,
                                                "memory benchmark archive footer overflows");
     result.compress_seconds +=
         std::chrono::duration<double>(std::chrono::steady_clock::now() - finalize_started).count();
     result.stats.entries = modeled_index.entries.size();
     result.wall_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - total_started).count();
     result.stats.seconds = result.wall_seconds - result.validation_seconds;
-    result.stats.gpu_runtime = superzip::snapshot_gpu_telemetry(*telemetry);
+    result.stats.gpu_runtime = flitzzip::snapshot_gpu_telemetry(*telemetry);
     return result;
 }
 
@@ -888,4 +888,4 @@ void run_benchmark_suite(const BenchmarkSuiteOptions& options) {
               << "\n";
 }
 
-}  // namespace superzip::cli
+}  // namespace flitzzip::cli

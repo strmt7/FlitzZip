@@ -15,7 +15,7 @@
 
 #include "miniz.h"
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 // Purpose: Encode a native file path for miniz's UTF-8 Windows stdio boundary.
@@ -43,7 +43,7 @@ std::string zip_entry_name(const std::string& name, mz_uint16 flags) {
     return path_diagnostic_utf8(std::filesystem::path(decoded));
 }
 
-// Purpose: Add ZIP metadata byte counters while enforcing SuperZip's extracted-output cap.
+// Purpose: Add ZIP metadata byte counters while enforcing FlitzZip's extracted-output cap.
 // Inputs: `lhs` and `rhs` are uncompressed byte counters from ZIP central directory metadata.
 // Outputs: Returns the sum or throws `ArchiveError` before wraparound or resource-limit excess.
 std::uint64_t checked_add_zip_bytes(std::uint64_t lhs, std::uint64_t rhs) {
@@ -61,7 +61,7 @@ struct ZipScanResult {
 std::string zip_full_entry_name(mz_zip_archive& zip, mz_uint index) {
     const auto size = mz_zip_reader_get_filename(&zip, index, nullptr, 0);
     if (size <= 1U || size - 1U > kMaxArchivePathBytes) {
-        throw ArchiveError("ZIP filename is empty or exceeds SuperZip resource limits");
+        throw ArchiveError("ZIP filename is empty or exceeds FlitzZip resource limits");
     }
     std::string name(size, '\0');
     if (mz_zip_reader_get_filename(&zip, index, name.data(), size) != size) {
@@ -80,7 +80,7 @@ std::string zip_full_entry_name(mz_zip_archive& zip, mz_uint index) {
 ZipScanResult scan_zip_entries(mz_zip_archive& zip) {
     const auto file_count = mz_zip_reader_get_num_files(&zip);
     if (file_count > kMaxArchiveEntries) {
-        throw ArchiveError("ZIP entry count exceeds SuperZip resource limit");
+        throw ArchiveError("ZIP entry count exceeds FlitzZip resource limit");
     }
     ZipScanResult result;
     std::uint64_t path_bytes = 0;
@@ -261,7 +261,7 @@ OperationStats verify_zip(const std::filesystem::path& archive_path, const Progr
     }
 }
 
-// Purpose: Extract a standard ZIP archive with SuperZip path safety and verified final-file publication.
+// Purpose: Extract a standard ZIP archive with FlitzZip path safety and verified final-file publication.
 // Inputs: `archive_path`, `destination`, `overwrite`, and optional `progress_callback` describe the extraction run.
 // Outputs: Restores verified ZIP entries into `destination` and returns operation telemetry, or throws on validation
 // failure.
@@ -310,7 +310,7 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
                 temporary_active = false;
             } catch (...) {
                 if (temporary_active) {
-                    // Remove only SuperZip's known temporary payload and its private directory.
+                    // Remove only FlitzZip's known temporary payload and its private directory.
                     cleanup_file_publish_target(temporary_target);
                 }
                 throw;
@@ -333,4 +333,4 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
     }
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

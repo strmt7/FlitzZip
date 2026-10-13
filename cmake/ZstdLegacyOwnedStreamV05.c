@@ -266,7 +266,7 @@ size_t ZBUFFv05_decompressContinue(ZBUFFv05_DCtx* zbc, void* dst, size_t* maxDst
     }
 }
 
-#ifdef SUPERZIP_ZSTD_BUFFER_PROBES
+#ifdef FLITZZIP_ZSTD_BUFFER_PROBES
 /* Purpose: Inspect actual owned buffer geometry without accessing absent storage.
  * Inputs: One live version-specific buffered decoder. Outputs: True only for coherent allocated pairs. */
 int sz_legacy_v05_buffers_consistent(const void* context) {

@@ -21,12 +21,15 @@
 
 namespace {
 
-constexpr std::array<unsigned char, 79> kSingleFileLzipFixture{{
-    0x4CU, 0x5AU, 0x49U, 0x50U, 0x01U, 0x14U, 0x00U, 0x29U, 0x9DU, 0x4AU, 0x06U, 0x67U, 0x91U, 0xC2U, 0xBFU, 0xC5U,
-    0x03U, 0x60U, 0x46U, 0xBDU, 0xEEU, 0x82U, 0x94U, 0xECU, 0xC2U, 0xB8U, 0xF3U, 0x54U, 0xADU, 0x7FU, 0xE6U, 0x87U,
-    0xEAU, 0xACU, 0x72U, 0x70U, 0xD0U, 0xE5U, 0xB9U, 0x5CU, 0x71U, 0xB8U, 0x10U, 0x02U, 0xDFU, 0x74U, 0xD6U, 0xCEU,
-    0x62U, 0xE3U, 0xAEU, 0xD4U, 0xCEU, 0xF7U, 0xFFU, 0xFEU, 0xEFU, 0x4CU, 0x00U, 0x6AU, 0x72U, 0xF8U, 0xD6U, 0x2CU,
-    0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x4FU, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+constexpr char kSingleFileLzipPayload[] = "Example lzip fixture payload.\nSecond line.\n";
+
+// Independent fixture: Python 3.13 liblzma raw LZMA1 with a size/CRC-verified LZIP v1 container.
+constexpr std::array<unsigned char, 78> kSingleFileLzipFixture{{
+    0x4CU, 0x5AU, 0x49U, 0x50U, 0x01U, 0x14U, 0x00U, 0x22U, 0x9EU, 0x08U, 0x26U, 0xFFU, 0x96U, 0x34U, 0x91U, 0xE7U,
+    0x9EU, 0x69U, 0x36U, 0x40U, 0x96U, 0xB7U, 0x1AU, 0xCEU, 0xEBU, 0x67U, 0xBCU, 0x99U, 0x6DU, 0x83U, 0x53U, 0x0CU,
+    0x3AU, 0x97U, 0x22U, 0x08U, 0x78U, 0xB1U, 0xB0U, 0x85U, 0x3EU, 0xEEU, 0x1EU, 0x51U, 0xA6U, 0x25U, 0x57U, 0x6DU,
+    0x13U, 0x60U, 0x7AU, 0x88U, 0x1FU, 0xFFU, 0xC7U, 0x5EU, 0xC0U, 0x00U, 0xB1U, 0xC4U, 0x4AU, 0x61U, 0x2BU, 0x00U,
+    0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x4EU, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
 }};
 
 constexpr std::array<unsigned char, 172> kTarLzipFixture{{
@@ -111,17 +114,17 @@ TEST_CASE(lzip_interleaved_streams_allow_sequential_thread_handoff) {
     const auto archive = root / "payload.lz";
     write_fixture(archive, kSingleFileLzipFixture);
     {
-        auto first = std::make_unique<superzip::LzipInputStream>(archive);
-        auto second = std::make_unique<superzip::LzipInputStream>(archive);
-        REQUIRE_EQ(first->get(), static_cast<int>('S'));
-        REQUIRE_EQ(second->get(), static_cast<int>('S'));
+        auto first = std::make_unique<flitzzip::LzipInputStream>(archive);
+        auto second = std::make_unique<flitzzip::LzipInputStream>(archive);
+        REQUIRE_EQ(first->get(), static_cast<int>(kSingleFileLzipPayload[0]));
+        REQUIRE_EQ(second->get(), static_cast<int>(kSingleFileLzipPayload[0]));
         first.reset();
         auto decoded = std::async(std::launch::async, [&] {
             const std::string payload{std::istreambuf_iterator<char>(*second), std::istreambuf_iterator<char>()};
             second->finish();
             return payload;
         });
-        REQUIRE_EQ(decoded.get(), "uperZip lzip fixture payload.\nSecond line.\n");
+        REQUIRE_EQ(decoded.get(), std::string(kSingleFileLzipPayload + 1));
     }
     std::filesystem::remove_all(root);
 }
@@ -134,9 +137,9 @@ TEST_CASE(lzip_missing_unicode_source_reports_original_error) {
     const auto archive = root / std::filesystem::path(u8"\u6E2C\u8A66\U0001F4E6.lz");
     bool rejected = false;
     try {
-        superzip::LzipInputStream input(archive);
-    } catch (const superzip::ArchiveError& error) {
-        rejected = std::string(error.what()) == "cannot read file size: " + superzip::path_diagnostic_utf8(archive);
+        flitzzip::LzipInputStream input(archive);
+    } catch (const flitzzip::ArchiveError& error) {
+        rejected = std::string(error.what()) == "cannot read file size: " + flitzzip::path_diagnostic_utf8(archive);
     }
     REQUIRE_TRUE(rejected);
     std::filesystem::remove_all(root);
@@ -161,8 +164,8 @@ TEST_CASE(lzip_resumable_error_never_publishes) {
         }
         bool rejected = false;
         try {
-            (void)superzip::extract_lzip_file(archive, output, overwrite);
-        } catch (const superzip::Error&) {
+            (void)flitzzip::extract_lzip_file(archive, output, overwrite);
+        } catch (const flitzzip::Error&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -174,13 +177,13 @@ TEST_CASE(lzip_resumable_error_never_publishes) {
     }
     bool tar_rejected = false;
     try {
-        (void)superzip::extract_tar_lzip(archive, root / "tar", false);
-    } catch (const superzip::Error&) {
+        (void)flitzzip::extract_tar_lzip(archive, root / "tar", false);
+    } catch (const flitzzip::Error&) {
         tar_rejected = true;
     }
     REQUIRE_TRUE(tar_rejected);
     REQUIRE_EQ(count_regular_files(root / "tar"), 0U);
-    require_sticky_decoder_failure<superzip::LzipInputStream>(archive);
+    require_sticky_decoder_failure<flitzzip::LzipInputStream>(archive);
 }
 
 // Purpose: Verify native `.lz` extraction over a deterministic lzip fixture.
@@ -190,13 +193,13 @@ TEST_CASE(lzip_extracts_single_file_fixture) {
     const auto root = test_temp_dir("lzip-single");
     const auto archive = root / "payload.txt.lz";
     write_fixture(archive, kSingleFileLzipFixture);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Lzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Lzip);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_lzip_file(archive, output, false);
+    const auto stats = flitzzip::extract_lzip_file(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
-    REQUIRE_EQ(read_text_file(output / "payload.txt"), "SuperZip lzip fixture payload.\nSecond line.\n");
-    superzip_test::export_compat_fixture(archive, output);
+    REQUIRE_EQ(read_text_file(output / "payload.txt"), kSingleFileLzipPayload);
+    flitzzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Preserve native Unicode filenames while extracting independent lzip fixtures.
@@ -209,16 +212,16 @@ TEST_CASE(lzip_unicode_archive_filename_extracts) {
     archive += ".LZ";
     write_fixture(archive, kSingleFileLzipFixture);
     const auto output = root / "out";
-    (void)superzip::extract_lzip_file(archive, output, false);
-    REQUIRE_EQ(read_text_file(output / filename), "SuperZip lzip fixture payload.\nSecond line.\n");
+    (void)flitzzip::extract_lzip_file(archive, output, false);
+    REQUIRE_EQ(read_text_file(output / filename), kSingleFileLzipPayload);
     bool refused = false;
     try {
-        (void)superzip::extract_lzip_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_lzip_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         refused = true;
     }
     REQUIRE_TRUE(refused);
-    REQUIRE_EQ(read_text_file(output / filename), "SuperZip lzip fixture payload.\nSecond line.\n");
+    REQUIRE_EQ(read_text_file(output / filename), kSingleFileLzipPayload);
 }
 
 // Purpose: Verify concatenated lzip members decode as one continuous single-file payload.
@@ -232,10 +235,9 @@ TEST_CASE(lzip_extracts_concatenated_members) {
     write_binary_file(archive, bytes);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_lzip_file(archive, output, false);
+    const auto stats = flitzzip::extract_lzip_file(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
-    REQUIRE_EQ(read_text_file(output / "payload.txt"),
-               "SuperZip lzip fixture payload.\nSecond line.\nSuperZip lzip fixture payload.\nSecond line.\n");
+    REQUIRE_EQ(read_text_file(output / "payload.txt"), std::string(kSingleFileLzipPayload) + kSingleFileLzipPayload);
 }
 
 // Purpose: Verify `.lz` extraction refuses overwriting existing files unless explicitly allowed.
@@ -253,8 +255,8 @@ TEST_CASE(lzip_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_lzip_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_lzip_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -275,8 +277,8 @@ TEST_CASE(lzip_rejects_crc_mismatch_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_lzip_file(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_lzip_file(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -297,8 +299,8 @@ TEST_CASE(lzip_rejects_member_size_mismatch_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_lzip_file(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_lzip_file(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -316,8 +318,8 @@ TEST_CASE(lzip_rejects_invalid_dictionary_code_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_lzip_file(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_lzip_file(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -331,14 +333,14 @@ TEST_CASE(tar_lzip_extracts_files_and_directories) {
     const auto root = test_temp_dir("tar-lzip-extract");
     const auto archive = root / "sample.tar.lz";
     write_fixture(archive, kTarLzipFixture);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::TarLzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::TarLzip);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_tar_lzip(archive, output, false);
+    const auto stats = flitzzip::extract_tar_lzip(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(3));
     REQUIRE_EQ(read_text_file(output / "dir" / "hello.txt"), "hello from tar.lz\n");
     REQUIRE_EQ(read_text_file(output / "root.txt"), "root tar lzip payload");
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify `.tar.lz` extraction rejects traversal metadata during the validation pass.
@@ -348,12 +350,12 @@ TEST_CASE(tar_lzip_extraction_rejects_traversal_before_output) {
     const auto root = test_temp_dir("tar-lzip-traversal");
     const auto archive = root / "bad.tlz";
     write_fixture(archive, kUnsafeTarLzipFixture);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::TarLzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::TarLzip);
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_tar_lzip(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_tar_lzip(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

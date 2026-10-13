@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr unsigned char kArcHeaderMarker = 0x1AU;
@@ -245,7 +245,7 @@ ArcScanResult scan_arc(const std::filesystem::path& archive_path) {
             break;
         }
         if (header.method != kArcMethodUnpackedOld && header.method != kArcMethodUnpackedNew) {
-            throw ArchiveError("compressed ARC methods are not supported by this SuperZip build");
+            throw ArchiveError("compressed ARC methods are not supported by this FlitzZip build");
         }
         const auto payload_pos = input.tellg();
         if (payload_pos == std::istream::pos_type(-1)) {
@@ -255,7 +255,7 @@ ArcScanResult scan_arc(const std::filesystem::path& archive_path) {
         result.total_file_bytes =
             checked_add_arc_bytes(result.total_file_bytes, header.original_size, "ARC extracted byte count overflows");
         if (result.total_file_bytes > kMaxPipelineMemoryBytes) {
-            throw ArchiveError("ARC extracted payload exceeds SuperZip resource limits");
+            throw ArchiveError("ARC extracted payload exceeds FlitzZip resource limits");
         }
         validation_entries.push_back(ArchivePathValidationEntry{.path = header.name, .directory = false});
         result.entries.push_back(ArcEntryMetadata{
@@ -354,4 +354,4 @@ OperationStats extract_arc(const std::filesystem::path& archive_path, const std:
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

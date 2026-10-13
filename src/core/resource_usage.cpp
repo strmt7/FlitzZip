@@ -5,7 +5,7 @@
 #include <map>
 #include <limits>
 
-namespace superzip {
+namespace flitzzip {
 
 namespace {
 
@@ -143,7 +143,7 @@ std::optional<double> system_gpu_utilization(std::span<const GpuEngineSample> sa
 
 // Purpose: Reconcile independent VRAM counters into one display-safe snapshot.
 // Inputs: All counters describe the same active GPU: HIP capacity/free memory, Windows adapter-wide
-// dedicated usage, and SuperZip process dedicated usage.
+// dedicated usage, and FlitzZip process dedicated usage.
 // Outputs: Returns bounded totals where process-dedicated usage never exceeds displayed total used VRAM.
 VramUsage reconcile_vram_usage(std::uint64_t total_capacity_bytes, std::uint64_t free_bytes,
                                std::uint64_t adapter_dedicated_used_bytes,
@@ -157,4 +157,4 @@ VramUsage reconcile_vram_usage(std::uint64_t total_capacity_bytes, std::uint64_t
     return VramUsage{total_capacity_bytes, total_used_bytes, bounded_process_bytes};
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

@@ -1,3 +1,0 @@
-#include "resource.h"
-
-IDI_SUPERZIP_APP ICON "../../resources/app/superzip.ico"

@@ -8,7 +8,7 @@
 #include <iosfwd>
 #include <span>
 
-namespace superzip {
+namespace flitzzip {
 
 inline constexpr std::size_t kArchiveEncodeBatchFiles = 64;
 inline constexpr std::uint64_t kArchiveEncodeBatchBytes = 8U * 1024U * 1024U;
@@ -27,4 +27,4 @@ void compress_manifest_batch(std::span<const ManifestEntry> entries, const Compr
                              std::uint64_t& block_count, ProgressState& progress, const ProgressCallback& callback,
                              const std::shared_ptr<GpuTelemetry>& telemetry);
 
-}  // namespace superzip
+}  // namespace flitzzip

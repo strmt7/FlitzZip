@@ -4,7 +4,7 @@
 #include <string_view>
 #include <windows.h>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Share System page geometry between rendering, dropdown placement, and viewport tests.
 // Inputs: Rectangles are physical client pixels at the caller's DPI.
@@ -56,4 +56,4 @@ inline SystemLayout make_system_layout(const RECT& content, UINT dpi) {
     return result;
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

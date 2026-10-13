@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 4.4)
-project(SuperZipCompilerAbiContracts LANGUAGES C CXX)
+project(FlitzZipCompilerAbiContracts LANGUAGES C CXX)
 if(NOT DEFINED ORIGINAL_HEADER OR NOT DEFINED REPAIRED_HEADER)
   message(FATAL_ERROR "Original and repaired ABI header paths are required")
 endif()

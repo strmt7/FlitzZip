@@ -65,8 +65,8 @@ function Assert-ReleaseNotesDoNotDuplicateTitle {
         throw 'Release workflow must exist for release-note title validation.'
     }
     $workflowText = Get-Content -LiteralPath $releaseWorkflow -Raw
-    if ($workflowText -match '#\s*SuperZip\s+\$env:RELEASE_TAG') {
-        throw "Release notes must not include a duplicate '# SuperZip `$env:RELEASE_TAG' heading; GitHub already renders the release title."
+    if ($workflowText -match '#\s*FlitzZip\s+\$env:RELEASE_TAG') {
+        throw "Release notes must not include a duplicate '# FlitzZip `$env:RELEASE_TAG' heading; GitHub already renders the release title."
     }
 }
 

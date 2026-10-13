@@ -222,8 +222,8 @@ TEST_CASE(zstd_legacy_prepared_clone_failure_blocks_frame_output) {
                                                         literals.size(), {}),
                                 version};
             REQUIRE_TRUE(owner.context != nullptr);
-            const auto extent = superzip_test::kLegacyFrames[version - 4U];
-            const auto frame = std::span(superzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
+            const auto extent = flitzzip_test::kLegacyFrames[version - 4U];
+            const auto frame = std::span(flitzzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
             std::array<unsigned char, 1024> output{};
             output.fill(kCanary);
             const auto before = output;
@@ -238,8 +238,8 @@ TEST_CASE(zstd_legacy_prepared_clone_failure_blocks_frame_output) {
                 sz_legacy_clone_decode(version, owner.context, output.data(), output.size(), dictionary.data(),
                                        dictionary.size(), frame.data(), frame.size());
             REQUIRE_EQ(sz_legacy_result_is_error(result), 0);
-            REQUIRE_EQ(result, superzip_test::kLegacyExpected.size());
-            REQUIRE_TRUE(std::equal(superzip_test::kLegacyExpected.begin(), superzip_test::kLegacyExpected.end(),
+            REQUIRE_EQ(result, flitzzip_test::kLegacyExpected.size());
+            REQUIRE_TRUE(std::equal(flitzzip_test::kLegacyExpected.begin(), flitzzip_test::kLegacyExpected.end(),
                                     output.begin()));
         }
         REQUIRE_EQ(sz_fault_live_allocations(), 0U);

@@ -1,6 +1,6 @@
 #include "app/main_window_impl.hpp"
 
-#include "superzip_license_notices.hpp"
+#include "flitzzip_license_notices.hpp"
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -18,12 +18,12 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 namespace {
 
-constexpr std::array<std::string_view, 2> kLicenseNoticeGroups{"SuperZip", "Other"};
-constexpr std::array<std::wstring_view, 2> kLicenseNoticeTabLabels{L"SuperZip", L"Other"};
+constexpr std::array<std::string_view, 2> kLicenseNoticeGroups{"FlitzZip", "Other"};
+constexpr std::array<std::wstring_view, 2> kLicenseNoticeTabLabels{L"FlitzZip", L"Other"};
 
 }  // namespace
 
@@ -68,9 +68,9 @@ RECT MainWindow::license_notices_close_button_rect(const RECT& modal) const {
                 modal.right - scale(24), modal.bottom - scale(22)};
 }
 
-// Purpose: Return SuperZip/Other tab rectangles for the license-notice modal.
+// Purpose: Return FlitzZip/Other tab rectangles for the license-notice modal.
 // Inputs: `modal` is the license-notice panel rectangle.
-// Outputs: Returns tab rectangles in SuperZip, Other order.
+// Outputs: Returns tab rectangles in FlitzZip, Other order.
 std::array<RECT, 2> MainWindow::license_notices_tab_rects(const RECT& modal) const {
     const int top = modal.top + scale(62);
     const int height = scale(34);
@@ -109,7 +109,7 @@ const std::wstring& MainWindow::license_notices_text() {
 }
 
 // Purpose: Change the active license-notice tab.
-// Inputs: `tab_index` is zero for SuperZip and one for Other.
+// Inputs: `tab_index` is zero for FlitzZip and one for Other.
 // Outputs: Updates tab and scroll state, then queues repaint when the tab changes.
 void MainWindow::select_license_notices_tab(int tab_index) {
     const int next = std::clamp(tab_index, 0, 1);
@@ -330,7 +330,7 @@ void MainWindow::show_license_notices_dialog() {
     request_repaint();
 }
 
-// Purpose: Draw the SuperZip-owned generated license-notice modal.
+// Purpose: Draw the FlitzZip-owned generated license-notice modal.
 // Inputs: `dc` is the target, `rect` is the full client area, and `state` contains modal visibility.
 // Outputs: Renders no pixels unless the license-notice dialog is active.
 void MainWindow::draw_license_notices_dialog(HDC dc, const RECT& rect, const UiState& state) {
@@ -490,4 +490,4 @@ bool MainWindow::handle_about_click(const RECT& content, int x, int y) {
     return false;
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

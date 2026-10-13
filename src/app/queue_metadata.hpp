@@ -15,7 +15,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Describe display metadata, never authority to open or extract a queued source.
 // Inputs: Classification comes from a worker query, not an archive-content probe.
@@ -87,4 +87,4 @@ std::vector<std::filesystem::path> queue_archive_candidates(std::span<const std:
                                                             const std::vector<bool>& enabled,
                                                             QueueMetadataCache& cache);
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

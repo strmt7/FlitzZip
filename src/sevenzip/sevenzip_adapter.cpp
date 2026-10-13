@@ -29,7 +29,7 @@ extern "C" {
 #include "7zTypes.h"
 }
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kSevenZipInputBufferBytes = 256U * 1024U;
@@ -51,7 +51,7 @@ struct SevenZipMetadata {
     std::uint64_t path_metadata_bytes = 0;
 };
 
-// Purpose: Convert an SDK result code to a stable SuperZip diagnostic.
+// Purpose: Convert an SDK result code to a stable FlitzZip diagnostic.
 // Inputs: `result` is returned by the LZMA SDK C API.
 // Outputs: Returns human-readable text without throwing.
 std::string sevenzip_result_message(SRes result) {
@@ -89,7 +89,7 @@ std::string sevenzip_result_message(SRes result) {
     }
 }
 
-// Purpose: Throw the SuperZip error that corresponds to an SDK result.
+// Purpose: Throw the FlitzZip error that corresponds to an SDK result.
 // Inputs: `result` is the SDK status and `context` names the operation.
 // Outputs: Throws `ArchiveError` unless `result` is `SZ_OK`.
 void throw_on_7z_error(SRes result, const char* context) {
@@ -107,7 +107,7 @@ std::uint64_t checked_add_7z_bytes(std::uint64_t total, std::uint64_t size) {
     }
     total += size;
     if (total > kMaxSevenZipTotalFileBytes) {
-        throw ArchiveError("7z uncompressed payload exceeds SuperZip resource limit");
+        throw ArchiveError("7z uncompressed payload exceeds FlitzZip resource limit");
     }
     return total;
 }
@@ -312,7 +312,7 @@ void append_utf8_code_point(std::string& output, std::uint32_t code_point) {
         output.push_back(static_cast<char>(0x80U | (code_point & 0x3FU)));
     }
     if (output.size() > kMaxArchivePathBytes) {
-        throw ArchiveError("7z filename exceeds SuperZip path length limit");
+        throw ArchiveError("7z filename exceeds FlitzZip path length limit");
     }
 }
 
@@ -343,11 +343,11 @@ std::string utf16_name_to_utf8(const std::vector<UInt16>& name) {
 // Purpose: Return a validated UTF-8 path for a 7z entry.
 // Inputs: `database` is the parsed SDK archive, `index` identifies an entry, and `metadata_bytes` tracks retained
 // conversion allocations.
-// Outputs: Returns the raw archive path converted to UTF-8 before SuperZip normalization.
+// Outputs: Returns the raw archive path converted to UTF-8 before FlitzZip normalization.
 std::string sevenzip_entry_path(const CSzArEx& database, UInt32 index, std::uint64_t& metadata_bytes) {
     const auto units = SzArEx_GetFileNameUtf16(&database, index, nullptr);
     if (units == 0 || units > kMaxSevenZipNameUtf16Units) {
-        throw ArchiveError("7z filename exceeds SuperZip resource limit");
+        throw ArchiveError("7z filename exceeds FlitzZip resource limit");
     }
     metadata_bytes = checked_add_archive_path_metadata_bytes(
         metadata_bytes, static_cast<std::uint64_t>(units) * sizeof(UInt16), "7z filename conversion metadata");
@@ -361,7 +361,7 @@ std::string sevenzip_entry_path(const CSzArEx& database, UInt32 index, std::uint
     return utf8;
 }
 
-// Purpose: Detect 7z attributes that SuperZip does not safely publish.
+// Purpose: Detect 7z attributes that FlitzZip does not safely publish.
 // Inputs: `database` is the parsed SDK archive, `index` identifies the entry, and `directory` is the decoded entry
 // kind. Outputs: Throws for reparse points, devices, or POSIX special-file modes.
 void reject_unsupported_7z_attributes(const CSzArEx& database, UInt32 index, bool directory) {
@@ -384,12 +384,12 @@ void reject_unsupported_7z_attributes(const CSzArEx& database, UInt32 index, boo
     }
 }
 
-// Purpose: Build and validate SuperZip metadata from a parsed 7z database.
+// Purpose: Build and validate FlitzZip metadata from a parsed 7z database.
 // Inputs: `database` is the parsed SDK archive.
 // Outputs: Returns all entries and total output size after archive-wide path validation.
 SevenZipMetadata scan_7z_metadata(CSzArEx& database) {
     if (database.NumFiles > kMaxSevenZipEntries) {
-        throw ArchiveError("7z entry count exceeds SuperZip resource limit");
+        throw ArchiveError("7z entry count exceeds FlitzZip resource limit");
     }
     SevenZipMetadata metadata;
     metadata.entries.reserve(database.NumFiles);
@@ -439,7 +439,7 @@ void validate_7z_payloads(SevenZipArchive& archive, const SevenZipMetadata& meta
     archive.reset_cache();
 }
 
-// Purpose: Write one decoded 7z payload through SuperZip's atomic publication path.
+// Purpose: Write one decoded 7z payload through FlitzZip's atomic publication path.
 // Inputs: `destination` is the extraction root, `entry` names the UTF-8 target, `payload` contains decoded bytes, and
 // `overwrite` controls replacement. Outputs: Publishes the verified file or throws after cleanup.
 void publish_7z_payload(const std::filesystem::path& destination, const SevenZipEntry& entry,
@@ -521,4 +521,4 @@ OperationStats extract_7z(const std::filesystem::path& archive_path, const std::
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

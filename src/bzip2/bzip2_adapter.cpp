@@ -18,7 +18,7 @@
 #include <limits>
 #include <string>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kBzip2BufferBytes = 64U * 1024U;
@@ -187,4 +187,4 @@ OperationStats extract_bzip2_file(const std::filesystem::path& archive_path, con
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

@@ -8,7 +8,7 @@
 #include <limits>
 #include <system_error>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Query a file byte length without relying on the host ANSI code page for diagnostics.
 // Inputs: `path` names a file; callers remain responsible for source locking and path validation.
@@ -20,9 +20,9 @@ inline std::uint64_t regular_file_size(const std::filesystem::path& path) {
         throw ArchiveError("cannot read file size: " + path_diagnostic_utf8(path));
     }
     if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("file size exceeds SuperZip limits: " + path_diagnostic_utf8(path));
+        throw ArchiveError("file size exceeds FlitzZip limits: " + path_diagnostic_utf8(path));
     }
     return static_cast<std::uint64_t>(size);
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

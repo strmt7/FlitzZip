@@ -1,6 +1,6 @@
 # Refactoring Governance
 
-This document defines how SuperZip refactoring is planned, triggered, executed,
+This document defines how FlitzZip refactoring is planned, triggered, executed,
 and verified without changing product behavior accidentally.
 
 ## References Checked
@@ -21,7 +21,7 @@ Checked on 2026-06-16:
 - SEI CERT C++ Coding Standard: <https://cmu-sei.github.io/secure-coding-standards/sei-cert-cpp-coding-standard/>
 
 The common rule is that refactoring changes structure while preserving behavior.
-For SuperZip, that means tests, benchmark baselines, and security gates are part
+For FlitzZip, that means tests, benchmark baselines, and security gates are part
 of the refactor itself, not a cleanup step after the fact.
 
 ## Modernization Baseline

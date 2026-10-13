@@ -78,11 +78,11 @@ TEST_CASE(gzip_standalone_and_stream_readers_preserve_payload_progress) {
     const std::string payload(192U * 1024U + 7U, 'p');
     write_text_file(source, payload);
     const auto archive = root / "payload.bin.gz";
-    (void)superzip::compress_gzip_file(source, archive);
+    (void)flitzzip::compress_gzip_file(source, archive);
     const auto expected_total = std::filesystem::file_size(archive) - 18U;
     std::uint64_t previous = 0;
-    superzip::ProgressSnapshot last;
-    (void)superzip::extract_gzip_file(archive, root / "out", false, [&](const superzip::ProgressSnapshot& snapshot) {
+    flitzzip::ProgressSnapshot last;
+    (void)flitzzip::extract_gzip_file(archive, root / "out", false, [&](const flitzzip::ProgressSnapshot& snapshot) {
         REQUIRE_EQ(snapshot.total_bytes, expected_total);
         REQUIRE_TRUE(snapshot.processed_bytes >= previous);
         REQUIRE_TRUE(snapshot.processed_bytes <= snapshot.total_bytes);
@@ -92,7 +92,7 @@ TEST_CASE(gzip_standalone_and_stream_readers_preserve_payload_progress) {
     REQUIRE_EQ(last.processed_bytes, expected_total);
     REQUIRE_EQ(last.completed_entries, std::uint64_t{1});
     REQUIRE_EQ(read_text_file(root / "out/payload.bin"), payload);
-    superzip::GzipInputStream input(archive);
+    flitzzip::GzipInputStream input(archive);
     const std::string streamed(std::istreambuf_iterator<char>(input), {});
     input.finish();
     REQUIRE_EQ(streamed, payload);
@@ -130,12 +130,12 @@ TEST_CASE(gzip_compat_roundtrip) {
     write_text_file(input, payload);
 
     const auto archive = root / "hello.txt.gz";
-    const auto compress_stats = superzip::compress_gzip_file(input, archive);
+    const auto compress_stats = flitzzip::compress_gzip_file(input, archive);
     REQUIRE_TRUE(compress_stats.output_bytes > 0);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Gzip);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Gzip);
 
     const auto output = root / "out";
-    const auto extract_stats = superzip::extract_gzip_file(archive, output, false);
+    const auto extract_stats = flitzzip::extract_gzip_file(archive, output, false);
     REQUIRE_EQ(extract_stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "hello.txt"), payload);
     std::filesystem::remove_all(root);
@@ -153,8 +153,8 @@ TEST_CASE(gzip_compress_rejects_multiple_sources) {
 
     bool rejected = false;
     try {
-        (void)superzip::compress_gzip({first, second}, root / "multi.gz");
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::compress_gzip({first, second}, root / "multi.gz");
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -169,7 +169,7 @@ TEST_CASE(gzip_extract_rejects_crc_mismatch_without_output) {
     const auto input = root / "payload.bin";
     write_text_file(input, std::string(96 * 1024, 'c'));
     const auto archive = root / "payload.bin.gz";
-    (void)superzip::compress_gzip_file(input, archive);
+    (void)flitzzip::compress_gzip_file(input, archive);
 
     auto bytes = read_binary_file(archive);
     REQUIRE_TRUE(bytes.size() > 18U);
@@ -179,8 +179,8 @@ TEST_CASE(gzip_extract_rejects_crc_mismatch_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_gzip_file(archive, output, true);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_gzip_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -198,7 +198,7 @@ TEST_CASE(gzip_extract_ignores_embedded_original_name) {
     const std::string payload = "gzip embedded names are metadata only";
     write_text_file(input, payload);
     const auto original_archive = root / "original.gz";
-    (void)superzip::compress_gzip_file(input, original_archive);
+    (void)flitzzip::compress_gzip_file(input, original_archive);
 
     const auto original = read_binary_file(original_archive);
     REQUIRE_TRUE(original.size() > 18U);
@@ -214,7 +214,7 @@ TEST_CASE(gzip_extract_ignores_embedded_original_name) {
     const auto archive = root / "safe.gz";
     write_binary_file(archive, modified);
     const auto output = root / "out";
-    (void)superzip::extract_gzip_file(archive, output, false);
+    (void)flitzzip::extract_gzip_file(archive, output, false);
     REQUIRE_EQ(read_text_file(output / "safe"), payload);
     REQUIRE_TRUE(!std::filesystem::exists(root / "escape.txt"));
     std::filesystem::remove_all(root);

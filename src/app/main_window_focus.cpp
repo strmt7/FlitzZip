@@ -16,9 +16,9 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 
-// Purpose: Identify clipboard-copy accelerators that SuperZip-owned UI must consume.
+// Purpose: Identify clipboard-copy accelerators that FlitzZip-owned UI must consume.
 // Inputs: `key` is the current virtual key and the current keyboard state supplies modifiers.
 // Outputs: Returns true for Ctrl+C and Ctrl+Insert copy shortcuts.
 bool is_copy_accelerator(WPARAM key) {
@@ -153,7 +153,7 @@ void MainWindow::add_compress_focus_targets(std::vector<FocusTarget>& targets, c
     if (compression_format_uses_level(format)) {
         append_focus_target(targets, FocusTargetKind::CompressLevel, layout.compression_level);
     }
-    if (compression_format_uses_suzip_tuning(format)) {
+    if (compression_format_uses_flzip_tuning(format)) {
         append_focus_target(targets, FocusTargetKind::CompressMethod, layout.method);
         append_focus_target(targets, FocusTargetKind::CompressBlockSize, layout.block_size);
     }
@@ -483,4 +483,4 @@ LRESULT MainWindow::handle_key_down(WPARAM wparam, LPARAM) {
 // Inputs: `x` and `y` are physical-pixel mouse coordinates relative to the client area.
 // Outputs: Returns true when a setting was changed and a repaint was queued.
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

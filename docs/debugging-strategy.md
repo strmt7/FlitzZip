@@ -1,6 +1,6 @@
 # Debugging Strategy
 
-This document defines the SuperZip debugging workflow for native Windows C++
+This document defines the FlitzZip debugging workflow for native Windows C++
 defects. It is sanitized for repository use: it captures methods and evidence
 requirements without carrying external company names, proprietary wording, or
 tool-specific marketing language.

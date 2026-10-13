@@ -12,7 +12,7 @@ extern "C" {
 #include "common/error_private.h"
 }
 
-#ifdef SUPERZIP_COVER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_COVER_FAULT_ALLOCATIONS
 #include "fault_allocator.h"
 #endif
 
@@ -21,7 +21,7 @@ struct ContextDelete {
     // Purpose: Match the allocator used for private C context storage.
     // Inputs: Owned array or null. Outputs: Releases storage without invoking C context cleanup.
     void operator()(std::byte* storage) const noexcept {
-#ifdef SUPERZIP_COVER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_COVER_FAULT_ALLOCATIONS
         sz_fault_free(storage);
 #else
         delete[] storage;
@@ -33,7 +33,7 @@ using ContextOwner = std::unique_ptr<std::byte[], ContextDelete>;
 // Purpose: Acquire fundamentally aligned storage for an implicit-lifetime private C context.
 // Inputs: Validated positive extent. Outputs: Exclusive array owner or empty owner on failure.
 ContextOwner acquire_context(std::size_t bytes) noexcept {
-#ifdef SUPERZIP_COVER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_COVER_FAULT_ALLOCATIONS
     return ContextOwner(static_cast<std::byte*>(sz_fault_malloc(bytes)));
 #else
     return ContextOwner(new (std::nothrow) std::byte[bytes]);
@@ -80,7 +80,7 @@ struct COVER_workGroup_s {
 // Purpose: Construct optimizer state and its optional pool with complete failure rollback.
 // Inputs: Requested worker count. Outputs: Exclusive heap owner or null; no borrowed stack state.
 extern "C" COVER_workGroup* COVER_createWorkGroup(unsigned threads) {
-#ifdef SUPERZIP_COVER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_COVER_FAULT_ALLOCATIONS
     auto* storage = sz_fault_malloc(sizeof(COVER_workGroup));
     auto* group = storage == nullptr ? nullptr : new (storage) COVER_workGroup;
 #else
@@ -160,7 +160,7 @@ extern "C" void COVER_finishWorkContext(COVER_workGroup* group) {
 // Purpose: Release the optimizer ownership tree through its matching allocator.
 // Inputs: Exclusive owner or null. Outputs: Workers return before any borrowed state is destroyed.
 extern "C" void COVER_releaseWorkGroup(COVER_workGroup* group) {
-#ifdef SUPERZIP_COVER_FAULT_ALLOCATIONS
+#ifdef FLITZZIP_COVER_FAULT_ALLOCATIONS
     if (group != nullptr) {
         group->~COVER_workGroup();
         sz_fault_free(group);

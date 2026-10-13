@@ -9,9 +9,9 @@ param(
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot 'process_environment.ps1')
 $repo = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $repo "build\$Configuration\SuperZip.exe"
+$exe = Join-Path $repo "build\$Configuration\FlitzZip.exe"
 if (-not (Test-Path $exe)) {
-    throw "SuperZip.exe not found. Run tools/build.ps1 first."
+    throw "FlitzZip.exe not found. Run tools/build.ps1 first."
 }
 if ([string]::IsNullOrWhiteSpace($ScreenshotPath)) {
     $ScreenshotPath = Join-Path $repo "out\gui-smoke-$Configuration.png"
@@ -97,7 +97,7 @@ function Assert-GuiSystemQueueContract {
         }
     }
     if ($SourceText -cmatch 'GetProcessIoCounters|sample_process_io_rates') {
-        throw "System I/O monitor must not regress to SuperZip process-only I/O counters."
+        throw "System I/O monitor must not regress to FlitzZip process-only I/O counters."
     }
     if (-not $SourceText.Contains('queue_scrollbar_thumb_rect') -or -not $SourceText.Contains('WM_MOUSEWHEEL')) {
         throw "Queue overflow must keep a fixed header and expose a working scrollbar/wheel path."
@@ -182,10 +182,10 @@ function Assert-GuiSecurityPickerContract {
         }
     }
     if (-not $SourceText.Contains('draw_extract_overwrite_prompt')) {
-        throw "Extract Ask-before-overwriting policy must use a SuperZip-owned in-app modal."
+        throw "Extract Ask-before-overwriting policy must use a FlitzZip-owned in-app modal."
     }
     if ($SourceText -cmatch 'MessageBoxW') {
-        throw "Product confirmations must not use native MessageBoxW; use SuperZip-owned modal surfaces."
+        throw "Product confirmations must not use native MessageBoxW; use FlitzZip-owned modal surfaces."
     }
 }
 
@@ -205,9 +205,9 @@ function Assert-GuiFormatTelemetryLicenseContract {
     if (-not $SourceText.Contains('performance_update_seconds = 3')) {
         throw "System Performance Monitor default refresh interval must remain 3 seconds."
     }
-    if (-not $SourceText.Contains('".suzip",   ".zip"') -or
+    if (-not $SourceText.Contains('".flzip",   ".zip"') -or
         -not $SourceText.Contains('constexpr int kDefaultCompressionFormatIndex = 0')) {
-        throw "Compress Format must list .suzip first and use it as the default row."
+        throw "Compress Format must list .flzip first and use it as the default row."
     }
     if ($SourceText.Contains('DragAcceptFiles(hwnd_, TRUE)')) {
         throw "GUI drag/drop must not advertise the full window as a shell drop surface; use the Queue OLE drop target."
@@ -230,18 +230,18 @@ function Assert-GuiFormatTelemetryLicenseContract {
         }
     }
     if (-not $SourceText.Contains('is_copy_accelerator')) {
-        throw "SuperZip-owned UI must consume text-copy accelerators instead of exposing copyable text."
+        throw "FlitzZip-owned UI must consume text-copy accelerators instead of exposing copyable text."
     }
     if ($SourceText -match 'OpenClipboard|SetClipboardData|GetClipboardData|CreateWindowExW[^\r\n]*(EDIT|RICHEDIT)|CreateWindowW[^\r\n]*(EDIT|RICHEDIT)') {
-        throw "SuperZip-owned UI must not expose selectable text controls or clipboard APIs."
+        throw "FlitzZip-owned UI must not expose selectable text controls or clipboard APIs."
     }
     if (-not $SourceText.Contains('license_notices_dialog_visible') -or
-        -not $SourceText.Contains('superzip_license_notices.hpp')) {
+        -not $SourceText.Contains('flitzzip_license_notices.hpp')) {
         throw "About Licenses must be backed by the generated license-notices header and modal state."
     }
     if (-not $SourceText.Contains('license_notices_tab_rects') -or
         -not $SourceText.Contains('select_license_notices_tab')) {
-        throw "About Licenses must keep SuperZip and Other tabs for readable non-copyable notices."
+        throw "About Licenses must keep FlitzZip and Other tabs for readable non-copyable notices."
     }
     foreach ($requiredSmoothScrollSource in @(
         'DeferredMouseCommand::ShowLicenseNotices',
@@ -263,7 +263,7 @@ function Assert-GuiFormatTelemetryLicenseContract {
     }
     $modalAccentLine = 'RECT{rect.left, workspace.top, rect.right, workspace.top + scale(2)}'
     if ([regex]::Matches($SourceText, [regex]::Escape($modalAccentLine)).Count -lt 2) {
-        throw "SuperZip-owned secondary windows must use the same full-width top red line as the main interface."
+        throw "FlitzZip-owned secondary windows must use the same full-width top red line as the main interface."
     }
     if (-not $SourceText.Contains('page_title_rect(area)')) {
         throw "Top-level page titles must share the button-aligned page_title_rect geometry."
@@ -297,7 +297,7 @@ function Assert-GuiSourceContract {
 Assert-GuiSourceContract
 
 # Purpose: Select a Compress format row through the same keyboard path users can use.
-# Inputs: `Handle`/`Dpi` identify the SuperZip window and `Index` is the zero-based Compress format row.
+# Inputs: `Handle`/`Dpi` identify the FlitzZip window and `Index` is the zero-based Compress format row.
 # Outputs: Opens the dropdown, moves to the requested row, selects it, and waits for repaint.
 function Select-CompressFormatIndex {
     param(
@@ -326,13 +326,13 @@ foreach ($requiredSmokeExercise in @('About-Licenses-SmoothWheel', 'History-Deta
     }
 }
 
-Import-Module (Join-Path $PSScriptRoot "SuperZip.GuiSmoke.Ui.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "FlitzZip.GuiSmoke.Ui.psm1") -Force
 
 # Purpose: Check sparse-detail detection independently of any product window or host font/DPI.
 # Inputs: None; creates one owned temporary image.
 # Outputs: Requires rejection of a flat image and detection of five colors missed by the coarse sampling grid.
 function Assert-VisualDetailSampler {
-    $path = Join-Path ([IO.Path]::GetTempPath()) ("SuperZip-visual-detail-{0}.png" -f [guid]::NewGuid().ToString('N'))
+    $path = Join-Path ([IO.Path]::GetTempPath()) ("FlitzZip-visual-detail-{0}.png" -f [guid]::NewGuid().ToString('N'))
     $bitmap = [Drawing.Bitmap]::new(240, 160)
     try {
         $bitmap.Save($path, [Drawing.Imaging.ImageFormat]::Png)
@@ -413,7 +413,7 @@ function Assert-PublicationSettingsMigration {
         $cases += @{ Values = @{ compressionLevelIndex = $legacyIndex }; Expected = $true; Effort = 2 * $legacyIndex + 1 }
     }
     foreach ($effort in 1..9) {
-        $cases += @{ Values = @{ schema = 'superzip.settings.v3'; compressionLevel = $effort; compressionLevelIndex = 4 }; Expected = $true; Effort = $effort }
+        $cases += @{ Values = @{ schema = 'flitzzip.settings.v3'; compressionLevel = $effort; compressionLevelIndex = 4 }; Expected = $true; Effort = $effort }
     }
     foreach ($invalid in @($null, 'invalid', 1.5, 2147483648)) {
         $cases += @{ Values = @{ compressionLevel = $invalid }; Expected = $true; Effort = 5 }
@@ -429,7 +429,7 @@ function Assert-PublicationSettingsMigration {
     }
     foreach ($case in $cases) {
         $document = $case.Values.Clone()
-        if (-not $document.ContainsKey('schema')) { $document.schema = 'superzip.settings.v2' }
+        if (-not $document.ContainsKey('schema')) { $document.schema = 'flitzzip.settings.v2' }
         [IO.File]::WriteAllText($SettingsPath, ($document | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
         $owned = Start-Process -FilePath $Exe -PassThru
         try {
@@ -441,11 +441,11 @@ function Assert-PublicationSettingsMigration {
             } while ($owned.MainWindowHandle -eq 0 -and (Get-Date) -lt $deadline)
             $handle = [IntPtr]$owned.MainWindowHandle
             if ($handle -eq [IntPtr]::Zero) { throw 'Settings migration GUI did not show a window.' }
-            $dpi = [int][SuperZipNativeUi]::GetDpiForWindow($handle)
+            $dpi = [int][FlitzZipNativeUi]::GetDpiForWindow($handle)
             if ($dpi -le 0) { throw 'Settings migration GUI DPI is unavailable.' }
             [void](Invoke-SmokeClientResize -Handle $handle -Dpi $dpi -Width 1200 -Height 760)
             Invoke-SidebarClick -Handle $handle -Dpi $dpi -PageIndex 6 -Synchronous
-            $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+            $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
             $length = (Get-Item -LiteralPath $logPath).Length
             Invoke-ClientClick -Handle $handle -Dpi $dpi -DesignX 1110 -DesignY 666 -Synchronous
             Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
@@ -453,7 +453,7 @@ function Assert-PublicationSettingsMigration {
             $saved = Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json
             $expectedEffort = if ($case.ContainsKey('Effort')) { $case.Effort } else { 5 }
             Assert-SettingsValue -Path $SettingsPath -Name 'compressionLevel' -Expected $expectedEffort
-            Assert-SettingsValue -Path $SettingsPath -Name 'schema' -Expected 'superzip.settings.v3'
+            Assert-SettingsValue -Path $SettingsPath -Name 'schema' -Expected 'flitzzip.settings.v3'
             if ($saved.PSObject.Properties.Name -contains 'compressionLevelIndex') {
                 throw 'Applied settings retained the obsolete effort row index.'
             }
@@ -486,7 +486,7 @@ function Assert-PublicationSettingsMigration {
 function Assert-CompressionEffortSelection {
     param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath)
 
-    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
     foreach ($effort in @(1..9) + @(5)) {
         Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 820 -DesignY 224 -Synchronous
@@ -509,7 +509,7 @@ function Assert-CompressionEffortSelection {
 function Save-CompressionSmokeChoice {
     param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath)
     Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
-    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
     $length = (Get-Item -LiteralPath $logPath).Length
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666 -Synchronous
     Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
@@ -567,9 +567,9 @@ function Assert-NeutronArchiveOperation {
     param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$InputPath, [string]$Destination)
     $inputBytes = (Get-Item -LiteralPath $InputPath).Length
     if ($inputBytes -le 0 -or $inputBytes -gt 65536) { throw 'Neutron GUI correctness input exceeds its smoke bound.' }
-    $archive = Join-Path $Destination 'SuperZip-output.suzip'
+    $archive = Join-Path $Destination 'FlitzZip-output.flzip'
     if (Test-Path -LiteralPath $archive) { throw 'Neutron GUI smoke requires an unused owned archive path.' }
-    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
     $length = (Get-Item -LiteralPath $logPath).Length
     $lineCount = @(Get-Content -LiteralPath $logPath).Count
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
@@ -586,7 +586,7 @@ function Assert-NeutronArchiveOperation {
         throw 'The GUI correctness input must exercise actual Neutron compound, byte-plane or context framing.'
     }
     $restoredRoot = Join-Path $Destination ('neutron-readback-' + [guid]::NewGuid().ToString('N'))
-    $cli = Join-Path $repo "build/$Configuration/superzip_cli.exe"
+    $cli = Join-Path $repo "build/$Configuration/flitzzip_cli.exe"
     foreach ($invocation in @(
         @{ Name = 'CPU verification'; Arguments = "verify --force-cpu `"$archive`"" },
         @{ Name = 'HIP extraction'; Arguments = "extract --require-gpu --output `"$restoredRoot`" `"$archive`"" }
@@ -638,7 +638,7 @@ function Assert-NeutronSelectionIsolation {
     param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$BasePath, [string]$Extension,
         [string]$InputPath, [string]$Destination, [Parameter(Mandatory = $true)][ref]$Captures)
     $original = Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json
-    $info = & (Join-Path $repo "build/$Configuration/superzip_cli.exe") gpu-info
+    $info = & (Join-Path $repo "build/$Configuration/flitzzip_cli.exe") gpu-info
     if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect actual HIP capability for Neutron GUI qualification.' }
     $available = @($info | Where-Object { $_ -ceq 'available=true' }).Count -eq 1
     Select-CompressFormatIndex -Handle $Handle -Dpi $Dpi -Index 0
@@ -648,7 +648,7 @@ function Assert-NeutronSelectionIsolation {
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 820 -DesignY 224 -Synchronous
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
     if ($available) {
-        $Captures.Value += Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Neutron-Selection$Extension"
+        $Captures.Value += Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-Neutron-Selection$Extension"
     }
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
     Save-CompressionSmokeChoice -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath
@@ -693,8 +693,8 @@ function Assert-OperationSummary {
     param([IntPtr]$Handle, [int]$Dpi, [string]$InputPath, [string]$Destination,
         [string]$SettingsPath, [string]$BasePath, [string]$Extension)
 
-    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
-    $output = Join-Path $Destination 'SuperZip-output.zst'
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
+    $output = Join-Path $Destination 'FlitzZip-output.zst'
     Assert-SettingsValue -Path $SettingsPath -Name 'showOperationSummary' -Expected $true
     Assert-SettingsValue -Path $SettingsPath -Name 'openDestinationAfterOperation' -Expected $false
     Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
@@ -767,7 +767,7 @@ function Assert-OperationSummary {
             throw 'Locked-output failure changed the completed archive.'
         }
         $path = "${BasePath}-Summary-$scenario$Extension"
-        Save-SuperZipScreenshot -Handle $Handle -Path $path
+        Save-FlitzZipScreenshot -Handle $Handle -Path $path
         $offset = Get-ClientCaptureOffset -Handle $Handle
         $top = if ($scenario -eq 'Disabled') { 130 } else { 319 }
         Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left 1 -Top $top -Right 4 -Bottom ($top + 42) -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 8 -MinPixels 100 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y
@@ -795,7 +795,7 @@ function Assert-SettingsSaveFailureRollback {
     )
 
     $original = Get-Content -Raw -LiteralPath $Path
-    $logPath = Join-Path (Split-Path -Parent $Path) "superzip.log"
+    $logPath = Join-Path (Split-Path -Parent $Path) "flitzzip.log"
     foreach ($command in @(
         @{ Name = "Apply"; X = 1110; Failure = "Settings apply failed" },
         @{ Name = "Restore Defaults"; X = 985; Failure = "Settings reset failed" }
@@ -847,7 +847,7 @@ function Assert-HistoryScrollEndpoint {
         Start-Sleep -Milliseconds 100
     }
     Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6
-    $logPath = Join-Path (Split-Path -Parent $SettingsPath) "superzip.log"
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) "flitzzip.log"
     foreach ($index in 1..20) {
         $logLength = (Get-Item -LiteralPath $logPath).Length
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666
@@ -873,11 +873,11 @@ function Assert-HistoryScrollEndpoint {
                 Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX 1158 -StartY $startY -EndX 1158 -EndY $endY
             }
             # Move hover away so endpoint evidence uses the normal thumb color.
-            [void][SuperZipNativeUi]::PostMessage($Handle, 0x0200, [IntPtr]::Zero,
+            [void][FlitzZipNativeUi]::PostMessage($Handle, 0x0200, [IntPtr]::Zero,
                 (ConvertTo-MouseLParam -X 0 -Y 0))
             Start-Sleep -Milliseconds 250
             $path = "${BasePath}-History-$method-$direction$Extension"
-            Save-SuperZipScreenshot -Handle $Handle -Path $path
+            Save-FlitzZipScreenshot -Handle $Handle -Path $path
             $top = if ($direction -eq 'Bottom') { 570 } else { 234 }
             Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left 1156 -Top $top -Right 1160 -Bottom ($top + 4) -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 64 -ExpectedGreen 83 -ExpectedBlue 90 -Tolerance 12 -MinPixels 8
         }
@@ -891,18 +891,18 @@ function Assert-HistoryScrollEndpoint {
 function Invoke-SmokeClientResize {
     param([IntPtr]$Handle, [int]$Dpi, [int]$Width, [int]$Height)
 
-    $window = New-Object SuperZipNativeUi+RECT
-    $client = New-Object SuperZipNativeUi+RECT
-    if (-not [SuperZipNativeUi]::GetWindowRect($Handle, [ref]$window) -or
-        -not [SuperZipNativeUi]::GetClientRect($Handle, [ref]$client)) { throw 'Cannot inspect smoke viewport.' }
+    $window = New-Object FlitzZipNativeUi+RECT
+    $client = New-Object FlitzZipNativeUi+RECT
+    if (-not [FlitzZipNativeUi]::GetWindowRect($Handle, [ref]$window) -or
+        -not [FlitzZipNativeUi]::GetClientRect($Handle, [ref]$client)) { throw 'Cannot inspect smoke viewport.' }
     $old = @{ Width = $window.Right - $window.Left; Height = $window.Bottom - $window.Top }
     $physicalWidth = [int][Math]::Round($Width * $Dpi / 96.0)
     $physicalHeight = [int][Math]::Round($Height * $Dpi / 96.0)
-    if (-not [SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0,
+    if (-not [FlitzZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0,
         ($physicalWidth + $old.Width - $client.Right), ($physicalHeight + $old.Height - $client.Bottom), 0x0016)) {
         throw 'Cannot resize the owned smoke window.'
     }
-    if (-not [SuperZipNativeUi]::GetClientRect($Handle, [ref]$client) -or
+    if (-not [FlitzZipNativeUi]::GetClientRect($Handle, [ref]$client) -or
         $client.Right -ne $physicalWidth -or $client.Bottom -ne $physicalHeight) { throw 'Client dimensions mismatch.' }
     return $old
 }
@@ -918,16 +918,16 @@ function Assert-WindowWorkAreaFit {
         if ($ExerciseEvents) {
             [void](Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width 960 -Height 600)
             $result = [UIntPtr]::Zero
-            if ([SuperZipNativeUi]::SendMessageTimeout($Handle, $notification[0], [IntPtr]$notification[1], [IntPtr]::Zero,
+            if ([FlitzZipNativeUi]::SendMessageTimeout($Handle, $notification[0], [IntPtr]$notification[1], [IntPtr]::Zero,
                 0x0002, 5000, [ref]$result) -eq [IntPtr]::Zero) { throw 'Window fitting notification timed out.' }
         }
-        $window = New-Object SuperZipNativeUi+RECT
-        $client = New-Object SuperZipNativeUi+RECT
-        $info = New-Object SuperZipNativeUi+MONITORINFO
+        $window = New-Object FlitzZipNativeUi+RECT
+        $client = New-Object FlitzZipNativeUi+RECT
+        $info = New-Object FlitzZipNativeUi+MONITORINFO
         $info.Size = [Runtime.InteropServices.Marshal]::SizeOf($info)
-        if (-not [SuperZipNativeUi]::GetWindowRect($Handle, [ref]$window) -or
-            -not [SuperZipNativeUi]::GetClientRect($Handle, [ref]$client) -or
-            -not [SuperZipNativeUi]::GetMonitorInfo([SuperZipNativeUi]::MonitorFromWindow($Handle, 2), [ref]$info)) {
+        if (-not [FlitzZipNativeUi]::GetWindowRect($Handle, [ref]$window) -or
+            -not [FlitzZipNativeUi]::GetClientRect($Handle, [ref]$client) -or
+            -not [FlitzZipNativeUi]::GetMonitorInfo([FlitzZipNativeUi]::MonitorFromWindow($Handle, 2), [ref]$info)) {
             throw 'Cannot inspect the actual monitor work area.'
         }
         $frameWidth = $window.Right - $window.Left - $client.Right
@@ -952,7 +952,7 @@ function Assert-WindowWorkAreaFit {
 function Assert-CompactLicenseDialog {
     param([IntPtr]$Handle, [int]$Dpi, [string]$BasePath, [string]$Extension, [string]$SettingsPath)
 
-    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
     $length = (Get-Item -LiteralPath $logPath).Length
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 875 -DesignY 434 -Synchronous
     Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'License notices opened'
@@ -960,18 +960,18 @@ function Assert-CompactLicenseDialog {
     foreach ($tab in 0..1) {
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX (220 + 136 * $tab) -DesignY 176 -Synchronous
         $path = "${BasePath}-Compact-Licenses-$tab$Extension"
-        Save-SuperZipScreenshot -Handle $Handle -Path $path -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+        Save-FlitzZipScreenshot -Handle $Handle -Path $path -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
         Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left (165 + 136 * $tab) -Top 159 -Right (293 + 136 * $tab) -Bottom 193 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 42 -MinPixels 20
         Assert-DesignRectHasDetail -Path $path -Dpi $Dpi -Left 175 -Top 209 -Right 867 -Bottom 443 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
     }
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
     Start-Sleep -Milliseconds 200
-    Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-Licenses-End$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+    Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-Licenses-End$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
     $length = (Get-Item -LiteralPath $logPath).Length
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 826 -DesignY 481 -Synchronous
     Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'License notices closed'
     $closedPath = "${BasePath}-Compact-Licenses-Closed$Extension"
-    Save-SuperZipScreenshot -Handle $Handle -Path $closedPath -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+    Save-FlitzZipScreenshot -Handle $Handle -Path $closedPath -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
     Assert-DesignRectHasColor -Path $closedPath -Dpi $Dpi -Left 160 -Top 180 -Right 240 -Bottom 260 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 42 -MinPixels 20
 }
 
@@ -984,15 +984,15 @@ function Assert-CompactOverwritePrompt {
     $old = Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width 960 -Height 600
     try {
         $path = "${BasePath}-Compact-OverwritePrompt$Extension"
-        Save-SuperZipScreenshot -Handle $Handle -Path $path -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+        Save-FlitzZipScreenshot -Handle $Handle -Path $path -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
         $offset = Get-ClientCaptureOffset -Handle $Handle
         Assert-DesignRectHasDetail -Path $path -Dpi $Dpi -Left 230 -Top 186 -Right 810 -Bottom 425 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 756 -DesignY 398 -Synchronous
         $closedPath = "${BasePath}-Compact-OverwriteCancelled$Extension"
-        Save-SuperZipScreenshot -Handle $Handle -Path $closedPath -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+        Save-FlitzZipScreenshot -Handle $Handle -Path $closedPath -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
         Assert-DesignRectHasDetail -Path $closedPath -Dpi $Dpi -Left 116 -Top 74 -Right 350 -Bottom 110 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
     } finally {
-        if (-not [SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $old.Width, $old.Height, 0x0016)) {
+        if (-not [FlitzZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $old.Width, $old.Height, 0x0016)) {
             throw 'Cannot restore the smoke window after the overwrite prompt test.'
         }
     }
@@ -1014,13 +1014,13 @@ function Assert-LegacyNameExtraction {
     Invoke-DropdownExercise -Handle $Handle -Dpi $Dpi -Name 'Extract-NameEncoding-System' -OpenX 300 -OpenY 451 -SelectX 300 -SelectY 528 -MenuLeft 116 -MenuTop 478 -MenuRight 617 -MenuBottom 546 -BasePath $BasePath -Extension $Extension
     $old = Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width 960 -Height 600
     try {
-        Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-NameEncoding$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+        Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-NameEncoding$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
     } finally {
-        if (-not [SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $old.Width, $old.Height, 0x0016)) {
+        if (-not [FlitzZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $old.Width, $old.Height, 0x0016)) {
             throw 'Cannot restore the smoke window after the encoding test.'
         }
     }
-    $logPath = Join-Path ([System.IO.Path]::GetTempPath()) 'SuperZip/superzip.log'
+    $logPath = Join-Path ([System.IO.Path]::GetTempPath()) 'FlitzZip/flitzzip.log'
     $length = (Get-Item -LiteralPath $logPath).Length
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 368 -Synchronous
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
@@ -1045,7 +1045,7 @@ function Assert-LegacyNameExtraction {
 function Assert-CompactFormatMenu {
     param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$BasePath, [string]$Extension)
 
-    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
     foreach ($method in @('Wheel', 'Arrow', 'Keyboard')) {
         Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 300 -DesignY 218 -Synchronous
@@ -1062,7 +1062,7 @@ function Assert-CompactFormatMenu {
             Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
         }
         Start-Sleep -Milliseconds 200
-        Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-Format-$method$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+        Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-Format-$method$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
         if ($method -eq 'Keyboard') {
             Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
         } else {
@@ -1090,7 +1090,7 @@ function Assert-CompactFormLayout {
         foreach ($index in 0..7) {
             Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex $index -Synchronous
             Start-Sleep -Milliseconds 150
-            Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-$($names[$index])$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+            Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-$($names[$index])$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
         }
         Assert-CompactLicenseDialog -Handle $Handle -Dpi $Dpi -BasePath $BasePath -Extension $Extension -SettingsPath $SettingsPath
         Assert-CompactFormatMenu -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath -BasePath $BasePath -Extension $Extension
@@ -1099,7 +1099,7 @@ function Assert-CompactFormLayout {
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 650 -DesignY 440 -Synchronous
         Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
         Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
-        $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+        $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
         $length = (Get-Item -LiteralPath $logPath).Length
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 875 -DesignY 508 -Synchronous
         Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied and saved'
@@ -1132,32 +1132,32 @@ function Assert-CompactFormLayout {
         Write-Information 'Compact forms and popup selections passed at the actual host DPI.' -InformationAction Continue
     } finally {
         Invoke-ClientKey -Handle $Handle -VirtualKey 0x1B
-        if (-not [SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $old.Width, $old.Height, 0x0016)) {
+        if (-not [FlitzZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $old.Width, $old.Height, 0x0016)) {
             throw 'Cannot restore the owned smoke window dimensions.'
         }
     }
 }
 
 $smokeRoot = Join-Path $repo "out\gui-smoke-work"
-$smokeDestination = Join-Path $smokeRoot ("SuperZip-destination-" + [char]0x03A9)
+$smokeDestination = Join-Path $smokeRoot ("FlitzZip-destination-" + [char]0x03A9)
 New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
 $smokeInput = Join-Path $smokeRoot "drag-drop-input.txt"
 $smokeInputTwo = Join-Path $smokeRoot "drag-drop-input-two.txt"
 $smokeFolder = Join-Path $smokeRoot "folder-input"
-$smokeArchive = Join-Path $smokeRoot "valid-input.suzip"
-$smokeArchiveTwo = Join-Path $smokeRoot "valid-input-two.suzip"
-$badArchive = Join-Path $smokeRoot "invalid-input.suzip"
+$smokeArchive = Join-Path $smokeRoot "valid-input.flzip"
+$smokeArchiveTwo = Join-Path $smokeRoot "valid-input-two.flzip"
+$badArchive = Join-Path $smokeRoot "invalid-input.flzip"
 $overflowFiles = @()
 $bulkDropFiles = @()
 $smokeCloseFile = Join-Path $smokeRoot "close.request"
-$smokeSettingsDir = Join-Path ([System.IO.Path]::GetTempPath()) "SuperZip"
+$smokeSettingsDir = Join-Path ([System.IO.Path]::GetTempPath()) "FlitzZip"
 $smokeSettingsFile = Join-Path $smokeSettingsDir "gui-smoke-settings.json"
 New-Item -ItemType Directory -Force -Path $smokeSettingsDir | Out-Null
 Remove-GuiSmokeDirectory -Path $smokeDestination
 New-Item -ItemType Directory -Force -Path $smokeDestination | Out-Null
 # A bounded correctness fixture exercises dictionary/entropy device readback; it is not a performance benchmark.
 Write-NeutronGuiFixture -Path $smokeInput
-Set-Content -LiteralPath $smokeInputTwo -Value "Second SuperZip GUI smoke input" -NoNewline
+Set-Content -LiteralPath $smokeInputTwo -Value "Second FlitzZip GUI smoke input" -NoNewline
 New-Item -ItemType Directory -Force -Path $smokeFolder | Out-Null
 Set-Content -LiteralPath (Join-Path $smokeFolder "nested.txt") -Value "Nested GUI smoke input" -NoNewline
 foreach ($index in 1..28) {
@@ -1171,48 +1171,48 @@ foreach ($index in 1..72) {
     $bulkDropFiles += (Resolve-Path -LiteralPath $path).Path
 }
 $queuePickerSelection = (@((Resolve-Path -LiteralPath $smokeInput).Path) + $overflowFiles) -join ';'
-Set-Content -LiteralPath $badArchive -Value "not a valid SuperZip archive" -NoNewline
+Set-Content -LiteralPath $badArchive -Value "not a valid FlitzZip archive" -NoNewline
 Remove-Item -LiteralPath $smokeArchive -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $smokeArchiveTwo -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $smokeCloseFile -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $smokeSettingsFile -Force -ErrorAction SilentlyContinue
-& (Join-Path $repo "build\$Configuration\superzip_cli.exe") compress --format suzip --output $smokeArchive --force-cpu $smokeInput | Out-Null
-& (Join-Path $repo "build\$Configuration\superzip_cli.exe") compress --format suzip --output $smokeArchiveTwo --force-cpu $smokeInputTwo | Out-Null
+& (Join-Path $repo "build\$Configuration\flitzzip_cli.exe") compress --format flzip --output $smokeArchive --force-cpu $smokeInput | Out-Null
+& (Join-Path $repo "build\$Configuration\flitzzip_cli.exe") compress --format flzip --output $smokeArchiveTwo --force-cpu $smokeInputTwo | Out-Null
 if (-not (Test-Path -LiteralPath $smokeArchive)) {
-    throw "Could not create valid SUZIP archive for GUI extract smoke."
+    throw "Could not create valid FLZIP archive for GUI extract smoke."
 }
 if (-not (Test-Path -LiteralPath $smokeArchiveTwo)) {
-    throw "Could not create second valid SUZIP archive for GUI multi-extract smoke."
+    throw "Could not create second valid FLZIP archive for GUI multi-extract smoke."
 }
 $legacyFixture = Join-Path $smokeRoot ('legacy-names-' + [guid]::NewGuid().ToString('N'))
-$previousFixtureExport = $env:SUPERZIP_TEST_FIXTURE_EXPORT
+$previousFixtureExport = $env:FLITZZIP_TEST_FIXTURE_EXPORT
 try {
-    $env:SUPERZIP_TEST_FIXTURE_EXPORT = $legacyFixture
-    $fixtureOutput = & (Join-Path $repo "build\$Configuration\superzip_tests.exe") cpio_legacy_member_names_both_passes
+    $env:FLITZZIP_TEST_FIXTURE_EXPORT = $legacyFixture
+    $fixtureOutput = & (Join-Path $repo "build\$Configuration\flitzzip_tests.exe") cpio_legacy_member_names_both_passes
     if ($LASTEXITCODE -ne 0) { throw "Could not export the verified legacy-name GUI fixture: $($fixtureOutput -join '`n')" }
 } finally {
-    $env:SUPERZIP_TEST_FIXTURE_EXPORT = $previousFixtureExport
+    $env:FLITZZIP_TEST_FIXTURE_EXPORT = $previousFixtureExport
 }
-$previousSmokeDestination = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", "Process")
-$previousSmokeFiles = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", "Process")
-$previousSmokeFolder = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", "Process")
-$previousSmokeAutoClose = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", "Process")
-$previousSmokeCloseFile = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", "Process")
-$previousSmokeSettingsRedirect = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", "Process")
-$previousSmokeShellOpen = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", "Process")
+$previousSmokeDestination = [Environment]::GetEnvironmentVariable("FLITZZIP_GUI_SMOKE_DESTINATION", "Process")
+$previousSmokeFiles = [Environment]::GetEnvironmentVariable("FLITZZIP_GUI_SMOKE_FILE_SELECTION", "Process")
+$previousSmokeFolder = [Environment]::GetEnvironmentVariable("FLITZZIP_GUI_SMOKE_FOLDER_SELECTION", "Process")
+$previousSmokeAutoClose = [Environment]::GetEnvironmentVariable("FLITZZIP_GUI_SMOKE_AUTO_CLOSE_MS", "Process")
+$previousSmokeCloseFile = [Environment]::GetEnvironmentVariable("FLITZZIP_GUI_SMOKE_CLOSE_FILE", "Process")
+$previousSmokeSettingsRedirect = [Environment]::GetEnvironmentVariable("FLITZZIP_GUI_SMOKE_SETTINGS_REDIRECT", "Process")
+$previousSmokeShellOpen = [Environment]::GetEnvironmentVariable("FLITZZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", "Process")
 $smokeAutoCloseMs = 300000
 if ($smokeAutoCloseMs -lt 240000) {
     throw "GUI smoke auto-close timeout must leave enough time for the full tab/control pass."
 }
-[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", $smokeDestination, "Process")
-[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", $queuePickerSelection, "Process")
-[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", (Resolve-Path -LiteralPath $smokeFolder).Path, "Process")
-[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", [string]$smokeAutoCloseMs, "Process")
-[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", $smokeCloseFile, "Process")
-[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", "1", "Process")
-[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", "1", "Process")
+[Environment]::SetEnvironmentVariable("FLITZZIP_GUI_SMOKE_DESTINATION", $smokeDestination, "Process")
+[Environment]::SetEnvironmentVariable("FLITZZIP_GUI_SMOKE_FILE_SELECTION", $queuePickerSelection, "Process")
+[Environment]::SetEnvironmentVariable("FLITZZIP_GUI_SMOKE_FOLDER_SELECTION", (Resolve-Path -LiteralPath $smokeFolder).Path, "Process")
+[Environment]::SetEnvironmentVariable("FLITZZIP_GUI_SMOKE_AUTO_CLOSE_MS", [string]$smokeAutoCloseMs, "Process")
+[Environment]::SetEnvironmentVariable("FLITZZIP_GUI_SMOKE_CLOSE_FILE", $smokeCloseFile, "Process")
+[Environment]::SetEnvironmentVariable("FLITZZIP_GUI_SMOKE_SETTINGS_REDIRECT", "1", "Process")
+[Environment]::SetEnvironmentVariable("FLITZZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", "1", "Process")
 
-$previousDpiContext = [SuperZipNativeUi]::SetThreadDpiAwarenessContext([IntPtr](-4))
+$previousDpiContext = [FlitzZipNativeUi]::SetThreadDpiAwarenessContext([IntPtr](-4))
 $process = $null
 $windowHandle = [IntPtr]::Zero
 try {
@@ -1223,7 +1223,7 @@ try {
     $deadline = (Get-Date).AddSeconds(15)
     while ((Get-Date) -lt $deadline) {
         if ($process.HasExited) {
-            throw "SuperZip exited before showing a window. ExitCode=$($process.ExitCode)."
+            throw "FlitzZip exited before showing a window. ExitCode=$($process.ExitCode)."
         }
         Start-Sleep -Milliseconds 250
         $process.Refresh()
@@ -1233,11 +1233,11 @@ try {
         }
     }
     if ($windowHandle -eq [IntPtr]::Zero) {
-        throw "SuperZip window did not appear."
+        throw "FlitzZip window did not appear."
     }
 
     Start-Sleep -Seconds 2
-    $windowDpi = [int][SuperZipNativeUi]::GetDpiForWindow($windowHandle)
+    $windowDpi = [int][FlitzZipNativeUi]::GetDpiForWindow($windowHandle)
     if ($windowDpi -le 0) {
         $windowDpi = 96
     }
@@ -1249,7 +1249,7 @@ try {
     $pageNames = @("Queue", "Compress", "Extract", "Security", "History", "System", "Settings", "About")
     $basePath = Join-Path (Split-Path -Parent $ScreenshotPath) ([System.IO.Path]::GetFileNameWithoutExtension($ScreenshotPath))
     $extension = [System.IO.Path]::GetExtension($ScreenshotPath)
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $ScreenshotPath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $ScreenshotPath
 
     if ($CompactOnly) {
         $captures += Assert-CompactFormLayout -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
@@ -1266,14 +1266,14 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1032 -DesignY 91
     Start-Sleep -Milliseconds 150
     $pickerQueuePath = "${basePath}-Queue-AfterPickers$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $pickerQueuePath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $pickerQueuePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $pickerQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Assert-DesignRectHasDetail -Path $pickerQueuePath -Dpi $windowDpi -Left 1148 -Top 170 -Right 1166 -Bottom 640 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 3
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 505 -DesignY 91
     Start-Sleep -Milliseconds 180
     $removeSelectedQueuePath = "${basePath}-Queue-AfterRemoveSelected$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $removeSelectedQueuePath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $removeSelectedQueuePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-QueueEmptyMessageCentered -Path $removeSelectedQueuePath -Dpi $windowDpi -ClientOffsetX $offset.X -ClientOffsetY $offset.Y
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 918 -DesignY 91
@@ -1281,33 +1281,33 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1032 -DesignY 91
     Start-Sleep -Milliseconds 150
     $pickerReloadedQueuePath = "${basePath}-Queue-AfterPickersReloaded$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $pickerReloadedQueuePath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $pickerReloadedQueuePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $pickerReloadedQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Invoke-ClientDrag -Handle $windowHandle -Dpi $windowDpi -StartX 1158 -StartY 186 -EndX 1158 -EndY 344
     Start-Sleep -Milliseconds 180
     $scrolledQueuePath = "${basePath}-Queue-AfterScrollbarDrag$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $scrolledQueuePath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $scrolledQueuePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $scrolledQueuePath -Dpi $windowDpi -Left 126 -Top 132 -Right 620 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 5
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
     $emptyQueuePath = "${basePath}-Queue-EmptyDropZone$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $emptyQueuePath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $emptyQueuePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-QueueEmptyMessageCentered -Path $emptyQueuePath -Dpi $windowDpi -ClientOffsetX $offset.X -ClientOffsetY $offset.Y
 
     Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths $bulkDropFiles
     Start-Sleep -Milliseconds 450
     $bulkDropQueuePath = "${basePath}-Queue-AfterBulkDragDrop$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $bulkDropQueuePath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $bulkDropQueuePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $bulkDropQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Assert-DesignRectHasDetail -Path $bulkDropQueuePath -Dpi $windowDpi -Left 1148 -Top 170 -Right 1166 -Bottom 640 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 3
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
     $emptyAfterBulkDropPath = "${basePath}-Queue-AfterBulkDropClear$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $emptyAfterBulkDropPath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $emptyAfterBulkDropPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-QueueEmptyMessageCentered -Path $emptyAfterBulkDropPath -Dpi $windowDpi -ClientOffsetX $offset.X -ClientOffsetY $offset.Y
 
@@ -1315,7 +1315,7 @@ try {
     Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths @((Resolve-Path -LiteralPath $smokeInput).Path)
     Start-Sleep -Milliseconds 350
     $dropQueuePath = "${basePath}-Queue-AfterDragDrop$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $dropQueuePath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $dropQueuePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $dropQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 136 -DesignY 146
@@ -1329,7 +1329,7 @@ try {
     Invoke-ClientDrag -Handle $windowHandle -Dpi $windowDpi -StartX 420 -StartY 146 -EndX 455 -EndY 146
     Start-Sleep -Milliseconds 180
     $queueColumnPath = "${basePath}-Queue-AfterTicksAndResize$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $queueColumnPath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $queueColumnPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $queueColumnPath -Dpi $windowDpi -Left 126 -Top 132 -Right 620 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 5
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 240 -DesignY 172
@@ -1360,7 +1360,7 @@ try {
     # Zstandard is outside the formats that support read-back verification.
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 432
     Start-Sleep -Milliseconds 140
-    $expectedZstd = Join-Path $smokeDestination "SuperZip-output.zst"
+    $expectedZstd = Join-Path $smokeDestination "FlitzZip-output.zst"
     Remove-Item -LiteralPath $expectedZstd -Force -ErrorAction SilentlyContinue
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 6
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
@@ -1377,7 +1377,7 @@ try {
     }
     Start-Sleep -Milliseconds 300
 
-    $expectedTarZstd = Join-Path $smokeDestination "SuperZip-output.tar.zst"
+    $expectedTarZstd = Join-Path $smokeDestination "FlitzZip-output.tar.zst"
     Remove-Item -LiteralPath $expectedTarZstd -Force -ErrorAction SilentlyContinue
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 8
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
@@ -1394,7 +1394,7 @@ try {
     }
     Start-Sleep -Milliseconds 300
 
-    $expectedTarGz = Join-Path $smokeDestination "SuperZip-output.tar.gz"
+    $expectedTarGz = Join-Path $smokeDestination "FlitzZip-output.tar.gz"
     Remove-Item -LiteralPath $expectedTarGz -Force -ErrorAction SilentlyContinue
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 2
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
@@ -1410,7 +1410,7 @@ try {
         throw "GUI compression did not create expected non-empty TAR.GZ archive at $expectedTarGz."
     }
 
-    $expectedCpioGz = Join-Path $smokeDestination "SuperZip-output.cpgz"
+    $expectedCpioGz = Join-Path $smokeDestination "FlitzZip-output.cpgz"
     Remove-Item -LiteralPath $expectedCpioGz -Force -ErrorAction SilentlyContinue
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 16
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
@@ -1435,7 +1435,7 @@ try {
     Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths @((Resolve-Path -LiteralPath $smokeArchive).Path)
     Start-Sleep -Milliseconds 250
     $archiveDropQueuePath = "${basePath}-Queue-ArchiveAfterDragDrop$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $archiveDropQueuePath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $archiveDropQueuePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $archiveDropQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 560 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 2
@@ -1517,7 +1517,7 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     Start-Sleep -Milliseconds 250
     $overwritePromptPath = "${basePath}-Extract-OverwritePrompt$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $overwritePromptPath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $overwritePromptPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $overwritePromptPath -Dpi $windowDpi -Left 290 -Top 250 -Right 910 -Bottom 510 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
     $captures += Assert-CompactOverwritePrompt -Handle $windowHandle -Dpi $windowDpi -BasePath $basePath -Extension $extension
@@ -1528,12 +1528,12 @@ try {
     Start-Sleep -Milliseconds 300
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Extract-Overwrite-Revert" -OpenX 900 -OpenY 225 -SelectX 900 -SelectY 300 -MenuLeft 657 -MenuTop 250 -MenuRight 1158 -MenuBottom 318 -BasePath $basePath -Extension $extension
 
-    # Extract failure: queue a corrupt SUZIP and verify History exposes a real Failure row.
+    # Extract failure: queue a corrupt FLZIP and verify History exposes a real Failure row.
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 0
     Start-Sleep -Milliseconds 150
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
-    Remove-GuiSmokeDirectory -Path (Join-Path $smokeRoot "SuperZip-extracted")
+    Remove-GuiSmokeDirectory -Path (Join-Path $smokeRoot "FlitzZip-extracted")
     Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths @((Resolve-Path -LiteralPath $badArchive).Path)
     Start-Sleep -Milliseconds 250
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 2
@@ -1555,19 +1555,19 @@ try {
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "History-Status-Success" -OpenX 390 -OpenY 145 -SelectX 390 -SelectY 214 -MenuLeft 354 -MenuTop 170 -MenuRight 574 -MenuBottom 268 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "History-Status-Failure" -OpenX 390 -OpenY 145 -SelectX 390 -SelectY 246 -MenuLeft 354 -MenuTop 170 -MenuRight 574 -MenuBottom 268 -BasePath $basePath -Extension $extension
     $historyFailurePath = "${basePath}-History-FailureRows$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $historyFailurePath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $historyFailurePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasColor -Path $historyFailurePath -Dpi $windowDpi -Left 700 -Top 210 -Right 1138 -Bottom 470 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 236 -ExpectedGreen 73 -ExpectedBlue 73 -Tolerance 42 -MinPixels 4
     Invoke-ClientWheel -Handle $windowHandle -Dpi $windowDpi -DesignX 650 -DesignY 670 -Delta -120
     Start-Sleep -Milliseconds 80
     $historyDetailsWheelPath = "${basePath}-History-Details-SmoothWheel$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $historyDetailsWheelPath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $historyDetailsWheelPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $historyDetailsWheelPath -Dpi $windowDpi -Left 116 -Top 628 -Right 1138 -Bottom 716 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 5
     Invoke-ClientDrag -Handle $windowHandle -Dpi $windowDpi -StartX 430 -StartY 205 -EndX 468 -EndY 205
     Start-Sleep -Milliseconds 180
     $historyResizePath = "${basePath}-History-AfterColumnResize$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $historyResizePath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $historyResizePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $historyResizePath -Dpi $windowDpi -Left 116 -Top 200 -Right 1138 -Bottom 260 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 5
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1100 -DesignY 90
@@ -1575,7 +1575,7 @@ try {
 
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 5
     Start-Sleep -Milliseconds 250
-    $systemLogPath = Join-Path (Split-Path -Parent $smokeSettingsFile) "superzip.log"
+    $systemLogPath = Join-Path (Split-Path -Parent $smokeSettingsFile) "flitzzip.log"
     foreach ($choice in @(@{ Seconds = 3; Y = 312 }, @{ Seconds = 5; Y = 344 },
             @{ Seconds = 10; Y = 376 }, @{ Seconds = 1; Y = 280 })) {
         $logLength = (Get-Item -LiteralPath $systemLogPath).Length
@@ -1590,7 +1590,7 @@ try {
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-IODrive" -OpenX 1106 -OpenY 297 -SelectX 1106 -SelectY 328 -MenuLeft 1074 -MenuTop 312 -MenuRight 1138 -MenuBottom 344 -BasePath $basePath -Extension $extension
     Wait-GuiLogEvent -Path $systemLogPath -PreviousLength $logLength -Message "System I/O drive: $firstDrive"
     $systemMonitorPath = "${basePath}-System-PerformanceMonitor$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $systemMonitorPath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $systemMonitorPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $systemMonitorPath -Dpi $windowDpi -Left 146 -Top 348 -Right 1138 -Bottom 678 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
     Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 308 -Right 1138 -Bottom 678 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 63 -ExpectedGreen 181 -ExpectedBlue 221
@@ -1646,25 +1646,25 @@ try {
     for ($index = 0; $index -lt $pageNames.Count; ++$index) {
         Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex $index
         Start-Sleep -Milliseconds 300
-        $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path "${basePath}-$($pageNames[$index])$extension"
+        $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path "${basePath}-$($pageNames[$index])$extension"
     }
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1070 -DesignY 594
     Start-Sleep -Milliseconds 180
     $licenseDialogPath = "${basePath}-About-Licenses$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $licenseDialogPath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $licenseDialogPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $licenseDialogPath -Dpi $windowDpi -Left 260 -Top 120 -Right 940 -Bottom 650 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
     Assert-DesignRectHasColor -Path $licenseDialogPath -Dpi $windowDpi -Left 286 -Top 170 -Right 400 -Bottom 212 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 42 -MinPixels 20
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 450 -DesignY 198
     Start-Sleep -Milliseconds 120
     $licenseOtherDialogPath = "${basePath}-About-Licenses-Other$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $licenseOtherDialogPath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $licenseOtherDialogPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $licenseOtherDialogPath -Dpi $windowDpi -Left 260 -Top 120 -Right 940 -Bottom 650 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
     Invoke-ClientWheel -Handle $windowHandle -Dpi $windowDpi -DesignX 610 -DesignY 420 -Delta -120
     Start-Sleep -Milliseconds 80
     $licenseSmoothWheelPath = "${basePath}-About-Licenses-SmoothWheel$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $licenseSmoothWheelPath
+    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $licenseSmoothWheelPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $licenseSmoothWheelPath -Dpi $windowDpi -Left 260 -Top 120 -Right 940 -Bottom 650 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
     Invoke-ClientKey -Handle $windowHandle -VirtualKey 0x22
@@ -1678,33 +1678,33 @@ try {
     Set-Content -LiteralPath $smokeCloseFile -Value "close" -NoNewline
     if ($process -and -not $process.HasExited) {
         if ($windowHandle -ne [IntPtr]::Zero) {
-            [void][SuperZipNativeUi]::PostMessage($windowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+            [void][FlitzZipNativeUi]::PostMessage($windowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
         }
         if (-not $process.WaitForExit(10000)) {
             try {
                 Stop-Process -Id $process.Id -Force
             } catch {
-                Write-Warning "Could not force-stop SuperZip process $($process.Id): $($_.Exception.Message)"
+                Write-Warning "Could not force-stop FlitzZip process $($process.Id): $($_.Exception.Message)"
             }
         }
     }
     if ($launchedProcessId -ne 0 -and (Get-Process -Id $launchedProcessId -ErrorAction SilentlyContinue)) {
-        $cleanupFailure = "SuperZip GUI smoke process $launchedProcessId did not exit cleanly."
+        $cleanupFailure = "FlitzZip GUI smoke process $launchedProcessId did not exit cleanly."
     }
     if ($previousDpiContext -ne [IntPtr]::Zero) {
-        [void][SuperZipNativeUi]::SetThreadDpiAwarenessContext($previousDpiContext)
+        [void][FlitzZipNativeUi]::SetThreadDpiAwarenessContext($previousDpiContext)
     }
     $smokeEnvironment = @{
-        SUPERZIP_GUI_SMOKE_DESTINATION = $previousSmokeDestination
-        SUPERZIP_GUI_SMOKE_FILE_SELECTION = $previousSmokeFiles
-        SUPERZIP_GUI_SMOKE_FOLDER_SELECTION = $previousSmokeFolder
-        SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS = $previousSmokeAutoClose
-        SUPERZIP_GUI_SMOKE_CLOSE_FILE = $previousSmokeCloseFile
-        SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT = $previousSmokeSettingsRedirect
-        SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN = $previousSmokeShellOpen
+        FLITZZIP_GUI_SMOKE_DESTINATION = $previousSmokeDestination
+        FLITZZIP_GUI_SMOKE_FILE_SELECTION = $previousSmokeFiles
+        FLITZZIP_GUI_SMOKE_FOLDER_SELECTION = $previousSmokeFolder
+        FLITZZIP_GUI_SMOKE_AUTO_CLOSE_MS = $previousSmokeAutoClose
+        FLITZZIP_GUI_SMOKE_CLOSE_FILE = $previousSmokeCloseFile
+        FLITZZIP_GUI_SMOKE_SETTINGS_REDIRECT = $previousSmokeSettingsRedirect
+        FLITZZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN = $previousSmokeShellOpen
     }
     foreach ($name in $smokeEnvironment.Keys) {
-        Set-SuperZipProcessEnvironmentValue -Name $name -Value $smokeEnvironment[$name] -Confirm:$false -WhatIf:$false
+        Set-FlitzZipProcessEnvironmentValue -Name $name -Value $smokeEnvironment[$name] -Confirm:$false -WhatIf:$false
     }
     Remove-Item -LiteralPath $smokeCloseFile -Force -ErrorAction SilentlyContinue
     if ($cleanupFailure) {

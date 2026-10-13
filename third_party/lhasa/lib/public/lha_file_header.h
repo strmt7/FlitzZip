@@ -123,7 +123,7 @@ extern "C" {
  */
 #define LHA_FILE_64BIT_SIZES           0x20
 
-/** Upstream flag for synthetic names; SuperZip rejects unnamed file entries. */
+/** Upstream flag for synthetic names; FlitzZip rejects unnamed file entries. */
 #define LHA_FILE_FAKE_NAME             0x40
 
 /**

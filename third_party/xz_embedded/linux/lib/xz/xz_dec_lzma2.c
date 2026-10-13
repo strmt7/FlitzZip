@@ -374,6 +374,9 @@ static bool dict_repeat(struct dictionary *dict, uint32_t *len, uint32_t dist)
 }
 
 /* Copy uncompressed data as is from input to dictionary and output buffers. */
+/* Purpose: Transfer uncompressed chunk bytes through the decoder dictionary.
+ * Inputs: Valid dictionary/output cursors, input extent and remaining chunk size.
+ * Outputs: Bounded cursor and dictionary updates, respecting overlap in single-call mode. */
 static void dict_uncompressed(struct dictionary *dict, struct xz_buf *b,
 			      uint32_t *left)
 {
@@ -397,7 +400,7 @@ static void dict_uncompressed(struct dictionary *dict, struct xz_buf *b,
 		 * overlap and cause undefined behavior with a non-overlap copy.
 		 * With valid inputs a plain non-overlap copy would be fine here.
 		 */
-		superzip_xz_move(dict->buf + dict->pos, b->in + b->in_pos, copy_size);
+		flitzzip_xz_move(dict->buf + dict->pos, b->in + b->in_pos, copy_size);
 		dict->pos += copy_size;
 
 		if (dict->full < dict->pos)
@@ -411,7 +414,7 @@ static void dict_uncompressed(struct dictionary *dict, struct xz_buf *b,
 			 * Like above but for multi-call mode: use an overlap-safe move
 			 * to avoid undefined behavior with invalid input.
 			 */
-			superzip_xz_move(b->out + b->out_pos, b->in + b->in_pos,
+			flitzzip_xz_move(b->out + b->out_pos, b->in + b->in_pos,
 					copy_size);
 		}
 
@@ -433,6 +436,9 @@ static void dict_uncompressed(struct dictionary *dict, struct xz_buf *b,
  * enough space in b->out. This is guaranteed because caller uses dict_limit()
  * before decoding data into the dictionary.
  */
+/* Purpose: Publish the pending dictionary window to the caller output.
+ * Inputs: Dictionary cursors bounded by dict_limit and the matching output buffer.
+ * Outputs: Copied byte count with advanced cursors and wrapped dictionary position. */
 static uint32_t dict_flush(struct dictionary *dict, struct xz_buf *b)
 {
 	size_t copy_size = dict->pos - dict->start;
@@ -452,7 +458,7 @@ static uint32_t dict_flush(struct dictionary *dict, struct xz_buf *b)
 		 * because it would break BCJ filters.
 		 */
 		if (!DICT_FLUSH_SUPPORTS_SKIPPING || b->out != NULL)
-			superzip_xz_copy(b->out + b->out_pos, dict->buf + dict->start,
+			flitzzip_xz_copy(b->out + b->out_pos, dict->buf + dict->start,
 					copy_size);
 	}
 
@@ -875,6 +881,9 @@ static bool lzma_props(struct xz_dec_lzma2 *s, uint8_t props)
  * function. We decode a few bytes from the temporary buffer so that we can
  * continue decoding from the caller-supplied input buffer again.
  */
+/* Purpose: Provide the range decoder its required bounded input lookahead.
+ * Inputs: LZMA2 state and live input/output buffers with validated cursors.
+ * Outputs: Advances decoding or retains partial input; returns false on invalid state. */
 static bool lzma2_lzma(struct xz_dec_lzma2 *s, struct xz_buf *b)
 {
 	size_t in_avail;
@@ -888,7 +897,7 @@ static bool lzma2_lzma(struct xz_dec_lzma2 *s, struct xz_buf *b)
 		if (tmp > in_avail)
 			tmp = in_avail;
 
-		superzip_xz_copy(s->temp.buf + s->temp.size, b->in + b->in_pos, tmp);
+		flitzzip_xz_copy(s->temp.buf + s->temp.size, b->in + b->in_pos, tmp);
 
 		if (s->temp.size + tmp == s->lzma2.compressed) {
 			memzero(s->temp.buf + s->temp.size + tmp,
@@ -913,7 +922,7 @@ static bool lzma2_lzma(struct xz_dec_lzma2 *s, struct xz_buf *b)
 
 		if (s->rc.in_pos < s->temp.size) {
 			s->temp.size -= s->rc.in_pos;
-			superzip_xz_move(s->temp.buf, s->temp.buf + s->rc.in_pos,
+			flitzzip_xz_move(s->temp.buf, s->temp.buf + s->rc.in_pos,
 					s->temp.size);
 			return true;
 		}
@@ -948,7 +957,7 @@ static bool lzma2_lzma(struct xz_dec_lzma2 *s, struct xz_buf *b)
 		if (in_avail > s->lzma2.compressed)
 			in_avail = s->lzma2.compressed;
 
-		superzip_xz_copy(s->temp.buf, b->in + b->in_pos, in_avail);
+		flitzzip_xz_copy(s->temp.buf, b->in + b->in_pos, in_avail);
 		s->temp.size = in_avail;
 		b->in_pos += in_avail;
 	}

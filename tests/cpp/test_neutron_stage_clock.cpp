@@ -85,7 +85,7 @@ struct TestEvents {
     }
 };
 
-using Clock = superzip::dictionary::NeutronStageClock<TestEvents>;
+using Clock = flitzzip::dictionary::NeutronStageClock<TestEvents>;
 const auto dispatch = std::mem_fn(&TestEvents::dispatch);
 const auto complete = std::mem_fn(&TestEvents::complete);
 
@@ -154,7 +154,7 @@ TEST_CASE(neutron_stage_clock_failure_rejects_reuse) {
             bool rejected = false;
             try {
                 clock.measure(dispatch, complete);
-            } catch (const superzip::GpuError&) {
+            } catch (const flitzzip::GpuError&) {
                 rejected = true;
             }
             REQUIRE_TRUE(rejected);
@@ -190,4 +190,66 @@ TEST_CASE(neutron_stage_clock_timing_availability) {
     clock.measure(dispatch, complete);
     REQUIRE_TRUE(!clock.milliseconds());
     REQUIRE_EQ(clock.launches(), 2U);
+}
+
+// Purpose: Count actual kernels while permitting one completion and timing interval per bounded batch.
+// Inputs: Batches of eight and three kernels followed by one ordinary stage on one event owner.
+// Outputs: Requires twelve completed kernels, three waits and three unscaled elapsed intervals.
+TEST_CASE(neutron_stage_clock_batch_accounting) {
+    StageState state;
+    Clock clock{TestEvents{state}};
+    clock.measure(dispatch, complete, 8U);
+    clock.measure(dispatch, complete, 3U);
+    clock.measure(dispatch, complete);
+    REQUIRE_EQ(clock.launches(), 12U);
+    REQUIRE_EQ(state.submissions, 3U);
+    REQUIRE_EQ(state.completions, 3U);
+    REQUIRE_EQ(clock.milliseconds(), std::optional<double>{0.75});
+}
+
+// Purpose: Reject empty or overflowing batches before touching the backend or poisoning a valid owner.
+// Inputs: Zero and overflowing counts around the full representable completed-kernel count.
+// Outputs: Requires no dispatch for rejected counts and permits the exact remaining count afterward.
+TEST_CASE(neutron_stage_clock_batch_count_admission) {
+    StageState state;
+    Clock clock{TestEvents{state}};
+    for (const auto count : {0U, std::numeric_limits<std::uint32_t>::max()}) {
+        if (count != 0U) {
+            clock.measure(dispatch, complete);
+        }
+        bool rejected = false;
+        try {
+            clock.measure(dispatch, complete, count);
+        } catch (const flitzzip::GpuError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(state.submissions, count == 0U ? 0U : 1U);
+    }
+    clock.measure(dispatch, complete, std::numeric_limits<std::uint32_t>::max() - 1U);
+    REQUIRE_EQ(clock.launches(), std::numeric_limits<std::uint32_t>::max());
+    REQUIRE_EQ(state.submissions, 2U);
+}
+
+// Purpose: Prevent partial or failed batches from becoming successful telemetry or reusable timing state.
+// Inputs: A dispatch failure and a completion failure, each representing a pending eight-kernel batch.
+// Outputs: Requires zero completed kernels and rejection of any subsequent batch without another dispatch.
+TEST_CASE(neutron_stage_clock_failed_batch_accounting) {
+    for (const bool during_dispatch : {false, true}) {
+        StageState state;
+        state.fail_dispatch = during_dispatch;
+        state.fail_completion = !during_dispatch;
+        Clock clock{TestEvents{state}};
+        for (unsigned int attempt = 0U; attempt < 2U; ++attempt) {
+            bool failed = false;
+            try {
+                clock.measure(dispatch, complete, 8U);
+            } catch (const std::runtime_error&) {
+                failed = true;
+            }
+            REQUIRE_TRUE(failed);
+            REQUIRE_EQ(clock.launches(), 0U);
+            REQUIRE_EQ(state.submissions, 1U);
+        }
+    }
 }

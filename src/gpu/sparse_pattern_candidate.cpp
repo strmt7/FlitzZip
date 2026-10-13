@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace superzip::sparse_pattern {
+namespace flitzzip::sparse_pattern {
 namespace {
 
 // Purpose: Find one likely repeated motif using bounded exact anchors and a sparse host sample.
@@ -221,4 +221,4 @@ EncodedChunk apply_replacements(EncodedChunk baseline, const SparseReplacements&
     return result;
 }
 
-}  // namespace superzip::sparse_pattern
+}  // namespace flitzzip::sparse_pattern

@@ -7,7 +7,7 @@
 #include <cstdlib>
 #include <unordered_map>
 
-namespace superzip {
+namespace flitzzip {
 
 class BoundedSdkAllocator final : public ISzAlloc {
   public:
@@ -79,4 +79,4 @@ class BoundedSdkAllocator final : public ISzAlloc {
     std::unordered_map<void*, std::size_t> allocations_;
 };
 
-}  // namespace superzip
+}  // namespace flitzzip

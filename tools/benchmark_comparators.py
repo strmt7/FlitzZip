@@ -81,7 +81,7 @@ class ReleasePage(HTMLParser):
 # Outputs: UTF-8 source text; network, status, redirect, and size failures stop preflight.
 def fetch_release_source(tool: str) -> str:
     uri = RELEASE_SOURCES[tool]
-    request = Request(uri, headers={"User-Agent": "SuperZip-benchmark-preflight"})
+    request = Request(uri, headers={"User-Agent": "FlitzZip-benchmark-preflight"})
     with build_opener(NoReleaseRedirects()).open(request, timeout=20) as response:
         payload = response.read(MAX_RESPONSE_BYTES + 1)
     if len(payload) > MAX_RESPONSE_BYTES:

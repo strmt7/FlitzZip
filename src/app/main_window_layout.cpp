@@ -17,7 +17,7 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Compute Queue page rectangles shared by rendering and hit testing.
 // Inputs: `rect` is the content area in physical pixels.
@@ -484,4 +484,4 @@ MainWindow::SettingsLayout MainWindow::settings_layout(const RECT& rect) const {
 // Inputs: `dc` is the paint target, `layout` holds DPI-scaled rectangles, and `state` is the copied UI state.
 // Outputs: Renders the title, optional Remove selected, Add files, Add folder, Clear, and item-count controls.
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

@@ -10,7 +10,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace superzip::dictionary {
+namespace flitzzip::dictionary {
 
 using EncodeCheckpoint = std::function<void()>;
 
@@ -128,7 +128,7 @@ MatchBatch find_matches(std::span<const std::byte> input, int level);
 // Purpose: Encode independent dictionary blocks entirely on HIP without downloading the match table.
 // Inputs: At most 4 MiB of source and effort 1..9; each block covers at most 64 KiB.
 // Outputs: Returns bounded LZ4-format block payloads and resource counts; throws if HIP is unavailable.
-// Empty input produces no blocks and needs no GPU work. No frame or SUZIP metadata is emitted.
+// Empty input produces no blocks and needs no GPU work. No frame or FLZIP metadata is emitted.
 EncodedBatch encode_segments(std::span<const std::byte> input, int level);
 
 // Purpose: Minimize complete LZ4 segment byte cost over a deeper verified HIP match search.
@@ -145,4 +145,4 @@ EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const Enc
 // Empty input produces an empty GPU-free result; native archives use the device-span decoder directly.
 DecodedBatch decode_segments(std::span<const EncodedSegment> segments);
 
-}  // namespace superzip::dictionary
+}  // namespace flitzzip::dictionary

@@ -2,7 +2,7 @@
 
 Reviewed 1 October 2026. This research informs the
 [measurement protocol](comparative-benchmark-methodology.md), not a claim
-that SuperZip has already passed it. Licenses are evaluated separately in
+that FlitzZip has already passed it. Licenses are evaluated separately in
 [the permission matrix](benchmark-permissions.md). A reviewer's use of a
 tool or dataset does not grant this project the same rights.
 
@@ -29,7 +29,7 @@ reports ratio, compression/decompression throughput and end-to-end time,
 including memory-copy effects. Its codec measurements repeat ten times and
 exclude file I/O. Roofline analysis separates memory bandwidth from compute
 limits. Adopt explicit timer boundaries and transfer accounting; do not label
-its CUDA or floating-point-only results as SuperZip archive performance.
+its CUDA or floating-point-only results as FlitzZip archive performance.
 The paper's license does not establish the rights of every referenced dataset.
 
 [PETRA III lossless compression study (2026 preprint)](https://arxiv.org/html/2608.00168v1),
@@ -39,7 +39,7 @@ and displays percentile ranges. Some experiments use at least eight samples;
 its cache-scaling study uses at least 64. Its underlying user data are not
 publicly available. Adopt boundary disclosure, per-category tradeoffs and
 contention diagnostics, not its private data, large parameter sweep or
-server-specific thread policy. The paper is not evidence of a SuperZip win.
+server-specific thread policy. The paper is not evidence of a FlitzZip win.
 
 Neither source establishes that all effort levels must produce distinct
 sizes, or that every GPU codec beats a CPU codec. Improvements require exact
@@ -61,7 +61,7 @@ Use several independent tools, but do not combine incompatible units:
   different boundaries. Do not pool its samples with the primary harness.
 - **lzbench:** [memory-only codec context](https://github.com/inikep/lzbench),
   only the individually reviewed LZ4/Zstd modules. It does not exercise
-  SuperZip's archive container or HIP path.
+  FlitzZip's archive container or HIP path.
 - **7-Zip built-in benchmark:** widely used CPU/codec context, as documented
   by AnandTech above and [the benchmark author](https://www.7-cpu.com/).
   Its ratings are not application elapsed seconds or ZIP archive sizes.
@@ -85,7 +85,7 @@ do not borrow a magazine's payload or call synthetic repetition real data.
 The final pre-release refresh must use at least five independent samples per
 point and direction. Short operations remain useful diagnostics, but headline
 sustained-speed results must meet the protocol's declared duration admission
-target. That target is a SuperZip policy, not an attributed industry standard.
+target. That target is a FlitzZip policy, not an attributed industry standard.
 Every final time/speed plot shows labeled sample dispersion; deterministic
 archive sizes may have a genuine zero-width size interval. Do not fabricate
 nonzero uncertainty. Keep both RAM-only and filesystem lanes separately labeled.

@@ -1,6 +1,6 @@
 #include "app/form_layout.hpp"
 
-namespace superzip::app {
+namespace flitzzip::app {
 namespace {
 // Purpose: Inset the shell content; inputs: physical content rectangle and positive DPI; outputs: form work area.
 RECT page_area(const RECT& rect, UINT dpi) {
@@ -162,4 +162,4 @@ SettingsLayout make_settings_layout(const RECT& rect, UINT dpi) {
     return layout;
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

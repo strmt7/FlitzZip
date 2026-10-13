@@ -3,11 +3,11 @@
  * external, private, inline or staged inclusion; one mode omits 64-bit APIs.
  * Outputs: Returns zero only when streaming, copied state and canonical
  * conversions agree with one-shot hashing in the original or owned dependency. */
-#if SUPERZIP_HASH_MODE == 1
+#if FLITZZIP_HASH_MODE == 1
 #define XXH_PRIVATE_API
-#elif SUPERZIP_HASH_MODE == 2
+#elif FLITZZIP_HASH_MODE == 2
 #define XXH_INLINE_ALL
-#elif SUPERZIP_HASH_MODE == 3
+#elif FLITZZIP_HASH_MODE == 3
 #include "common/xxhash.h"
 #define XXH_STATIC_LINKING_ONLY
 #include "common/xxhash.h"
@@ -16,7 +16,7 @@
 #define XXH_STATIC_LINKING_ONLY
 #define XXH_IMPLEMENTATION
 #endif
-#if SUPERZIP_HASH_MODE == 4
+#if FLITZZIP_HASH_MODE == 4
 #define XXH_NO_LONG_LONG
 #endif
 #include "common/xxhash.h"

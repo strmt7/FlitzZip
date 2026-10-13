@@ -7,7 +7,7 @@
 #include <vector>
 #include <hip/hip_runtime.h>
 
-namespace superzip::hip_detail {
+namespace flitzzip::hip_detail {
 namespace {
 
 struct PrefixEncodeBlockPlan {
@@ -314,4 +314,4 @@ std::optional<EncodedChunk> encode_prefix_chunk_device(const std::byte* device_i
     return out;
 }
 
-}  // namespace superzip::hip_detail
+}  // namespace flitzzip::hip_detail

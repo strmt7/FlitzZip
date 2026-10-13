@@ -12,15 +12,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $repo "build\$Configuration\superzip_cli.exe"
+$exe = Join-Path $repo "build\$Configuration\flitzzip_cli.exe"
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-    throw "superzip_cli.exe not found. Run tools/build.ps1 -Configuration $Configuration first."
+    throw "flitzzip_cli.exe not found. Run tools/build.ps1 -Configuration $Configuration first."
 }
 
-# Purpose: Convert one stable SuperZip key/value statistics line into a dictionary.
+# Purpose: Convert one stable FlitzZip key/value statistics line into a dictionary.
 # Inputs: `Line` is the stdout line that begins with `entries=`.
 # Outputs: Returns a string dictionary keyed by statistic name.
-function ConvertFrom-SuperZipStatsLine {
+function ConvertFrom-FlitzZipStatsLine {
     param([Parameter(Mandatory = $true)][string]$Line)
 
     $stats = @{}
@@ -34,21 +34,21 @@ function ConvertFrom-SuperZipStatsLine {
     return $stats
 }
 
-# Purpose: Read a numeric SuperZip statistic as a double.
+# Purpose: Read a numeric FlitzZip statistic as a double.
 # Inputs: `Stats` is a key/value dictionary and `Name` identifies the required key.
 # Outputs: Returns the numeric value or throws when the key is missing or invalid.
-function Get-SuperZipStatNumber {
+function Get-FlitzZipStatNumber {
     param(
         [Parameter(Mandatory = $true)][hashtable]$Stats,
         [Parameter(Mandatory = $true)][string]$Name
     )
 
     if (-not $Stats.ContainsKey($Name)) {
-        throw "Missing SuperZip statistic: $Name"
+        throw "Missing FlitzZip statistic: $Name"
     }
     $value = [double]::Parse([string]$Stats[$Name], [Globalization.CultureInfo]::InvariantCulture)
     if ([double]::IsNaN($value) -or [double]::IsInfinity($value)) {
-        throw "Unavailable or non-finite SuperZip statistic: $Name"
+        throw "Unavailable or non-finite FlitzZip statistic: $Name"
     }
     return $value
 }
@@ -76,13 +76,13 @@ function Invoke-TransferDiagnosticLane {
     }
     $statsLine = $output | Where-Object { $_ -match '^entries=' } | Select-Object -Last 1
     if (-not $statsLine) {
-        throw "$LaneName transfer diagnostic did not print a SuperZip stats line."
+        throw "$LaneName transfer diagnostic did not print a FlitzZip stats line."
     }
-    $stats = ConvertFrom-SuperZipStatsLine -Line $statsLine
+    $stats = ConvertFrom-FlitzZipStatsLine -Line $statsLine
     if ($stats["memory_only"] -ne "true") {
         throw "$LaneName transfer diagnostic must stay RAM-only."
     }
-    if ((Get-SuperZipStatNumber -Stats $stats -Name "disk_write_bytes") -ne 0.0) {
+    if ((Get-FlitzZipStatNumber -Stats $stats -Name "disk_write_bytes") -ne 0.0) {
         throw "$LaneName transfer diagnostic wrote benchmark payload bytes to disk."
     }
     return $stats
@@ -93,9 +93,9 @@ $gpu = Invoke-TransferDiagnosticLane -LaneName "GPU" -ModeFlag "--require-gpu"
 if ($gpu["gpu_used"] -ne "true") {
     throw "GPU transfer diagnostic did not execute the required AMD HIP lane."
 }
-if ((Get-SuperZipStatNumber -Stats $gpu -Name "gpu_h2d_bytes") -le 0.0 -or
-    (Get-SuperZipStatNumber -Stats $gpu -Name "gpu_d2h_bytes") -le 0.0 -or
-    (Get-SuperZipStatNumber -Stats $gpu -Name "gpu_device_allocation_bytes") -le 0.0) {
+if ((Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_h2d_bytes") -le 0.0 -or
+    (Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_d2h_bytes") -le 0.0 -or
+    (Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_device_allocation_bytes") -le 0.0) {
     throw "GPU transfer diagnostic did not report nonzero H2D, D2H, and device allocation counters."
 }
 
@@ -104,19 +104,19 @@ $summary = [ordered]@{
     size_mib = $SizeMiB
     compression_level = $CompressionLevel
     block_size_kib = $BlockSizeKiB
-    cpu_input_bytes = [uint64](Get-SuperZipStatNumber -Stats $cpu -Name "input_bytes")
-    cpu_output_bytes = [uint64](Get-SuperZipStatNumber -Stats $cpu -Name "output_bytes")
-    cpu_compression_ratio = Get-SuperZipStatNumber -Stats $cpu -Name "compression_ratio"
-    cpu_throughput_mib_s = Get-SuperZipStatNumber -Stats $cpu -Name "throughput_mib_s"
-    gpu_input_bytes = [uint64](Get-SuperZipStatNumber -Stats $gpu -Name "input_bytes")
-    gpu_output_bytes = [uint64](Get-SuperZipStatNumber -Stats $gpu -Name "output_bytes")
-    gpu_compression_ratio = Get-SuperZipStatNumber -Stats $gpu -Name "compression_ratio"
-    gpu_throughput_mib_s = Get-SuperZipStatNumber -Stats $gpu -Name "throughput_mib_s"
-    gpu_h2d_bytes = [uint64](Get-SuperZipStatNumber -Stats $gpu -Name "gpu_h2d_bytes")
-    gpu_d2h_bytes = [uint64](Get-SuperZipStatNumber -Stats $gpu -Name "gpu_d2h_bytes")
-    gpu_device_allocation_bytes = [uint64](Get-SuperZipStatNumber -Stats $gpu -Name "gpu_device_allocation_bytes")
-    gpu_kernel_launches = [uint64](Get-SuperZipStatNumber -Stats $gpu -Name "gpu_kernel_launches")
-    gpu_kernel_ms = Get-SuperZipStatNumber -Stats $gpu -Name "gpu_kernel_ms"
+    cpu_input_bytes = [uint64](Get-FlitzZipStatNumber -Stats $cpu -Name "input_bytes")
+    cpu_output_bytes = [uint64](Get-FlitzZipStatNumber -Stats $cpu -Name "output_bytes")
+    cpu_compression_ratio = Get-FlitzZipStatNumber -Stats $cpu -Name "compression_ratio"
+    cpu_throughput_mib_s = Get-FlitzZipStatNumber -Stats $cpu -Name "throughput_mib_s"
+    gpu_input_bytes = [uint64](Get-FlitzZipStatNumber -Stats $gpu -Name "input_bytes")
+    gpu_output_bytes = [uint64](Get-FlitzZipStatNumber -Stats $gpu -Name "output_bytes")
+    gpu_compression_ratio = Get-FlitzZipStatNumber -Stats $gpu -Name "compression_ratio"
+    gpu_throughput_mib_s = Get-FlitzZipStatNumber -Stats $gpu -Name "throughput_mib_s"
+    gpu_h2d_bytes = [uint64](Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_h2d_bytes")
+    gpu_d2h_bytes = [uint64](Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_d2h_bytes")
+    gpu_device_allocation_bytes = [uint64](Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_device_allocation_bytes")
+    gpu_kernel_launches = [uint64](Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_kernel_launches")
+    gpu_kernel_ms = Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_kernel_ms"
     memory_only = $true
     disk_write_bytes = 0
 }

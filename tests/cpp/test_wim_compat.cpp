@@ -25,15 +25,15 @@
 
 namespace {
 
-#ifndef SUPERZIP_TEST_FIXTURES_DIR
-#define SUPERZIP_TEST_FIXTURES_DIR "tests/fixtures"
+#ifndef FLITZZIP_TEST_FIXTURES_DIR
+#define FLITZZIP_TEST_FIXTURES_DIR "tests/fixtures"
 #endif
 
 // Purpose: Resolve a pinned WIM fixture path for tests.
 // Inputs: `name` is the fixture filename under `tests/fixtures/wim`.
 // Outputs: Returns the absolute or source-relative fixture path.
 std::filesystem::path wim_fixture_path(const std::string& name) {
-    return std::filesystem::path(SUPERZIP_TEST_FIXTURES_DIR) / "wim" / name;
+    return std::filesystem::path(FLITZZIP_TEST_FIXTURES_DIR) / "wim" / name;
 }
 
 // Purpose: Read a small text fixture result.
@@ -42,7 +42,7 @@ std::filesystem::path wim_fixture_path(const std::string& name) {
 std::string read_text(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("failed to open text file: " + superzip::path_diagnostic_utf8(path));
+        throw std::runtime_error("failed to open text file: " + flitzzip::path_diagnostic_utf8(path));
     }
     return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
@@ -87,16 +87,16 @@ TEST_CASE(wim_fixture_extracts_with_native_adapter) {
     const auto destination = root / "out";
     const auto fixture = wim_fixture_path("basic.wim");
 
-    REQUIRE_EQ(superzip::detect_archive_format(fixture), superzip::ArchiveFormat::Wim);
-    const auto& info = superzip::archive_format_info(superzip::ArchiveFormat::Wim);
+    REQUIRE_EQ(flitzzip::detect_archive_format(fixture), flitzzip::ArchiveFormat::Wim);
+    const auto& info = flitzzip::archive_format_info(flitzzip::ArchiveFormat::Wim);
     REQUIRE_TRUE(info.can_extract);
     REQUIRE_TRUE(info.bundled_native);
 
-    const auto stats = superzip::extract_wim(fixture, destination, false);
+    const auto stats = flitzzip::extract_wim(fixture, destination, false);
     REQUIRE_TRUE(stats.entries >= 2U);
     REQUIRE_EQ(read_text(destination / "root.txt"), std::string("wim-root"));
     REQUIRE_EQ(read_text(destination / "nested" / "hello.txt"), std::string("hello wim"));
-    superzip_test::export_compat_fixture(fixture, destination);
+    flitzzip_test::export_compat_fixture(fixture, destination);
 }
 
 // Purpose: Preserve UTF-16 WIM names in private staging and single/multiple-image publication.
@@ -105,7 +105,7 @@ TEST_CASE(wim_fixture_extracts_with_native_adapter) {
 TEST_CASE(wim_unicode_names_extract_and_overwrite) {
     const auto root = test_temp_dir("wim-unicode") / L"\u65e5\u672c";
     std::filesystem::create_directories(root);
-    (void)superzip::extract_wim(wim_fixture_path("basic.wim"), root / "initialize", false);
+    (void)flitzzip::extract_wim(wim_fixture_path("basic.wim"), root / "initialize", false);
     const auto source = root / L"source-\u03a9";
     const auto relative = std::filesystem::path(L"caf\u00e9") / L"\u65e5\u672c-\U0001f680.txt";
     std::filesystem::create_directories((source / relative).parent_path());
@@ -116,7 +116,7 @@ TEST_CASE(wim_unicode_names_extract_and_overwrite) {
         const auto archive = root / (L"archive-\u03a9-" + std::to_wstring(images) + L".wim");
         const auto output = root / (L"output-\u00e9-" + std::to_wstring(images));
         write_unicode_wim_fixture(source, archive, images);
-        const auto stats = superzip::extract_wim(archive, output, false);
+        const auto stats = flitzzip::extract_wim(archive, output, false);
         REQUIRE_EQ(stats.output_bytes, std::string_view("wim unicode payload\n").size() * images);
         for (int index = 1; index <= images; ++index) {
             const auto image_root = images == 1 ? output : output / ("image-" + std::to_string(index));
@@ -127,8 +127,8 @@ TEST_CASE(wim_unicode_names_extract_and_overwrite) {
         }
         bool refused = false;
         try {
-            (void)superzip::extract_wim(archive, output, false);
-        } catch (const superzip::SecurityError&) {
+            (void)flitzzip::extract_wim(archive, output, false);
+        } catch (const flitzzip::SecurityError&) {
             refused = true;
         }
         REQUIRE_TRUE(refused);
@@ -136,16 +136,16 @@ TEST_CASE(wim_unicode_names_extract_and_overwrite) {
             const auto image_root = images == 1 ? output : output / ("image-" + std::to_string(index));
             REQUIRE_EQ(read_text(image_root / relative), "old");
         }
-        (void)superzip::extract_wim(archive, output, true);
+        (void)flitzzip::extract_wim(archive, output, true);
         for (int index = 1; index <= images; ++index) {
             const auto image_root = images == 1 ? output : output / ("image-" + std::to_string(index));
             REQUIRE_EQ(read_text(image_root / relative), "wim unicode payload\n");
         }
         for (const auto& entry : std::filesystem::directory_iterator(output)) {
-            REQUIRE_TRUE(!entry.path().filename().wstring().starts_with(L".superzip"));
+            REQUIRE_TRUE(!entry.path().filename().wstring().starts_with(L".flitzzip"));
         }
         if (images == 2) {
-            superzip_test::export_compat_fixture(archive, output);
+            flitzzip_test::export_compat_fixture(archive, output);
         }
     }
     std::filesystem::remove_all(root);
@@ -156,7 +156,7 @@ TEST_CASE(wim_unicode_names_extract_and_overwrite) {
 // Outputs: Checks exact names/bytes, empty entries, overwrite refusal/replacement, and complete staging cleanup.
 TEST_CASE(wim_unicode_long_paths_preserve_publication_policy) {
     const auto root = test_temp_dir("wim-long-path");
-    (void)superzip::extract_wim(wim_fixture_path("basic.wim"), root / "initialize", false);
+    (void)flitzzip::extract_wim(wim_fixture_path("basic.wim"), root / "initialize", false);
     const auto source = root / "source";
     const auto relative = std::filesystem::path(L"caf\u00e9") / L"\u65e5\u672c-\U0001f680.txt";
     std::filesystem::create_directories((source / relative).parent_path());
@@ -166,21 +166,21 @@ TEST_CASE(wim_unicode_long_paths_preserve_publication_policy) {
     auto long_root = root;
     while (long_root.native().size() < 320U)
         long_root /= std::wstring(60U, L'p');
-    const auto long_io = std::filesystem::path(superzip::windows_api_path(long_root));
+    const auto long_io = std::filesystem::path(flitzzip::windows_api_path(long_root));
     std::filesystem::create_directories(long_io);
     write_unicode_wim_fixture(source, long_io / L"archive-\u03a9.wim", 2);
     for (const bool validate : {false, true}) {
         const auto output = long_root / (validate ? "validated" : "direct");
-        const auto output_io = std::filesystem::path(superzip::windows_api_path(output));
+        const auto output_io = std::filesystem::path(flitzzip::windows_api_path(output));
         int calls = 0;
         std::filesystem::path stage;
         const auto extract = [&](bool overwrite) {
-            superzip::extract_with_publication(
+            flitzzip::extract_with_publication(
                 {.destination = output, .overwrite = overwrite, .validate_before_publish = validate},
                 [&](const auto& destination, bool replace) {
                     ++calls;
                     stage = destination;
-                    const auto stats = superzip::extract_wim(long_root / L"archive-\u03a9.wim", destination, replace);
+                    const auto stats = flitzzip::extract_wim(long_root / L"archive-\u03a9.wim", destination, replace);
                     REQUIRE_EQ(stats.output_bytes, 2U * std::string_view("long path payload").size());
                 });
         };
@@ -197,7 +197,7 @@ TEST_CASE(wim_unicode_long_paths_preserve_publication_policy) {
         bool refused = false;
         try {
             extract(false);
-        } catch (const superzip::SecurityError&) {
+        } catch (const flitzzip::SecurityError&) {
             refused = true;
         }
         REQUIRE_TRUE(refused);
@@ -211,9 +211,9 @@ TEST_CASE(wim_unicode_long_paths_preserve_publication_policy) {
         for (const auto* image : {"image-1", "image-2"})
             REQUIRE_EQ(read_text(output_io / image / relative), "long path payload");
         for (const auto& entry : std::filesystem::recursive_directory_iterator(output_io))
-            REQUIRE_TRUE(!entry.path().filename().wstring().starts_with(L".superzip"));
+            REQUIRE_TRUE(!entry.path().filename().wstring().starts_with(L".flitzzip"));
     }
-    std::filesystem::remove_all(std::filesystem::path(superzip::windows_api_path(root)));
+    std::filesystem::remove_all(std::filesystem::path(flitzzip::windows_api_path(root)));
 }
 
 TEST_CASE(wim_extraction_refuses_to_overwrite_existing_files) {
@@ -227,8 +227,8 @@ TEST_CASE(wim_extraction_refuses_to_overwrite_existing_files) {
 
     bool refused = false;
     try {
-        (void)superzip::extract_wim(wim_fixture_path("basic.wim"), destination, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_wim(wim_fixture_path("basic.wim"), destination, false);
+    } catch (const flitzzip::SecurityError&) {
         refused = true;
     }
     REQUIRE_TRUE(refused);
@@ -243,8 +243,8 @@ TEST_CASE(wim_extraction_rejects_truncated_archives) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_wim(corrupt, root / "out", false);
-    } catch (const superzip::Error&) {
+        (void)flitzzip::extract_wim(corrupt, root / "out", false);
+    } catch (const flitzzip::Error&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -256,11 +256,11 @@ TEST_CASE(wim_extraction_rejects_split_wim_extension_until_multipart_support_exi
     const auto split_part = root / "part.swm";
     std::filesystem::copy_file(wim_fixture_path("basic.wim"), split_part);
 
-    REQUIRE_EQ(superzip::detect_archive_format(split_part), superzip::ArchiveFormat::SplitWim);
+    REQUIRE_EQ(flitzzip::detect_archive_format(split_part), flitzzip::ArchiveFormat::SplitWim);
     bool rejected = false;
     try {
-        (void)superzip::extract_wim(split_part, root / "out", false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_wim(split_part, root / "out", false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

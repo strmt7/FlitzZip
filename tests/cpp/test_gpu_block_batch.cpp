@@ -1,5 +1,5 @@
 #include "test_util.hpp"
-#include "test_suzip_helpers.hpp"
+#include "test_flzip_helpers.hpp"
 
 #include "core/archive_encode_batch.hpp"
 #include "core/checksum.hpp"
@@ -42,20 +42,20 @@ std::vector<std::byte> batch_fixture(std::span<const std::uint32_t> lengths) {
 // Purpose: Compare batched descriptors, bytes, and checksums with separately encoded independent blocks.
 // Inputs: lengths and options select bounded RAM fixtures and an explicit CPU or required-HIP backend.
 // Outputs: Requires exact encoding identity and byte-exact decoding through every applicable backend.
-void check_batch_identity(std::span<const std::uint32_t> lengths, superzip::GpuCodecOptions options) {
+void check_batch_identity(std::span<const std::uint32_t> lengths, flitzzip::GpuCodecOptions options) {
     const auto input = batch_fixture(lengths);
-    const auto batch = superzip::encode_owned_block_batch(input, lengths, options);
+    const auto batch = flitzzip::encode_owned_block_batch(input, lengths, options);
     REQUIRE_EQ(batch.encoded.blocks.size(), lengths.size());
     REQUIRE_EQ(batch.block_crc32.size(), lengths.size());
     REQUIRE_TRUE(batch.encoded.source_crc32_available);
-    REQUIRE_EQ(batch.encoded.source_crc32, superzip::crc32(input));
+    REQUIRE_EQ(batch.encoded.source_crc32, flitzzip::crc32(input));
     REQUIRE_EQ(batch.encoded.gpu_used, !options.force_cpu && !input.empty());
     std::size_t source_offset = 0;
     std::size_t payload_offset = 0;
     for (std::size_t i = 0; i < lengths.size(); ++i) {
         const auto source = std::span(input).subspan(source_offset, lengths[i]);
         const auto separate =
-            superzip::encode_owned_chunk(std::vector<std::byte>(source.begin(), source.end()), options);
+            flitzzip::encode_owned_chunk(std::vector<std::byte>(source.begin(), source.end()), options);
         REQUIRE_EQ(separate.blocks.size(), 1U);
         const auto& expected = separate.blocks.front();
         const auto& actual = batch.encoded.blocks[i];
@@ -66,7 +66,7 @@ void check_batch_identity(std::span<const std::uint32_t> lengths, superzip::GpuC
         REQUIRE_EQ(actual.encoded_offset, payload_offset);
         const auto payload = std::span(batch.encoded.payload).subspan(payload_offset, actual.encoded_len);
         REQUIRE_TRUE(std::ranges::equal(payload, separate.payload));
-        REQUIRE_EQ(batch.block_crc32[i], superzip::crc32(source));
+        REQUIRE_EQ(batch.block_crc32[i], flitzzip::crc32(source));
         REQUIRE_EQ(batch.block_crc32[i], separate.source_crc32);
         source_offset += lengths[i];
         payload_offset += actual.encoded_len;
@@ -74,12 +74,12 @@ void check_batch_identity(std::span<const std::uint32_t> lengths, superzip::GpuC
     REQUIRE_EQ(payload_offset, batch.encoded.payload.size());
     std::vector<std::byte> decoded(input.size());
     if (!options.force_cpu) {
-        superzip::decode_chunk(batch.encoded.payload, batch.encoded.blocks, decoded, options);
+        flitzzip::decode_chunk(batch.encoded.payload, batch.encoded.blocks, decoded, options);
         REQUIRE_TRUE(decoded == input);
     }
     options.require_gpu = false;
     options.force_cpu = true;
-    superzip::decode_chunk(batch.encoded.payload, batch.encoded.blocks, decoded, options);
+    flitzzip::decode_chunk(batch.encoded.payload, batch.encoded.blocks, decoded, options);
     REQUIRE_TRUE(decoded == input);
 }
 
@@ -87,17 +87,17 @@ void check_batch_identity(std::span<const std::uint32_t> lengths, superzip::GpuC
 // Inputs: size and lengths describe one intentionally invalid independent-block layout.
 // Outputs: Requires ArchiveError and unchanged dispatch counters.
 void require_invalid_batch(std::size_t size, std::span<const std::uint32_t> lengths) {
-    superzip::GpuCodecOptions options;
-    options.block_size = superzip::kMinArchiveBlockBytes;
-    options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+    flitzzip::GpuCodecOptions options;
+    options.block_size = flitzzip::kMinArchiveBlockBytes;
+    options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
     bool rejected = false;
     try {
-        (void)superzip::encode_owned_block_batch(std::vector<std::byte>(size), lengths, options);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::encode_owned_block_batch(std::vector<std::byte>(size), lengths, options);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
-    const auto counters = superzip::snapshot_gpu_telemetry(*options.telemetry);
+    const auto counters = flitzzip::snapshot_gpu_telemetry(*options.telemetry);
     REQUIRE_EQ(counters.encode_chunks, 0U);
     REQUIRE_EQ(counters.kernel_launches, 0U);
     REQUIRE_EQ(counters.h2d_bytes, 0U);
@@ -121,7 +121,7 @@ TEST_CASE(gpu_block_batch_cpu_identity) {
 // Inputs: All effort settings and every product block-size option on an available HIP device.
 // Outputs: Requires exact separate-encode bytes plus independent CPU and HIP roundtrips; absent HIP skips this case.
 TEST_CASE(gpu_block_batch_hip_identity) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     constexpr std::array<std::uint32_t, 12> lengths{1, 31,    4095,  4096,   4097,   65537,
@@ -133,7 +133,7 @@ TEST_CASE(gpu_block_batch_hip_identity) {
         1U, 127U, 128U, 129U, 255U, 256U, 257U, 8191U, 8192U, 8193U, 32767U, 32768U, 32769U,
     };
     check_batch_identity(crc_edges, {.block_size = 256U * 1024U, .compression_level = 5});
-    for (std::uint32_t size = 256U * 1024U; size <= superzip::kMaxArchiveBlockBytes; size *= 2U) {
+    for (std::uint32_t size = 256U * 1024U; size <= flitzzip::kMaxArchiveBlockBytes; size *= 2U) {
         const std::array<std::uint32_t, 4> edges{3, size - 1U, size, 65537};
         check_batch_identity(edges, {.block_size = size, .compression_level = 9});
     }
@@ -144,9 +144,9 @@ TEST_CASE(gpu_block_batch_hip_identity) {
 // Outputs: Requires exact coverage admission, no dispatch on invalid layouts, and explicit policy conflict rejection.
 TEST_CASE(gpu_block_batch_layout_validation) {
     check_batch_identity({}, {.require_gpu = false, .force_cpu = true});
-    const std::vector<std::uint32_t> maximum(superzip::kMaxEncodeBatchBlocks, 1U);
+    const std::vector<std::uint32_t> maximum(flitzzip::kMaxEncodeBatchBlocks, 1U);
     check_batch_identity(maximum, {.require_gpu = false, .force_cpu = true});
-    if (superzip::query_gpu_info().available) {
+    if (flitzzip::query_gpu_info().available) {
         check_batch_identity(maximum, {});
     }
     require_invalid_batch(1, {});
@@ -155,13 +155,13 @@ TEST_CASE(gpu_block_batch_layout_validation) {
     }
     require_invalid_batch(0, std::array<std::uint32_t, 1>{1});
     require_invalid_batch(2, std::array<std::uint32_t, 1>{1});
-    require_invalid_batch(superzip::kMinArchiveBlockBytes + 1U,
-                          std::array<std::uint32_t, 1>{superzip::kMinArchiveBlockBytes + 1U});
+    require_invalid_batch(flitzzip::kMinArchiveBlockBytes + 1U,
+                          std::array<std::uint32_t, 1>{flitzzip::kMinArchiveBlockBytes + 1U});
     require_invalid_batch(257, std::vector<std::uint32_t>(257, 1U));
     bool rejected = false;
     try {
-        (void)superzip::encode_owned_block_batch({}, {}, {.require_gpu = true, .force_cpu = true});
-    } catch (const superzip::GpuError&) {
+        (void)flitzzip::encode_owned_block_batch({}, {}, {.require_gpu = true, .force_cpu = true});
+    } catch (const flitzzip::GpuError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -171,35 +171,35 @@ TEST_CASE(gpu_block_batch_layout_validation) {
 // Inputs: Synthetic manifest metadata only, including exact and just-over byte caps.
 // Outputs: Requires deterministic grouping without reading files or launching HIP work.
 TEST_CASE(gpu_block_batch_archive_policy) {
-    superzip::CompressOptions options;
+    flitzzip::CompressOptions options;
     options.block_size = 256U * 1024U;
     options.chunk_size = 8U * 1024U * 1024U;
-    std::vector<superzip::ManifestEntry> entries(70);
+    std::vector<flitzzip::ManifestEntry> entries(70);
     for (auto& entry : entries) {
         entry.size = 4096;
     }
-    REQUIRE_EQ(superzip::archive_encode_batch_count(entries, options), 64U);
+    REQUIRE_EQ(flitzzip::archive_encode_batch_count(entries, options), 64U);
     options.force_cpu = true;
-    REQUIRE_EQ(superzip::archive_encode_batch_count(entries, options), 0U);
+    REQUIRE_EQ(flitzzip::archive_encode_batch_count(entries, options), 0U);
     options.force_cpu = false;
     for (auto& entry : entries) {
         entry.size = options.block_size;
     }
-    REQUIRE_EQ(superzip::archive_encode_batch_count(entries, options), 32U);
+    REQUIRE_EQ(flitzzip::archive_encode_batch_count(entries, options), 32U);
     options.chunk_size = 2U * options.block_size;
-    REQUIRE_EQ(superzip::archive_encode_batch_count(entries, options), 2U);
+    REQUIRE_EQ(flitzzip::archive_encode_batch_count(entries, options), 2U);
     options.chunk_size -= 1;
-    REQUIRE_EQ(superzip::archive_encode_batch_count(entries, options), 0U);
+    REQUIRE_EQ(flitzzip::archive_encode_batch_count(entries, options), 0U);
     options.chunk_size = 8U * 1024U * 1024U;
     entries[2].directory = true;
-    REQUIRE_EQ(superzip::archive_encode_batch_count(entries, options), 2U);
+    REQUIRE_EQ(flitzzip::archive_encode_batch_count(entries, options), 2U);
     entries[2].directory = false;
     entries[2].size = 0;
-    REQUIRE_EQ(superzip::archive_encode_batch_count(entries, options), 2U);
+    REQUIRE_EQ(flitzzip::archive_encode_batch_count(entries, options), 2U);
     entries[2].size = options.block_size + 1U;
-    REQUIRE_EQ(superzip::archive_encode_batch_count(entries, options), 2U);
+    REQUIRE_EQ(flitzzip::archive_encode_batch_count(entries, options), 2U);
     entries[1].size = 0;
-    REQUIRE_EQ(superzip::archive_encode_batch_count(entries, options), 0U);
+    REQUIRE_EQ(flitzzip::archive_encode_batch_count(entries, options), 0U);
 }
 
 namespace {
@@ -207,11 +207,11 @@ namespace {
 // Purpose: Independently serialize per-file encoding as a byte-level oracle for the batched archive scheduler.
 // Inputs: manifest points to bounded fixture files; options selects the same backend/effort as production.
 // Outputs: Returns a complete archive with the block-required version, independent of the batch writer.
-std::string separate_archive_bytes(const superzip::Manifest& manifest, const superzip::GpuCodecOptions& options) {
-    superzip::ArchiveIndex index;
+std::string separate_archive_bytes(const flitzzip::Manifest& manifest, const flitzzip::GpuCodecOptions& options) {
+    flitzzip::ArchiveIndex index;
     std::ostringstream output(std::ios::binary);
     for (const auto& source : manifest.entries) {
-        superzip::ArchiveEntry entry{.path = source.archive_path,
+        flitzzip::ArchiveEntry entry{.path = source.archive_path,
                                      .directory = source.directory,
                                      .uncompressed_size = source.size,
                                      .payload_offset = static_cast<std::uint64_t>(output.tellp())};
@@ -220,7 +220,7 @@ std::string separate_archive_bytes(const superzip::Manifest& manifest, const sup
             std::ifstream input(source.source_path, std::ios::binary);
             input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
             REQUIRE_EQ(input.gcount(), static_cast<std::streamsize>(bytes.size()));
-            const auto encoded = superzip::encode_owned_chunk(std::move(bytes), options);
+            const auto encoded = flitzzip::encode_owned_chunk(std::move(bytes), options);
             entry.blocks = encoded.blocks;
             entry.crc32 = encoded.source_crc32;
             entry.payload_size = encoded.payload.size();
@@ -233,23 +233,23 @@ std::string separate_archive_bytes(const superzip::Manifest& manifest, const sup
     }
     for (const auto& entry : index.entries) {
         for (const auto& block : entry.blocks) {
-            if (block.kind == superzip::BlockKind::GpuLongSparsePattern) {
+            if (block.kind == flitzzip::BlockKind::GpuLongSparsePattern) {
                 index.version = std::max(index.version, 7U);
-            } else if (block.kind == superzip::BlockKind::CpuZstd) {
+            } else if (block.kind == flitzzip::BlockKind::CpuZstd) {
                 index.version = std::max(index.version, 6U);
-            } else if (block.kind == superzip::BlockKind::GpuSparsePattern) {
+            } else if (block.kind == flitzzip::BlockKind::GpuSparsePattern) {
                 index.version = std::max(index.version, 5U);
-            } else if (block.kind == superzip::BlockKind::GpuDictionary ||
-                       (block.kind == superzip::BlockKind::Pattern &&
-                        block.encoded_len > superzip::kLegacyGpuPatternBytes)) {
+            } else if (block.kind == flitzzip::BlockKind::GpuDictionary ||
+                       (block.kind == flitzzip::BlockKind::Pattern &&
+                        block.encoded_len > flitzzip::kLegacyGpuPatternBytes)) {
                 index.version = std::max(index.version, 4U);
             }
         }
     }
     const auto offset = static_cast<std::uint64_t>(output.tellp());
-    superzip::write_archive_index(output, index);
+    flitzzip::write_archive_index(output, index);
     const auto size = static_cast<std::uint64_t>(output.tellp()) - offset;
-    superzip_test::write_test_footer(output, offset, size, index.version);
+    flitzzip_test::write_test_footer(output, offset, size, index.version);
     return output.str();
 }
 
@@ -284,20 +284,20 @@ void write_archive_batch_fixture(const std::filesystem::path& root) {
 // Inputs: Small-file fixtures crossing empty/large/directory boundaries and two HIP effort tiers.
 // Outputs: Requires full archive byte identity, fewer encode submissions, progress totals, and exact extracted files.
 TEST_CASE(gpu_block_batch_archive_roundtrip) {
-    const bool gpu = superzip::query_gpu_info().available;
+    const bool gpu = flitzzip::query_gpu_info().available;
     const auto root = test_temp_dir("block-batch-archive");
     write_archive_batch_fixture(root / "source");
-    const auto manifest = superzip::build_manifest({root / "source"});
+    const auto manifest = flitzzip::build_manifest({root / "source"});
     for (const int level : {5, 9}) {
-        superzip::CompressOptions options;
+        flitzzip::CompressOptions options;
         options.gpu_required = gpu;
         options.block_size = 256U * 1024U;
         options.compression_level = level;
-        superzip::ProgressSnapshot last;
-        const auto archive = root / "batch.suzip";
+        flitzzip::ProgressSnapshot last;
+        const auto archive = root / "batch.flzip";
         const auto stats =
-            superzip::compress_suzip({root / "source"}, archive, options,
-                                     [&last](const superzip::ProgressSnapshot& progress) { last = progress; });
+            flitzzip::compress_flzip({root / "source"}, archive, options,
+                                     [&last](const flitzzip::ProgressSnapshot& progress) { last = progress; });
         const auto reference = separate_archive_bytes(
             manifest, {.require_gpu = gpu, .block_size = options.block_size, .compression_level = level});
         std::ifstream actual(archive, std::ios::binary);
@@ -308,14 +308,14 @@ TEST_CASE(gpu_block_batch_archive_roundtrip) {
         REQUIRE_EQ(stats.gpu_used, gpu);
         if (gpu) {
             REQUIRE_TRUE(stats.gpu_runtime.encode_chunks < 10U);
-            superzip::verify_suzip(archive, {.gpu_required = true});
+            flitzzip::verify_flzip(archive, {.gpu_required = true});
         }
-        superzip::extract_suzip(archive, root / "extracted",
+        flitzzip::extract_flzip(archive, root / "extracted",
                                 {.gpu_required = false, .force_cpu = true, .overwrite = true});
         for (const auto& entry : manifest.entries) {
             if (!entry.directory) {
                 REQUIRE_TRUE(
-                    superzip_test::files_are_equal(entry.source_path, root / "extracted" / entry.archive_path));
+                    flitzzip_test::files_are_equal(entry.source_path, root / "extracted" / entry.archive_path));
             }
         }
     }
@@ -328,20 +328,20 @@ TEST_CASE(gpu_block_batch_archive_roundtrip) {
 TEST_CASE(gpu_block_batch_archive_abort) {
     const auto root = test_temp_dir("block-batch-abort");
     write_archive_batch_fixture(root / "source");
-    const auto archive = root / "batch.suzip";
+    const auto archive = root / "batch.flzip";
     {
         std::ofstream old(archive, std::ios::binary);
         old << "sentinel";
     }
     bool interrupted = false;
     try {
-        superzip::compress_suzip({root / "source"}, archive, {.gpu_required = false},
-                                 [](const superzip::ProgressSnapshot& progress) {
+        flitzzip::compress_flzip({root / "source"}, archive, {.gpu_required = false},
+                                 [](const flitzzip::ProgressSnapshot& progress) {
                                      if (progress.processed_bytes != 0) {
-                                         throw superzip::ArchiveError("test batch interruption");
+                                         throw flitzzip::ArchiveError("test batch interruption");
                                      }
                                  });
-    } catch (const superzip::ArchiveError& error) {
+    } catch (const flitzzip::ArchiveError& error) {
         interrupted = std::string(error.what()) == "test batch interruption";
     }
     REQUIRE_TRUE(interrupted);
@@ -350,7 +350,7 @@ TEST_CASE(gpu_block_batch_archive_abort) {
         const std::string bytes((std::istreambuf_iterator<char>(old)), std::istreambuf_iterator<char>());
         REQUIRE_EQ(bytes, "sentinel");
     }
-    REQUIRE_EQ(superzip_test::count_regular_files(root), 74U);
+    REQUIRE_EQ(flitzzip_test::count_regular_files(root), 74U);
     std::filesystem::remove_all(root);
     REQUIRE_TRUE(!std::filesystem::exists(root));
 }
@@ -361,7 +361,7 @@ struct BatchTiming {
     double milliseconds = 0;
     std::size_t payload_bytes = 0;
     std::uint32_t checksum = 0;
-    superzip::GpuRuntimeStats telemetry;
+    flitzzip::GpuRuntimeStats telemetry;
 };
 
 // Purpose: Time the production batch API or its unchanged per-file baseline with equal input-copy accounting.
@@ -369,14 +369,14 @@ struct BatchTiming {
 // Outputs: Returns wall time, exact payload size/combined CRC, and real HIP counters without writing payload files.
 BatchTiming time_batch_encoding(const std::vector<std::byte>& input, std::span<const std::uint32_t> lengths, int level,
                                 bool batched) {
-    superzip::GpuCodecOptions options;
+    flitzzip::GpuCodecOptions options;
     options.compression_level = level;
     options.block_size = 256U * 1024U;
-    options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+    options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
     BatchTiming timing;
     const auto start = std::chrono::steady_clock::now();
     if (batched) {
-        const auto result = superzip::encode_owned_block_batch(input, lengths, options);
+        const auto result = flitzzip::encode_owned_block_batch(input, lengths, options);
         REQUIRE_TRUE(result.encoded.gpu_used);
         timing.payload_bytes = result.encoded.payload.size();
         timing.checksum = result.encoded.source_crc32;
@@ -385,15 +385,15 @@ BatchTiming time_batch_encoding(const std::vector<std::byte>& input, std::span<c
         for (const auto length : lengths) {
             const auto bytes = std::span(input).subspan(offset, length);
             const auto result =
-                superzip::encode_owned_chunk(std::vector<std::byte>(bytes.begin(), bytes.end()), options);
+                flitzzip::encode_owned_chunk(std::vector<std::byte>(bytes.begin(), bytes.end()), options);
             REQUIRE_TRUE(result.gpu_used);
             timing.payload_bytes += result.payload.size();
-            timing.checksum = superzip::crc32_combine(timing.checksum, result.source_crc32, length);
+            timing.checksum = flitzzip::crc32_combine(timing.checksum, result.source_crc32, length);
             offset += length;
         }
     }
     timing.milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    timing.telemetry = superzip::snapshot_gpu_telemetry(*options.telemetry);
+    timing.telemetry = flitzzip::snapshot_gpu_telemetry(*options.telemetry);
     return timing;
 }
 
@@ -417,14 +417,14 @@ void print_batch_timing(const BatchTiming& timing, std::size_t input_size, const
 }  // namespace
 
 // Purpose: Compare the production batch API with separate encoding in repeated alternating RAM-only runs.
-// Inputs: SUPERZIP_BATCH_BENCHMARK=1 explicitly opts in under an external host-resource monitor.
+// Inputs: FLITZZIP_BATCH_BENCHMARK=1 explicitly opts in under an external host-resource monitor.
 // Outputs: Prints six paired samples per profile/size/effort after warmup; requires exact sizes and CRC identity.
 TEST_CASE(gpu_block_batch_benchmark_opt_in) {
     wchar_t enabled[2]{};
-    if (GetEnvironmentVariableW(L"SUPERZIP_BATCH_BENCHMARK", enabled, 2U) != 1U || enabled[0] != L'1') {
+    if (GetEnvironmentVariableW(L"FLITZZIP_BATCH_BENCHMARK", enabled, 2U) != 1U || enabled[0] != L'1') {
         return;
     }
-    REQUIRE_TRUE(superzip::query_gpu_info().available);
+    REQUIRE_TRUE(flitzzip::query_gpu_info().available);
     for (const auto size : {4096U, 65536U}) {
         std::vector<std::uint32_t> lengths(64);
         for (std::size_t i = 0; i < lengths.size(); ++i) {

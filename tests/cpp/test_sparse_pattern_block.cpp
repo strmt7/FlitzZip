@@ -1,6 +1,6 @@
 #include "core/sparse_pattern_block.hpp"
 #include "gpu/gpu_codec.hpp"
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
 #include "gpu/sparse_pattern_device.hpp"
 #endif
 #include "test_util.hpp"
@@ -55,11 +55,11 @@ std::vector<std::byte> make_sparse_test_payload() {
 // Inputs: `payload` is invalid, `decoded_size` is its output extent, and `max_period` is the versioned bound.
 // Outputs: Requires `ArchiveError` rather than acceptance or another exception type.
 void require_sparse_rejected(std::span<const std::byte> payload, std::uint32_t decoded_size,
-                             std::uint32_t max_period = superzip::kMaxGpuPatternBytes) {
+                             std::uint32_t max_period = flitzzip::kMaxGpuPatternBytes) {
     bool rejected = false;
     try {
-        (void)superzip::parse_sparse_pattern_block(payload, decoded_size, max_period);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::parse_sparse_pattern_block(payload, decoded_size, max_period);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -72,13 +72,13 @@ void require_sparse_rejected(std::span<const std::byte> payload, std::uint32_t d
 // Outputs: Requires the expected period and patch count without copying the payload.
 TEST_CASE(sparse_pattern_block_admits_canonical_payload) {
     const auto bytes = make_sparse_test_payload();
-    const auto layout = superzip::parse_sparse_pattern_block(bytes, 64U);
+    const auto layout = flitzzip::parse_sparse_pattern_block(bytes, 64U);
     REQUIRE_EQ(layout.motif.size(), 4U);
     REQUIRE_EQ(layout.patch_count, 2U);
-    REQUIRE_EQ(layout.patches.size(), 2U * superzip::kSparsePatternPatchBytes);
+    REQUIRE_EQ(layout.patches.size(), 2U * flitzzip::kSparsePatternPatchBytes);
     REQUIRE_EQ(layout.motif.front(), std::byte{'A'});
-    REQUIRE_EQ(superzip::read_sparse_u32(layout.patches, 0U), 5U);
-    REQUIRE_EQ(superzip::read_sparse_u32(layout.patches, superzip::kSparsePatternPatchBytes), 11U);
+    REQUIRE_EQ(flitzzip::read_sparse_u32(layout.patches, 0U), 5U);
+    REQUIRE_EQ(flitzzip::read_sparse_u32(layout.patches, flitzzip::kSparsePatternPatchBytes), 11U);
 }
 
 // Purpose: Reject sparse blocks whose metadata could cause partial, ambiguous, or out-of-bounds decode.
@@ -88,14 +88,14 @@ TEST_CASE(sparse_pattern_block_rejects_malformed_payload) {
     const auto valid = make_sparse_test_payload();
     require_sparse_rejected(std::span(valid).first(7U), 64U);
     require_sparse_rejected(valid, 0U);
-    require_sparse_rejected(valid, superzip::kMaxArchiveBlockBytes + 1U);
+    require_sparse_rejected(valid, flitzzip::kMaxArchiveBlockBytes + 1U);
     require_sparse_rejected(valid, static_cast<std::uint32_t>(valid.size()));
 
     auto invalid = valid;
     replace_sparse_test_u32(invalid, 0U, 1U);
     require_sparse_rejected(invalid, 64U);
     invalid = valid;
-    replace_sparse_test_u32(invalid, 0U, superzip::kMaxGpuPatternBytes + 1U);
+    replace_sparse_test_u32(invalid, 0U, flitzzip::kMaxGpuPatternBytes + 1U);
     require_sparse_rejected(invalid, 64U);
     invalid = valid;
     replace_sparse_test_u32(invalid, 4U, 0U);
@@ -124,27 +124,27 @@ TEST_CASE(sparse_pattern_block_rejects_malformed_payload) {
 // Inputs: Canonical single-patch payloads at 16 KiB and 1 MiB period boundaries.
 // Outputs: Each parser admits only its distinct versioned period range.
 TEST_CASE(sparse_pattern_long_period_boundaries) {
-    for (const auto period : {superzip::kMaxGpuPatternBytes, superzip::kMaxGpuPatternBytes + 1U,
-                              superzip::kMaxGpuLongSparsePatternBytes, superzip::kMaxGpuLongSparsePatternBytes + 1U}) {
+    for (const auto period : {flitzzip::kMaxGpuPatternBytes, flitzzip::kMaxGpuPatternBytes + 1U,
+                              flitzzip::kMaxGpuLongSparsePatternBytes, flitzzip::kMaxGpuLongSparsePatternBytes + 1U}) {
         std::vector<std::byte> payload;
         append_sparse_test_u32(payload, period);
         append_sparse_test_u32(payload, 1U);
-        payload.resize(superzip::kSparsePatternHeaderBytes + period, std::byte{0});
+        payload.resize(flitzzip::kSparsePatternHeaderBytes + period, std::byte{0});
         append_sparse_test_u32(payload, period);
         payload.push_back(std::byte{1});
         const auto decoded_size = 2U * period + 1U;
-        if (period <= superzip::kMaxGpuPatternBytes) {
-            REQUIRE_EQ(superzip::parse_sparse_pattern_block(payload, decoded_size).motif.size(), period);
+        if (period <= flitzzip::kMaxGpuPatternBytes) {
+            REQUIRE_EQ(flitzzip::parse_sparse_pattern_block(payload, decoded_size).motif.size(), period);
         } else {
             require_sparse_rejected(payload, decoded_size);
         }
-        if (period > superzip::kMaxGpuPatternBytes && period <= superzip::kMaxGpuLongSparsePatternBytes) {
+        if (period > flitzzip::kMaxGpuPatternBytes && period <= flitzzip::kMaxGpuLongSparsePatternBytes) {
             REQUIRE_EQ(
-                superzip::parse_sparse_pattern_block(payload, decoded_size, superzip::kMaxGpuLongSparsePatternBytes)
+                flitzzip::parse_sparse_pattern_block(payload, decoded_size, flitzzip::kMaxGpuLongSparsePatternBytes)
                     .motif.size(),
                 period);
         } else {
-            require_sparse_rejected(payload, decoded_size, superzip::kMaxGpuLongSparsePatternBytes);
+            require_sparse_rejected(payload, decoded_size, flitzzip::kMaxGpuLongSparsePatternBytes);
         }
     }
 }
@@ -153,7 +153,7 @@ TEST_CASE(sparse_pattern_long_period_boundaries) {
 // Inputs: A seeded 128 KiB motif repeated twice with one changed byte in a 256 KiB block.
 // Outputs: Requires exact payload size, v7 block kind, GPU telemetry, and byte-exact CPU/HIP roundtrips.
 TEST_CASE(long_sparse_pattern_required_hip_roundtrip) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     constexpr std::size_t period = 128U * 1024U;
@@ -168,33 +168,33 @@ TEST_CASE(long_sparse_pattern_required_hip_roundtrip) {
     }
     input[period + 1024U] ^= std::byte{0xFF};
 
-    superzip::GpuCodecOptions options;
+    flitzzip::GpuCodecOptions options;
     options.block_size = static_cast<std::uint32_t>(input.size());
     options.compression_level = 5;
     options.require_gpu = true;
-    options.telemetry = std::make_shared<superzip::GpuTelemetry>();
-    const auto encoded = superzip::encode_chunk(input, options);
+    options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+    const auto encoded = flitzzip::encode_chunk(input, options);
     REQUIRE_TRUE(encoded.gpu_used);
     REQUIRE_EQ(encoded.blocks.size(), 1U);
-    REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::GpuLongSparsePattern);
+    REQUIRE_EQ(encoded.blocks[0].kind, flitzzip::BlockKind::GpuLongSparsePattern);
     REQUIRE_EQ(encoded.payload.size(),
-               superzip::kSparsePatternHeaderBytes + period + superzip::kSparsePatternPatchBytes);
-    REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).sparse_pattern_blocks, 1U);
+               flitzzip::kSparsePatternHeaderBytes + period + flitzzip::kSparsePatternPatchBytes);
+    REQUIRE_EQ(flitzzip::snapshot_gpu_telemetry(*options.telemetry).sparse_pattern_blocks, 1U);
     std::vector<std::byte> decoded(input.size());
-    REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+    REQUIRE_TRUE(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
     REQUIRE_EQ(decoded, input);
     options.require_gpu = false;
     options.force_cpu = true;
     std::fill(decoded.begin(), decoded.end(), std::byte{0});
-    REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+    REQUIRE_TRUE(!flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
     REQUIRE_EQ(decoded, input);
 
     auto corrupt = encoded.payload;
-    corrupt[superzip::kSparsePatternHeaderBytes + period + sizeof(std::uint32_t)] = input[1024U];
+    corrupt[flitzzip::kSparsePatternHeaderBytes + period + sizeof(std::uint32_t)] = input[1024U];
     bool rejected = false;
     try {
-        (void)superzip::decode_chunk(corrupt, encoded.blocks, decoded, options);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::decode_chunk(corrupt, encoded.blocks, decoded, options);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -204,7 +204,7 @@ TEST_CASE(long_sparse_pattern_required_hip_roundtrip) {
 // Inputs: A seeded 4 KiB motif with one correction in each later record of a 1 MiB block.
 // Outputs: Requires a complete smaller sparse payload, exact CPU/HIP decode, and one reported sparse block.
 TEST_CASE(sparse_pattern_required_hip_encode_roundtrip) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     constexpr std::size_t motif_bytes = 4096U;
@@ -225,46 +225,46 @@ TEST_CASE(sparse_pattern_required_hip_encode_roundtrip) {
         input[position] ^= std::byte{0xFF};
     }
 
-    superzip::GpuCodecOptions options;
+    flitzzip::GpuCodecOptions options;
     options.block_size = static_cast<std::uint32_t>(block_bytes);
     options.compression_level = 5;
     options.require_gpu = true;
-    options.telemetry = std::make_shared<superzip::GpuTelemetry>();
-    const auto encoded = superzip::encode_chunk(input, options);
+    options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+    const auto encoded = flitzzip::encode_chunk(input, options);
     REQUIRE_TRUE(encoded.gpu_used);
     REQUIRE_EQ(encoded.blocks.size(), 1U);
-    REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::GpuSparsePattern);
-    const auto layout = superzip::parse_sparse_pattern_block(encoded.payload, static_cast<std::uint32_t>(block_bytes));
+    REQUIRE_EQ(encoded.blocks[0].kind, flitzzip::BlockKind::GpuSparsePattern);
+    const auto layout = flitzzip::parse_sparse_pattern_block(encoded.payload, static_cast<std::uint32_t>(block_bytes));
     REQUIRE_EQ(layout.motif.size(), motif_bytes);
     REQUIRE_EQ(layout.patch_count, 255U);
-    REQUIRE_EQ(encoded.payload.size(), superzip::kSparsePatternHeaderBytes + motif_bytes +
-                                           layout.patch_count * superzip::kSparsePatternPatchBytes);
-    REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).sparse_pattern_blocks, 1U);
+    REQUIRE_EQ(encoded.payload.size(), flitzzip::kSparsePatternHeaderBytes + motif_bytes +
+                                           layout.patch_count * flitzzip::kSparsePatternPatchBytes);
+    REQUIRE_EQ(flitzzip::snapshot_gpu_telemetry(*options.telemetry).sparse_pattern_blocks, 1U);
 
     std::vector<std::byte> decoded(input.size());
-    REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+    REQUIRE_TRUE(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
     REQUIRE_EQ(decoded, input);
     options.require_gpu = false;
     options.force_cpu = true;
     std::fill(decoded.begin(), decoded.end(), std::byte{0});
-    REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+    REQUIRE_TRUE(!flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
     REQUIRE_EQ(decoded, input);
 
     options.force_cpu = false;
-    options.telemetry = std::make_shared<superzip::GpuTelemetry>();
-    const auto optional = superzip::encode_chunk(input, options);
+    options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+    const auto optional = flitzzip::encode_chunk(input, options);
     REQUIRE_TRUE(optional.gpu_used);
     REQUIRE_EQ(optional.payload, encoded.payload);
-    REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).sparse_pattern_blocks, 1U);
+    REQUIRE_EQ(flitzzip::snapshot_gpu_telemetry(*options.telemetry).sparse_pattern_blocks, 1U);
 
     options.require_gpu = true;
     options.compression_level = 9;
-    options.telemetry = std::make_shared<superzip::GpuTelemetry>();
-    const auto high_effort = superzip::encode_chunk(input, options);
+    options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+    const auto high_effort = flitzzip::encode_chunk(input, options);
     REQUIRE_TRUE(high_effort.gpu_used);
     REQUIRE_TRUE(high_effort.payload.size() <= encoded.payload.size());
     std::fill(decoded.begin(), decoded.end(), std::byte{0});
-    REQUIRE_TRUE(superzip::decode_chunk(high_effort.payload, high_effort.blocks, decoded, options));
+    REQUIRE_TRUE(flitzzip::decode_chunk(high_effort.payload, high_effort.blocks, decoded, options));
     REQUIRE_EQ(decoded, input);
 }
 
@@ -272,7 +272,7 @@ TEST_CASE(sparse_pattern_required_hip_encode_roundtrip) {
 // Inputs: Three sparse MiB blocks with divisible, nondivisible, and short motif periods, separated by a fill block.
 // Outputs: Requires exact candidate-to-block mapping, three HIP sparse blocks, and byte-exact CPU/HIP decode.
 TEST_CASE(sparse_pattern_hip_batch_preserves_block_offsets) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     constexpr std::size_t block_bytes = 1024U * 1024U;
@@ -296,26 +296,26 @@ TEST_CASE(sparse_pattern_hip_batch_preserves_block_offsets) {
         }
     }
 
-    superzip::GpuCodecOptions options;
+    flitzzip::GpuCodecOptions options;
     options.block_size = static_cast<std::uint32_t>(block_bytes);
     options.compression_level = 5;
     options.require_gpu = true;
-    options.telemetry = std::make_shared<superzip::GpuTelemetry>();
-    const auto encoded = superzip::encode_chunk(input, options);
+    options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+    const auto encoded = flitzzip::encode_chunk(input, options);
     REQUIRE_TRUE(encoded.gpu_used);
     REQUIRE_EQ(encoded.blocks.size(), 4U);
-    REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::GpuSparsePattern);
-    REQUIRE_EQ(encoded.blocks[1].kind, superzip::BlockKind::Fill);
-    REQUIRE_EQ(encoded.blocks[2].kind, superzip::BlockKind::GpuSparsePattern);
-    REQUIRE_EQ(encoded.blocks[3].kind, superzip::BlockKind::GpuSparsePattern);
-    REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).sparse_pattern_blocks, 3U);
+    REQUIRE_EQ(encoded.blocks[0].kind, flitzzip::BlockKind::GpuSparsePattern);
+    REQUIRE_EQ(encoded.blocks[1].kind, flitzzip::BlockKind::Fill);
+    REQUIRE_EQ(encoded.blocks[2].kind, flitzzip::BlockKind::GpuSparsePattern);
+    REQUIRE_EQ(encoded.blocks[3].kind, flitzzip::BlockKind::GpuSparsePattern);
+    REQUIRE_EQ(flitzzip::snapshot_gpu_telemetry(*options.telemetry).sparse_pattern_blocks, 3U);
     std::vector<std::byte> decoded(input.size());
-    REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+    REQUIRE_TRUE(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
     REQUIRE_EQ(decoded, input);
     options.require_gpu = false;
     options.force_cpu = true;
     std::fill(decoded.begin(), decoded.end(), std::byte{0});
-    REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+    REQUIRE_TRUE(!flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
     REQUIRE_EQ(decoded, input);
 }
 
@@ -323,9 +323,9 @@ TEST_CASE(sparse_pattern_hip_batch_preserves_block_offsets) {
 // Inputs: A candidate with valid source bounds but nonzero output-only fields.
 // Outputs: HIP builds reject both forgeries before borrowing input; CPU builds confirm backend unavailability.
 TEST_CASE(sparse_pattern_hip_batch_rejects_prepopulated_output_fields) {
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     std::array<std::byte, 32U> input{};
-    std::array<superzip::sparse_pattern::SparseCandidate, 1U> candidates{{{
+    std::array<flitzzip::sparse_pattern::SparseCandidate, 1U> candidates{{{
         .source_offset = 0U,
         .input_bytes = 32U,
         .period = 2U,
@@ -337,14 +337,14 @@ TEST_CASE(sparse_pattern_hip_batch_rejects_prepopulated_output_fields) {
         candidates[0].patch_count = forge_count ? 1U : 0U;
         bool rejected = false;
         try {
-            (void)superzip::sparse_pattern::collect_positions_device_batch(
+            (void)flitzzip::sparse_pattern::collect_positions_device_batch(
                 input.data(), static_cast<std::uint32_t>(input.size()), candidates, nullptr);
-        } catch (const superzip::GpuError&) {
+        } catch (const flitzzip::GpuError&) {
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
     }
 #else
-    REQUIRE_TRUE(!superzip::query_gpu_info().available);
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
 #endif
 }

@@ -93,7 +93,7 @@ async function resolveConfig(core, environment = process.env, fetcher = globalTh
             throw new ConfigurationError("GREENBONE_SECRET_PROVIDER_URL repository variable is required");
         }
         const provider = new URL(providerText);
-        const audience = environment.GREENBONE_SECRET_PROVIDER_AUDIENCE || "superzip-openvas";
+        const audience = environment.GREENBONE_SECRET_PROVIDER_AUDIENCE || "flitzzip-openvas";
         const targetRequest = environment.GREENBONE_TARGET_INPUT || "";
         if (provider.protocol !== "https:" || provider.username || provider.password || provider.hash ||
             [providerText, audience, targetRequest].some((value) => value.length > 4096 || /[\0\r\n]/u.test(value))) {

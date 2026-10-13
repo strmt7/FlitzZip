@@ -53,32 +53,32 @@ function Assert-KernelIndependentCpu {
 
 & py -3 -B -m tools.native_build_receipt validate --configuration $Configuration --require-hip *> (Join-Path $repo 'out/hip-kernel-smoke-native-identity.json')
 if ($LASTEXITCODE) { throw 'Kernel runtime smoke requires a current HIP-enabled native receipt.' }
-$names = @('superzip_cli.exe', 'libzstd.dll', 'libwim-15.dll', 'superzip_hip_kernels.dll')
+$names = @('flitzzip_cli.exe', 'libzstd.dll', 'libwim-15.dll', 'flitzzip_hip_kernels.dll')
 $bytes = ($names | ForEach-Object { (Get-Item -LiteralPath (Join-Path $buildBin $_)).Length } | Measure-Object -Sum).Sum
-if ($bytes + (Get-Item -LiteralPath (Join-Path $buildBin 'superzip_hip_kernels.dll')).Length -gt 64MB) {
+if ($bytes + (Get-Item -LiteralPath (Join-Path $buildBin 'flitzzip_hip_kernels.dll')).Length -gt 64MB) {
     throw 'Kernel boundary filesystem fixture exceeds 64 MiB.'
 }
 try {
     $bin = Join-Path $fixture 'bin'
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
     foreach ($name in $names) { Copy-Item -LiteralPath (Join-Path $buildBin $name) -Destination $bin }
-    Copy-Item -LiteralPath (Join-Path $repo 'build/superzip-runtime-dependencies.json') -Destination $fixture
-    $cli = Join-Path $bin 'superzip_cli.exe'
-    Assert-SuperZipPackagedRuntime -PackageRoot $fixture -HipEnabled $true
+    Copy-Item -LiteralPath (Join-Path $repo 'build/flitzzip-runtime-dependencies.json') -Destination $fixture
+    $cli = Join-Path $bin 'flitzzip_cli.exe'
+    Assert-FlitzZipPackagedRuntime -PackageRoot $fixture -HipEnabled $true
     $valid = Invoke-KernelBoundaryProbe $cli 'dependency-check'
-    Assert-SuperZipHipDependencyState -Output ($valid.text -split '\r?\n') -ExitCode $valid.code
+    Assert-FlitzZipHipDependencyState -Output ($valid.text -split '\r?\n') -ExitCode $valid.code
     Assert-KernelIndependentCpu $cli
-    $module = Join-Path $bin 'superzip_hip_kernels.dll'
+    $module = Join-Path $bin 'flitzzip_hip_kernels.dll'
     foreach ($case in @('missing', 'modified')) {
         if ($case -eq 'missing') { Remove-Item -LiteralPath $module }
         else {
-            Copy-Item -LiteralPath (Join-Path $buildBin 'superzip_hip_kernels.dll') -Destination $module
+            Copy-Item -LiteralPath (Join-Path $buildBin 'flitzzip_hip_kernels.dll') -Destination $module
             $stream = [IO.File]::Open($module, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
             try { $stream.SetLength($stream.Length - 1) }
             finally { $stream.Dispose() }
         }
         $rejected = $false
-        try { Assert-SuperZipPackagedRuntime -PackageRoot $fixture -HipEnabled $true } catch { $rejected = $true }
+        try { Assert-FlitzZipPackagedRuntime -PackageRoot $fixture -HipEnabled $true } catch { $rejected = $true }
         if (-not $rejected) { throw "Package integrity admitted the $case kernel module." }
         $state = Invoke-KernelBoundaryProbe $cli 'dependency-check'
         $expected = if ($valid.code -eq 0) { 13 } else { $valid.code }

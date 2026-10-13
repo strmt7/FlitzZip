@@ -15,7 +15,7 @@
 #include <shlobj.h>
 #endif
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr int kDefenderUnavailableExitCode = -1;
@@ -248,4 +248,4 @@ void require_clean_defender_scan(const DefenderScanResult& result, const std::fi
     }
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

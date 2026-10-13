@@ -2,7 +2,7 @@
 
 ## Production Contract
 
-Native SUZIP creation groups consecutive nonempty regular files into one HIP
+Native FLZIP creation groups consecutive nonempty regular files into one HIP
 submission when at least two fit. Each source must fit the selected block size.
 A group contains at most 64 files and at most the smaller of the selected chunk
 size and 8 MiB. Directories, empty files, larger files, and forced-CPU creation
@@ -95,9 +95,9 @@ To repeat, build the HIP test target, collect CPU/GPU/RAM/storage counters befor
 and throughout the run, then opt in only for this process environment:
 
 ```powershell
-$env:SUPERZIP_BATCH_BENCHMARK = '1'
-build/Release/superzip_tests.exe gpu_block_batch_benchmark_opt_in
-Remove-Item Env:SUPERZIP_BATCH_BENCHMARK
+$env:FLITZZIP_BATCH_BENCHMARK = '1'
+build/Release/flitzzip_tests.exe gpu_block_batch_benchmark_opt_in
+Remove-Item Env:FLITZZIP_BATCH_BENCHMARK
 ```
 
 The seven-block-size 10 GiB RAM sweep remains a separate validation lane; this

@@ -25,7 +25,7 @@ def recipe() -> dict:
         data.get("schema") != 1
         or data.get("project") != "crawl4ai"
         or data.get("upstream_version") != "0.9.4"
-        or data.get("version") != "0.9.4+superzip.portable2"
+        or data.get("version") != "0.9.4+flitzzip.portable2"
         or data.get("source") != "crawl4ai-0.9.4.tar.gz"
         or type(data.get("source_date_epoch")) is not int
     ):
@@ -93,14 +93,14 @@ def patched_strategy(original: str) -> str:
         raise ValueError("Upstream download opener changed; repair requires renewed review")
     repaired = original.replace(
         previous,
-        "    # SuperZip portable source repair: preserve no-follow checks on Windows.\n"
-        "    from .superzip_download import open_download\n"
+        "    # FlitzZip portable source repair: preserve no-follow checks on Windows.\n"
+        "    from .flitzzip_download import open_download\n"
         "    return open_download(path, flags)",
     )
     repaired = repaired.replace(
         basename,
         basename + "\n    # Validate before normalization or Python's console I/O selection.\n"
-        "    from .superzip_download import validate_download_name\n"
+        "    from .flitzzip_download import validate_download_name\n"
         "    validate_download_name(safe_name)",
     )
     contracts = (
@@ -138,7 +138,7 @@ def runtime_hashes() -> dict[str, str]:
     files = {
         "crawl4ai/async_crawler_strategy.py": patched_strategy(strategy),
         "crawl4ai/__version__.py": patched_version(version, data["version"]),
-        "crawl4ai/superzip_download.py": OPENER.read_text(encoding="utf-8"),
+        "crawl4ai/flitzzip_download.py": OPENER.read_text(encoding="utf-8"),
     }
     return {
         name: hashlib.sha256(contents.replace("\r\n", "\n").encode("utf-8")).hexdigest()
@@ -150,7 +150,7 @@ def repair_source(source: Path, data: dict) -> None:
     """Purpose: Repair the actual download boundary. Inputs: Owned exact source/recipe. Outputs: Identified source."""
     strategy = source / "crawl4ai/async_crawler_strategy.py"
     strategy.write_text(patched_strategy(strategy.read_text(encoding="utf-8")), encoding="utf-8", newline="\n")
-    (source / "crawl4ai/superzip_download.py").write_text(
+    (source / "crawl4ai/flitzzip_download.py").write_text(
         OPENER.read_text(encoding="utf-8"), encoding="utf-8", newline="\n"
     )
     version = source / "crawl4ai/__version__.py"
@@ -158,11 +158,11 @@ def repair_source(source: Path, data: dict) -> None:
         patched_version(version.read_text(encoding="utf-8"), data["version"]), encoding="utf-8", newline="\n"
     )
     notice = (
-        "SuperZip Crawl4AI development-tool source build\n\n"
+        "FlitzZip Crawl4AI development-tool source build\n\n"
         "Upstream: https://github.com/unclecode/crawl4ai/releases/tag/v0.9.4\n"
         f"Downstream version: {data['version']}\n"
         "Modified 5 October 2026: async_crawler_strategy.py delegates its download opener\n"
-        "and pre-open filename validation to the included Apache-2.0 superzip_download.py.\n"
+        "and pre-open filename validation to the included Apache-2.0 flitzzip_download.py.\n"
         "Reserved Windows basenames are rejected before path normalization and opening.\n"
         "Windows uses a native no-follow\n"
         "handle, validates it before truncation and transfers ownership to Python.\n"
@@ -172,14 +172,14 @@ def repair_source(source: Path, data: dict) -> None:
         "This product includes software developed by UncleCode (https://x.com/unclecode)\n"
         "as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai).\n"
     )
-    (source / "SUPERZIP_BUILD_NOTICE.txt").write_text(notice, encoding="utf-8", newline="\n")
+    (source / "FLITZZIP_BUILD_NOTICE.txt").write_text(notice, encoding="utf-8", newline="\n")
     config = source / "pyproject.toml"
     contents = config.read_text(encoding="utf-8")
     if contents.count('license = "Apache-2.0"') != 1:
         raise ValueError("Upstream license packaging changed")
     config.write_text(
         contents.replace(
-            'license = "Apache-2.0"', 'license = "Apache-2.0"\nlicense-files = ["LICENSE", "SUPERZIP_BUILD_NOTICE.txt"]'
+            'license = "Apache-2.0"', 'license = "Apache-2.0"\nlicense-files = ["LICENSE", "FLITZZIP_BUILD_NOTICE.txt"]'
         ),
         encoding="utf-8",
         newline="\n",

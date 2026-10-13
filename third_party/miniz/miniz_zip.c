@@ -144,7 +144,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
 #define MZ_DELETE_FILE remove
 
 #else
-#error "SuperZip's patched miniz stdio backend is Windows-only."
+#error "FlitzZip's patched miniz stdio backend is Windows-only."
 #endif /* #ifdef _MSC_VER */
 #endif /* #ifdef MINIZ_NO_STDIO */
 
@@ -374,6 +374,9 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
     }
 
 #ifndef MINIZ_NO_ARCHIVE_WRITING_APIS
+    /* Purpose: Convert a local timestamp to the ZIP DOS date/time fields.
+     * Inputs: A timestamp and two writable output pointers.
+     * Outputs: Packed fields, or zero fields if the secure CRT rejects the timestamp. */
     static void mz_zip_time_t_to_dos_time(MZ_TIME_T time, mz_uint16 *pDOS_time, mz_uint16 *pDOS_date)
     {
 #ifdef _MSC_VER
@@ -387,7 +390,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             return;
         }
 #else
-#error "SuperZip's patched miniz time conversion expects the Visual Studio secure CRT."
+#error "FlitzZip's patched miniz time conversion expects the Visual Studio secure CRT."
 #endif /* #ifdef _MSC_VER */
 
         *pDOS_time = (mz_uint16)(((tm->tm_hour) << 11) + ((tm->tm_min) << 5) + ((tm->tm_sec) >> 1));
@@ -1069,6 +1072,9 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         return mz_zip_reader_init_file_v2(pZip, pFilename, flags, 0, 0);
     }
 
+    /* Purpose: Open and initialize a file-backed ZIP reader with optional bounds.
+     * Inputs: Archive state, a filename, flags, starting offset and optional size.
+     * Outputs: Initialized reader ownership on success; closes the file and records failures. */
     mz_bool mz_zip_reader_init_file_v2(mz_zip_archive *pZip, const char *pFilename, mz_uint flags, mz_uint64 file_start_ofs, mz_uint64 archive_size)
     {
         mz_uint64 file_size;
@@ -1093,7 +1099,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             file_size = MZ_FTELL64(pFile);
         }
 
-        /* SuperZip hardening note: callers validate archive size before exposing ZIP extraction. */
+        /* FlitzZip hardening note: callers validate archive size before exposing ZIP extraction. */
 
         if (file_size < MZ_ZIP_END_OF_CENTRAL_DIR_HEADER_SIZE)
         {

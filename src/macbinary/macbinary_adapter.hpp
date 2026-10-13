@@ -4,7 +4,7 @@
 
 #include <filesystem>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Extract the data fork from one MacBinary stream with path-safe publication.
 // Inputs: `archive_path` is the MacBinary stream, `destination` is the extraction root, `overwrite` controls
@@ -14,4 +14,4 @@ OperationStats extract_macbinary_file(const std::filesystem::path& archive_path,
                                       const std::filesystem::path& destination, bool overwrite,
                                       const ProgressCallback& progress_callback = {});
 
-}  // namespace superzip
+}  // namespace flitzzip

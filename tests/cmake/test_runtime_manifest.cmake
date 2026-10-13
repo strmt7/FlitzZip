@@ -6,27 +6,27 @@ if(NOT DEFINED REPO_ROOT OR NOT DEFINED OUTPUT_ROOT)
 endif()
 include("${REPO_ROOT}/cmake/ConfigureRuntimeDependencies.cmake")
 file(MAKE_DIRECTORY "${OUTPUT_ROOT}")
-set(SUPERZIP_PACKAGE_VERSION "0.8.0")
-set(SUPERZIP_HIP_ARCH "gfx1201")
-set(SUPERZIP_ZSTD_RUNTIME_DLL_SHA256 "fixture-zstd")
-set(SUPERZIP_ZSTD_RUNTIME_PACKAGE_SHA256 "fixture-zstd-package")
+set(FLITZZIP_PACKAGE_VERSION "0.8.0")
+set(FLITZZIP_HIP_ARCH "gfx1201")
+set(FLITZZIP_ZSTD_RUNTIME_DLL_SHA256 "fixture-zstd")
+set(FLITZZIP_ZSTD_RUNTIME_PACKAGE_SHA256 "fixture-zstd-package")
 set(_zstd "${OUTPUT_ROOT}/libzstd.dll")
 set(_wim "${OUTPUT_ROOT}/libwim-15.dll")
 file(WRITE "${_wim}" "pinned-wim-fixture")
-file(SHA256 "${_wim}" SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256)
-set(SUPERZIP_WIMLIB_RUNTIME_PACKAGE_SHA256 "fixture-wim-package")
+file(SHA256 "${_wim}" FLITZZIP_WIMLIB_RUNTIME_DLL_SHA256)
+set(FLITZZIP_WIMLIB_RUNTIME_PACKAGE_SHA256 "fixture-wim-package")
 foreach(mode IN ITEMS OFF ON)
   if(mode STREQUAL "ON")
-    set(SUPERZIP_HIP_RUNTIME_DLL_NAME "amdhip64_7.dll")
-    set(SUPERZIP_HIP_RUNTIME_DLL_SHA256 "fixture-hip")
-    set(SUPERZIP_HIP_RUNTIME_DLL_SIZE 12345)
+    set(FLITZZIP_HIP_RUNTIME_DLL_NAME "amdhip64_7.dll")
+    set(FLITZZIP_HIP_RUNTIME_DLL_SHA256 "fixture-hip")
+    set(FLITZZIP_HIP_RUNTIME_DLL_SIZE 12345)
   else()
-    unset(SUPERZIP_HIP_RUNTIME_DLL_NAME)
-    unset(SUPERZIP_HIP_RUNTIME_DLL_SHA256)
-    unset(SUPERZIP_HIP_RUNTIME_DLL_SIZE)
+    unset(FLITZZIP_HIP_RUNTIME_DLL_NAME)
+    unset(FLITZZIP_HIP_RUNTIME_DLL_SHA256)
+    unset(FLITZZIP_HIP_RUNTIME_DLL_SIZE)
   endif()
   set(OUTPUT_FILE "${OUTPUT_ROOT}/runtime-${mode}.json")
-  superzip_configure_runtime_dependencies("${REPO_ROOT}/cmake" "${OUTPUT_FILE}"
+  flitzzip_configure_runtime_dependencies("${REPO_ROOT}/cmake" "${OUTPUT_FILE}"
                                           "${mode}")
   file(READ "${OUTPUT_FILE}" manifest LIMIT 65536)
   string(JSON enabled GET "${manifest}" gpu_backend enabled)
@@ -84,7 +84,7 @@ foreach(mode IN ITEMS OFF ON)
 endforeach()
 
 # All runtime identities must follow linked bytes across incremental builds.
-set(_module "${OUTPUT_ROOT}/superzip_hip_kernels.dll")
+set(_module "${OUTPUT_ROOT}/flitzzip_hip_kernels.dll")
 set(_base "${OUTPUT_ROOT}/runtime-ON.json")
 set(_header "${OUTPUT_ROOT}/kernel-identity.hpp")
 set(_final_manifest "${OUTPUT_ROOT}/kernel-manifest.json")
@@ -92,7 +92,7 @@ foreach(mode IN ITEMS OFF ON)
   set(_optional)
   if(mode STREQUAL "ON")
     list(APPEND _optional "-DINPUT=${_module}" "-DHEADER=${_header}"
-         "-DPACKAGE_VERSION=${SUPERZIP_PACKAGE_VERSION}")
+         "-DPACKAGE_VERSION=${FLITZZIP_PACKAGE_VERSION}")
   endif()
   foreach(content IN ITEMS first-linked-bytes replacement-linked-bytes)
     file(WRITE "${_zstd}" "zstd-${content}")
@@ -118,7 +118,7 @@ foreach(mode IN ITEMS OFF ON)
            sha256)
     string(JSON module_count LENGTH "${manifest_text}" packaged_runtime_files)
     if(NOT zstd_digest STREQUAL expected_zstd
-       OR NOT wim_digest STREQUAL SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256)
+       OR NOT wim_digest STREQUAL FLITZZIP_WIMLIB_RUNTIME_DLL_SHA256)
       message(
         FATAL_ERROR "Compatibility identities do not match actual DLL bytes")
     endif()
@@ -136,7 +136,7 @@ foreach(mode IN ITEMS OFF ON)
         name)
       if(NOT module_digest STREQUAL expected_kernel
          OR NOT module_count EQUAL 3
-         OR NOT module_name STREQUAL "superzip_hip_kernels.dll"
+         OR NOT module_name STREQUAL "flitzzip_hip_kernels.dll"
          OR NOT header_text MATCHES "${expected_kernel}"
          OR NOT header_text MATCHES "kHipKernelArchitectures"
          OR NOT header_text MATCHES "gfx1201")
@@ -195,7 +195,7 @@ foreach(
       "${CMAKE_COMMAND}" "-DZSTD_DLL=${_zstd_input}" "-DWIM_DLL=${_wim_input}"
       "-DINPUT=${_input}" "-DBASE_MANIFEST=${_base}" "-DHEADER=${_header}"
       "-DMANIFEST=${_final_manifest}"
-      "-DPACKAGE_VERSION=${SUPERZIP_PACKAGE_VERSION}" -P
+      "-DPACKAGE_VERSION=${FLITZZIP_PACKAGE_VERSION}" -P
       "${REPO_ROOT}/cmake/WritePackagedRuntimeIdentity.cmake"
     RESULT_VARIABLE status
     OUTPUT_QUIET ERROR_QUIET)

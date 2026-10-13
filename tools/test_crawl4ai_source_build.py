@@ -43,10 +43,10 @@ class SourceContracts(unittest.TestCase):
                     self.assertEqual((source / path).read_bytes(), contents)
             original_license = (build.ROOT / "docs/licenses/Crawl4AI-0.9.4.txt").read_text(encoding="utf-8")
             self.assertEqual((source / "LICENSE").read_text(encoding="utf-8"), original_license)
-            notice = (source / "SUPERZIP_BUILD_NOTICE.txt").read_text()
+            notice = (source / "FLITZZIP_BUILD_NOTICE.txt").read_text()
             self.assertIn("downstream build", notice)
             self.assertIn("UncleCode", notice)
-            self.assertEqual((source / "crawl4ai/superzip_download.py").read_text(), build.OPENER.read_text())
+            self.assertEqual((source / "crawl4ai/flitzzip_download.py").read_text(), build.OPENER.read_text())
             for path, expected in build.runtime_hashes().items():
                 self.assertEqual(build.packaging.digest(source / path), expected)
             with self.assertRaisesRegex(ValueError, "requires renewed review"):

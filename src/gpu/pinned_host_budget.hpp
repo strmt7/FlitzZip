@@ -4,7 +4,7 @@
 #include <atomic>
 #include <cstdint>
 
-namespace superzip {
+namespace flitzzip {
 
 // Process-wide pin admission; reservations include any allocation whose release failed.
 class PinnedHostBudget {
@@ -53,4 +53,4 @@ class PinnedHostBudget {
     std::atomic<std::uint64_t> reserved_{0};
 };
 
-}  // namespace superzip
+}  // namespace flitzzip

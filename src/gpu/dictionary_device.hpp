@@ -8,7 +8,7 @@
 #include <span>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 struct GpuTelemetry;
 
@@ -44,4 +44,4 @@ void decode_segments_device(const std::byte* encoded, std::span<const Dictionary
                             GpuTelemetry* telemetry);
 
 }  // namespace dictionary
-}  // namespace superzip
+}  // namespace flitzzip

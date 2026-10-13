@@ -1,7 +1,7 @@
 #include "app/main_window_support.hpp"
 
 #include "core/archive_format.hpp"
-#include "superzip_brand_logo.hpp"
+#include "flitzzip_brand_logo.hpp"
 
 #include <algorithm>
 #include <array>
@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Blend two Win32 colors linearly.
 // Inputs: `from` and `to` are colors and `t` is clamped interpolation progress.
@@ -490,9 +490,9 @@ void append_focus_target(std::vector<FocusTarget>& targets, FocusTargetKind kind
     }
 }
 
-// Purpose: Draw the SuperZip stacked archive mark.
+// Purpose: Draw the FlitzZip stacked archive mark.
 // Inputs: `dc` is the target, `rect` is the logo bounds, and `color` is the stroke color.
-// Outputs: Draws the canonical vector mark generated from `resources/brand/superzip-logo.svg`.
+// Outputs: Draws the canonical vector mark generated from `resources/brand/flitzzip-logo.svg`.
 void draw_logo(HDC dc, const RECT& rect, COLORREF color) {
     Gdiplus::Graphics graphics(dc);
     graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
@@ -500,11 +500,11 @@ void draw_logo(HDC dc, const RECT& rect, COLORREF color) {
 
     const float width = static_cast<float>(rect.right - rect.left);
     const float height = static_cast<float>(rect.bottom - rect.top);
-    const float scale_x = width / brand::kSuperZipLogoMarkWidth;
-    const float scale_y = height / brand::kSuperZipLogoMarkHeight;
+    const float scale_x = width / brand::kFlitzZipLogoMarkWidth;
+    const float scale_y = height / brand::kFlitzZipLogoMarkHeight;
     const float scale_factor = std::max(0.01f, std::min(scale_x, scale_y));
-    const float rendered_width = brand::kSuperZipLogoMarkWidth * scale_factor;
-    const float rendered_height = brand::kSuperZipLogoMarkHeight * scale_factor;
+    const float rendered_width = brand::kFlitzZipLogoMarkWidth * scale_factor;
+    const float rendered_height = brand::kFlitzZipLogoMarkHeight * scale_factor;
     const float origin_x = static_cast<float>(rect.left) + (width - rendered_width) / 2.0f;
     const float origin_y = static_cast<float>(rect.top) + (height - rendered_height) / 2.0f;
     auto map_point = [&](brand::LogoPoint point) {
@@ -512,11 +512,11 @@ void draw_logo(HDC dc, const RECT& rect, COLORREF color) {
     };
 
     Gdiplus::Pen pen(Gdiplus::Color(255, GetRValue(color), GetGValue(color), GetBValue(color)),
-                     std::max(1.35f, brand::kSuperZipLogoMarkStrokeWidth * scale_factor));
+                     std::max(1.35f, brand::kFlitzZipLogoMarkStrokeWidth * scale_factor));
     pen.SetStartCap(Gdiplus::LineCapRound);
     pen.SetEndCap(Gdiplus::LineCapRound);
     pen.SetLineJoin(Gdiplus::LineJoinRound);
-    for (const auto& layer : brand::kSuperZipLogoMarkLayers) {
+    for (const auto& layer : brand::kFlitzZipLogoMarkLayers) {
         std::array<Gdiplus::PointF, 4> points{};
         std::ranges::transform(layer.points, points.begin(), map_point);
         graphics.DrawPolygon(&pen, points.data(), static_cast<INT>(points.size()));
@@ -701,4 +701,4 @@ bool gpu_ready(const UiState& state) {
     return state.gpu_available;
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

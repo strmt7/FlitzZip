@@ -293,7 +293,7 @@ def main(gmp: Any, args: Any) -> int:
     output_dir = Path(parsed.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
-    name = f"SuperZip CI {parsed.target} {timestamp}"
+    name = f"FlitzZip CI {parsed.target} {timestamp}"
 
     target_id: str | None = None
     task_id: str | None = None

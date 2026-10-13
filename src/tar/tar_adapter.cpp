@@ -22,7 +22,7 @@
 #include <optional>
 #include <sstream>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::size_t kTarBlockSize = 512U;
@@ -244,8 +244,8 @@ std::array<char, kTarBlockSize> make_tar_header(const std::string& path, char ty
     header[156] = typeflag;
     put_tar_string(header, 257, 6, "ustar");
     put_tar_string(header, 263, 2, "00");
-    put_tar_string(header, 265, 32, "superzip");
-    put_tar_string(header, 297, 32, "superzip");
+    put_tar_string(header, 265, 32, "flitzzip");
+    put_tar_string(header, 297, 32, "flitzzip");
     put_tar_string(header, 345, 155, fields->prefix);
     finalize_tar_checksum(header);
     return header;
@@ -283,7 +283,7 @@ void write_pax_path_if_needed(std::ostream& output, const std::string& path, std
         return;
     }
     const auto payload = make_pax_record("path", path);
-    const auto metadata_path = "PaxHeaders.X/superzip-" + std::to_string(ordinal);
+    const auto metadata_path = "PaxHeaders.X/flitzzip-" + std::to_string(ordinal);
     const auto header = make_tar_header(metadata_path, 'x', payload.size(), 0644);
     write_bytes(output, header.data(), header.size());
     write_bytes(output, payload.data(), payload.size());
@@ -296,7 +296,7 @@ void write_pax_path_if_needed(std::ostream& output, const std::string& path, std
 void write_entry_header(std::ostream& output, const std::string& path, char typeflag, std::uint64_t size,
                         std::uint64_t ordinal) {
     write_pax_path_if_needed(output, path, ordinal);
-    const auto header_path = split_ustar_name(path).has_value() ? path : "superzip-pax-entry";
+    const auto header_path = split_ustar_name(path).has_value() ? path : "flitzzip-pax-entry";
     const auto header = make_tar_header(header_path, typeflag, size, typeflag == '5' ? 0755 : 0644);
     write_bytes(output, header.data(), header.size());
 }
@@ -488,7 +488,7 @@ void skip_tar_payload(std::istream& input, std::uint64_t size, bool seekable) {
 // Outputs: Returns payload bytes as a string and consumes payload padding.
 std::string read_tar_metadata_payload(std::istream& input, std::uint64_t size) {
     if (size > kMaxTarMetadataPayloadBytes) {
-        throw ArchiveError("TAR metadata payload exceeds SuperZip resource limit");
+        throw ArchiveError("TAR metadata payload exceeds FlitzZip resource limit");
     }
     std::string payload(static_cast<std::size_t>(size), '\0');
     input.read(payload.data(), static_cast<std::streamsize>(payload.size()));
@@ -538,7 +538,7 @@ PendingTarExtensions parse_pax_payload(const std::string& payload) {
                     throw ArchiveError("TAR PAX metadata contains duplicate path records");
                 }
                 if (value.empty() || value.size() > kMaxArchivePathBytes) {
-                    throw ArchiveError("TAR PAX path exceeds SuperZip path limits");
+                    throw ArchiveError("TAR PAX path exceeds FlitzZip path limits");
                 }
                 parsed.path = std::string(value);
             } else if (key == "hdrcharset") {
@@ -567,7 +567,7 @@ std::string parse_gnu_long_name(std::string payload) {
         throw ArchiveError("TAR long-name metadata is empty");
     }
     if (payload.size() > kMaxArchivePathBytes) {
-        throw ArchiveError("TAR long-name metadata exceeds SuperZip path limits");
+        throw ArchiveError("TAR long-name metadata exceeds FlitzZip path limits");
     }
     return payload;
 }
@@ -637,7 +637,7 @@ TarScanResult scan_tar_stream(std::istream& input, bool seekable,
         const auto entry_path = tar_entry_path(header, pending);
         if (typeflag == '0' || typeflag == '5') {
             if (result.entries.size() >= kMaxArchiveEntries) {
-                throw ArchiveError("TAR entry count exceeds SuperZip resource limit");
+                throw ArchiveError("TAR entry count exceeds FlitzZip resource limit");
             }
             const bool directory = typeflag == '5';
             result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
@@ -1174,4 +1174,4 @@ OperationStats extract_tar_zstd(const std::filesystem::path& archive_path, const
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

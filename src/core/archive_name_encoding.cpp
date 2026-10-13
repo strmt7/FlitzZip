@@ -9,7 +9,7 @@
 #include <windows.h>
 #endif
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 // Purpose: Validate UTF-8 scalar encoding without locale-dependent conversions.
@@ -122,4 +122,4 @@ std::string decode_archive_name(std::string_view raw, ArchivePathEncoding encodi
 #endif
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

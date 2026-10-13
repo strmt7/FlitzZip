@@ -1,6 +1,6 @@
 #include "gpu/hip_kernel_api.hpp"
 
-namespace superzip::hip_detail {
+namespace flitzzip::hip_detail {
 namespace {
 
 using namespace hip_detail;
@@ -141,4 +141,4 @@ void bind_adaptive_prefix_kernels(HipKernelApi& api) noexcept {
     api.adaptive_prefix_pack_segments_batch_kernel = adaptive_prefix_pack_segments_batch_kernel;
 }
 
-}  // namespace superzip::hip_detail
+}  // namespace flitzzip::hip_detail

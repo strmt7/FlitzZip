@@ -1,14 +1,14 @@
 # Purpose: Route hosted compilation to actual CPU and HIP source boundaries.
 # Inputs: Paths are normalized changes; Full explicitly admits both compile qualifications.
 # Outputs: Returns CPU/HIP workflow admission without substituting CPU tests for device compilation.
-function Get-SuperZipHostedWorkflowSelection {
+function Get-FlitzZipHostedWorkflowSelection {
     param([string[]]$Paths, [switch]$Full)
     $cpuPaths = @($Paths | Where-Object { $_ -notmatch '^src/gpu/[^/]+\.hip\.cpp$' })
-    $cpu = Get-SuperZipVerificationScope -ChangedPath $cpuPaths
+    $cpu = Get-FlitzZipVerificationScope -ChangedPath $cpuPaths
     $windows = $Full.IsPresent -or $cpu.touchesCpp -or $cpu.touchesProductionSource -or
         $cpu.touchesGui -or $cpu.touchesPackaging -or $cpu.touchesNativeBuildInputs -or
-        (Test-SuperZipAnyPath -Path $Paths -Pattern @('^\.github/workflows/windows-ci\.yml$'))
-    $rocm = $Full.IsPresent -or (Test-SuperZipAnyPath -Path $Paths -Pattern @(
+        (Test-FlitzZipAnyPath -Path $Paths -Pattern @('^\.github/workflows/windows-ci\.yml$'))
+    $rocm = $Full.IsPresent -or (Test-FlitzZipAnyPath -Path $Paths -Pattern @(
         '^\.github/workflows/rocm-qualification\.yml$', '^CMakeLists\.txt$', '^cmake/',
         '^src/gpu/', '^src/core/[^/]+\.hpp$', '^third_party/',
         '^tools/(build|compile_hip_object|hip_architecture|rocm_toolchain|process_environment|cmake_toolchain|build_parallelism|local_resources)\.ps1$',
@@ -21,9 +21,9 @@ function Get-SuperZipHostedWorkflowSelection {
 # Purpose: Project hosted native work from the canonical planner instead of repeating every product check.
 # Inputs: Paths describe the push/PR range; Full is explicit manual broad CPU qualification.
 # Outputs: Returns build/test/matrix decisions and the trusted native command; never launches a workload.
-function Get-SuperZipHostedNativePlan {
+function Get-FlitzZipHostedNativePlan {
     param([string[]]$Paths, [switch]$Full)
-    $plan = Get-SuperZipVerificationPlan -ChangedPath $Paths -SuspectGlobalBug:$Full -Checkpoint intermediate
+    $plan = Get-FlitzZipVerificationPlan -ChangedPath $Paths -SuspectGlobalBug:$Full -Checkpoint intermediate
     $unit = @($plan.requiredLocalCommands | Where-Object id -eq 'unit-tests')
     $mode = 'none'
     $command = $null
@@ -44,7 +44,7 @@ function Get-SuperZipHostedNativePlan {
 # Purpose: Resolve a complete trusted Git event range without accepting shell expressions as revisions.
 # Inputs: EventName and complete event SHAs; manual runs are broad unless DispatchBase selects a reviewed range.
 # Outputs: Returns changed paths and broad intent; rejects missing/malformed bases or unavailable Git evidence.
-function Get-SuperZipNativeCiEvent {
+function Get-FlitzZipNativeCiEvent {
     param([ValidateSet('push', 'pull_request', 'workflow_dispatch')][string]$EventName,
           [string]$PushBase, [string]$PullRequestBase, [string]$DispatchBase)
     if ($DispatchBase -and $EventName -ne 'workflow_dispatch') { throw 'A manual comparison base requires workflow_dispatch.' }
@@ -58,7 +58,7 @@ function Get-SuperZipNativeCiEvent {
         $paths = @(git ls-files)
         if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate initial native event inputs.' }
     } else {
-        $paths = @(Get-SuperZipChangedPath -BaseRef $base -HeadRef HEAD)
+        $paths = @(Get-FlitzZipChangedPath -BaseRef $base -HeadRef HEAD)
     }
     return [pscustomobject]@{ paths = $paths; full = $false }
 }
@@ -66,7 +66,7 @@ function Get-SuperZipNativeCiEvent {
 # Purpose: Execute only the hosted CPU native command selected from the actual change range.
 # Inputs: Plan is canonical projection; component commands receive explicit CPU-only validation.
 # Outputs: Runs selected tests once or reports none; hardware qualification always remains false.
-function Invoke-SuperZipHostedNativeTest {
+function Invoke-FlitzZipHostedNativeTest {
     param([Parameter(Mandatory = $true)]$Plan)
     if ($Plan.testMode -eq 'none') { Write-Output 'No native runtime tests selected; affected mechanism contracts run in the component lane.'; return }
     if (-not $Plan.build -or $Plan.testMode -notin @('component', 'full') -or $Plan.testCommand.id -ne 'unit-tests') {
@@ -75,5 +75,5 @@ function Invoke-SuperZipHostedNativeTest {
     $command = $Plan.testCommand.PSObject.Copy()
     if ($Plan.testMode -eq 'component') { $command.arguments = @($command.arguments) + '-CpuOnlyValidation' }
     Write-Output 'Hosted CPU-only validation: GPU execution is not qualified.'
-    Invoke-SuperZipVerificationCommand -Command $command
+    Invoke-FlitzZipVerificationCommand -Command $command
 }

@@ -5,7 +5,7 @@
 #include <istream>
 #include <memory>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Stream-decompress an `.xz` file through `std::istream` with bounded XZ Embedded state.
 // Inputs: Construct with `archive_path`; callers read uncompressed bytes through the `std::istream` interface.
@@ -38,4 +38,4 @@ class XzInputStream final : public std::istream {
     std::unique_ptr<Buffer> buffer_;
 };
 
-}  // namespace superzip
+}  // namespace flitzzip

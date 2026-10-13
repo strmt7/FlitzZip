@@ -46,4 +46,4 @@ set(_zstd_legacy_public_original
     "a582b26687409283a230ff99d53cf0ccefa945ec86cf35111d00a3600e8eb848")
 
 set(_zstd_legacy_public_patched
-    "f58b297da5abbf80e1e3185a8b28f5182d48687e6eaa23043e488608a0ad7a10")
+    "91a68c85c18479023cdb635e1bf704cdb65719e4bb14748e14a8c1a1b5e25260")

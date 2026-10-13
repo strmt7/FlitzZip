@@ -3,11 +3,11 @@
 #include <stdexcept>
 #include <string>
 
-namespace superzip {
+namespace flitzzip {
 
 class Error : public std::runtime_error {
   public:
-    // Purpose: Construct a base SuperZip exception with a stable diagnostic message.
+    // Purpose: Construct a base FlitzZip exception with a stable diagnostic message.
     // Inputs: `message` is safe-to-display diagnostic text.
     // Outputs: Initializes `std::runtime_error` state.
     explicit Error(const std::string& message) : std::runtime_error(message) {}
@@ -37,4 +37,4 @@ class GpuError : public Error {
     explicit GpuError(const std::string& message) : Error(message) {}
 };
 
-}  // namespace superzip
+}  // namespace flitzzip

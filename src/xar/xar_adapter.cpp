@@ -24,7 +24,7 @@
 #include <string_view>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::uint32_t kXarMagic = 0x78617221U;
@@ -434,7 +434,7 @@ void set_xar_file_name(XarFileContext& context, std::string_view text, XarMetada
         throw ArchiveError("XAR file entry contains duplicate name metadata");
     }
     if (trim_ascii(text).size() > kMaxArchivePathComponentBytes) {
-        throw ArchiveError("XAR filename exceeds SuperZip component length limit");
+        throw ArchiveError("XAR filename exceeds FlitzZip component length limit");
     }
     auto name = decode_xml_text(text);
     if (name.empty() || name.find_first_of("/\\") != std::string::npos) {
@@ -447,7 +447,7 @@ void set_xar_file_name(XarFileContext& context, std::string_view text, XarMetada
     const auto separator_bytes = context.parent_path.empty() ? 0U : 1U;
     const auto required_bytes = name.size() + separator_bytes;
     if (required_bytes > kMaxArchivePathBytes || context.parent_path.size() > kMaxArchivePathBytes - required_bytes) {
-        throw ArchiveError("XAR path exceeds SuperZip path length limit");
+        throw ArchiveError("XAR path exceeds FlitzZip path length limit");
     }
     std::string path = context.parent_path;
     if (!path.empty()) {
@@ -468,7 +468,7 @@ void set_xar_file_name(XarFileContext& context, std::string_view text, XarMetada
 std::uint64_t checked_add_xar_bytes(std::uint64_t total, std::uint64_t size) {
     total = checked_add_u64(total, size, "decoded size total");
     if (total > kMaxXarTotalFileBytes) {
-        throw ArchiveError("XAR decoded payload exceeds SuperZip resource limit");
+        throw ArchiveError("XAR decoded payload exceeds FlitzZip resource limit");
     }
     return total;
 }
@@ -616,7 +616,7 @@ void open_xar_toc_tag(std::string_view tag, const std::string& name, bool self_c
     if (name == "file") {
         if (state.file_stack.size() >= kMaxArchivePathComponents ||
             state.metadata.entries.size() >= kMaxArchiveEntries) {
-            throw ArchiveError("XAR file nesting or entry count exceeds SuperZip limits");
+            throw ArchiveError("XAR file nesting or entry count exceeds FlitzZip limits");
         }
         XarFileContext context;
         if (!state.file_stack.empty()) {
@@ -646,7 +646,7 @@ void open_xar_toc_tag(std::string_view tag, const std::string& name, bool self_c
     }
     if (!self_closing) {
         if (state.tag_stack.size() >= kMaxXarXmlDepth) {
-            throw ArchiveError("XAR XML nesting exceeds SuperZip limits");
+            throw ArchiveError("XAR XML nesting exceeds FlitzZip limits");
         }
         state.tag_stack_bytes =
             checked_add_archive_path_metadata_bytes(state.tag_stack_bytes, name.size(), "XAR active XML tag metadata");
@@ -695,7 +695,7 @@ XarMetadata parse_xar_toc(std::span<const unsigned char> toc_bytes, const XarHea
             throw ArchiveError("XAR TOC contains an unterminated XML tag");
         }
         if (close - open - 1U > kMaxXarXmlTagBytes || ++state.element_count > kMaxXarXmlElements) {
-            throw ArchiveError("XAR TOC XML element exceeds SuperZip metadata limits");
+            throw ArchiveError("XAR TOC XML element exceeds FlitzZip metadata limits");
         }
         const auto tag = trim_ascii(xml.substr(open + 1U, close - open - 1U));
         if (tag.empty()) {
@@ -954,4 +954,4 @@ OperationStats extract_xar(const std::filesystem::path& archive_path, const std:
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

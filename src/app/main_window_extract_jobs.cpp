@@ -21,7 +21,7 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 namespace {
 
 // Purpose: Replace filesystem-hostile characters in a derived folder name.
@@ -128,7 +128,7 @@ bool MainWindow::extract_overwrite_prompt_needed(const std::filesystem::path& de
     return true;
 }
 
-// Purpose: Open the SuperZip-owned overwrite confirmation modal for a pending extract job.
+// Purpose: Open the FlitzZip-owned overwrite confirmation modal for a pending extract job.
 // Inputs: `request` is the fully captured job request to run if the user continues.
 // Outputs: Stores the pending job, updates modal UI state, clears progress, and queues repaint.
 void MainWindow::show_extract_overwrite_prompt(ExtractJobRequest request) {
@@ -602,4 +602,4 @@ void MainWindow::append_history_entry(std::string operation, std::string archive
     reset_history_details_scroll_state();
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

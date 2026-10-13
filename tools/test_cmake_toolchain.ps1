@@ -87,8 +87,8 @@ function Test-CMakeCompilerAbiRepair {
     $install = Split-Path (Split-Path $CMake)
     $production = Join-Path $install 'share/cmake-4.4/Modules/CMakeCompilerABI.h'
     $patched = [IO.File]::ReadAllText($production)
-    $prefix = "#ifndef SUPERZIP_CMAKE_COMPILER_ABI_H`n#define SUPERZIP_CMAKE_COMPILER_ABI_H`n"
-    $suffix = "`n#endif /* SUPERZIP_CMAKE_COMPILER_ABI_H */`n"
+    $prefix = "#ifndef FLITZZIP_CMAKE_COMPILER_ABI_H`n#define FLITZZIP_CMAKE_COMPILER_ABI_H`n"
+    $suffix = "`n#endif /* FLITZZIP_CMAKE_COMPILER_ABI_H */`n"
     if (-not $patched.StartsWith($prefix) -or -not $patched.EndsWith($suffix)) {
         throw 'Production compiler ABI header is not completely guarded.'
     }
@@ -99,12 +99,20 @@ function Test-CMakeCompilerAbiRepair {
     [IO.File]::WriteAllText($header, 'unknown ABI probe', [Text.UTF8Encoding]::new($false))
     Assert-CMakeRejection { Repair-CMakeCompilerAbiHeader -Install $fixtureInstall }
     Copy-Item -LiteralPath $original -Destination $header
-    $partial = "$header.superzip-abi"
+    $partial = "$header.flitzzip-abi"
     [IO.File]::WriteAllText($partial, 'interrupted publication', [Text.UTF8Encoding]::new($false))
     Assert-CMakeRejection { Repair-CMakeCompilerAbiHeader -Install $fixtureInstall }
     Remove-Item -LiteralPath $partial
     Repair-CMakeCompilerAbiHeader -Install $fixtureInstall
     if ([IO.File]::ReadAllText($header) -cne $patched) { throw 'Repaired ABI payload differs from production.' }
+    $previous = $patched.Replace('FLITZZIP_CMAKE_COMPILER_ABI_H', 'SUPERZIP_CMAKE_COMPILER_ABI_H')
+    [IO.File]::WriteAllText($header, $previous, [Text.UTF8Encoding]::new($false))
+    Assert-CMakeToolHash -Path $header -Expected (Get-CMakeToolchainLock).abi_header_previous_sha256
+    Repair-CMakeCompilerAbiHeader -Install $fixtureInstall
+    if ([IO.File]::ReadAllText($header) -cne $patched) { throw 'Preceding ABI cache did not migrate exactly.' }
+    [IO.File]::WriteAllText($header, ($previous + 'drift'), [Text.UTF8Encoding]::new($false))
+    Assert-CMakeRejection { Repair-CMakeCompilerAbiHeader -Install $fixtureInstall }
+    [IO.File]::WriteAllText($header, $patched, [Text.UTF8Encoding]::new($false))
     $before = (Get-Item -LiteralPath $header).LastWriteTimeUtc
     Repair-CMakeCompilerAbiHeader -Install $fixtureInstall
     if ((Get-Item -LiteralPath $header).LastWriteTimeUtc -ne $before) { throw 'ABI repair is not idempotent.' }

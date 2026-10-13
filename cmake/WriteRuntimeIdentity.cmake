@@ -7,7 +7,7 @@ if(NOT EXISTS "${RUNTIME_DLL}" OR NOT DEFINED OUTPUT_HEADER)
 endif()
 file(SHA256 "${RUNTIME_DLL}" runtime_hash)
 string(CONCAT HEADER_CONTENT "#pragma once\n"
-              "#define SUPERZIP_ZSTD_RUNTIME_DLL_SHA256 \"${runtime_hash}\"\n")
+              "#define FLITZZIP_ZSTD_RUNTIME_DLL_SHA256 \"${runtime_hash}\"\n")
 if(EXISTS "${OUTPUT_HEADER}")
   file(READ "${OUTPUT_HEADER}" existing_content)
   if(existing_content STREQUAL HEADER_CONTENT)

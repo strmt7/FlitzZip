@@ -19,7 +19,7 @@ TEST_CASE(file_manifest_rejects_nul_before_path_resolution) {
     name += L"suffix";
     bool refused = false;
     try {
-        static_cast<void>(superzip::build_manifest({std::filesystem::path(name)}));
+        static_cast<void>(flitzzip::build_manifest({std::filesystem::path(name)}));
     } catch (const std::invalid_argument&) {
         refused = true;
     }
@@ -36,18 +36,18 @@ TEST_CASE(file_manifest_long_paths_preserve_source_identity) {
     while (parent.native().size() < 320U)
         parent /= std::wstring(60U, L'p');
     const auto source = parent / L"\u65e5\u672c-\U0001f680.txt";
-    const auto source_io = std::filesystem::path(superzip::windows_api_path(source));
+    const auto source_io = std::filesystem::path(flitzzip::windows_api_path(source));
     std::filesystem::create_directories(source_io.parent_path());
     std::ofstream(source_io, std::ios::binary) << "long source bytes";
-    const auto manifest = superzip::build_manifest({source});
-    const auto extended = superzip::build_manifest({source_io});
+    const auto manifest = flitzzip::build_manifest({source});
+    const auto extended = flitzzip::build_manifest({source_io});
     REQUIRE_EQ(manifest.entries.size(), 1U);
     REQUIRE_EQ(extended.entries.size(), 1U);
     const auto& entry = manifest.entries.front();
-    REQUIRE_EQ(entry.archive_path, superzip::path_diagnostic_utf8(source.filename()));
+    REQUIRE_EQ(entry.archive_path, flitzzip::path_diagnostic_utf8(source.filename()));
     REQUIRE_EQ(entry.identity.file_id, extended.entries.front().identity.file_id);
     {
-        const auto pinned = superzip::pin_source_file(source);
+        const auto pinned = flitzzip::pin_source_file(source);
         REQUIRE_EQ(pinned.size(), 17U);
         std::ifstream input(pinned.path(), std::ios::binary);
         REQUIRE_TRUE(input.good());
@@ -58,12 +58,12 @@ TEST_CASE(file_manifest_long_paths_preserve_source_identity) {
     std::ofstream(source_io, std::ios::binary) << "replacement";
     bool refused = false;
     try {
-        static_cast<void>(superzip::lock_manifest_source(entry));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::lock_manifest_source(entry));
+    } catch (const flitzzip::SecurityError&) {
         refused = true;
     }
     REQUIRE_TRUE(refused);
-    std::filesystem::remove_all(std::filesystem::path(superzip::windows_api_path(root)));
+    std::filesystem::remove_all(std::filesystem::path(flitzzip::windows_api_path(root)));
 }
 
 // Purpose: Preserve a source-open failure instead of replacing it with a locale conversion exception.
@@ -78,8 +78,8 @@ TEST_CASE(file_manifest_unicode_lock_failure_keeps_original_diagnostic) {
     REQUIRE_TRUE(handle != INVALID_HANDLE_VALUE);
     std::string message;
     try {
-        static_cast<void>(superzip::pin_source_file(source));
-    } catch (const superzip::SecurityError& error) {
+        static_cast<void>(flitzzip::pin_source_file(source));
+    } catch (const flitzzip::SecurityError& error) {
         message = error.what();
     } catch (...) {
         CloseHandle(handle);
@@ -87,7 +87,7 @@ TEST_CASE(file_manifest_unicode_lock_failure_keeps_original_diagnostic) {
     }
     CloseHandle(handle);
     REQUIRE_TRUE(message.starts_with("cannot lock source file: "));
-    REQUIRE_TRUE(message.find(superzip::path_diagnostic_utf8(source)) != std::string::npos);
+    REQUIRE_TRUE(message.find(flitzzip::path_diagnostic_utf8(source)) != std::string::npos);
     REQUIRE_TRUE(message.find("Windows error 32") != std::string::npos);
     std::filesystem::remove_all(root);
 }
@@ -103,7 +103,7 @@ TEST_CASE(file_manifest_rejects_directory_junction_sources) {
     std::ofstream(outside / "secret.txt", std::ios::binary) << "outside";
 
     const auto junction = source / "linked";
-    if (!superzip_test::try_create_test_directory_junction(junction, outside)) {
+    if (!flitzzip_test::try_create_test_directory_junction(junction, outside)) {
         std::filesystem::remove_all(root);
         std::filesystem::remove_all(outside);
         return;
@@ -111,12 +111,12 @@ TEST_CASE(file_manifest_rejects_directory_junction_sources) {
 
     bool rejected = false;
     try {
-        (void)superzip::build_manifest({source});
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::build_manifest({source});
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
 
-    superzip_test::remove_test_directory_junction(junction);
+    flitzzip_test::remove_test_directory_junction(junction);
     std::filesystem::remove_all(root);
     std::filesystem::remove_all(outside);
     REQUIRE_TRUE(rejected);
@@ -129,15 +129,15 @@ TEST_CASE(file_manifest_source_lock_rejects_path_replacement) {
     const auto root = test_temp_dir("manifest-source-replacement");
     const auto source = root / "source.txt";
     std::ofstream(source, std::ios::binary) << "original";
-    const auto manifest = superzip::build_manifest({source});
+    const auto manifest = flitzzip::build_manifest({source});
     REQUIRE_EQ(manifest.entries.size(), static_cast<std::size_t>(1));
 
     std::filesystem::rename(source, root / "original.txt");
     std::ofstream(source, std::ios::binary) << "replacement with different identity and size";
     bool rejected = false;
     try {
-        static_cast<void>(superzip::lock_manifest_source(manifest.entries.front()));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::lock_manifest_source(manifest.entries.front()));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

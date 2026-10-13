@@ -46,7 +46,7 @@ class CorpusAdmissionTests(unittest.TestCase):
             "schema_version": 1,
             "name": "offline generated fixture",
             "files": [entry],
-            "cases": [{"name": "csv", "format": "zst", "files": [entry["name"]], "tools": ["SuperZip", "Zstd"]}],
+            "cases": [{"name": "csv", "format": "zst", "files": [entry["name"]], "tools": ["FlitzZip", "Zstd"]}],
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

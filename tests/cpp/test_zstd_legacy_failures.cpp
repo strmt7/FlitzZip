@@ -198,8 +198,8 @@ TEST_CASE(zstd_legacy_same_version_reuses_owner) {
 // Inputs: version is 5-7, fail_after selects the input or output allocation, and pinned bytes provide the oracle.
 // Outputs: Requires valid capacity/storage, exact retried output and complete cleanup without an unsafe baseline retry.
 void check_stream_allocation_failure(unsigned version, std::size_t fail_after) {
-    const auto extent = superzip_test::kLegacyFrames[version - 4U];
-    const auto frame = std::span(superzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
+    const auto extent = flitzzip_test::kLegacyFrames[version - 4U];
+    const auto frame = std::span(flitzzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
     REQUIRE_TRUE(sz_fault_reset(0U));
     {
         LegacyOwner owner{nullptr, version};
@@ -223,8 +223,8 @@ void check_stream_allocation_failure(unsigned version, std::size_t fail_after) {
             0);
         REQUIRE_EQ(hint, 0U);
         REQUIRE_EQ(input_bytes, frame.size());
-        REQUIRE_EQ(output_bytes, superzip_test::kLegacyExpected.size());
-        REQUIRE_TRUE(std::ranges::equal(std::span(output).first(output_bytes), superzip_test::kLegacyExpected));
+        REQUIRE_EQ(output_bytes, flitzzip_test::kLegacyExpected.size());
+        REQUIRE_TRUE(std::ranges::equal(std::span(output).first(output_bytes), flitzzip_test::kLegacyExpected));
         REQUIRE_TRUE(sz_legacy_buffers_consistent(owner.context, version));
     }
     REQUIRE_EQ(sz_fault_live_allocations(), 0U);
@@ -274,8 +274,8 @@ void require_legacy_stream_readback(const LegacyOwner& owner, std::span<const un
         0);
     REQUIRE_EQ(hint, 0U);
     REQUIRE_EQ(input_bytes, frame.size());
-    REQUIRE_EQ(output_bytes, superzip_test::kLegacyExpected.size());
-    REQUIRE_TRUE(std::ranges::equal(std::span(output).first(output_bytes), superzip_test::kLegacyExpected));
+    REQUIRE_EQ(output_bytes, flitzzip_test::kLegacyExpected.size());
+    REQUIRE_TRUE(std::ranges::equal(std::span(output).first(output_bytes), flitzzip_test::kLegacyExpected));
     REQUIRE_TRUE(sz_legacy_buffers_consistent(owner.context, owner.version));
 }
 
@@ -283,8 +283,8 @@ void require_legacy_stream_readback(const LegacyOwner& owner, std::span<const un
 // Inputs: version is 5-7; pinned frame bytes retain their payload while the format's window declaration grows.
 // Outputs: Requires exact owner/capacity preservation, successful reinitialization and retry, and complete cleanup.
 void check_stream_buffer_growth_failure(unsigned version) {
-    const auto extent = superzip_test::kLegacyFrames[version - 4U];
-    const auto frame = std::span(superzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
+    const auto extent = flitzzip_test::kLegacyFrames[version - 4U];
+    const auto frame = std::span(flitzzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
     std::vector<unsigned char> larger(frame.begin(), frame.end());
     if (version == 7U) {
         REQUIRE_EQ(larger[4], 0x20U);
@@ -361,8 +361,8 @@ TEST_CASE(zstd_legacy_stream_empty_buffers_preserve_progress) {
             REQUIRE_EQ(output_bytes, 0U);
             REQUIRE_TRUE(hint > 0U);
 
-            const auto extent = superzip_test::kLegacyFrames[version - 4U];
-            const auto frame = std::span(superzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
+            const auto extent = flitzzip_test::kLegacyFrames[version - 4U];
+            const auto frame = std::span(flitzzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
             input_bytes = 1U;
             REQUIRE_EQ(
                 sz_legacy_decode(owner.context, version, nullptr, &output_bytes, frame.data(), &input_bytes, &hint), 0);
@@ -396,8 +396,8 @@ TEST_CASE(zstd_legacy_stream_empty_buffers_preserve_progress) {
             }
             REQUIRE_EQ(hint, 0U);
             REQUIRE_EQ(position, frame.size());
-            REQUIRE_EQ(produced, superzip_test::kLegacyExpected.size());
-            REQUIRE_TRUE(std::ranges::equal(std::span(output).first(produced), superzip_test::kLegacyExpected));
+            REQUIRE_EQ(produced, flitzzip_test::kLegacyExpected.size());
+            REQUIRE_TRUE(std::ranges::equal(std::span(output).first(produced), flitzzip_test::kLegacyExpected));
             REQUIRE_TRUE(sz_legacy_buffers_consistent(owner.context, version));
         }
         REQUIRE_EQ(sz_fault_live_allocations(), 0U);

@@ -58,12 +58,12 @@ TEST_CASE(tar_bzip2_roundtrip_nested_tree) {
     std::filesystem::create_directories(input / "empty-dir");
 
     const auto archive = root / "archive.tar.bz2";
-    const auto compress_stats = superzip::compress_tar_bzip2({input}, archive);
+    const auto compress_stats = flitzzip::compress_tar_bzip2({input}, archive);
     REQUIRE_TRUE(compress_stats.entries >= static_cast<std::uint64_t>(4));
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::TarBzip2);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::TarBzip2);
 
     const auto output = root / "out";
-    const auto extract_stats = superzip::extract_tar_bzip2(archive, output, false);
+    const auto extract_stats = flitzzip::extract_tar_bzip2(archive, output, false);
     REQUIRE_TRUE(extract_stats.entries >= static_cast<std::uint64_t>(4));
     REQUIRE_EQ(read_text_file(output / "input" / "alpha.txt"), "alpha payload");
     REQUIRE_EQ(read_text_file(output / "input" / "nested" / "beta.txt"), "beta payload");
@@ -78,15 +78,15 @@ TEST_CASE(tar_bzip2_refuses_overwrite_by_default) {
     const auto input = root / "input";
     write_text_file(input / "alpha.txt", "new payload");
     const auto archive = root / "archive.tbz2";
-    (void)superzip::compress_tar_bzip2({input}, archive);
+    (void)flitzzip::compress_tar_bzip2({input}, archive);
 
     const auto output = root / "out";
     write_text_file(output / "input" / "alpha.txt", "old payload");
 
     bool rejected = false;
     try {
-        (void)superzip::extract_tar_bzip2(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_tar_bzip2(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -104,8 +104,8 @@ TEST_CASE(tar_bzip2_rejects_bad_stream_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_tar_bzip2(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_tar_bzip2(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

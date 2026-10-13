@@ -24,7 +24,7 @@ TEST_CASE(window_layout_fits_work_areas_without_crossing_native_control_size_lim
             for (const POINT origin : {POINT{0, 0}, POINT{-2560, -1440}, POINT{3840, 100}}) {
                 const RECT work{origin.x, origin.y, origin.x + size.cx, origin.y + size.cy};
                 const RECT proposed{work.right - 10, work.bottom - 10, work.right + 1200, work.bottom + 760};
-                const auto result = superzip::app::make_window_layout(work, proposed, frame, dpi);
+                const auto result = flitzzip::app::make_window_layout(work, proposed, frame, dpi);
                 REQUIRE_TRUE(result.has_value());
                 const auto& bounds = result->bounds;
                 const LONG width = bounds.right - bounds.left - frame.cx;
@@ -37,8 +37,8 @@ TEST_CASE(window_layout_fits_work_areas_without_crossing_native_control_size_lim
                     REQUIRE_TRUE(bounds.right <= work.right && bounds.bottom <= work.bottom);
                 }
                 const RECT content{scale(86), scale(52), width, height - scale(34)};
-                const auto compress = superzip::app::make_compress_layout(content, dpi);
-                const auto settings = superzip::app::make_settings_layout(content, dpi);
+                const auto compress = flitzzip::app::make_compress_layout(content, dpi);
+                const auto settings = flitzzip::app::make_settings_layout(content, dpi);
                 REQUIRE_TRUE(compress.security.bottom < compress.start.top);
                 REQUIRE_TRUE(settings.logging.bottom < settings.apply.top);
                 REQUIRE_TRUE(settings.log_level.right < settings.open_log_file.left);
@@ -51,18 +51,18 @@ TEST_CASE(window_layout_preserves_normal_size_and_restores_it_after_monitor_chan
     const RECT large{0, 0, 3840, 2100};
     const RECT position{120, 100, 500, 500};
     const auto frame = frame_size(144);
-    const auto normal = superzip::app::make_window_layout(large, position, frame, 144);
+    const auto normal = flitzzip::app::make_window_layout(large, position, frame, 144);
     REQUIRE_TRUE(normal && normal->minimum_fits);
     REQUIRE_EQ(normal->bounds.left, position.left);
     REQUIRE_EQ(normal->bounds.top, position.top);
     REQUIRE_EQ(normal->bounds.right - normal->bounds.left, 1800 + frame.cx);
     REQUIRE_EQ(normal->bounds.bottom - normal->bounds.top, 1140 + frame.cy);
     const RECT small{-1920, 0, 0, 1040};
-    const auto compact = superzip::app::make_window_layout(small, normal->bounds, frame, 144);
+    const auto compact = flitzzip::app::make_window_layout(small, normal->bounds, frame, 144);
     REQUIRE_TRUE(compact && compact->minimum_fits);
     REQUIRE_EQ(compact->bounds.bottom, small.bottom);
     REQUIRE_TRUE(compact->bounds.top >= small.top);
-    const auto restored = superzip::app::make_window_layout(large, compact->bounds, frame_size(192), 192);
+    const auto restored = flitzzip::app::make_window_layout(large, compact->bounds, frame_size(192), 192);
     REQUIRE_TRUE(restored && restored->minimum_fits);
     REQUIRE_EQ(restored->bounds.right - restored->bounds.left, 2400 + frame_size(192).cx);
     REQUIRE_EQ(restored->bounds.bottom - restored->bounds.top, 1520 + frame_size(192).cy);
@@ -70,11 +70,11 @@ TEST_CASE(window_layout_preserves_normal_size_and_restores_it_after_monitor_chan
 
 TEST_CASE(window_layout_rejects_invalid_geometry_and_reports_insufficient_work_area) {
     const RECT work{0, 0, 1920, 1040};
-    REQUIRE_TRUE(!superzip::app::make_window_layout(work, work, SIZE{}, 0));
-    REQUIRE_TRUE(!superzip::app::make_window_layout(work, work, SIZE{}, 1000));
-    REQUIRE_TRUE(!superzip::app::make_window_layout(RECT{}, work, SIZE{}, 96));
-    REQUIRE_TRUE(!superzip::app::make_window_layout(work, work, SIZE{-1, 0}, 96));
-    const auto tiny = superzip::app::make_window_layout(RECT{10, 20, 210, 220}, work, frame_size(144), 144);
+    REQUIRE_TRUE(!flitzzip::app::make_window_layout(work, work, SIZE{}, 0));
+    REQUIRE_TRUE(!flitzzip::app::make_window_layout(work, work, SIZE{}, 1000));
+    REQUIRE_TRUE(!flitzzip::app::make_window_layout(RECT{}, work, SIZE{}, 96));
+    REQUIRE_TRUE(!flitzzip::app::make_window_layout(work, work, SIZE{-1, 0}, 96));
+    const auto tiny = flitzzip::app::make_window_layout(RECT{10, 20, 210, 220}, work, frame_size(144), 144);
     REQUIRE_TRUE(tiny && !tiny->minimum_fits);
     REQUIRE_EQ(tiny->bounds.left, 10);
     REQUIRE_EQ(tiny->bounds.top, 20);
@@ -84,7 +84,7 @@ TEST_CASE(window_layout_rejects_invalid_geometry_and_reports_insufficient_work_a
 
 TEST_CASE(window_layout_real_hidden_window_has_the_requested_client_and_frame_dimensions) {
     const std::unique_ptr<std::remove_pointer_t<HWND>, decltype(&DestroyWindow)> window(
-        CreateWindowExW(0, L"STATIC", L"SuperZip layout test", kStyle, 0, 0, 1200, 760, nullptr, nullptr,
+        CreateWindowExW(0, L"STATIC", L"FlitzZip layout test", kStyle, 0, 0, 1200, 760, nullptr, nullptr,
                         GetModuleHandleW(nullptr), nullptr),
         DestroyWindow);
     REQUIRE_TRUE(window != nullptr);
@@ -100,7 +100,7 @@ TEST_CASE(window_layout_real_hidden_window_has_the_requested_client_and_frame_di
         const RECT work{monitor.rcWork.left, monitor.rcWork.top,
                         std::min(monitor.rcWork.right, monitor.rcWork.left + width),
                         std::min(monitor.rcWork.bottom, monitor.rcWork.top + height)};
-        const auto result = superzip::app::make_window_layout(work, work, frame, dpi);
+        const auto result = flitzzip::app::make_window_layout(work, work, frame, dpi);
         REQUIRE_TRUE(result && result->minimum_fits);
         const auto& bounds = result->bounds;
         REQUIRE_TRUE(SetWindowPos(window.get(), nullptr, bounds.left, bounds.top, bounds.right - bounds.left,

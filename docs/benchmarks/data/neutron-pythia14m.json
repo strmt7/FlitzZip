@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "benchmark_kind": "suzip_ram",
+  "benchmark_kind": "flzip_ram",
   "corpus": "Pythia14M",
   "mode": "Neutron star mode",
   "block_size_kib": 1024,
@@ -268,7 +268,7 @@
     }
   ],
   "comparison": {
-    "baseline": "https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/benchmarks/data/neutron-pythia14m-lazy-kernel-block-1024-2026-10-06.json",
+    "baseline": "https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/benchmarks/data/neutron-pythia14m-lazy-kernel-block-1024-2026-10-06.json",
     "baseline_sha256": "a8f3118946894f902ed1d691695825826e8db5b1c2765225a3ab281f7bf08e33",
     "result": "Every complete original file retained the same archive size in all three runs.",
     "limit": "Workspace allocation refactor; size and readback qualification, no comparative speed claim."

@@ -38,7 +38,7 @@ def fixture_record() -> dict:
             )
     return {
         "schema_version": 1,
-        "benchmark_kind": "suzip_ram",
+        "benchmark_kind": "flzip_ram",
         "source_commit": "a" * 40,
         "source_dirty": False,
         "binary_sha256": "b" * 64,
@@ -158,12 +158,12 @@ def receipt_fixture() -> dict:
     recipe.update(
         CMAKE_GENERATOR="Visual Studio 18 2026",
         CMAKE_GENERATOR_PLATFORM="x64",
-        SUPERZIP_ENABLE_HIP="ON",
-        SUPERZIP_HIP_ARCH="gfx1201",
-        SUPERZIP_PACKAGE_VERSION="0.8.0",
-        SUPERZIP_MSI_INSTALL_SCOPE="perMachine",
-        SUPERZIP_BUILD_GUI="ON",
-        SUPERZIP_BUILD_TESTS="ON",
+        FLITZZIP_ENABLE_HIP="ON",
+        FLITZZIP_HIP_ARCH="gfx1201",
+        FLITZZIP_PACKAGE_VERSION="0.8.0",
+        FLITZZIP_MSI_INSTALL_SCOPE="perMachine",
+        FLITZZIP_BUILD_GUI="ON",
+        FLITZZIP_BUILD_TESTS="ON",
         configuration="Release",
         configured_flags_sha256="f" * 64,
     )
@@ -205,10 +205,10 @@ def receipt_fixture() -> dict:
             },
         },
         "outputs_sha256": {
-            "build/Release/superzip_cli.exe": "b" * 64,
-            "build/Release/SuperZip.exe": "a" * 64,
+            "build/Release/flitzzip_cli.exe": "b" * 64,
+            "build/Release/FlitzZip.exe": "a" * 64,
             "build/Release/fixture.dll": "c" * 64,
-            "build/superzip-runtime-dependencies.json": "a" * 64,
+            "build/flitzzip-runtime-dependencies.json": "a" * 64,
         },
     }
     record.update(
@@ -258,6 +258,10 @@ class BenchmarkGraphTests(unittest.TestCase):
         identity, rows = graph.summarize_records([record], False)
         expected = (root / "resources/benchmarks/fixtures/native-v1.svg").read_bytes()
         self.assertEqual(graph.render_svg(identity, rows), expected)
+        original = copy.deepcopy(record)
+        with self.assertRaises(ValueError):
+            graph.validate_receipt(record["native_build_receipt"])
+        self.assertEqual(record, original)
 
     # Purpose: Reject inconsistent, private, incomplete and CPU-fallback receipt-backed publication metadata.
     # Inputs: Independently mutated exported fixture receipts.
@@ -267,10 +271,10 @@ class BenchmarkGraphTests(unittest.TestCase):
         graph.validate_record(record, False)
         for section, key, value in (
             ("inputs", "inputs_sha256", "0" * 64),
-            ("recipe", "SUPERZIP_ENABLE_HIP", "OFF"),
+            ("recipe", "FLITZZIP_ENABLE_HIP", "OFF"),
             ("recipe", "configuration", "Debug"),
             ("toolchain", "host_compiler_version", "C:/private/compiler"),
-            ("outputs_sha256", "build/Release/superzip_cli.exe", "0" * 64),
+            ("outputs_sha256", "build/Release/flitzzip_cli.exe", "0" * 64),
         ):
             changed = copy.deepcopy(record)
             changed["native_build_receipt"][section][key] = value

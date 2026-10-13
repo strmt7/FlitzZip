@@ -1,6 +1,6 @@
 #include "app/main_window_impl.hpp"
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 // Purpose: Format a queued row's type without I/O; inputs: queued path; outputs: cached metadata plus extension label.
 std::wstring MainWindow::queue_entry_type_text(const std::filesystem::path& path) const {
@@ -29,4 +29,4 @@ std::vector<std::filesystem::path> MainWindow::selected_extract_archive_paths(co
     return queue_archive_candidates(state.queued_paths, state.queued_enabled, queue_metadata_);
 }
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

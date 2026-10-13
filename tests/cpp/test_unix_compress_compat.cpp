@@ -68,7 +68,7 @@ std::string mixed_payload(std::size_t bytes) {
 
 }  // namespace
 
-// Purpose: Verify a minimal handcrafted `.Z` stream decodes without relying on SuperZip's encoder.
+// Purpose: Verify a minimal handcrafted `.Z` stream decodes without relying on FlitzZip's encoder.
 // Inputs: A standard block-mode header followed by one 9-bit literal `A` code.
 // Outputs: Throws if extraction rejects the fixture or restores wrong bytes.
 TEST_CASE(unix_compress_extracts_handcrafted_single_literal) {
@@ -77,10 +77,10 @@ TEST_CASE(unix_compress_extracts_handcrafted_single_literal) {
     write_binary_file(archive, {0x1FU, 0x9DU, 0x90U, 0x41U, 0x00U});
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_unix_compress_file(archive, output, false);
+    const auto stats = flitzzip::extract_unix_compress_file(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "single"), "A");
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::UnixCompress);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::UnixCompress);
 }
 
 // Purpose: Preserve Unicode host filenames in Unix Compress extraction independently of its encoder.
@@ -93,12 +93,12 @@ TEST_CASE(unix_compress_unicode_archive_filename_extracts) {
     archive += ".Z";
     write_binary_file(archive, {0x1FU, 0x9DU, 0x90U, 0x41U, 0x00U});
     const auto output = root / "out";
-    (void)superzip::extract_unix_compress_file(archive, output, false);
+    (void)flitzzip::extract_unix_compress_file(archive, output, false);
     REQUIRE_EQ(read_text_file(output / filename), "A");
     bool refused = false;
     try {
-        (void)superzip::extract_unix_compress_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_unix_compress_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         refused = true;
     }
     REQUIRE_TRUE(refused);
@@ -114,7 +114,7 @@ TEST_CASE(unix_compress_extracts_non_block_single_literal) {
     write_binary_file(archive, {0x1FU, 0x9DU, 0x09U, 0x41U, 0x00U});
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_unix_compress_file(archive, output, false);
+    const auto stats = flitzzip::extract_unix_compress_file(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "single"), "A");
 }
@@ -128,11 +128,11 @@ TEST_CASE(unix_compress_roundtrip_empty_file) {
     write_text_file(input, "");
 
     const auto archive = root / "empty.bin.Z";
-    const auto compress_stats = superzip::compress_unix_compress_file(input, archive);
+    const auto compress_stats = flitzzip::compress_unix_compress_file(input, archive);
     REQUIRE_EQ(compress_stats.entries, static_cast<std::uint64_t>(1));
 
     const auto output = root / "out";
-    const auto extract_stats = superzip::extract_unix_compress_file(archive, output, false);
+    const auto extract_stats = flitzzip::extract_unix_compress_file(archive, output, false);
     REQUIRE_EQ(extract_stats.output_bytes, static_cast<std::uint64_t>(0));
     REQUIRE_EQ(read_text_file(output / "empty.bin"), "");
 }
@@ -147,13 +147,13 @@ TEST_CASE(unix_compress_roundtrip_with_dictionary_growth) {
     write_text_file(input, payload);
 
     const auto archive = root / "payload.bin.Z";
-    const auto compress_stats = superzip::compress_unix_compress_file(input, archive);
+    const auto compress_stats = flitzzip::compress_unix_compress_file(input, archive);
     REQUIRE_EQ(compress_stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_TRUE(compress_stats.output_bytes > 3U);
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::UnixCompress);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::UnixCompress);
 
     const auto output = root / "out";
-    const auto extract_stats = superzip::extract_unix_compress_file(archive, output, false);
+    const auto extract_stats = flitzzip::extract_unix_compress_file(archive, output, false);
     REQUIRE_EQ(extract_stats.output_bytes, static_cast<std::uint64_t>(payload.size()));
     REQUIRE_EQ(read_text_file(output / "payload.bin"), payload);
 }
@@ -170,8 +170,8 @@ TEST_CASE(unix_compress_rejects_multiple_sources) {
 
     bool rejected = false;
     try {
-        (void)superzip::compress_unix_compress({first, second}, root / "multi.Z");
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::compress_unix_compress({first, second}, root / "multi.Z");
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -185,7 +185,7 @@ TEST_CASE(unix_compress_refuses_overwrite_by_default) {
     const auto input = root / "sample.txt";
     write_text_file(input, "new payload");
     const auto archive = root / "sample.txt.Z";
-    (void)superzip::compress_unix_compress_file(input, archive);
+    (void)flitzzip::compress_unix_compress_file(input, archive);
 
     const auto output = root / "out";
     std::filesystem::create_directories(output);
@@ -193,8 +193,8 @@ TEST_CASE(unix_compress_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_unix_compress_file(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_unix_compress_file(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -212,8 +212,8 @@ TEST_CASE(unix_compress_rejects_bad_magic_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_unix_compress_file(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_unix_compress_file(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -231,8 +231,8 @@ TEST_CASE(unix_compress_rejects_reserved_flags_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_unix_compress_file(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_unix_compress_file(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -250,8 +250,8 @@ TEST_CASE(unix_compress_rejects_bad_maxbits_without_output) {
     const auto output = root / "out";
     bool rejected = false;
     try {
-        (void)superzip::extract_unix_compress_file(archive, output, false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_unix_compress_file(archive, output, false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

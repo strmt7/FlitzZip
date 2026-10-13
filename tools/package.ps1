@@ -14,8 +14,8 @@ $stage = Join-Path $repo "out\install-$Configuration"
 . (Join-Path $PSScriptRoot "cmake_toolchain.ps1")
 . (Join-Path $PSScriptRoot "package_runtime.ps1")
 
-$PackageVersion = Resolve-SuperZipPackageVersion -RepoRoot $repo -RequestedVersion $PackageVersion
-$packageBase = Get-SuperZipPackageBase -PackageVersion $PackageVersion
+$PackageVersion = Resolve-FlitzZipPackageVersion -RepoRoot $repo -RequestedVersion $PackageVersion
+$packageBase = Get-FlitzZipPackageBase -PackageVersion $PackageVersion
 $package = Join-Path $repo "out\$packageBase-portable.zip"
 $wixUiExtension = "WixToolset.UI.wixext/7.0.0"
 
@@ -39,10 +39,10 @@ function Find-Wix {
 # Outputs: Accepts the configured EULA for the current user profile or throws when the repository variable is absent.
 function Confirm-WixEula {
     param([string]$WixPath)
-    if ($env:SUPERZIP_ACCEPT_WIX_OSMF_EULA -ne "wix7") {
-        throw "MSI packaging with WiX v7 requires SUPERZIP_ACCEPT_WIX_OSMF_EULA=wix7 after accepting the WiX OSMF EULA."
+    if ($env:FLITZZIP_ACCEPT_WIX_OSMF_EULA -ne "wix7") {
+        throw "MSI packaging with WiX v7 requires FLITZZIP_ACCEPT_WIX_OSMF_EULA=wix7 after accepting the WiX OSMF EULA."
     }
-    & $WixPath eula accept $env:SUPERZIP_ACCEPT_WIX_OSMF_EULA
+    & $WixPath eula accept $env:FLITZZIP_ACCEPT_WIX_OSMF_EULA
     if ($LASTEXITCODE -ne 0) {
         throw "WiX EULA acceptance command failed."
     }
@@ -107,11 +107,11 @@ if (-not (Test-Path -LiteralPath $cachePath)) {
     throw "CMake cache not found. Run tools/build.ps1 first."
 }
 $cacheLines = Get-Content -LiteralPath $cachePath
-Assert-SuperZipPackageVersionMatchesBuild -BuildRoot $build -PackageVersion $PackageVersion
-$hipEntry = $cacheLines | Where-Object { $_ -match '^SUPERZIP_ENABLE_HIP:[^=]+=.+$' } | Select-Object -First 1
+Assert-FlitzZipPackageVersionMatchesBuild -BuildRoot $build -PackageVersion $PackageVersion
+$hipEntry = $cacheLines | Where-Object { $_ -match '^FLITZZIP_ENABLE_HIP:[^=]+=.+$' } | Select-Object -First 1
 $hipEnabled = $hipEntry -match '=ON$'
 if (-not $hipEnabled -and -not $AllowCpuValidationPackage) {
-    throw "Refusing to package a CPU-only SuperZip build. Rebuild with AMD HIP enabled, or pass -AllowCpuValidationPackage only for internal CI validation artifacts that will not be released."
+    throw "Refusing to package a CPU-only FlitzZip build. Rebuild with AMD HIP enabled, or pass -AllowCpuValidationPackage only for internal CI validation artifacts that will not be released."
 }
 
 foreach ($directory in @($repo, (Join-Path $repo 'out'), $stage)) {
@@ -132,14 +132,14 @@ $cmake = Find-CMake -RepoRoot $repo
 & $cmake --install $build --config $Configuration --prefix $stage
 if ($LASTEXITCODE -ne 0) { throw "Package staging failed: $LASTEXITCODE" }
 & (Join-Path $PSScriptRoot 'verify_license_notices.ps1') -PackageRoot $stage
-Assert-SuperZipPackagedRuntime -PackageRoot $stage -HipEnabled $hipEnabled
+Assert-FlitzZipPackagedRuntime -PackageRoot $stage -HipEnabled $hipEnabled
 
-$cli = Join-Path $stage "bin\superzip_cli.exe"
+$cli = Join-Path $stage "bin\flitzzip_cli.exe"
 if (-not (Test-Path -LiteralPath $cli)) {
     throw "Staged CLI was not produced: $cli"
 }
 if ($hipEnabled) {
-    $manifest = Join-Path $stage "superzip-runtime-dependencies.json"
+    $manifest = Join-Path $stage "flitzzip-runtime-dependencies.json"
     if (-not (Test-Path -LiteralPath $manifest)) {
         throw "HIP runtime dependency manifest was not staged: $manifest"
     }
@@ -148,8 +148,8 @@ if ($hipEnabled) {
     }
     $dependencyOutput = & $cli dependency-check 2>&1
     $dependencyExit = $LASTEXITCODE
-    $dependencyOutput | Set-Content -LiteralPath (Join-Path $stage "superzip-dependency-check.txt")
-    Assert-SuperZipHipDependencyState -Output $dependencyOutput -ExitCode $dependencyExit
+    $dependencyOutput | Set-Content -LiteralPath (Join-Path $stage "flitzzip-dependency-check.txt")
+    Assert-FlitzZipHipDependencyState -Output $dependencyOutput -ExitCode $dependencyExit
 }
 
 if (Test-Path $package) {
@@ -177,9 +177,9 @@ if ($CreateMsi) {
     if (-not (Test-Path $msi)) {
         throw "Expected MSI was not produced: $msi"
     }
-    $expectedProductVersion = Read-SuperZipCPackValue -BuildRoot $build -Name "CPACK_PACKAGE_VERSION"
-    $expectedProductCode = Format-MsiGuid -GuidText (Read-SuperZipCPackValue -BuildRoot $build -Name "CPACK_WIX_PRODUCT_GUID")
-    $expectedUpgradeCode = Format-MsiGuid -GuidText (Read-SuperZipCPackValue -BuildRoot $build -Name "CPACK_WIX_UPGRADE_GUID")
+    $expectedProductVersion = Read-FlitzZipCPackValue -BuildRoot $build -Name "CPACK_PACKAGE_VERSION"
+    $expectedProductCode = Format-MsiGuid -GuidText (Read-FlitzZipCPackValue -BuildRoot $build -Name "CPACK_WIX_PRODUCT_GUID")
+    $expectedUpgradeCode = Format-MsiGuid -GuidText (Read-FlitzZipCPackValue -BuildRoot $build -Name "CPACK_WIX_UPGRADE_GUID")
     $manufacturer = Read-MsiProperty -MsiPath $msi -Name "Manufacturer"
     if ($manufacturer -ne "Efstratios Mitridis") {
         throw "MSI Manufacturer was '$manufacturer'; expected 'Efstratios Mitridis'."

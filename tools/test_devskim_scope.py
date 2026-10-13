@@ -22,14 +22,16 @@ class DevSkimScopeTests(unittest.TestCase):
         self.data = self.root / scope.REPORT_DIRECTORY
         self.data.mkdir(parents=True)
 
-    # Purpose: Admit passive record roles independently of dates. Inputs: Three producer kinds. Outputs: Exact paths.
+    # Purpose: Admit current and historical passive report roles independently of dates.
+    # Inputs: Explicit native and comparison producer kinds. Outputs: Exact paths without any source exclusion.
     def test_report_roles_and_exact_directory_scope(self):
-        for index, kind in enumerate(sorted(scope.REPORT_KINDS)):
+        kinds = ("flzip_ram", "suzip_ram", "archive_application_comparison", "format_size_matrix")
+        for index, kind in enumerate(kinds):
             (self.data / f"report-{index}.json").write_text(
                 json.dumps({"schema_version": 1, "benchmark_kind": kind, "cases": []}), encoding="utf-8"
             )
         paths = scope.validate_report_directory(self.root)
-        self.assertEqual(len(paths), 3)
+        self.assertEqual(len(paths), 4)
         globs = scope.ignore_globs(self.root)
         self.assertEqual(globs, ["**/.git/**", self.data.as_posix() + "/**"])
         for glob in globs:
@@ -55,7 +57,7 @@ class DevSkimScopeTests(unittest.TestCase):
     # Purpose: Exercise the pinned scanner's actual matcher, including checkout punctuation and neighboring code.
     # Inputs: Explicit provisioned DevSkim executable and controlled fixture bytes.
     # Outputs: Complete retained finding paths.
-    @unittest.skipUnless(os.environ.get("SUPERZIP_DEVSKIM"), "Actual scanner requires the complete pinned tool")
+    @unittest.skipUnless(os.environ.get("FLITZZIP_DEVSKIM"), "Actual scanner requires the complete pinned tool")
     def test_actual_scanner_directory_boundary(self):
         root = self.root / "checkout [scope], (owned)"
         root.mkdir()
@@ -78,7 +80,7 @@ class DevSkimScopeTests(unittest.TestCase):
         report_path = root / scope.REPORT_DIRECTORY / "future/report.json"
         report_path.parent.mkdir(parents=True)
         report_path.write_text(
-            json.dumps({"schema_version": 1, "benchmark_kind": "suzip_ram", "runs": [], "source_sha256": digest}),
+            json.dumps({"schema_version": 1, "benchmark_kind": "flzip_ram", "runs": [], "source_sha256": digest}),
             encoding="utf-8",
         )
         options = self.root / "scope.json"
@@ -86,7 +88,7 @@ class DevSkimScopeTests(unittest.TestCase):
         for scoped in (False, True):
             output = self.root / ("scoped.sarif" if scoped else "control.sarif")
             arguments = [
-                os.environ["SUPERZIP_DEVSKIM"],
+                os.environ["FLITZZIP_DEVSKIM"],
                 "analyze",
                 "-I",
                 str(root),
@@ -121,7 +123,7 @@ class DevSkimScopeTests(unittest.TestCase):
             ("helper.py", "print('source')"),
             ("source-pin.json", '{"schema_version":1,"download_url":"https://example.invalid/source"}'),
             ("fixture.json", '{"schema_version":1,"benchmark_kind":"test_fixture","cases":[]}'),
-            ("source-pin.json", '{"schema_version":1,"benchmark_kind":"suzip_ram","runs":[],"download_url":"x"}'),
+            ("source-pin.json", '{"schema_version":1,"benchmark_kind":"flzip_ram","runs":[],"download_url":"x"}'),
         ):
             path = self.data / name
             path.write_text(payload, encoding="utf-8")
@@ -137,7 +139,7 @@ class DevSkimScopeTests(unittest.TestCase):
             path.write_text(payload, encoding="utf-8")
             with self.assertRaises(ValueError):
                 scope.validate_report_directory(self.root)
-        path.write_text('{"schema_version":1,"benchmark_kind":"suzip_ram","runs":[]}', encoding="utf-8")
+        path.write_text('{"schema_version":1,"benchmark_kind":"flzip_ram","runs":[]}', encoding="utf-8")
         with patch.object(scope, "MAX_BYTES", 1), self.assertRaises(ValueError):
             scope.validate_report_directory(self.root)
         with patch.object(scope, "MAX_ENTRIES", 0), self.assertRaises(ValueError):

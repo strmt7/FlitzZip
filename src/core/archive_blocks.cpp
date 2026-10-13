@@ -18,7 +18,7 @@
 #include <string>
 #include <utility>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 struct EncodedBlockWork {
@@ -31,7 +31,7 @@ struct EncodedBlockWork {
 // Outputs: Returns normally for bounded settings; throws `ArchiveError` otherwise.
 void validate_encode_options(const ArchiveCodecOptions& options) {
     if (options.block_size < kMinArchiveBlockBytes || options.block_size > kMaxArchiveBlockBytes) {
-        throw ArchiveError("codec block size is outside SuperZip resource limits");
+        throw ArchiveError("codec block size is outside FlitzZip resource limits");
     }
     if (options.compression_level < kMinCompressionLevel || options.compression_level > kMaxCompressionLevel) {
         throw ArchiveError("codec compression level must be between 1 and 9");
@@ -43,7 +43,7 @@ void validate_encode_options(const ArchiveCodecOptions& options) {
 // Outputs: Returns normally for bounded settings; throws `ArchiveError` otherwise.
 void validate_decode_options(const ArchiveCodecOptions& options) {
     if (options.block_size < kMinArchiveBlockBytes || options.block_size > kMaxArchiveBlockBytes) {
-        throw ArchiveError("codec block size is outside SuperZip resource limits");
+        throw ArchiveError("codec block size is outside FlitzZip resource limits");
     }
 }
 
@@ -52,7 +52,7 @@ void validate_decode_options(const ArchiveCodecOptions& options) {
 // Outputs: Returns normally while bounded; throws `ArchiveError` before large allocations.
 void reject_oversized_codec_span(std::size_t size, const char* label) {
     if (size > kMaxArchiveChunkBytes) {
-        throw ArchiveError(std::string(label) + " exceeds SuperZip codec resource limit");
+        throw ArchiveError(std::string(label) + " exceeds FlitzZip codec resource limit");
     }
 }
 
@@ -140,17 +140,36 @@ void inflate_deflate_block(std::span<const std::byte> payload, std::uint64_t enc
     }
 }
 
+struct ZstdDecodeContextDeleter {
+    // Purpose: Release a worker's decoder through the same pinned runtime that created it.
+    // Inputs: A live decoder context whose worker has finished all synchronous reads.
+    // Outputs: Frees its workspace without throwing during successful or exceptional teardown.
+    void operator()(ZstdDecompressionStream* context) const noexcept {
+        zstd_runtime().free_decompression_stream(context);
+    }
+};
+
+using ZstdDecodeContext = std::unique_ptr<ZstdDecompressionStream, ZstdDecodeContextDeleter>;
+
 // Purpose: Decode exactly one bounded version-six CPU frame without accepting trailing or size-lying input.
-// Inputs: An untrusted encoded block payload and its already bounded exact output span.
+// Inputs: Untrusted payload, exact output span and an exclusive lazily initialized worker decoder.
 // Outputs: Restores all bytes or throws `ArchiveError` before output publication.
-void materialize_zstd_block_cpu(std::span<const std::byte> encoded, std::span<std::byte> output) {
+void materialize_zstd_block_cpu(std::span<const std::byte> encoded, std::span<std::byte> output,
+                                ZstdDecodeContext& context) {
     const auto& zstd = zstd_runtime();
     const auto first_frame = zstd.first_frame_size(encoded.data(), encoded.size());
     if (zstd.is_error(first_frame) || first_frame != encoded.size() ||
         zstd.frame_content_size(encoded.data(), encoded.size()) != output.size()) {
         throw ArchiveError("Zstandard native block frame metadata is invalid");
     }
-    const auto written = zstd.decompress_block(output.data(), output.size(), encoded.data(), encoded.size());
+    if (!context) {
+        context.reset(zstd.create_decompression_stream());
+        if (!context) {
+            throw ArchiveError("Zstandard native decompression context allocation failed");
+        }
+    }
+    const auto written =
+        zstd.decompress_block_with_context(context.get(), output.data(), output.size(), encoded.data(), encoded.size());
     if (zstd.is_error(written) || written != output.size()) {
         throw ArchiveError("Zstandard native block failed to decompress");
     }
@@ -212,7 +231,7 @@ std::uint32_t read_prefix_bits(std::span<const std::byte> stream, std::size_t& b
     return value;
 }
 
-// Purpose: Decode one byte from SuperZip's static GPU prefix code.
+// Purpose: Decode one byte from FlitzZip's static GPU prefix code.
 // Inputs: `stream`, `bit_pos`, and `limit_bits` describe one encoded segment.
 // Outputs: Returns one decoded byte; throws on malformed group payloads.
 std::byte decode_prefix_byte_cpu(std::span<const std::byte> stream, std::size_t& bit_pos, std::size_t limit_bits) {
@@ -232,7 +251,7 @@ std::byte decode_prefix_byte_cpu(std::span<const std::byte> stream, std::size_t&
     return static_cast<std::byte>(84U + value);
 }
 
-// Purpose: Decode one byte from SuperZip's adaptive GPU prefix code.
+// Purpose: Decode one byte from FlitzZip's adaptive GPU prefix code.
 // Inputs: `codebook`, `stream`, `bit_pos`, and `limit_bits` describe one encoded segment.
 // Outputs: Returns one decoded byte; throws on malformed group payloads.
 std::byte decode_adaptive_prefix_byte_cpu(std::span<const std::byte> codebook, std::span<const std::byte> stream,
@@ -526,6 +545,7 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
                             std::span<const std::size_t> offsets, std::span<std::byte> output,
                             std::uint32_t worker_count) {
     run_parallel_ranges(blocks.size(), worker_count, [&](std::size_t begin, std::size_t end) {
+        ZstdDecodeContext context;
         for (std::size_t i = begin; i < end; ++i) {
             const auto& block = blocks[i];
             const auto len = static_cast<std::size_t>(block.uncompressed_len);
@@ -540,7 +560,7 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
             } else if (block.kind == BlockKind::CpuZstd) {
                 materialize_zstd_block_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                            static_cast<std::size_t>(block.encoded_len)),
-                                           output.subspan(out_pos, len));
+                                           output.subspan(out_pos, len), context);
             } else if (block.kind == BlockKind::Pattern) {
                 materialize_pattern_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                         static_cast<std::size_t>(block.encoded_len)),
@@ -598,7 +618,7 @@ HostPipelineWorkspace cpu_encode_workspace_estimate(std::uint64_t chunk_size, co
     validate_encode_options(options);
     if (chunk_size == 0 || chunk_size > kMaxArchiveChunkBytes || aggregate_workers == 0 ||
         aggregate_workers > kMaxArchiveWorkers) {
-        throw ArchiveError("CPU workspace estimate is outside SuperZip resource limits");
+        throw ArchiveError("CPU workspace estimate is outside FlitzZip resource limits");
     }
     const auto blocks = (chunk_size + options.block_size - 1U) / options.block_size;
     const auto largest_block = static_cast<std::size_t>(std::min<std::uint64_t>(chunk_size, options.block_size));
@@ -664,7 +684,7 @@ std::uint64_t count_decode_block_windows(std::span<const BlockDescriptor> blocks
     return count;
 }
 
-// Purpose: Report whether a SUZIP block kind reserves bytes in the encoded payload window.
+// Purpose: Report whether a FLZIP block kind reserves bytes in the encoded payload window.
 // Inputs: `kind` is a native archive block encoding tag.
 // Outputs: Returns true for raw, CPU-compressed, and GPU-compressed payload blocks.
 bool block_kind_has_payload(BlockKind kind) {
@@ -798,7 +818,7 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
     return out;
 }
 
-// Purpose: Report whether a decoded SUZIP block table needs CPU-only codec handling.
+// Purpose: Report whether a decoded FLZIP block table needs CPU-only codec handling.
 // Inputs: `blocks` is a validated or soon-to-be-validated block descriptor table.
 // Outputs: Returns true when any block uses Deflate or Zstandard.
 bool block_table_contains_cpu_only(std::span<const BlockDescriptor> blocks) {
@@ -807,7 +827,7 @@ bool block_table_contains_cpu_only(std::span<const BlockDescriptor> blocks) {
     });
 }
 
-// Purpose: Decode only CPU-compressed blocks in a SUZIP chunk into an existing output buffer.
+// Purpose: Decode only CPU-compressed blocks in a FLZIP chunk into an existing output buffer.
 // Inputs: `payload`, `blocks`, `output`, and `options` describe one archive chunk and CPU decode settings.
 // Outputs: Mutates `output` for Deflate/Zstandard blocks; throws on malformed metadata or codec failures.
 void decode_cpu_only_blocks_cpu(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
@@ -816,26 +836,27 @@ void decode_cpu_only_blocks_cpu(std::span<const std::byte> payload, std::span<co
     reject_oversized_codec_span(payload.size(), "codec payload");
     reject_oversized_codec_span(output.size(), "codec output");
     if (blocks.size() > kMaxBlocksPerEntry) {
-        throw ArchiveError("codec block table exceeds SuperZip resource limit");
+        throw ArchiveError("codec block table exceeds FlitzZip resource limit");
     }
     const auto offsets = validate_decode_blocks(payload, blocks, output);
     run_parallel_ranges(blocks.size(), options.worker_count, [&](std::size_t begin, std::size_t end) {
+        ZstdDecodeContext context;
         for (std::size_t i = begin; i < end; ++i) {
             const auto& block = blocks[i];
             if (block.kind == BlockKind::Deflate) {
                 inflate_deflate_block(payload, block.encoded_offset, block.encoded_len,
                                       output.subspan(offsets[i], static_cast<std::size_t>(block.uncompressed_len)));
             } else if (block.kind == BlockKind::CpuZstd) {
-                materialize_zstd_block_cpu(
-                    payload.subspan(static_cast<std::size_t>(block.encoded_offset),
-                                    static_cast<std::size_t>(block.encoded_len)),
-                    output.subspan(offsets[i], static_cast<std::size_t>(block.uncompressed_len)));
+                materialize_zstd_block_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
+                                                           static_cast<std::size_t>(block.encoded_len)),
+                                           output.subspan(offsets[i], static_cast<std::size_t>(block.uncompressed_len)),
+                                           context);
             }
         }
     });
 }
 
-// Purpose: Decode one SUZIP chunk on the CPU.
+// Purpose: Decode one FLZIP chunk on the CPU.
 // Inputs: `payload`, `blocks`, `output`, and `options` describe the encoded chunk and CPU decode settings.
 // Outputs: Fills `output` with decoded bytes; throws on malformed metadata or unsupported block shapes.
 void decode_chunk_cpu(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
@@ -844,10 +865,10 @@ void decode_chunk_cpu(std::span<const std::byte> payload, std::span<const BlockD
     reject_oversized_codec_span(payload.size(), "codec payload");
     reject_oversized_codec_span(output.size(), "codec output");
     if (blocks.size() > kMaxBlocksPerEntry) {
-        throw ArchiveError("codec block table exceeds SuperZip resource limit");
+        throw ArchiveError("codec block table exceeds FlitzZip resource limit");
     }
     const auto offsets = validate_decode_blocks(payload, blocks, output);
     materialize_blocks_cpu(payload, blocks, offsets, output, options.worker_count);
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

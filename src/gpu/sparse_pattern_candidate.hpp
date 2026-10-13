@@ -6,7 +6,7 @@
 #include <span>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 struct GpuTelemetry;
 
@@ -26,4 +26,4 @@ SparseReplacements select_replacements(std::span<const std::byte> input, const s
 EncodedChunk apply_replacements(EncodedChunk baseline, const SparseReplacements& replacements);
 
 }  // namespace sparse_pattern
-}  // namespace superzip
+}  // namespace flitzzip

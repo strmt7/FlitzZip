@@ -22,10 +22,10 @@ function Assert-CiContractPlan {
 }
 
 Assert-CiContractPlan -Path 'tools/cocoindex_agent_search.py' -Required @('agent-context-contracts')
-Assert-CiContractPlan -Path 'mcp/superzip_mcp.py' -Required @('mcp-python-compile', 'mcp-bounded-child-tests')
+Assert-CiContractPlan -Path 'mcp/flitzzip_mcp.py' -Required @('mcp-python-compile', 'mcp-bounded-child-tests')
 Assert-CiContractPlan -Path 'tools/test_native_build_receipt.py' -Required @('native-build-receipt-tests')
 Assert-CiContractPlan -Path 'tools/build.ps1' -Required @('native-build-receipt-tests', 'rocm-toolchain-tests')
-Assert-CiContractPlan -Path 'cmake/SuperZipPrecompiledHeaders.cmake' -Required @('precompiled-header-tests')
+Assert-CiContractPlan -Path 'cmake/FlitzZipPrecompiledHeaders.cmake' -Required @('precompiled-header-tests')
 Assert-CiContractPlan -Path 'tests/cmake/precompiled_headers/contract.c' -Required @('precompiled-header-tests')
 Assert-CiContractPlan -Path 'src/core/checksum.cpp' -Required @()
 Assert-CiContractPlan -Path 'tools/verify_changes.ps1' -Required @('verification-runner-tests')
@@ -51,7 +51,7 @@ Assert-CiContractPlan -Path '.github/workflows/security-code-scanning.yml' -Requ
 
 # Load the actual production comparison helper without executing any selected command.
 . $runner -ChangedPath 'README.md' -PlanOnly | Out-Null
-$fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("superzip-ci-ancestry-" + [guid]::NewGuid().ToString('N'))
+$fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("flitzzip-ci-ancestry-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 try {
     & git -C $fixtureRoot init --quiet
@@ -61,26 +61,26 @@ try {
     & git -C $fixtureRoot add SECURITY.md
     & git -C $fixtureRoot commit --quiet -m 'Default branch fixture'
     & git -C $fixtureRoot update-ref refs/remotes/origin/main HEAD
-    $empty = @(Get-SuperZipInitialPushPath -Root $fixtureRoot -DefaultBranch main)
+    $empty = @(Get-FlitzZipInitialPushPath -Root $fixtureRoot -DefaultBranch main)
     if ($empty.Count) { throw 'An unchanged initial branch selected inherited files.' }
     New-Item -ItemType Directory -Path (Join-Path $fixtureRoot 'tools/requirements') | Out-Null
     Set-Content -LiteralPath (Join-Path $fixtureRoot 'tools/requirements/crawl4ai.txt') -Value 'fixture==1.0'
     & git -C $fixtureRoot add tools/requirements/crawl4ai.txt
     & git -C $fixtureRoot commit --quiet -m 'Dependency change fixture'
-    $paths = @(Get-SuperZipInitialPushPath -Root $fixtureRoot -DefaultBranch main)
+    $paths = @(Get-FlitzZipInitialPushPath -Root $fixtureRoot -DefaultBranch main)
     if ($paths.Count -ne 1 -or $paths[0] -ne 'tools/requirements/crawl4ai.txt') {
         throw 'Initial-push comparison lost the change or admitted inherited files.'
     }
     foreach ($branch in @('missing', 'main:invalid', '-invalid', '')) {
         $rejected = $false
-        try { Get-SuperZipInitialPushPath -Root $fixtureRoot -DefaultBranch $branch 2>$null | Out-Null } catch { $rejected = $true }
+        try { Get-FlitzZipInitialPushPath -Root $fixtureRoot -DefaultBranch $branch 2>$null | Out-Null } catch { $rejected = $true }
         if (-not $rejected) { throw 'Initial-push comparison admitted missing or invalid ancestry.' }
     }
 } finally {
     $resolvedFixture = [IO.Path]::GetFullPath($fixtureRoot)
     $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
     if (-not $resolvedFixture.StartsWith($temporaryRoot, [StringComparison]::OrdinalIgnoreCase) -or
-        [IO.Path]::GetFileName($resolvedFixture) -notlike 'superzip-ci-ancestry-*') { throw 'Unsafe fixture cleanup path.' }
+        [IO.Path]::GetFileName($resolvedFixture) -notlike 'flitzzip-ci-ancestry-*') { throw 'Unsafe fixture cleanup path.' }
     Remove-Item -LiteralPath $resolvedFixture -Recurse -Force
 }
 Write-Output 'CI component projection inclusion/exclusion contracts passed.'

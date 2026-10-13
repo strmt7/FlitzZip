@@ -31,7 +31,7 @@
 #include <pdh.h>
 #include <pdhmsg.h>
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 class QueueDropTarget;
 
@@ -49,7 +49,7 @@ class MainWindow {
     // Outputs: Blocks until any active worker finishes, then frees owned resources.
     ~MainWindow();
 
-    // Purpose: Register and show the native Win32 SuperZip window.
+    // Purpose: Register and show the native Win32 FlitzZip window.
     // Inputs: `instance` is the process HINSTANCE and `show_command` is the Windows show mode from `wWinMain`.
     // Outputs: Runs the message loop and returns the process exit code.
     int run(HINSTANCE instance, int show_command);
@@ -61,15 +61,15 @@ class MainWindow {
     // failure.
     void fit_window_to_work_area(const RECT* suggested = nullptr);
 
-    using QueueLayout = superzip::app::QueueLayout;
-    using QueueColumnLayout = superzip::app::QueueColumnLayout;
-    using HistoryColumnLayout = superzip::app::HistoryColumnLayout;
-    using ExtractJobRequest = superzip::app::ExtractJobRequest;
-    using ProcessIoRates = superzip::app::ProcessIoRates;
-    using HistoryLayout = superzip::app::HistoryLayout;
-    using CompressLayout = superzip::app::CompressLayout;
-    using ExtractLayout = superzip::app::ExtractLayout;
-    using SettingsLayout = superzip::app::SettingsLayout;
+    using QueueLayout = flitzzip::app::QueueLayout;
+    using QueueColumnLayout = flitzzip::app::QueueColumnLayout;
+    using HistoryColumnLayout = flitzzip::app::HistoryColumnLayout;
+    using ExtractJobRequest = flitzzip::app::ExtractJobRequest;
+    using ProcessIoRates = flitzzip::app::ProcessIoRates;
+    using HistoryLayout = flitzzip::app::HistoryLayout;
+    using CompressLayout = flitzzip::app::CompressLayout;
+    using ExtractLayout = flitzzip::app::ExtractLayout;
+    using SettingsLayout = flitzzip::app::SettingsLayout;
 
     enum class DeferredMouseCommand {
         None,
@@ -205,7 +205,7 @@ class MainWindow {
 
     // Purpose: Return whether a client point is inside the active Queue table drop target.
     // Inputs: `point` is a client-coordinate point.
-    // Outputs: Returns true only on the Queue page, with no SuperZip modal active, and inside the Queue table.
+    // Outputs: Returns true only on the Queue page, with no FlitzZip modal active, and inside the Queue table.
     [[nodiscard]] bool queue_drop_target_contains(POINT point);
 
     // Purpose: Initialize drag/drop, performance sampling, and smoke timers during window creation.
@@ -280,7 +280,7 @@ class MainWindow {
     // Outputs: Renders a compact tooltip above the Queue table without affecting layout.
     void draw_text_tooltip(HDC dc);
 
-    // Purpose: Draw the SuperZip-owned extraction overwrite confirmation modal.
+    // Purpose: Draw the FlitzZip-owned extraction overwrite confirmation modal.
     // Inputs: `dc` is the target, `rect` is the full client area, and `state` contains modal text.
     // Outputs: Renders no pixels unless the overwrite confirmation is active.
     void draw_extract_overwrite_prompt(HDC dc, const RECT& rect, const UiState& state);
@@ -295,7 +295,7 @@ class MainWindow {
     // Outputs: Returns two right-aligned button rectangles.
     [[nodiscard]] std::array<RECT, 2> extract_overwrite_prompt_buttons(const RECT& modal) const;
 
-    // Purpose: Draw the SuperZip-owned generated license-notice modal.
+    // Purpose: Draw the FlitzZip-owned generated license-notice modal.
     // Inputs: `dc` is the target, `rect` is the full client area, and `state` contains modal visibility.
     // Outputs: Renders no pixels unless the license-notice dialog is active.
     void draw_license_notices_dialog(HDC dc, const RECT& rect, const UiState& state);
@@ -315,9 +315,9 @@ class MainWindow {
     // Outputs: Returns a right-aligned command rectangle.
     [[nodiscard]] RECT license_notices_close_button_rect(const RECT& modal) const;
 
-    // Purpose: Return SuperZip/Other tab rectangles for the license-notice modal.
+    // Purpose: Return FlitzZip/Other tab rectangles for the license-notice modal.
     // Inputs: `modal` is the license-notice panel rectangle.
-    // Outputs: Returns tab rectangles in SuperZip, Other order.
+    // Outputs: Returns tab rectangles in FlitzZip, Other order.
     [[nodiscard]] std::array<RECT, 2> license_notices_tab_rects(const RECT& modal) const;
 
     // Purpose: Build the generated license-notice text for the active modal tab.
@@ -326,7 +326,7 @@ class MainWindow {
     [[nodiscard]] const std::wstring& license_notices_text();
 
     // Purpose: Change the active license-notice tab.
-    // Inputs: `tab_index` is zero for SuperZip and one for Other.
+    // Inputs: `tab_index` is zero for FlitzZip and one for Other.
     // Outputs: Updates tab and scroll state, then queues repaint when the tab changes.
     void select_license_notices_tab(int tab_index);
 
@@ -1172,7 +1172,7 @@ class MainWindow {
     // Outputs: Updates the destination directory and queues a repaint when selected.
     void choose_destination();
 
-    // Purpose: Open Windows Explorer with the current user's SuperZip log file selected.
+    // Purpose: Open Windows Explorer with the current user's FlitzZip log file selected.
     // Inputs: None; resolves and creates the per-user log file path.
     // Outputs: Launches Explorer or records a warning status when the shell action fails.
     void open_log_file_location();
@@ -1182,12 +1182,12 @@ class MainWindow {
     // Outputs: Queues a repaint with the next compression level.
     void cycle_compression_level();
 
-    // Purpose: Start a background SuperZip compression job from queued paths.
+    // Purpose: Start a background FlitzZip compression job from queued paths.
     // Inputs: None; reads queued paths from UI state.
     // Outputs: Launches a worker thread or no-ops when the queue is empty or another worker is running.
     void start_compress();
 
-    // Purpose: Start a background SuperZip extraction job from selected queued archives.
+    // Purpose: Start a background FlitzZip extraction job from selected queued archives.
     // Inputs: None; reads queued paths from UI state.
     // Outputs: Launches a worker thread or no-ops when the queue is empty or another worker is running.
     void start_extract();
@@ -1197,7 +1197,7 @@ class MainWindow {
     // Outputs: Returns true when the destination exists and is non-empty or cannot be proven empty.
     [[nodiscard]] bool extract_overwrite_prompt_needed(const std::filesystem::path& destination) const;
 
-    // Purpose: Open the SuperZip-owned overwrite confirmation modal for a pending extract job.
+    // Purpose: Open the FlitzZip-owned overwrite confirmation modal for a pending extract job.
     // Inputs: `request` is the fully captured job request to run if the user continues.
     // Outputs: Stores the pending job, updates modal UI state, clears progress, and queues repaint.
     void show_extract_overwrite_prompt(ExtractJobRequest request);
@@ -1299,7 +1299,7 @@ class MainWindow {
     // Outputs: Returns logical-processor-normalized CPU percentage and updates previous system FILETIME state.
     [[nodiscard]] double sample_system_cpu_percent(double elapsed_seconds);
 
-    // Purpose: Sample SuperZip process CPU use since the previous monitor tick.
+    // Purpose: Sample FlitzZip process CPU use since the previous monitor tick.
     // Inputs: `elapsed_seconds` is the interval from the previous sample.
     // Outputs: Returns total-system-capacity CPU percentage and updates previous process FILETIME state.
     [[nodiscard]] double sample_process_cpu_percent(double elapsed_seconds);
@@ -1329,7 +1329,7 @@ class MainWindow {
     // Outputs: Returns total system GPU percentage or a negative value when unavailable.
     [[nodiscard]] double sample_gpu_utilization();
 
-    // Purpose: Sample Windows GPU dedicated memory assigned to the SuperZip process.
+    // Purpose: Sample Windows GPU dedicated memory assigned to the FlitzZip process.
     // Inputs: None; uses the current process id and Windows PDH GPU Process Memory counters.
     // Outputs: Returns dedicated GPU memory bytes or zero when the counter is unavailable.
     [[nodiscard]] std::uint64_t sample_process_dedicated_vram_bytes() const;
@@ -1512,4 +1512,4 @@ class MainWindow {
     AppSettings applied_settings_{};
 };
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app

@@ -7,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-namespace superzip {
+namespace flitzzip {
 
 // One trusted lowercase ASCII suffix and its replacement for a single-stream output filename.
 struct StreamArchiveSuffix {
@@ -45,4 +45,4 @@ inline std::string single_stream_entry_name(const std::filesystem::path& archive
     return normalize_archive_path_key(filename);
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

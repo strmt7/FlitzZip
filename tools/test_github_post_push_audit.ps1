@@ -45,7 +45,7 @@ Set-Alias -Name git -Value Invoke-TestGitRemote -Scope Script
 # Outputs: Emits the fixture response and sets the same process-status variable used by a native CLI.
 function Invoke-TestGitHub {
     if ($args.Count -ge 2 -and $args[0] -eq 'api' -and
-        $args[1] -in @('repos/fixture/repository', 'repos/strmt7/SuperZip')) {
+        $args[1] -in @('repos/fixture/repository', 'repos/strmt7/FlitzZip')) {
         $global:LASTEXITCODE = $auditBranchExitCode
         return 'main'
     }
@@ -180,7 +180,7 @@ foreach ($schemaValue in @([int]1, [long]1, [double]1, '1', $true, $null, [long]
                 }
             } },
             $schemaVariables,
-            @('strmt7/SuperZip', $schemaAlerts, $schemaPath)))
+            @('strmt7/FlitzZip', $schemaAlerts, $schemaPath)))
         $schemaAccepted = $schemaResult.Count -eq 1 -and $schemaResult[0] -eq 71
     } catch {
         if ($_.Exception.ToString() -notlike '*Invalid governance baseline policy.*') { throw }
@@ -211,10 +211,10 @@ $auditGitRemote = ''
 Test-AuditCase 'empty remote query rejected' @() 'remote.origin.url is unset' -Repository ''
 Test-AuditCase 'previously accepted governance alert remains blocking' @($emptyDeployments, (Get-ApiReply $alerts 0 $approvedJson)) 'Unresolved code-scanning'
 Test-AuditCase 'exact maintainer governance baseline passes without deleting reports' @(
-    (Get-ApiReply 'repos/strmt7/SuperZip/deployments' 0 '0'),
-    (Get-ApiReply 'repos/strmt7/SuperZip/code-scanning/alerts*' 0 `
+    (Get-ApiReply 'repos/strmt7/FlitzZip/deployments' 0 '0'),
+    (Get-ApiReply 'repos/strmt7/FlitzZip/code-scanning/alerts*' 0 `
         '[{"number":71,"state":"open","tool":{"name":"Scorecard"},"rule":{"id":"CodeReviewID"}},{"number":73,"state":"open","tool":{"name":"Scorecard"},"rule":{"id":"CIIBestPracticesID"}}]')
-) -Repository 'strmt7/SuperZip'
+) -Repository 'strmt7/FlitzZip'
 if ($lastAuditOutput -notlike '*Accepted governance baseline: 2. Raw open alerts retained: 2.*') {
     throw 'Passing audit hid the accepted governance observations.'
 }
@@ -225,15 +225,15 @@ foreach ($changedIdentity in @(
     '{"number":73,"state":"open","tool":{"name":"Scorecard"},"rule":{"id":"CodeReviewID"}}'
 )) {
     Test-AuditCase 'baseline does not admit changed report identities' @(
-        (Get-ApiReply 'repos/strmt7/SuperZip/deployments' 0 '0'),
-        (Get-ApiReply 'repos/strmt7/SuperZip/code-scanning/alerts*' 0 ("[$changedIdentity]"))
-    ) 'Unresolved code-scanning alerts are open: 1.' -Repository 'strmt7/SuperZip'
+        (Get-ApiReply 'repos/strmt7/FlitzZip/deployments' 0 '0'),
+        (Get-ApiReply 'repos/strmt7/FlitzZip/code-scanning/alerts*' 0 ("[$changedIdentity]"))
+    ) 'Unresolved code-scanning alerts are open: 1.' -Repository 'strmt7/FlitzZip'
 }
 Test-AuditCase 'baseline cannot hide an additional source finding' @(
-    (Get-ApiReply 'repos/strmt7/SuperZip/deployments' 0 '0'),
-    (Get-ApiReply 'repos/strmt7/SuperZip/code-scanning/alerts*' 0 `
+    (Get-ApiReply 'repos/strmt7/FlitzZip/deployments' 0 '0'),
+    (Get-ApiReply 'repos/strmt7/FlitzZip/code-scanning/alerts*' 0 `
         '[{"number":71,"state":"open","tool":{"name":"Scorecard"},"rule":{"id":"CodeReviewID"}},{"number":100,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/test-rule"}}]')
-) 'Unresolved code-scanning alerts are open: 1.' -Repository 'strmt7/SuperZip'
+) 'Unresolved code-scanning alerts are open: 1.' -Repository 'strmt7/FlitzZip'
 Test-AuditCase 'unapproved finding' @($emptyDeployments, (Get-ApiReply $alerts 0 $unapprovedJson)) 'Unresolved code-scanning'
 $priorityJson = '[{"number":100,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/quality"}},' +
     '{"number":2,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/critical","security_severity_level":"critical"}},' +
@@ -453,7 +453,7 @@ try {
     Remove-Item -LiteralPath Alias:py
 }
 
-$reportRoot = Join-Path ([IO.Path]::GetTempPath()) ('superzip-history-audit-' + [Guid]::NewGuid().ToString('N'))
+$reportRoot = Join-Path ([IO.Path]::GetTempPath()) ('flitzzip-history-audit-' + [Guid]::NewGuid().ToString('N'))
 $reportPath = Join-Path $reportRoot 'history.json'
 try {
     Test-AuditCase 'history report export' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $historyJson)) -IncludeHistory -HistoryReportPath $reportPath

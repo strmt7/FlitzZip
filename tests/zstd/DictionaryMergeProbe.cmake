@@ -3,7 +3,7 @@
 # file. Outputs: Writes the original type and complete helper/merger region
 # verbatim, retaining their source identities beside the probe. No alternate
 # algorithm.
-function(superzip_generate_zstd_dictionary_probe source output)
+function(flitzzip_generate_zstd_dictionary_probe source output)
   file(SHA256 "${source}" source_hash)
   if(NOT source_hash STREQUAL
      "dbe57910c9d446bbf2195f31bdba5cffef2c80b93c0325e9df8c9ffa744b0aa3"

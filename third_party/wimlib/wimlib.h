@@ -1459,7 +1459,7 @@ struct wimlib_resource_entry {
 	uint64_t offset;
 
 	/** If this blob is located in a WIM resource, then this is the legacy
-	 * WIM blob digest of the blob's uncompressed contents.  SuperZip does
+	 * WIM blob digest of the blob's uncompressed contents.  FlitzZip does
 	 * not use this field as a product integrity primitive. */
 	uint8_t legacy_blob_digest[20];
 

@@ -4,7 +4,7 @@
 
 #include <numeric>
 
-namespace superzip::hip_detail {
+namespace flitzzip::hip_detail {
 namespace {
 
 // Purpose: Select the measured small- or large-chunk CRC geometry without changing checksum semantics.
@@ -159,4 +159,4 @@ std::uint32_t compute_decoded_crc32_device(const std::byte* device_payload, cons
     return combine_crc_segments(host_segments);
 }
 
-}  // namespace superzip::hip_detail
+}  // namespace flitzzip::hip_detail

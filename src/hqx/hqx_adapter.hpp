@@ -4,7 +4,7 @@
 
 #include <filesystem>
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Extract the data fork from one BinHex 4.0 `.hqx` stream with path-safe publication.
 // Inputs: `archive_path` is the `.hqx` stream, `destination` is the extraction root, `overwrite` controls replacement,
@@ -13,4 +13,4 @@ namespace superzip {
 OperationStats extract_hqx_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                 bool overwrite, const ProgressCallback& progress_callback = {});
 
-}  // namespace superzip
+}  // namespace flitzzip

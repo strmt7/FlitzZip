@@ -1,6 +1,6 @@
 #include "core/archive.hpp"
 #include "core/result.hpp"
-#include "test_suzip_helpers.hpp"
+#include "test_flzip_helpers.hpp"
 #include "test_util.hpp"
 
 #include <fstream>
@@ -24,12 +24,12 @@ std::string read_verification_fixture(const std::filesystem::path& path) {
 // Purpose: Use small deterministic CPU windows to expose verification progress within one file.
 // Inputs: None.
 // Outputs: Returns compression options with read-back verification enabled and bounded concurrency.
-superzip::CompressOptions verification_compress_options() {
+flitzzip::CompressOptions verification_compress_options() {
     return {
         .gpu_required = false,
         .force_cpu = true,
-        .chunk_size = superzip::kMinArchiveBlockBytes,
-        .block_size = superzip::kMinArchiveBlockBytes,
+        .chunk_size = flitzzip::kMinArchiveBlockBytes,
+        .block_size = flitzzip::kMinArchiveBlockBytes,
         .worker_count = 2,
         .max_inflight_chunks = 0,
         .verify_after_write = true,
@@ -54,12 +54,12 @@ void require_unpublished_verification(const std::filesystem::path& root, const s
 // Purpose: Reject corrupted staged native bytes without publishing a new file or replacing an existing archive.
 // Inputs: A deterministic raw-block source and one payload-bit fault injected before the first verification window.
 // Outputs: Requires an actual CRC mismatch from the production decoder and complete preservation/cleanup.
-TEST_CASE(suzip_write_verification_crc_failure_preserves_destination) {
+TEST_CASE(flzip_write_verification_crc_failure_preserves_destination) {
     for (const bool existing : {false, true}) {
-        const auto root = test_temp_dir("suzip-write-verification-crc");
+        const auto root = test_temp_dir("flzip-write-verification-crc");
         const auto source = root / "source.bin";
-        const auto archive = root / "output.suzip";
-        std::string payload(3U * superzip::kMinArchiveBlockBytes + 1U, '\0');
+        const auto archive = root / "output.flzip";
+        std::string payload(3U * flitzzip::kMinArchiveBlockBytes + 1U, '\0');
         std::uint32_t state = 0x71F2A903U;
         for (auto& byte : payload) {
             state ^= state << 13U;
@@ -75,8 +75,8 @@ TEST_CASE(suzip_write_verification_crc_failure_preserves_destination) {
         bool rejected = false;
         try {
             static_cast<void>(
-                superzip::compress_suzip({source}, archive, verification_compress_options(), [&](const auto& snapshot) {
-                    if (corrupted || snapshot.operation != superzip::OperationKind::Verify) {
+                flitzzip::compress_flzip({source}, archive, verification_compress_options(), [&](const auto& snapshot) {
+                    if (corrupted || snapshot.operation != flitzzip::OperationKind::Verify) {
                         return;
                     }
                     for (const auto& item : std::filesystem::recursive_directory_iterator(root)) {
@@ -84,15 +84,15 @@ TEST_CASE(suzip_write_verification_crc_failure_preserves_destination) {
                             continue;
                         }
                         REQUIRE_TRUE(!corrupted);
-                        const auto index = superzip_test::read_test_archive_index(item.path());
+                        const auto index = flitzzip_test::read_test_archive_index(item.path());
                         REQUIRE_EQ(index.entries.size(), 1U);
-                        REQUIRE_EQ(index.entries.front().blocks.front().kind, superzip::BlockKind::Raw);
-                        superzip_test::xor_archive_byte(item.path(), index.entries.front().payload_offset, 1U);
+                        REQUIRE_EQ(index.entries.front().blocks.front().kind, flitzzip::BlockKind::Raw);
+                        flitzzip_test::xor_archive_byte(item.path(), index.entries.front().payload_offset, 1U);
                         corrupted = true;
                     }
                     REQUIRE_TRUE(corrupted);
                 }));
-        } catch (const superzip::ArchiveError& error) {
+        } catch (const flitzzip::ArchiveError& error) {
             REQUIRE_EQ(std::string(error.what()), "CRC mismatch while verifying: source.bin");
             rejected = true;
         }
@@ -106,22 +106,22 @@ TEST_CASE(suzip_write_verification_crc_failure_preserves_destination) {
 // Purpose: Withhold native output until every read-back progress callback has returned successfully.
 // Inputs: A multi-window source, both new/replacement destinations, and verification enabled or disabled.
 // Outputs: Requires correct publication, no verification when disabled, and unchanged output throughout verification.
-TEST_CASE(suzip_write_verification_precedes_publication) {
+TEST_CASE(flzip_write_verification_precedes_publication) {
     for (const bool existing : {false, true}) {
         for (const bool verify : {false, true}) {
-            const auto root = test_temp_dir("suzip-write-verification-order");
+            const auto root = test_temp_dir("flzip-write-verification-order");
             const auto source = root / "source.txt";
-            const auto archive = root / "output.suzip";
-            const std::string payload(3U * superzip::kMinArchiveBlockBytes + 1U, 'V');
+            const auto archive = root / "output.flzip";
+            const std::string payload(3U * flitzzip::kMinArchiveBlockBytes + 1U, 'V');
             std::ofstream(source, std::ios::binary) << payload;
             if (existing) {
                 std::ofstream(archive, std::ios::binary) << "existing archive bytes";
             }
             auto options = verification_compress_options();
             options.verify_after_write = verify;
-            std::vector<superzip::ProgressSnapshot> snapshots;
-            const auto stats = superzip::compress_suzip({source}, archive, options, [&](const auto& snapshot) {
-                if (snapshot.operation != superzip::OperationKind::Verify) {
+            std::vector<flitzzip::ProgressSnapshot> snapshots;
+            const auto stats = flitzzip::compress_flzip({source}, archive, options, [&](const auto& snapshot) {
+                if (snapshot.operation != flitzzip::OperationKind::Verify) {
                     return;
                 }
                 REQUIRE_EQ(std::filesystem::exists(archive), existing);
@@ -139,10 +139,10 @@ TEST_CASE(suzip_write_verification_precedes_publication) {
             REQUIRE_EQ(stats.input_bytes, payload.size());
             REQUIRE_EQ(stats.output_bytes, std::filesystem::file_size(archive));
             REQUIRE_TRUE(!stats.gpu_used);
-            superzip::ExtractOptions extraction;
+            flitzzip::ExtractOptions extraction;
             extraction.gpu_required = false;
             extraction.force_cpu = true;
-            static_cast<void>(superzip::extract_suzip(archive, root / "extracted", extraction));
+            static_cast<void>(flitzzip::extract_flzip(archive, root / "extracted", extraction));
             REQUIRE_EQ(read_verification_fixture(root / "extracted" / source.filename()), payload);
             std::filesystem::remove_all(root);
         }
@@ -152,21 +152,21 @@ TEST_CASE(suzip_write_verification_precedes_publication) {
 // Purpose: Preserve the destination when callers cancel at the start, middle, or completion of verification.
 // Inputs: A multi-window native source and new/replacement output paths, with an exception at each checkpoint.
 // Outputs: Requires the original callback exception, unchanged or absent final output, and complete staging cleanup.
-TEST_CASE(suzip_write_verification_cancellation_preserves_destination) {
+TEST_CASE(flzip_write_verification_cancellation_preserves_destination) {
     for (const bool existing : {false, true}) {
         for (const int phase : {0, 1, 2}) {
-            const auto root = test_temp_dir("suzip-write-verification-cancel");
+            const auto root = test_temp_dir("flzip-write-verification-cancel");
             const auto source = root / "source.txt";
-            const auto archive = root / "output.suzip";
-            std::ofstream(source, std::ios::binary) << std::string(3U * superzip::kMinArchiveBlockBytes + 1U, 'C');
+            const auto archive = root / "output.flzip";
+            std::ofstream(source, std::ios::binary) << std::string(3U * flitzzip::kMinArchiveBlockBytes + 1U, 'C');
             if (existing) {
                 std::ofstream(archive, std::ios::binary) << "existing archive bytes";
             }
             bool cancelled = false;
             try {
-                static_cast<void>(superzip::compress_suzip(
+                static_cast<void>(flitzzip::compress_flzip(
                     {source}, archive, verification_compress_options(), [&](const auto& snapshot) {
-                        if (snapshot.operation != superzip::OperationKind::Verify) {
+                        if (snapshot.operation != flitzzip::OperationKind::Verify) {
                             return;
                         }
                         const bool at_start = snapshot.processed_bytes == 0;
@@ -174,10 +174,10 @@ TEST_CASE(suzip_write_verification_cancellation_preserves_destination) {
                             snapshot.processed_bytes > 0 && snapshot.processed_bytes < snapshot.total_bytes;
                         const bool at_end = snapshot.completed_entries == snapshot.total_entries;
                         if ((phase == 0 && at_start) || (phase == 1 && in_file) || (phase == 2 && at_end)) {
-                            throw superzip::ArchiveError("test verification cancelled");
+                            throw flitzzip::ArchiveError("test verification cancelled");
                         }
                     }));
-            } catch (const superzip::ArchiveError& error) {
+            } catch (const flitzzip::ArchiveError& error) {
                 REQUIRE_EQ(std::string(error.what()), "test verification cancelled");
                 cancelled = true;
             }
@@ -191,24 +191,24 @@ TEST_CASE(suzip_write_verification_cancellation_preserves_destination) {
 // Purpose: Expose bounded decode progress so a large entry does not defer cancellation until its final byte.
 // Inputs: A four-window CPU archive verified without extracting files.
 // Outputs: Requires monotonic counters, complete terminal progress, and an observable intermediate window.
-TEST_CASE(suzip_verification_reports_each_decode_window) {
-    const auto root = test_temp_dir("suzip-verification-windows");
+TEST_CASE(flzip_verification_reports_each_decode_window) {
+    const auto root = test_temp_dir("flzip-verification-windows");
     const auto source = root / "source.txt";
-    const auto archive = root / "output.suzip";
-    std::ofstream(source, std::ios::binary) << std::string(3U * superzip::kMinArchiveBlockBytes + 1U, 'W');
+    const auto archive = root / "output.flzip";
+    std::ofstream(source, std::ios::binary) << std::string(3U * flitzzip::kMinArchiveBlockBytes + 1U, 'W');
     auto compression = verification_compress_options();
     compression.verify_after_write = false;
-    static_cast<void>(superzip::compress_suzip({source}, archive, compression));
-    superzip::ExtractOptions options;
+    static_cast<void>(flitzzip::compress_flzip({source}, archive, compression));
+    flitzzip::ExtractOptions options;
     options.gpu_required = false;
     options.force_cpu = true;
-    options.chunk_size = superzip::kMinArchiveBlockBytes;
-    options.block_size = superzip::kMinArchiveBlockBytes;
+    options.chunk_size = flitzzip::kMinArchiveBlockBytes;
+    options.block_size = flitzzip::kMinArchiveBlockBytes;
     options.worker_count = 2;
     options.max_inflight_chunks = 0;
-    std::vector<superzip::ProgressSnapshot> snapshots;
-    const auto stats = superzip::verify_suzip(archive, options, [&](const auto& snapshot) {
-        REQUIRE_EQ(snapshot.operation, superzip::OperationKind::Verify);
+    std::vector<flitzzip::ProgressSnapshot> snapshots;
+    const auto stats = flitzzip::verify_flzip(archive, options, [&](const auto& snapshot) {
+        REQUIRE_EQ(snapshot.operation, flitzzip::OperationKind::Verify);
         snapshots.push_back(snapshot);
     });
     REQUIRE_TRUE(!snapshots.empty());
@@ -218,7 +218,7 @@ TEST_CASE(suzip_verification_reports_each_decode_window) {
     for (const auto& snapshot : snapshots) {
         REQUIRE_TRUE(snapshot.processed_bytes >= previous);
         REQUIRE_TRUE(snapshot.processed_bytes <= snapshot.total_bytes);
-        REQUIRE_TRUE(snapshot.processed_bytes - previous <= superzip::kMinArchiveBlockBytes);
+        REQUIRE_TRUE(snapshot.processed_bytes - previous <= flitzzip::kMinArchiveBlockBytes);
         previous = snapshot.processed_bytes;
         intermediate = intermediate || (previous > 0 && previous < snapshot.total_bytes);
     }
@@ -232,36 +232,36 @@ TEST_CASE(suzip_verification_reports_each_decode_window) {
 // Purpose: Keep empty native archives and directory-only archives cancellable and observable.
 // Inputs: Handcrafted valid indexes with no entries or one directory, and optional callback cancellation.
 // Outputs: Requires an initial snapshot, complete counters, and propagated cancellation without extraction output.
-TEST_CASE(suzip_verification_empty_archives_report_progress) {
+TEST_CASE(flzip_verification_empty_archives_report_progress) {
     for (const bool directory : {false, true}) {
-        const auto root = test_temp_dir("suzip-verification-empty");
-        const auto archive = root / "empty.suzip";
-        superzip::ArchiveIndex index;
+        const auto root = test_temp_dir("flzip-verification-empty");
+        const auto archive = root / "empty.flzip";
+        flitzzip::ArchiveIndex index;
         if (directory) {
             index.entries.push_back({.path = "empty", .directory = true});
         }
         {
             std::ofstream output(archive, std::ios::binary);
-            superzip::write_archive_index(output, index);
+            flitzzip::write_archive_index(output, index);
             const auto index_size = static_cast<std::uint64_t>(output.tellp());
-            superzip_test::write_test_footer(output, 0, index_size);
+            flitzzip_test::write_test_footer(output, 0, index_size);
             REQUIRE_TRUE(output.good());
         }
-        superzip::ExtractOptions options;
+        flitzzip::ExtractOptions options;
         options.gpu_required = false;
         options.force_cpu = true;
-        std::vector<superzip::ProgressSnapshot> snapshots;
+        std::vector<flitzzip::ProgressSnapshot> snapshots;
         static_cast<void>(
-            superzip::verify_suzip(archive, options, [&](const auto& snapshot) { snapshots.push_back(snapshot); }));
+            flitzzip::verify_flzip(archive, options, [&](const auto& snapshot) { snapshots.push_back(snapshot); }));
         REQUIRE_TRUE(!snapshots.empty());
         REQUIRE_EQ(snapshots.front().processed_bytes, 0U);
         REQUIRE_EQ(snapshots.back().completed_entries, index.entries.size());
         REQUIRE_EQ(snapshots.back().processed_bytes, snapshots.back().total_bytes);
         bool cancelled = false;
         try {
-            static_cast<void>(superzip::verify_suzip(
-                archive, options, [](const auto&) { throw superzip::ArchiveError("empty verification cancelled"); }));
-        } catch (const superzip::ArchiveError& error) {
+            static_cast<void>(flitzzip::verify_flzip(
+                archive, options, [](const auto&) { throw flitzzip::ArchiveError("empty verification cancelled"); }));
+        } catch (const flitzzip::ArchiveError& error) {
             REQUIRE_EQ(std::string(error.what()), "empty verification cancelled");
             cancelled = true;
         }

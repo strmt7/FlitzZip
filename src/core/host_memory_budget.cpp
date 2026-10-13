@@ -16,7 +16,7 @@
 #include <windows.h>
 #endif
 
-namespace superzip {
+namespace flitzzip {
 
 // Purpose: Query physical RAM without inventing capacity when the OS counter fails.
 // Inputs: None.
@@ -57,13 +57,13 @@ std::uint64_t safe_host_memory_growth_bytes(HostMemorySnapshot memory) {
 std::uint32_t resolve_host_pipeline_inflight_limit(HostMemorySnapshot memory, std::uint64_t chunk_size,
                                                    std::uint64_t reserve_bytes, HostPipelineWorkspace workspace) {
     if (chunk_size == 0 || chunk_size > kMaxArchiveChunkBytes) {
-        throw ArchiveError("pipeline chunk size is outside SuperZip resource limits");
+        throw ArchiveError("pipeline chunk size is outside FlitzZip resource limits");
     }
     if (workspace.aggregate_workers > kMaxArchiveWorkers || workspace.workers_per_window > kMaxArchiveWorkers ||
         ((workspace.aggregate_workers == 0) != (workspace.workers_per_window == 0)) ||
         (workspace.per_worker_bytes != 0 && workspace.aggregate_workers == 0) ||
         workspace.per_window_bytes > kMaxPipelineMemoryBytes - chunk_size * 3U) {
-        throw ArchiveError("pipeline workspace is outside SuperZip resource limits");
+        throw ArchiveError("pipeline workspace is outside FlitzZip resource limits");
     }
     const auto growth = safe_host_memory_growth_bytes(memory);
     const auto remaining = growth > reserve_bytes ? std::min(growth - reserve_bytes, kMaxPipelineMemoryBytes) : 0;
@@ -85,4 +85,4 @@ std::uint32_t resolve_host_pipeline_inflight_limit(HostMemorySnapshot memory, st
     return static_cast<std::uint32_t>(limit);
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

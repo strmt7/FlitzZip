@@ -10,7 +10,7 @@
 #include <span>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 struct DictionarySegmentSpan {
     std::uint32_t encoded_offset = 0;
@@ -94,4 +94,4 @@ inline std::vector<DictionarySegmentSpan> parse_dictionary_segments(std::span<co
     return spans;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

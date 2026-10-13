@@ -93,7 +93,7 @@ TEST_CASE(tar_writer_checksum_preserves_exact_wire_encoding) {
         }
     }
     const auto archive = root / "output.tar";
-    (void)superzip::compress_tar({source}, archive);
+    (void)flitzzip::compress_tar({source}, archive);
     {
         std::ifstream input(archive, std::ios::binary);
         std::array<char, 512> header{};
@@ -142,7 +142,7 @@ TEST_CASE(tar_pax_filename_encoding_contract) {
         output.write(footer.data(), footer.size());
         output.close();
         const auto destination = root / (charset_name.empty() ? "default" : charset_name);
-        (void)superzip::extract_tar(archive, destination, false);
+        (void)flitzzip::extract_tar(archive, destination, false);
         const auto expected = charset_name == "BINARY" || charset_name == "legacy"
                                   ? std::filesystem::path(name)
                                   : std::filesystem::path(u8"caf\u00e9.txt");
@@ -160,12 +160,12 @@ TEST_CASE(tar_roundtrip_extracts_files_and_directories) {
         std::ofstream(input / "root.txt") << "root file\n";
     }
     const auto archive = root / "sample.tar";
-    const auto compress_stats = superzip::compress_tar({input}, archive);
+    const auto compress_stats = flitzzip::compress_tar({input}, archive);
     REQUIRE_TRUE(compress_stats.entries >= 3);
     REQUIRE_TRUE(compress_stats.output_bytes > compress_stats.input_bytes);
 
     const auto output = root / "output";
-    const auto extract_stats = superzip::extract_tar(archive, output, false);
+    const auto extract_stats = flitzzip::extract_tar(archive, output, false);
     REQUIRE_EQ(extract_stats.output_bytes, compress_stats.input_bytes);
     REQUIRE_TRUE(std::filesystem::exists(output / "input" / "dir" / "hello.txt"));
     REQUIRE_TRUE(std::filesystem::exists(output / "input" / "root.txt"));
@@ -177,8 +177,8 @@ TEST_CASE(tar_extraction_rejects_traversal_before_output) {
     write_one_entry_tar(archive, "../escape.txt", '0', "bad");
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_tar(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_tar(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -191,8 +191,8 @@ TEST_CASE(tar_extraction_rejects_link_entries) {
     write_one_entry_tar(archive, "link", '2', "target");
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_tar(archive, root / "out", false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_tar(archive, root / "out", false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -208,8 +208,8 @@ TEST_CASE(tar_extraction_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        static_cast<void>(superzip::extract_tar(archive, output, false));
-    } catch (const superzip::SecurityError&) {
+        static_cast<void>(flitzzip::extract_tar(archive, output, false));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

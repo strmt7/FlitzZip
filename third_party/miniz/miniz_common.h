@@ -72,10 +72,10 @@ MZ_INTERNAL_INLINE void *mz_internal_alloc(size_t size)
     const size_t effective_size = size ? size : 1U;
 #if defined(_WIN32)
     return HeapAlloc(GetProcessHeap(), 0, effective_size);
-#elif defined(SUPERZIP_MINIZ_FUZZ_ALLOCATOR) && defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
+#elif defined(FLITZZIP_MINIZ_FUZZ_ALLOCATOR) && defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
     return malloc(effective_size);
 #else
-#error "SuperZip's patched miniz allocator is Windows-only."
+#error "FlitzZip's patched miniz allocator is Windows-only."
 #endif
 }
 
@@ -88,10 +88,10 @@ MZ_INTERNAL_INLINE void mz_internal_release(void *address)
         return;
 #if defined(_WIN32)
     (void)HeapFree(GetProcessHeap(), 0, address);
-#elif defined(SUPERZIP_MINIZ_FUZZ_ALLOCATOR) && defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
+#elif defined(FLITZZIP_MINIZ_FUZZ_ALLOCATOR) && defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
     free(address);
 #else
-#error "SuperZip's patched miniz allocator is Windows-only."
+#error "FlitzZip's patched miniz allocator is Windows-only."
 #endif
 }
 
@@ -105,10 +105,10 @@ MZ_INTERNAL_INLINE void *mz_internal_resize(void *address, size_t size)
     if (!address)
         return HeapAlloc(GetProcessHeap(), 0, effective_size);
     return HeapReAlloc(GetProcessHeap(), 0, address, effective_size);
-#elif defined(SUPERZIP_MINIZ_FUZZ_ALLOCATOR) && defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
+#elif defined(FLITZZIP_MINIZ_FUZZ_ALLOCATOR) && defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
     return realloc(address, effective_size);
 #else
-#error "SuperZip's patched miniz allocator is Windows-only."
+#error "FlitzZip's patched miniz allocator is Windows-only."
 #endif
 }
 

@@ -6,9 +6,9 @@
 #include <array>
 #include <cmath>
 
-namespace superzip::dictionary {
+namespace flitzzip::dictionary {
 
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
 // Purpose: Execute the bounded HIP dictionary implementation after host-side admission checks.
 // Inputs: A validated batch of at least four bytes and a validated effort budget.
 // Outputs: Returns deterministic match records and measured HIP stage/resource statistics.
@@ -67,7 +67,7 @@ MatchBatch find_matches(std::span<const std::byte> input, int level) {
         result.matches.resize(input.size());
         return result;
     }
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     const auto info = query_gpu_info();
     if (!info.available) {
         throw GpuError(info.status);
@@ -90,7 +90,7 @@ EncodedBatch encode_segments(std::span<const std::byte> input, int level) {
     if (input.empty()) {
         return {};
     }
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     const auto info = query_gpu_info();
     if (!info.available) {
         throw GpuError(info.status);
@@ -143,7 +143,7 @@ EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const Enc
     if (input.empty()) {
         return {};
     }
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     const auto info = query_gpu_info();
     if (!info.available) {
         throw GpuError(info.status);
@@ -172,7 +172,7 @@ DecodedBatch decode_segments(std::span<const EncodedSegment> segments) {
     if (segments.empty()) {
         return {};
     }
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     const auto info = query_gpu_info();
     if (!info.available) {
         throw GpuError(info.status);
@@ -184,4 +184,4 @@ DecodedBatch decode_segments(std::span<const EncodedSegment> segments) {
 #endif
 }
 
-}  // namespace superzip::dictionary
+}  // namespace flitzzip::dictionary

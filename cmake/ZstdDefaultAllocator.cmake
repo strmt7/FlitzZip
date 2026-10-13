@@ -13,7 +13,7 @@ set(_zstd_default_allocator_common_patched
 # declaration. Inputs: Exact original static API text. Outputs: Same type, name
 # and linkage contract, with the definition supplied by the common library
 # translation unit.
-function(superzip_zstd_share_default_allocator content output)
+function(flitzzip_zstd_share_default_allocator content output)
   set(original
       [=[static
 #ifdef __GNUC__
@@ -50,13 +50,13 @@ endfunction()
 # Purpose: Migrate only the exact previously published static header component.
 # Inputs: Component path and its actual digest. Outputs: Atomically publishes
 # shared storage declaration; all unknown component bytes remain rejected.
-function(superzip_zstd_migrate_default_allocator path actual)
+function(flitzzip_zstd_migrate_default_allocator path actual)
   if(NOT actual STREQUAL _zstd_default_allocator_static_original)
     return()
   endif()
   file(READ "${path}" content)
-  superzip_zstd_share_default_allocator("${content}" content)
-  superzip_write_verified_zstd_patch(
+  flitzzip_zstd_share_default_allocator("${content}" content)
+  flitzzip_write_verified_zstd_patch(
     "${path}" "${actual}" "${_zstd_default_allocator_static_patched}"
     "${content}")
 endfunction()
@@ -64,7 +64,7 @@ endfunction()
 # Purpose: Define the shared immutable allocator in the production common unit.
 # Inputs: Exact upstream or repaired zstd_common.c. Outputs: Same null callback
 # values and allocator semantics, with one definition for all C/C++ callers.
-function(superzip_patch_zstd_default_allocator source_dir)
+function(flitzzip_patch_zstd_default_allocator source_dir)
   set(source "${source_dir}/lib/common/zstd_common.c")
   file(SHA256 "${source}" actual)
   if(actual STREQUAL _zstd_default_allocator_common_patched)
@@ -82,7 +82,7 @@ function(superzip_patch_zstd_default_allocator source_dir)
            "ZSTD_customMem const ZSTD_defaultCMem = { NULL, NULL, NULL };\n")
   string(REPLACE "#include \"zstd_internal.h\"\n" "${definition}" content
                  "${content}")
-  superzip_write_verified_zstd_patch(
+  flitzzip_write_verified_zstd_patch(
     "${source}" "${actual}" "${_zstd_default_allocator_common_patched}"
     "${content}")
 endfunction()

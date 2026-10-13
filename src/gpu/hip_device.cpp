@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -31,18 +31,18 @@
 #include "gpu/hip_kernel_api.hpp"
 #endif
 
-namespace superzip {
+namespace flitzzip {
 
 namespace {
 PinnedHostBudget pinned_host_budget;
 std::atomic<std::uint64_t> pinned_host_release_failures{0};
 }  // namespace
 
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
 namespace {
 
-#ifndef SUPERZIP_HIP_RUNTIME_DLL_NAME
-#define SUPERZIP_HIP_RUNTIME_DLL_NAME "amdhip64.dll"
+#ifndef FLITZZIP_HIP_RUNTIME_DLL_NAME
+#define FLITZZIP_HIP_RUNTIME_DLL_NAME "amdhip64.dll"
 #endif
 
 // Purpose: Convert a UTF-8 runtime DLL name to a Windows UTF-16 string for loader APIs.
@@ -269,7 +269,7 @@ struct LoadedHipRuntime {
 const LoadedHipRuntime& loaded_hip_runtime() {
     static const LoadedHipRuntime loaded = [] {
         LoadedHipRuntime result;
-        const auto runtime = widen_ascii(SUPERZIP_HIP_RUNTIME_DLL_NAME);
+        const auto runtime = widen_ascii(FLITZZIP_HIP_RUNTIME_DLL_NAME);
         for (const auto& candidate : trusted_hip_runtime_candidates(runtime)) {
             result.module = load_trusted_hip_candidate(candidate, runtime, result.version);
             if (result.module != nullptr) {
@@ -326,11 +326,11 @@ HipDeviceIdentity checked_hip_device_identity(bool allow_absent = false) {
 // Inputs: None; neither device selection nor allocation admission is changed.
 // Outputs: Returns on readiness or throws GpuError; every subsequent HIP operation still checks its own result.
 void require_hip_device_ready() {
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     if (!load_hip_runtime()) {
         throw GpuError(
             std::string("AMD HIP runtime is not loadable. Install or update the AMD GPU driver that provides ") +
-            SUPERZIP_HIP_RUNTIME_DLL_NAME + ".");
+            FLITZZIP_HIP_RUNTIME_DLL_NAME + ".");
     }
     (void)checked_hip_device_identity();
 #else
@@ -342,7 +342,7 @@ void require_hip_device_ready() {
 // Inputs: None; preserves the calling thread's selection and resolves the build's registered device kernels.
 // Outputs: Returns false only for a missing runtime/build or zero devices; unexpected HIP errors propagate.
 bool hip_device_available() {
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     if (!load_hip_runtime() || checked_hip_device_identity(true).selected < 0) {
         return false;
     }
@@ -357,7 +357,7 @@ bool hip_device_available() {
 // Inputs: bytes is bounded native output; the caller's selected HIP device remains unchanged.
 // Outputs: Returns pinned bytes or nullptr on unavailable resources; allocation failure returns its reservation.
 std::byte* try_allocate_hip_host_output(std::size_t bytes) {
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     if (bytes < kMinArchiveBlockBytes || bytes > kMaxArchiveChunkBytes || !load_hip_runtime()) {
         return nullptr;
     }
@@ -383,7 +383,7 @@ std::byte* try_allocate_hip_host_output(std::size_t bytes) {
 // Inputs: pointer/bytes belong to one live pinned owner with no outstanding copies or borrowed views.
 // Outputs: Returns reservation bytes only on successful free; a failed release is observable but never throws.
 void release_hip_host_output(std::byte* pointer, std::size_t bytes) noexcept {
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     if (hipHostFree(pointer) == hipSuccess) {
         pinned_host_budget.release(bytes);
     } else {
@@ -406,7 +406,7 @@ HipPinnedHostStats snapshot_hip_pinned_host_stats() noexcept {
 // Inputs: None; does not query device availability or reserve storage.
 // Outputs: Returns the conservative aggregate pin capacity, or zero for unavailable memory/backend information.
 std::uint64_t hip_host_output_capacity_bytes() noexcept {
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     MEMORYSTATUSEX memory{};
     memory.dwLength = sizeof(memory);
     return GlobalMemoryStatusEx(&memory) ? PinnedHostBudget::allowance(memory.ullAvailPhys) : 0U;
@@ -477,7 +477,7 @@ void HipHostOutputPool::release(std::byte* pointer, std::size_t bytes) noexcept 
 // Inputs: The calling thread's selected device and its current pool; neither is reconfigured.
 // Outputs: Returns false for unsupported features/policies or throws GpuError for other runtime failures.
 bool hip_stream_ordered_allocator_supported() {
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     if (!load_hip_runtime() || !hip_runtime_allows_stream_allocations(loaded_hip_runtime().version)) {
         return false;
     }
@@ -528,9 +528,9 @@ bool hip_stream_ordered_allocator_supported() {
 // Outputs: Reports feature support and pool use in-band; absent/unreadable devices remain diagnostic failures.
 GpuInfo query_hip_gpu_info() {
     GpuInfo info;
-#if SUPERZIP_ENABLE_HIP
+#if FLITZZIP_ENABLE_HIP
     info.hip_compiled = true;
-    info.runtime_name = SUPERZIP_HIP_RUNTIME_DLL_NAME;
+    info.runtime_name = FLITZZIP_HIP_RUNTIME_DLL_NAME;
     if (!load_hip_runtime()) {
         info.status = "AMD HIP runtime is not loadable. Install or update the AMD GPU driver that provides " +
                       info.runtime_name + ".";
@@ -600,4 +600,4 @@ GpuInfo query_hip_gpu_info() {
     return info;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

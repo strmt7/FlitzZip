@@ -8,7 +8,7 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'verify_changes.ps1') -Destinati
 $moduleSource = @'
 # Purpose: Provide a controlled plan for runner integration fixtures.
 # Inputs: The production runner's planning arguments. Outputs: Two required commands and one manual command.
-function Get-SuperZipVerificationPlan {
+function Get-FlitzZipVerificationPlan {
     param($ChangedPath, $BaseRef, $HeadRef, $IncludeUntracked, $SuspectGlobalBug, $Checkpoint)
     Add-Content -LiteralPath (Join-Path $PSScriptRoot '../calls.txt') -Value "plan:$SuspectGlobalBug"
     return [pscustomobject]@{
@@ -18,7 +18,7 @@ function Get-SuperZipVerificationPlan {
 }
 # Purpose: Record fixture execution and optionally fail one selected command.
 # Inputs: Command descriptor and owned failure marker. Outputs: Journal entry or the original fixture error.
-function Invoke-SuperZipVerificationCommand {
+function Invoke-FlitzZipVerificationCommand {
     param($Command)
     Add-Content -LiteralPath (Join-Path $PSScriptRoot '../calls.txt') -Value "command:$($Command.id)"
     $failure = Join-Path $PSScriptRoot '../fail.txt'
@@ -27,9 +27,9 @@ function Invoke-SuperZipVerificationCommand {
         throw "intentional fixture failure:$($Command.id)"
     }
 }
-Export-ModuleMember -Function Get-SuperZipVerificationPlan, Invoke-SuperZipVerificationCommand
+Export-ModuleMember -Function Get-FlitzZipVerificationPlan, Invoke-FlitzZipVerificationCommand
 '@
-[IO.File]::WriteAllText((Join-Path $fixtureTools 'superzip_verification.psm1'), $moduleSource)
+[IO.File]::WriteAllText((Join-Path $fixtureTools 'flitzzip_verification.psm1'), $moduleSource)
 
 # Purpose: Exercise the real runner with controlled plans and failures without running product checks.
 # Inputs: Failure id, optional manual lane, and the exact expected invocation sequence.

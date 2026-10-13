@@ -30,7 +30,7 @@
 #include <sddl.h>
 #endif
 
-namespace superzip {
+namespace flitzzip {
 
 class FilePublishReservationState {
   public:
@@ -133,7 +133,7 @@ std::vector<QuarantineTreeEntry> inventory_quarantine_tree(const std::filesystem
         const auto current = std::move(pending.back());
         pending.pop_back();
         if (current.depth > kMaxArchivePathComponents) {
-            throw ArchiveError("quarantine directory depth exceeds SuperZip resource limits");
+            throw ArchiveError("quarantine directory depth exceeds FlitzZip resource limits");
         }
         std::error_code error;
         std::vector<std::filesystem::path> children;
@@ -142,7 +142,7 @@ std::vector<QuarantineTreeEntry> inventory_quarantine_tree(const std::filesystem
             if (checkpoint)
                 checkpoint();
             if (children.size() >= kMaxArchiveEntries) {
-                throw ArchiveError("quarantine directory fanout exceeds SuperZip resource limits");
+                throw ArchiveError("quarantine directory fanout exceeds FlitzZip resource limits");
             }
             children.push_back(iterator->path());
         }
@@ -152,7 +152,7 @@ std::vector<QuarantineTreeEntry> inventory_quarantine_tree(const std::filesystem
         std::ranges::sort(children);
         for (auto iterator = children.rbegin(); iterator != children.rend(); ++iterator) {
             if (entries.size() >= kMaxArchiveEntries) {
-                throw ArchiveError("quarantine entry count exceeds SuperZip resource limits");
+                throw ArchiveError("quarantine entry count exceeds FlitzZip resource limits");
             }
             const auto status = std::filesystem::symlink_status(*iterator, error);
             if (error || std::filesystem::is_symlink(status)) {
@@ -675,7 +675,7 @@ void FilePublishTransaction::commit(bool overwrite) {
 // Outputs: Constructs an active transaction with a protected staging tree or throws before extraction starts.
 DirectoryPublishTransaction::DirectoryPublishTransaction(const std::filesystem::path& destination)
     : destination_(normalized_absolute_path(destination)),
-      quarantine_(reserve_file_publish_target(destination_ / ".superzip-quarantine")) {}
+      quarantine_(reserve_file_publish_target(destination_ / ".flitzzip-quarantine")) {}
 
 // Purpose: Remove unpublished quarantine bytes on every failure path.
 // Inputs: Uses this transaction's reservation.
@@ -763,4 +763,4 @@ void extract_with_publication(const ExtractionPublicationOptions& options,
     transaction.publish(options.overwrite, checkpoint);
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

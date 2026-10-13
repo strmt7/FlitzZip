@@ -18,7 +18,7 @@
 #include <string_view>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 namespace {
 
 constexpr std::uint64_t kMaxHqxDecodedWorkBytes = 1024ULL * 1024ULL * 1024ULL;
@@ -227,7 +227,7 @@ class HqxExtractParser {
         resource_length_ = read_be_u32(header_bytes_, length_offset + 4U);
         const auto declared_work = static_cast<std::uint64_t>(data_length_) + resource_length_;
         if (resource_length_ > kMaxHqxDiscardedResourceBytes || declared_work > kMaxHqxDecodedWorkBytes) {
-            throw ArchiveError("BinHex declared fork work exceeds SuperZip resource limits");
+            throw ArchiveError("BinHex declared fork work exceeds FlitzZip resource limits");
         }
     }
 
@@ -348,7 +348,7 @@ class HqxRleDecoder {
     // Outputs: Forwards zero or more expanded bytes to `parser`; throws on malformed marker sequences.
     void feed(std::uint8_t byte) {
         if (encoded_bytes_ >= kMaxHqxDecodedWorkBytes) {
-            throw ArchiveError("BinHex encoded RLE work exceeds SuperZip limits");
+            throw ArchiveError("BinHex encoded RLE work exceeds FlitzZip limits");
         }
         ++encoded_bytes_;
         if (pending_marker_) {
@@ -395,7 +395,7 @@ class HqxRleDecoder {
     void emit(std::uint8_t byte) {
         if (decoded_bytes_ >= kMaxHqxDecodedWorkBytes ||
             decoded_bytes_ + 1U > encoded_bytes_ * kMaxHqxRleExpansionRatio) {
-            throw ArchiveError("BinHex RLE expansion exceeds SuperZip work limits");
+            throw ArchiveError("BinHex RLE expansion exceeds FlitzZip work limits");
         }
         ++decoded_bytes_;
         parser_.feed(byte);
@@ -489,7 +489,7 @@ void seek_hqx_payload_start(std::ifstream& input) {
         matched = ch == kHqxComment.front() ? 1U : 0U;
     }
     if (matched != kHqxComment.size()) {
-        throw ArchiveError("BinHex preamble exceeds SuperZip metadata limit");
+        throw ArchiveError("BinHex preamble exceeds FlitzZip metadata limit");
     }
     for (;;) {
         const auto next = input.get();
@@ -556,7 +556,7 @@ OperationStats extract_hqx_file(const std::filesystem::path& archive_path, const
     const auto archive_source = pin_source_file(archive_path);
     const auto archive_size = archive_source.size();
     if (archive_size > kMaxHqxArchiveBytes) {
-        throw ArchiveError("BinHex text stream exceeds SuperZip work limits");
+        throw ArchiveError("BinHex text stream exceeds FlitzZip work limits");
     }
     std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
@@ -591,4 +591,4 @@ OperationStats extract_hqx_file(const std::filesystem::path& archive_path, const
     return stats;
 }
 
-}  // namespace superzip
+}  // namespace flitzzip

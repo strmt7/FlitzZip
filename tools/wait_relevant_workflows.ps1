@@ -19,7 +19,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
-Import-Module (Join-Path $PSScriptRoot "superzip_verification.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "flitzzip_verification.psm1") -Force
 . (Join-Path $PSScriptRoot 'github_repository.ps1')
 
 if ($FinalCommit.IsPresent -and ($Mode -ne 'final' -or $SkipPostPushAudit.IsPresent)) {
@@ -185,7 +185,7 @@ function Save-WorkflowCheckpoint {
 }
 
 $checkpoint = if ($Mode -eq 'final') { 'final' } else { 'intermediate' }
-$plan = Get-SuperZipVerificationPlan -ChangedPath $ChangedPath -BaseRef $BaseRef -HeadRef $HeadRef -SuspectGlobalBug:$Full -Checkpoint $checkpoint
+$plan = Get-FlitzZipVerificationPlan -ChangedPath $ChangedPath -BaseRef $BaseRef -HeadRef $HeadRef -SuspectGlobalBug:$Full -Checkpoint $checkpoint
 if ($Mode -eq 'final' -and $plan.postPushAuditRequired -and $SkipPostPushAudit.IsPresent) {
     throw 'A required post-push audit cannot be skipped in final mode.'
 }

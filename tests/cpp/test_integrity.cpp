@@ -52,14 +52,14 @@ TEST_CASE(crc32_parallel_first_use_matches_known_digest) {
         workers[index] = std::async(std::launch::async, [&ready, input, index] {
             ready.arrive_and_wait();
             if (index % 3U == 1U) {
-                superzip::initialize_crc32_backend();
+                flitzzip::initialize_crc32_backend();
                 return static_cast<std::uint32_t>(CrcCalc(input.data(), input.size()));
             }
             if (index % 3U == 2U) {
                 return static_cast<std::uint32_t>(
                     mz_crc32(MZ_CRC32_INIT, reinterpret_cast<const unsigned char*>(input.data()), input.size()));
             }
-            return superzip::crc32(std::as_bytes(std::span(input.data(), input.size())));
+            return flitzzip::crc32(std::as_bytes(std::span(input.data(), input.size())));
         });
     }
     for (auto& worker : workers) {
@@ -85,12 +85,12 @@ TEST_CASE(crc32_seeded_alignment_and_tail_oracle) {
         byte = static_cast<std::byte>(state & 255U);
     }
     for (const auto seed : seeds) {
-        REQUIRE_EQ(superzip::crc32({}, seed), seed);
+        REQUIRE_EQ(flitzzip::crc32({}, seed), seed);
         for (std::size_t alignment = 0U; alignment < 16U; ++alignment) {
             for (const auto length : lengths) {
                 const auto bytes = std::span(input).subspan(alignment, length);
                 const auto expected = bitwise_crc32(bytes, seed);
-                REQUIRE_EQ(superzip::crc32(bytes, seed), expected);
+                REQUIRE_EQ(flitzzip::crc32(bytes, seed), expected);
                 REQUIRE_EQ(mz_crc32(seed, reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size()),
                            static_cast<mz_ulong>(expected));
             }
@@ -107,8 +107,8 @@ TEST_CASE(crc32_seeded_fragmentation_matches_independent_oracle) {
     for (const auto seed : {0U, 1U, 0x12345678U, 0xFFFFFFFFU}) {
         const auto expected = bitwise_crc32(bytes, seed);
         for (std::size_t split = 0U; split <= bytes.size(); ++split) {
-            const auto first = superzip::crc32(bytes.first(split), seed);
-            REQUIRE_EQ(superzip::crc32(bytes.subspan(split), first), expected);
+            const auto first = flitzzip::crc32(bytes.first(split), seed);
+            REQUIRE_EQ(flitzzip::crc32(bytes.subspan(split), first), expected);
             const auto miniz_first = mz_crc32(seed, reinterpret_cast<const unsigned char*>(bytes.data()), split);
             REQUIRE_EQ(mz_crc32(miniz_first, reinterpret_cast<const unsigned char*>(bytes.data() + split),
                                 bytes.size() - split),
@@ -141,10 +141,10 @@ TEST_CASE(crc32_parallel_output_matches_oracle_and_worker_bounds) {
     const auto bytes = std::span(storage).subspan(3U);
     const auto expected = bitwise_crc32(bytes, 0U);
     for (const auto workers : {0U, 1U, 2U, 3U, 8U, 64U, std::numeric_limits<std::uint32_t>::max()}) {
-        REQUIRE_EQ(superzip::crc32_parallel(bytes, workers), expected);
+        REQUIRE_EQ(flitzzip::crc32_parallel(bytes, workers), expected);
     }
     for (const auto size : {0U, 1U, 1024U, 8U * 1024U * 1024U + 1U}) {
-        REQUIRE_EQ(superzip::crc32_parallel(bytes.first(size), 64U), superzip::crc32(bytes.first(size)));
+        REQUIRE_EQ(flitzzip::crc32_parallel(bytes.first(size), 64U), flitzzip::crc32(bytes.first(size)));
     }
 }
 
@@ -152,7 +152,7 @@ TEST_CASE(crc32_parallel_output_matches_oracle_and_worker_bounds) {
 // Inputs: Unaligned deterministic bytes at lane, segment, chunk-policy, and block tails; HIP absence skips this case.
 // Outputs: Requires exact device CRCs and restored bytes without accepting CPU fallback or changing source storage.
 TEST_CASE(gpu_crc32_cooperative_source_and_decode_boundaries) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     constexpr std::array<std::size_t, 25> lengths{
@@ -193,21 +193,21 @@ TEST_CASE(gpu_crc32_cooperative_source_and_decode_boundaries) {
     for (const auto length : lengths) {
         const auto bytes = std::span(storage).subspan(3U, length);
         const auto expected = bitwise_crc32(bytes, 0U);
-        superzip::GpuCodecOptions options;
-        options.block_size = superzip::kMaxArchiveBlockBytes;
+        flitzzip::GpuCodecOptions options;
+        options.block_size = flitzzip::kMaxArchiveBlockBytes;
         options.compression_level = 1;
-        options.telemetry = std::make_shared<superzip::GpuTelemetry>();
-        const auto encoded = superzip::encode_chunk(bytes, options);
+        options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+        const auto encoded = flitzzip::encode_chunk(bytes, options);
         REQUIRE_EQ(encoded.gpu_used, !bytes.empty());
         REQUIRE_TRUE(encoded.source_crc32_available);
         REQUIRE_EQ(encoded.source_crc32, expected);
-        const auto checked = superzip::crc_decoded_chunk(encoded.payload, encoded.blocks, bytes.size(), options);
+        const auto checked = flitzzip::crc_decoded_chunk(encoded.payload, encoded.blocks, bytes.size(), options);
         REQUIRE_EQ(checked.gpu_used, !bytes.empty());
         REQUIRE_EQ(checked.crc32, expected);
         std::vector<std::byte> decoded(bytes.size());
-        superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options);
+        flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options);
         REQUIRE_TRUE(std::ranges::equal(decoded, bytes));
-        const auto stats = superzip::snapshot_gpu_telemetry(*options.telemetry);
+        const auto stats = flitzzip::snapshot_gpu_telemetry(*options.telemetry);
         REQUIRE_TRUE(bytes.empty() || stats.kernel_launches > 0U);
     }
 }
@@ -216,7 +216,7 @@ TEST_CASE(gpu_crc32_cooperative_source_and_decode_boundaries) {
 // Inputs: Independently constructed raw/fill/seven-byte-pattern blocks, including a large final segment tail.
 // Outputs: Requires the bitwise oracle and corruption sensitivity without materializing through production decode.
 TEST_CASE(gpu_crc32_cooperative_simple_decoded_block_boundaries) {
-    if (!superzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     constexpr std::array<std::uint32_t, 9> lengths{
@@ -225,42 +225,42 @@ TEST_CASE(gpu_crc32_cooperative_simple_decoded_block_boundaries) {
     constexpr std::array<std::byte, 7> motif{
         std::byte{13}, std::byte{0}, std::byte{254}, std::byte{91}, std::byte{1}, std::byte{137}, std::byte{73},
     };
-    std::vector<superzip::BlockDescriptor> blocks;
+    std::vector<flitzzip::BlockDescriptor> blocks;
     std::vector<std::byte> payload;
     std::vector<std::byte> decoded;
     for (std::size_t index = 0U; index < lengths.size(); ++index) {
-        superzip::BlockDescriptor block;
+        flitzzip::BlockDescriptor block;
         block.uncompressed_len = lengths[index];
         block.encoded_offset = payload.size();
         block.fill_value = static_cast<std::uint8_t>(index * 29U);
-        block.kind = index % 3U == 0U   ? superzip::BlockKind::Raw
-                     : index % 3U == 1U ? superzip::BlockKind::Fill
-                                        : superzip::BlockKind::Pattern;
-        if (block.kind == superzip::BlockKind::Pattern) {
+        block.kind = index % 3U == 0U   ? flitzzip::BlockKind::Raw
+                     : index % 3U == 1U ? flitzzip::BlockKind::Fill
+                                        : flitzzip::BlockKind::Pattern;
+        if (block.kind == flitzzip::BlockKind::Pattern) {
             payload.insert(payload.end(), motif.begin(), motif.end());
             block.encoded_len = motif.size();
         }
         for (std::uint32_t pos = 0U; pos < lengths[index]; ++pos) {
-            const auto byte = block.kind == superzip::BlockKind::Raw
+            const auto byte = block.kind == flitzzip::BlockKind::Raw
                                   ? static_cast<std::byte>((pos * 73U + index) & 255U)
-                              : block.kind == superzip::BlockKind::Fill ? static_cast<std::byte>(block.fill_value)
+                              : block.kind == flitzzip::BlockKind::Fill ? static_cast<std::byte>(block.fill_value)
                                                                         : motif[pos % motif.size()];
             decoded.push_back(byte);
-            if (block.kind == superzip::BlockKind::Raw) {
+            if (block.kind == flitzzip::BlockKind::Raw) {
                 payload.push_back(byte);
                 ++block.encoded_len;
             }
         }
         blocks.push_back(block);
     }
-    superzip::GpuCodecOptions options;
-    options.block_size = superzip::kMaxArchiveBlockBytes;
+    flitzzip::GpuCodecOptions options;
+    options.block_size = flitzzip::kMaxArchiveBlockBytes;
     const auto expected = bitwise_crc32(decoded, 0U);
-    const auto checked = superzip::crc_decoded_chunk(payload, blocks, decoded.size(), options);
+    const auto checked = flitzzip::crc_decoded_chunk(payload, blocks, decoded.size(), options);
     REQUIRE_TRUE(checked.gpu_used);
     REQUIRE_EQ(checked.crc32, expected);
     payload[0] ^= std::byte{1};
-    const auto corrupted = superzip::crc_decoded_chunk(payload, blocks, decoded.size(), options);
+    const auto corrupted = flitzzip::crc_decoded_chunk(payload, blocks, decoded.size(), options);
     REQUIRE_TRUE(corrupted.gpu_used);
     REQUIRE_TRUE(corrupted.crc32 != expected);
 }
@@ -276,7 +276,7 @@ TEST_CASE(integrity_disabled_is_noop) {
         out << "abc";
     }
 
-    const auto result = superzip::hash_file(path, superzip::IntegrityMode::Disabled);
+    const auto result = flitzzip::hash_file(path, flitzzip::IntegrityMode::Disabled);
     REQUIRE_TRUE(!result.attempted);
     REQUIRE_TRUE(result.hex_digest.empty());
 }
@@ -292,7 +292,7 @@ TEST_CASE(integrity_sha256_matches_known_digest) {
         out << "abc";
     }
 
-    const auto result = superzip::hash_file(path, superzip::IntegrityMode::Sha256);
+    const auto result = flitzzip::hash_file(path, flitzzip::IntegrityMode::Sha256);
     REQUIRE_TRUE(result.attempted);
     REQUIRE_EQ(result.algorithm, std::string("SHA-256"));
     REQUIRE_EQ(result.target, std::string("file"));
@@ -326,8 +326,8 @@ TEST_CASE(integrity_hash_path_directory_is_deterministic_and_content_sensitive) 
         out << "alpha";
     }
 
-    const auto first = superzip::hash_path(tree, superzip::IntegrityMode::Sha256);
-    const auto second = superzip::hash_path(tree, superzip::IntegrityMode::Sha256);
+    const auto first = flitzzip::hash_path(tree, flitzzip::IntegrityMode::Sha256);
+    const auto second = flitzzip::hash_path(tree, flitzzip::IntegrityMode::Sha256);
     REQUIRE_TRUE(first.attempted);
     REQUIRE_EQ(first.algorithm, std::string("SHA-256"));
     REQUIRE_EQ(first.target, std::string("directory"));
@@ -340,7 +340,7 @@ TEST_CASE(integrity_hash_path_directory_is_deterministic_and_content_sensitive) 
         std::ofstream out(nested / "a.txt", std::ios::binary | std::ios::trunc);
         out << "alpha!";
     }
-    const auto changed = superzip::hash_path(tree, superzip::IntegrityMode::Sha256);
+    const auto changed = flitzzip::hash_path(tree, flitzzip::IntegrityMode::Sha256);
     REQUIRE_TRUE(first.hex_digest != changed.hex_digest);
     REQUIRE_EQ(changed.bytes_hashed, 11ULL);
 }
@@ -354,8 +354,8 @@ TEST_CASE(integrity_hash_path_rejects_missing_target) {
 
     bool rejected = false;
     try {
-        (void)superzip::hash_path(missing, superzip::IntegrityMode::Sha256);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::hash_path(missing, flitzzip::IntegrityMode::Sha256);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -371,14 +371,14 @@ TEST_CASE(crc32_combine_matches_single_pass_crc) {
         bytes.push_back(static_cast<std::byte>((i * 131U + 17U) & 0xFFU));
     }
 
-    const auto expected = superzip::crc32(std::span<const std::byte>(bytes.data(), bytes.size()));
+    const auto expected = flitzzip::crc32(std::span<const std::byte>(bytes.data(), bytes.size()));
     const std::array<std::size_t, 6> splits{
         0U, 1U, 4096U, 65536U, bytes.size() - 1U, bytes.size(),
     };
     for (const std::size_t split : splits) {
-        const auto first = superzip::crc32(std::span<const std::byte>(bytes.data(), split));
-        const auto second = superzip::crc32(std::span<const std::byte>(bytes.data() + split, bytes.size() - split));
-        const auto combined = superzip::crc32_combine(first, second, bytes.size() - split);
+        const auto first = flitzzip::crc32(std::span<const std::byte>(bytes.data(), split));
+        const auto second = flitzzip::crc32(std::span<const std::byte>(bytes.data() + split, bytes.size() - split));
+        const auto combined = flitzzip::crc32_combine(first, second, bytes.size() - split);
         REQUIRE_EQ(combined, expected);
     }
 }
@@ -403,18 +403,18 @@ TEST_CASE(crc32_combine_full_length_oracle) {
     for (auto& worker : workers) {
         worker = std::async(std::launch::async, [&expected] {
             for (std::size_t bit = 0U; bit < expected.size(); ++bit) {
-                REQUIRE_EQ(superzip::crc32_combine(0x12345678U, 0x9ABCDEF0U, std::uint64_t{1} << bit), expected[bit]);
+                REQUIRE_EQ(flitzzip::crc32_combine(0x12345678U, 0x9ABCDEF0U, std::uint64_t{1} << bit), expected[bit]);
             }
         });
     }
     for (auto& worker : workers) {
         worker.get();
     }
-    REQUIRE_EQ(superzip::crc32_combine(0x12345678U, 0x9ABCDEF0U, 0x123456789ABCDEFULL), 0x8BB98EB9U);
-    REQUIRE_EQ(superzip::crc32_combine(0x12345678U, 0x9ABCDEF0U, std::numeric_limits<std::uint64_t>::max()),
+    REQUIRE_EQ(flitzzip::crc32_combine(0x12345678U, 0x9ABCDEF0U, 0x123456789ABCDEFULL), 0x8BB98EB9U);
+    REQUIRE_EQ(flitzzip::crc32_combine(0x12345678U, 0x9ABCDEF0U, std::numeric_limits<std::uint64_t>::max()),
                0x88888888U);
-    REQUIRE_EQ(superzip::crc32_combine(0x12345678U, 0x9ABCDEF0U, 0U), 0x12345678U);
-    REQUIRE_EQ(superzip::crc32_combine(0U, 0x9ABCDEF0U, std::numeric_limits<std::uint64_t>::max()), 0x9ABCDEF0U);
+    REQUIRE_EQ(flitzzip::crc32_combine(0x12345678U, 0x9ABCDEF0U, 0U), 0x12345678U);
+    REQUIRE_EQ(flitzzip::crc32_combine(0U, 0x9ABCDEF0U, std::numeric_limits<std::uint64_t>::max()), 0x9ABCDEF0U);
 }
 
 // Purpose: Verify repeated cached CRC combinations against a direct checksum on uneven and short source segments.
@@ -429,14 +429,14 @@ TEST_CASE(crc32_combine_repeated_segment_boundaries) {
         seed ^= seed << 5U;
         byte = static_cast<std::byte>(seed & 255U);
     }
-    const auto expected = superzip::crc32(bytes);
+    const auto expected = flitzzip::crc32(bytes);
     for (const std::size_t segment_bytes : {1U, 13U, 4096U, 8192U, 32768U, 65536U}) {
         std::uint32_t combined = 0U;
         std::uint32_t incremental = 0U;
         for (std::size_t offset = 0U; offset < bytes.size(); offset += segment_bytes) {
             const auto segment = std::span(bytes).subspan(offset, std::min(segment_bytes, bytes.size() - offset));
-            combined = superzip::crc32_combine(combined, superzip::crc32(segment), segment.size());
-            incremental = superzip::crc32(segment, incremental);
+            combined = flitzzip::crc32_combine(combined, flitzzip::crc32(segment), segment.size());
+            incremental = flitzzip::crc32(segment, incremental);
         }
         REQUIRE_EQ(combined, expected);
         REQUIRE_EQ(combined, incremental);
@@ -454,7 +454,7 @@ TEST_CASE(defender_disabled_is_noop) {
         out << "abc";
     }
 
-    const auto result = superzip::scan_with_windows_defender(path, superzip::DefenderScanMode::Disabled);
+    const auto result = flitzzip::scan_with_windows_defender(path, flitzzip::DefenderScanMode::Disabled);
     REQUIRE_TRUE(!result.attempted);
     REQUIRE_TRUE(!result.clean);
     REQUIRE_TRUE(!result.timed_out);
@@ -469,8 +469,8 @@ TEST_CASE(defender_enabled_rejects_missing_target) {
 
     bool rejected = false;
     try {
-        (void)superzip::scan_with_windows_defender(missing, superzip::DefenderScanMode::FullPath);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::scan_with_windows_defender(missing, flitzzip::DefenderScanMode::FullPath);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -480,16 +480,16 @@ TEST_CASE(defender_enabled_rejects_missing_target) {
 // Inputs: Synthetic clean, unavailable, timeout, and detected scan states.
 // Outputs: Throws if any ambiguous or failed state passes the fail-closed predicate.
 TEST_CASE(defender_policy_is_fail_closed) {
-    REQUIRE_TRUE(superzip::defender_scan_passed(
-        superzip::DefenderScanResult{.attempted = true, .clean = true, .timed_out = false, .exit_code = 0}));
-    REQUIRE_TRUE(!superzip::defender_scan_passed(
-        superzip::DefenderScanResult{.attempted = false, .clean = false, .timed_out = false, .exit_code = -1}));
-    REQUIRE_TRUE(!superzip::defender_scan_passed(
-        superzip::DefenderScanResult{.attempted = true, .clean = false, .timed_out = true, .exit_code = -2}));
-    REQUIRE_TRUE(!superzip::defender_scan_passed(
-        superzip::DefenderScanResult{.attempted = true, .clean = false, .timed_out = false, .exit_code = 2}));
-    REQUIRE_TRUE(!superzip::defender_scan_passed(
-        superzip::DefenderScanResult{.attempted = true, .clean = true, .timed_out = false, .exit_code = 1}));
+    REQUIRE_TRUE(flitzzip::defender_scan_passed(
+        flitzzip::DefenderScanResult{.attempted = true, .clean = true, .timed_out = false, .exit_code = 0}));
+    REQUIRE_TRUE(!flitzzip::defender_scan_passed(
+        flitzzip::DefenderScanResult{.attempted = false, .clean = false, .timed_out = false, .exit_code = -1}));
+    REQUIRE_TRUE(!flitzzip::defender_scan_passed(
+        flitzzip::DefenderScanResult{.attempted = true, .clean = false, .timed_out = true, .exit_code = -2}));
+    REQUIRE_TRUE(!flitzzip::defender_scan_passed(
+        flitzzip::DefenderScanResult{.attempted = true, .clean = false, .timed_out = false, .exit_code = 2}));
+    REQUIRE_TRUE(!flitzzip::defender_scan_passed(
+        flitzzip::DefenderScanResult{.attempted = true, .clean = true, .timed_out = false, .exit_code = 1}));
 }
 
 #if defined(_WIN32)
@@ -499,8 +499,8 @@ TEST_CASE(defender_policy_is_fail_closed) {
 TEST_CASE(trusted_runtime_rejects_unpinned_digest_before_export_lookup) {
     bool rejected = false;
     try {
-        (void)superzip::load_trusted_app_local_runtime(L"libzstd.dll", std::string(64U, '0'));
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::load_trusted_app_local_runtime(L"libzstd.dll", std::string(64U, '0'));
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -512,8 +512,8 @@ TEST_CASE(trusted_runtime_rejects_unpinned_digest_before_export_lookup) {
 TEST_CASE(trusted_runtime_rejects_path_bearing_module_names) {
     bool rejected = false;
     try {
-        (void)superzip::load_trusted_app_local_runtime(L"..\\libzstd.dll", std::string(64U, '0'));
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::load_trusted_app_local_runtime(L"..\\libzstd.dll", std::string(64U, '0'));
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -524,9 +524,9 @@ TEST_CASE(trusted_runtime_rejects_path_bearing_module_names) {
 // Inputs: Published empty/abc vectors and 1048577 ASCII a bytes with a Python hashlib reference digest.
 // Outputs: Requires exact hexadecimal digests with no filesystem input.
 TEST_CASE(integrity_sha256_snapshot_vectors_and_update_boundary) {
-    REQUIRE_EQ(superzip::sha256_bytes({}), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    REQUIRE_EQ(flitzzip::sha256_bytes({}), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     const std::array<std::byte, 3> abc{std::byte{'a'}, std::byte{'b'}, std::byte{'c'}};
-    REQUIRE_EQ(superzip::sha256_bytes(abc), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    REQUIRE_EQ(flitzzip::sha256_bytes(abc), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     const std::vector<std::byte> multiple(1048577U, std::byte{'a'});
-    REQUIRE_EQ(superzip::sha256_bytes(multiple), "4a3f0c0c213adea174f9a3d4c13177315b588bdb2e9c1012d3d0bf0453ca0f6a");
+    REQUIRE_EQ(flitzzip::sha256_bytes(multiple), "4a3f0c0c213adea174f9a3d4c13177315b588bdb2e9c1012d3d0bf0453ca0f6a");
 }

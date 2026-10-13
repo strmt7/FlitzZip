@@ -5,7 +5,7 @@
 #include <span>
 #include <vector>
 
-namespace superzip {
+namespace flitzzip {
 
 struct GpuTelemetry;
 
@@ -29,4 +29,4 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
                                                                        GpuTelemetry* telemetry);
 
 }  // namespace sparse_pattern
-}  // namespace superzip
+}  // namespace flitzzip

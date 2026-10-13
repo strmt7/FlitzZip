@@ -71,7 +71,7 @@ Write-Output 'Lint routing changed/all/configuration/new-file checks passed.'
 
 # Exercise the production grammar gate with the parser error that analyzer lint
 # failed to report, without executing either fixture.
-$fixture = Join-Path ([IO.Path]::GetTempPath()) ('superzip-lint-' + [guid]::NewGuid().ToString('N') + '.ps1')
+$fixture = Join-Path ([IO.Path]::GetTempPath()) ('flitzzip-lint-' + [guid]::NewGuid().ToString('N') + '.ps1')
 try {
     [IO.File]::WriteAllText($fixture, 'Write-Output "${case}: valid"')
     Assert-PowerShellSyntax -Path $fixture

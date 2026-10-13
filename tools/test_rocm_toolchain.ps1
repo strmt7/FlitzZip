@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'rocm_toolchain.ps1')
-$fixture = Join-Path ([IO.Path]::GetTempPath()) ('superzip-rocm-' + [guid]::NewGuid().ToString('N'))
+$fixture = Join-Path ([IO.Path]::GetTempPath()) ('flitzzip-rocm-' + [guid]::NewGuid().ToString('N'))
 $manifest = Join-Path $fixture 'share/therock/therock_manifest.json'
 $inputs = @('bin/hipcc.exe', 'lib/amdhip64.lib', 'include/hip/hip_version.h',
     'lib/llvm/bin/clang.exe', 'lib/llvm/amdgcn/bitcode/ocml.bc')

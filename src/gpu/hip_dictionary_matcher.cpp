@@ -11,7 +11,7 @@
 
 #include <rocprim/rocprim_version.hpp>
 
-namespace superzip::dictionary {
+namespace flitzzip::dictionary {
 namespace {
 
 using namespace hip_detail;
@@ -423,6 +423,42 @@ void apply_neutron_budgets(std::uint32_t input_bytes, const NeutronShape& shape,
     }
 }
 
+// Purpose: Amortize host waits over a bounded group of unchanged, ordered parse kernels.
+// Inputs: Admitted workspace and descending parse endpoint; checkpoints run only with no work outstanding.
+// Outputs: Completes at most eight existing parse tiles, records every kernel and returns the next endpoint.
+std::uint32_t run_neutron_parse_batch(NeutronRun& run, const EncodeCheckpoint& checkpoint, NeutronWorkspace& workspace,
+                                      std::uint32_t input_bytes, unsigned int segments, std::uint32_t end) {
+    constexpr std::uint32_t maximum_launches = 8U;
+    const auto launches =
+        std::min(maximum_launches, (end + optimal::kPositionsPerLaunch - 1U) / optimal::kPositionsPerLaunch);
+    if (checkpoint) {
+        checkpoint();
+    }
+    try {
+        // Purpose: Queue dependency-ordered tiles without changing their per-kernel work bounds.
+        // Inputs: Borrowed timing events and workspace stay live until the enclosing completion or drain.
+        // Outputs: Records one enclosing interval; each launch retains its own descending endpoint.
+        run.clock.measure(
+            [&](const HipEventPair& events) {
+                for (std::uint32_t tile = 0U; tile < launches; ++tile) {
+                    launch_kernel_with_timing(
+                        hip_kernel_api().neutron_parse_tile, segments, kDictionaryKernelThreads, 0, hipStreamPerThread,
+                        tile == 0U ? events.start : nullptr, tile + 1U == launches ? events.stop : nullptr,
+                        "launch Neutron parse tile", workspace.state, input_bytes, end, workspace.sizes);
+                    end = end > optimal::kPositionsPerLaunch ? end - optimal::kPositionsPerLaunch : 0U;
+                }
+            },
+            finish_dictionary_stage, launches);
+    } catch (...) {
+        // A partial submission still borrows workspace. Drain before unwinding its owners;
+        // retain the original runtime error even if a failed device also rejects synchronization.
+        (void)hipStreamSynchronize(hipStreamPerThread);
+        throw;
+    }
+    run.parse_launches += launches;
+    return end;
+}
+
 // Purpose: Execute deeper matches, competitive exact parsing and incremental output entirely on HIP.
 // Inputs: Borrowed source/index, admitted workspace and optional group limits; host controls admission only.
 // Outputs: Returns completed segment lengths and real launch/timing/transfer accounting or throws.
@@ -460,10 +496,7 @@ std::vector<std::uint32_t> run_neutron_encoder(const std::byte* source, const st
     }
     const auto segment_bytes = std::min(input_bytes, kSegmentBytes);
     for (auto end = parse_bytes; end != 0U;) {
-        run_neutron_stage(run, checkpoint, hip_kernel_api().neutron_parse_tile, segments, workspace.state, input_bytes,
-                          end, workspace.sizes);
-        ++run.parse_launches;
-        end = end > optimal::kPositionsPerLaunch ? end - optimal::kPositionsPerLaunch : 0U;
+        end = run_neutron_parse_batch(run, checkpoint, workspace, input_bytes, segments, end);
     }
     run_neutron_stage(run, checkpoint, hip_kernel_api().neutron_initialize_writers, 1U, workspace.cursors,
                       workspace.sizes, segments);
@@ -672,4 +705,4 @@ DecodedBatch decode_segments_hip(std::span<const EncodedSegment> segments, std::
     return result;
 }
 
-}  // namespace superzip::dictionary
+}  // namespace flitzzip::dictionary

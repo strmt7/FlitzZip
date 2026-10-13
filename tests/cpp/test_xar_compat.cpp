@@ -138,20 +138,20 @@ TEST_CASE(xar_extraction_reads_nested_zlib_payload) {
     const auto archive = root / "sample.xar";
     write_nested_xar_fixture(archive, "hello xar\n");
 
-    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Xar);
-    const auto info = superzip::archive_format_info(superzip::ArchiveFormat::Xar);
+    REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::Xar);
+    const auto info = flitzzip::archive_format_info(flitzzip::ArchiveFormat::Xar);
     REQUIRE_TRUE(!info.can_create);
     REQUIRE_TRUE(info.can_extract);
     REQUIRE_TRUE(info.bundled_native);
     REQUIRE_TRUE(!info.gpu_native);
 
     const auto output = root / "out";
-    const auto stats = superzip::extract_xar(archive, output, false);
+    const auto stats = flitzzip::extract_xar(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(2));
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(std::string_view("hello xar\n").size()));
     REQUIRE_TRUE(!stats.gpu_used);
     REQUIRE_EQ(read_text_file(output / "subdir" / "hello.txt"), "hello xar\n");
-    superzip_test::export_compat_fixture(archive, output);
+    flitzzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Reject the formerly accepted, nonstandard reversal of XAR stored and decoded extents.
@@ -171,8 +171,8 @@ TEST_CASE(xar_extraction_rejects_reversed_payload_extents) {
     write_xar_fixture(archive, toc, compressed);
     bool rejected = false;
     try {
-        (void)superzip::extract_xar(archive, root / "out", false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_xar(archive, root / "out", false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -201,7 +201,7 @@ TEST_CASE(xar_unicode_names_extract_and_overwrite) {
                                 (compressed ? "application/x-gzip" : "application/octet-stream") +
                                 "\"/></data></file></file></toc></xar>";
         write_xar_fixture(archive, toc, heap);
-        const auto stats = superzip::extract_xar(archive, output, false);
+        const auto stats = flitzzip::extract_xar(archive, output, false);
         REQUIRE_EQ(stats.entries, 2U);
         REQUIRE_EQ(stats.output_bytes, payload.size());
         REQUIRE_EQ(read_text_file(output / relative), payload);
@@ -209,16 +209,16 @@ TEST_CASE(xar_unicode_names_extract_and_overwrite) {
         std::ofstream(output / relative, std::ios::binary | std::ios::trunc) << "old";
         bool refused = false;
         try {
-            (void)superzip::extract_xar(archive, output, false);
-        } catch (const superzip::SecurityError&) {
+            (void)flitzzip::extract_xar(archive, output, false);
+        } catch (const flitzzip::SecurityError&) {
             refused = true;
         }
         REQUIRE_TRUE(refused);
         REQUIRE_EQ(read_text_file(output / relative), "old");
-        (void)superzip::extract_xar(archive, output, true);
+        (void)flitzzip::extract_xar(archive, output, true);
         REQUIRE_EQ(read_text_file(output / relative), payload);
         if (compressed) {
-            superzip_test::export_compat_fixture(archive, output);
+            flitzzip_test::export_compat_fixture(archive, output);
         }
     }
     std::filesystem::remove_all(root);
@@ -237,8 +237,8 @@ TEST_CASE(xar_extraction_refuses_overwrite_by_default) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_xar(archive, output, false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_xar(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -265,8 +265,8 @@ TEST_CASE(xar_extraction_rejects_parent_directory_paths) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_xar(archive, root / "out", false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_xar(archive, root / "out", false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -286,8 +286,8 @@ TEST_CASE(xar_extraction_rejects_symbolic_links) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_xar(archive, root / "out", false);
-    } catch (const superzip::SecurityError&) {
+        (void)flitzzip::extract_xar(archive, root / "out", false);
+    } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -315,8 +315,8 @@ TEST_CASE(xar_extraction_rejects_unsupported_encoding) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_xar(archive, root / "out", false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_xar(archive, root / "out", false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -342,8 +342,8 @@ TEST_CASE(xar_extraction_rejects_unverified_toc_checksum_algorithm) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_xar(archive, root / "out", false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_xar(archive, root / "out", false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -371,8 +371,8 @@ TEST_CASE(xar_extraction_rejects_corrupt_zlib_payload_before_output) {
 
     bool rejected = false;
     try {
-        (void)superzip::extract_xar(archive, root / "out", false);
-    } catch (const superzip::ArchiveError&) {
+        (void)flitzzip::extract_xar(archive, root / "out", false);
+    } catch (const flitzzip::ArchiveError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

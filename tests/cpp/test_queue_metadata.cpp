@@ -4,9 +4,9 @@
 #include <atomic>
 #include <fstream>
 
-using superzip::app::QueueFileKind;
-using superzip::app::QueueFileMetadata;
-using superzip::app::QueueMetadataCache;
+using flitzzip::app::QueueFileKind;
+using flitzzip::app::QueueFileMetadata;
+using flitzzip::app::QueueMetadataCache;
 using namespace std::chrono_literals;
 
 namespace {
@@ -50,7 +50,7 @@ struct ReleaseReadGate {
 TEST_CASE(queue_metadata_reader_reports_file_directory_size_and_missing_transitions) {
     const auto root = test_temp_dir("queue-metadata");
     const auto path = root / "input.txt";
-    using superzip::app::read_queue_file_metadata;
+    using flitzzip::app::read_queue_file_metadata;
     REQUIRE_TRUE(read_queue_file_metadata(root).kind == QueueFileKind::Directory);
     REQUIRE_TRUE(read_queue_file_metadata(path).kind == QueueFileKind::Missing);
     std::ofstream(path, std::ios::binary) << "payload";
@@ -178,7 +178,7 @@ TEST_CASE(queue_metadata_membership_is_bounded_and_stop_is_final_and_idempotent)
     });
     const std::filesystem::path paths[]{"retained"};
     cache.synchronize(paths);
-    std::vector<std::filesystem::path> too_many(superzip::app::kMaxQueueItems + 1, "input");
+    std::vector<std::filesystem::path> too_many(flitzzip::app::kMaxQueueItems + 1, "input");
     bool rejected = false;
     try {
         cache.synchronize(too_many);
@@ -213,10 +213,10 @@ TEST_CASE(queue_metadata_archive_candidates_preserve_ticks_order_and_regular_fil
         ++reads;
         return QueueFileMetadata{path == "directory.zip" ? QueueFileKind::Directory : QueueFileKind::File, 1};
     });
-    const std::filesystem::path paths[]{"second.suzip", "ignored.txt", "unchecked.zip", "directory.zip", "first.zip"};
+    const std::filesystem::path paths[]{"second.flzip", "ignored.txt", "unchecked.zip", "directory.zip", "first.zip"};
     const std::vector<bool> enabled{true, true, false, true};
     cache.synchronize(paths);
-    using superzip::app::queue_archive_candidates;
+    using flitzzip::app::queue_archive_candidates;
     await_metadata([&] { return queue_archive_candidates(paths, enabled, cache).size() == 2; });
     const auto actual = queue_archive_candidates(paths, enabled, cache);
     REQUIRE_EQ(actual[0], paths[0]);
@@ -229,7 +229,7 @@ TEST_CASE(queue_metadata_refresh_observes_real_resize_delete_and_recreation) {
     const auto root = test_temp_dir("queue-metadata-refresh");
     const std::filesystem::path paths[]{root / "input.zip"};
     std::ofstream(paths[0], std::ios::binary) << "original";
-    QueueMetadataCache cache(superzip::app::read_queue_file_metadata);
+    QueueMetadataCache cache(flitzzip::app::read_queue_file_metadata);
     cache.synchronize(paths);
     await_metadata([&] { return cache.get(paths[0]).bytes == 8U; });
     std::ofstream(paths[0], std::ios::binary | std::ios::trunc) << "new";

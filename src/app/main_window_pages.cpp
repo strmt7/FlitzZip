@@ -16,7 +16,7 @@
 #define MSGFLT_ALLOW 1
 #endif
 
-namespace superzip::app {
+namespace flitzzip::app {
 
 namespace {
 
@@ -246,7 +246,7 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
                                 state, OperationKind::Compress);
 
     const auto format = compression_format_value(state.compression_format_index);
-    const bool suzip_tuning = compression_format_uses_suzip_tuning(format);
+    const bool flzip_tuning = compression_format_uses_flzip_tuning(format);
     const bool level_tuning = compression_format_uses_level(format);
     draw_field(dc, layout.archive_name, L"Archive name", compression_output_filename_for(state), false);
     draw_field(dc, layout.destination, L"Destination", destination_directory_or_default(state).wstring(), false, true,
@@ -255,11 +255,11 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     draw_field(dc, layout.compression_level, L"Compression level",
                level_tuning ? compression_level_text(state.compression_level_index) : L"-", level_tuning, level_tuning);
     draw_field(dc, layout.method, L"Compression method",
-               suzip_tuning ? (state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred") : L"-", suzip_tuning,
-               suzip_tuning);
+               flzip_tuning ? (state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred") : L"-", flzip_tuning,
+               flzip_tuning);
     draw_field(dc, layout.block_size, L"Block size",
-               suzip_tuning ? compression_block_size_text(state.compression_block_size_index) : L"-", suzip_tuning,
-               suzip_tuning);
+               flzip_tuning ? compression_block_size_text(state.compression_block_size_index) : L"-", flzip_tuning,
+               flzip_tuning);
 
     RECT advanced = layout.advanced;
     fill_round_rect(dc, advanced, kPanel, scale(4));
@@ -268,7 +268,7 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     draw_text(dc, RECT{advanced.left + scale(16), advanced.top + scale(12), advanced.right, advanced.top + scale(36)},
               L"Verification", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_toggle(dc, layout.verify, L"Verify SUZIP/ZIP after write", state.verify_after_write_opt_in,
+    draw_toggle(dc, layout.verify, L"Verify FLZIP/ZIP after write", state.verify_after_write_opt_in,
                 ToggleId::VerifyAfterWrite);
 
     RECT security = layout.security;
@@ -1023,7 +1023,7 @@ void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& sta
     draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);
     draw_toggle(dc, layout.defender, L"Microsoft Defender scan", state.defender_scan_opt_in, ToggleId::DefenderScan);
     draw_toggle(dc, layout.gpu, L"Require AMD GPU acceleration", state.gpu_required, ToggleId::GpuRequired);
-    draw_toggle(dc, layout.verify, L"Verify SUZIP/ZIP after write", state.verify_after_write_opt_in,
+    draw_toggle(dc, layout.verify, L"Verify FLZIP/ZIP after write", state.verify_after_write_opt_in,
                 ToggleId::VerifyAfterWrite);
     draw_field(dc, layout.log_level, L"Log level", log_level_text(state.log_level_index), true);
     draw_field(dc, layout.log_retention, L"Log retention", log_retention_text(state.log_retention_index), true);
@@ -1045,7 +1045,7 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_logo(dc, logo, kAccent);
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(50), card.right - scale(40), card.top + scale(90)},
-              L"SuperZip", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+              L"FlitzZip", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, small_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)},
               std::wstring(kProductTagline), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -1053,10 +1053,10 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(130), card.right - scale(40), card.top + scale(150)},
               L"Author: Efstratios Mitridis", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(146), card.right - scale(40), card.top + scale(166)},
-              widen(std::string("Version: ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+              widen(std::string("Version: ") + FLITZZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_text(
         dc, RECT{card.left + scale(42), card.top + scale(184), card.right - scale(42), card.top + scale(294)},
-        L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, "
+        L"FlitzZip separates native .flzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, "
         L"LZMA, lzip, Zstandard, Unix Compress, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM standard "
         L"archive/compression handling. Legacy transfer decoders remain extract-only. AMD HIP is the only GPU "
         L"acceleration boundary; security-sensitive extraction validates paths and metadata before writing output.",
@@ -1072,4 +1072,4 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
 // Inputs: `dc` is the target, `rect` is the button rectangle, `text` is display text, and `active` selects accent
 // styling. Outputs: Renders hover, press, release, border, and ellipsized text states.
 
-}  // namespace superzip::app
+}  // namespace flitzzip::app
