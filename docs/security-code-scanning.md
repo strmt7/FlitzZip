@@ -15,15 +15,20 @@ data directory. New executable or unknown files there fail role admission
 instead of inheriting a blanket directory exception.
 
 Historical source and hosted review ledgers are informational evidence only.
-They cannot admit a source finding, including an exact match to an earlier
-review. Do not reseal those ledgers to make changed source pass. Raw reports,
+They cannot admit a source finding. Separately, the maintainer has authorized
+individually proven false positives through the current exact-source review
+contract. That contract binds the alert, source, relevant callers, location,
+scanner and review evidence; any changed identity requires a fresh review.
+Do not reseal historical ledgers to make changed source pass. Raw reports,
 locations, rule identities and producer categories remain complete. Follow the
 [source remediation requirements](security-source-remediation-redesign.md).
 
-The hosted audit separately applies exact public-integrity metadata contracts
-and the maintainer's [governance baseline](../.github/scanner-governance-baseline.json).
-Neither mechanism accepts source-code findings. Current acceptance depends on
-fresh analysis or proven unchanged native/query inputs, not an old dismissal.
+The hosted audit applies that current source-review contract, separate exact
+public-integrity metadata contracts, and the maintainer's
+[governance baseline](../.github/scanner-governance-baseline.json).
+Metadata and governance contracts cannot accept source-code findings. Current
+acceptance depends on fresh analysis or proven unchanged native/query inputs,
+not an old dismissal. A false-positive disposition does not repair a defect.
 
 ### Prevention Strategy and Research
 

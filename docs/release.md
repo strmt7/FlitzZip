@@ -124,9 +124,12 @@ never reads a real user's predecessor settings.
   `ProductCode`, patch updates receive a different `ProductCode`, all scopes
   keep the same `UpgradeCode`, and per-user test MSIs do not collide with product
   per-machine MSIs.
-- Release smoke installs the MSI, repairs the same MSI, runs dependency-check
-  after repair, and then uninstalls it. This proves that install, repair, and
-  uninstall all operate through the shipped package.
+- Release smoke installs the MSI, verifies the installed CLI against the staged
+  binary, removes that owned executable, and repairs the same MSI. Repair must
+  restore the exact original bytes and pass dependency-check before uninstall.
+  This proves recovery through the shipped package rather than merely invoking
+  repair on an intact installation. This destructive control runs only in the
+  disposable release-validation runner.
 
 For local coding and non-admin installer tests only, agents may build an
 explicit per-user MSI with `tools\build.ps1 -MsiInstallScope perUser`, then run
@@ -202,9 +205,12 @@ The workflow performs:
   inventory through the same tool used by local developers and agents.
 - HIP-enabled build and C++ tests.
 - Local repository security scan.
-- Portable package staging, dependency check, FLZIP/ZIP/TAR/TAR.GZ/TAR.BZ2/Gzip/Bzip2/Unix Compress/CPIO/CPIO.GZ/AR/DEB
-  smoke tests, and
-  checksum generation.
+- Portable package staging and dependency checks, followed by the shared
+  registry-driven format matrix against the packaged CLI. This checks complete
+  restored bytes, Unicode paths, aliases and overwrite failures for every
+  supported format. A separate native SHA-256 roundtrip uses required HIP when
+  hardware is available and explicitly selects the CPU reader/writer otherwise.
+- ZIP/MSI checksum generation.
 - MSI creation and silent install/repair/uninstall smoke tests under the
   Program Files release install path when requested. Each MSI phase has a
   300-second stale-wait timeout so an unanswered installer or elevation prompt

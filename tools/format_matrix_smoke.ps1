@@ -1,7 +1,8 @@
 param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo")]
     [string]$Configuration = "Release",
-    [string]$WorkRoot = $env:TEMP
+    [string]$WorkRoot = $env:TEMP,
+    [string]$CliPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,9 +11,9 @@ if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyCo
 }
 
 $repo = Split-Path -Parent $PSScriptRoot
-$cli = Join-Path $repo "build\$Configuration\flitzzip_cli.exe"
+$cli = if ($CliPath) { [IO.Path]::GetFullPath($CliPath) } else { Join-Path $repo "build\$Configuration\flitzzip_cli.exe" }
 if (-not (Test-Path -LiteralPath $cli)) {
-    throw "CLI binary not found. Run tools/build.ps1 first."
+    throw "CLI binary not found: $cli. Build or stage the package before selecting its CLI."
 }
 $testRunner = Join-Path $repo "build\$Configuration\flitzzip_tests.exe"
 if (-not (Test-Path -LiteralPath $testRunner)) {
