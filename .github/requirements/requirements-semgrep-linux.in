@@ -3,5 +3,5 @@
 semgrep==1.179.0
 pyjwt[crypto]==2.15.1
 # Advisory floors still apply to the complete resolved graph.
-cryptography>=50.0.0
+cryptography>=50.0.2
 mcp>=1.28.1
