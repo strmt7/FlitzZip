@@ -1,3 +1,4 @@
+--index-url https://pypi.org/simple
 --only-binary :all:
 
 annotated-types==0.8.0 \
