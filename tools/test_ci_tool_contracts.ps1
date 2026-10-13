@@ -34,6 +34,8 @@ Assert-CiContractPlan -Path 'tools/test_security_scan.ps1' -Required @('security
 Assert-CiContractPlan -Path 'tools/native_component_tests.ps1' -Required @('native-selection-contracts')
 Assert-CiContractPlan -Path 'tests/cpp/test_main.cpp' -Required @('native-runner-contracts')
 Assert-CiContractPlan -Path 'tools/native_ci.ps1' -Required @('native-ci-contracts')
+Assert-CiContractPlan -Path 'tools/native_coverage.py' -Required @('native-coverage-contracts')
+Assert-CiContractPlan -Path 'tools/native-coverage-toolchain.json' -Required @('native-coverage-contracts')
 Assert-CiContractPlan -Path '.github/workflows/rocm-qualification.yml' -Required @('native-ci-contracts', 'rocm-toolchain-tests')
 Assert-CiContractPlan -Path '.github/workflows/release.yml' -Required @('release-workflow-contracts')
 Assert-CiContractPlan -Path 'cmake/ZstdLegacyHistoryV05.c' -Required @('zstd-rewrite-policy-contracts')

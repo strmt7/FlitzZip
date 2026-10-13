@@ -315,6 +315,7 @@ function Get-FlitzZipVerificationScope {
         '^tools/test_refactor_audit\.ps1$',
         '^tools/(native_test_selection|native_component_tests|test_native_selection|test_native_runner)\.ps1$',
         '^tools/(native_ci|ci_native_plan|test_native_ci)\.ps1$',
+        '^tools/(native_coverage(_report)?|test_native_coverage)\.py$', '^tools/native-coverage-toolchain\.json$',
         '^tools/(cpp_security_plan|test_cpp_security_plan)\.py$',
         '^\.clusterfuzzlite/(build\.sh|local_smoke\.sh|Dockerfile|project\.yaml)$',
         '^mcp/',
@@ -387,6 +388,8 @@ function Get-FlitzZipVerificationScope {
 function Get-FlitzZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
     $definitions = @(
+        @{ Pattern = @('^tools/(native_coverage(_report)?|test_native_coverage)\.py$', '^tools/native-coverage-toolchain\.json$', '^tools/native_build_receipt\.py$', '^mcp/flitzzip_mcp\.py$', '^\.github/workflows/windows-ci\.yml$')
+           Command = (Get-FlitzZipVerificationCommand -Id 'native-coverage-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_native_coverage') -Reason 'coverage normalization, collector identity and failure propagation require offline contracts; the existing Windows CI lane measures actual native coverage') }
         @{ Pattern = @('^tools/(test_zstd_sanitizers|cmake_toolchain|build_parallelism|local_resources|process_environment)\.ps1$', '^tools/native_build_provenance\.py$', '^tools/cmake-toolchain\.sha256$', '^\.github/workflows/zstd-sanitizers\.yml$', '^third_party/upstream/zstd/', '^tests/cpp/(zstd_legacy_fixture|test_util)\.hpp$', '^tests/cpp/test_main\.cpp$', '^cmake/(PatchZstdLegacy\.cmake|Zstd.*\.(c|cmake))$', '^tests/(cpp/test_zstd.*\.cpp|zstd/|cmake/test_zstd)', '^CMakeLists\.txt$')
            Command = (Get-FlitzZipVerificationCommand -Id 'zstd-sanitizer-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_zstd_sanitizers.ps1') -Reason 'dependency memory and ownership rewrites require instrumented canonical-source tests and qualified Windows ASan controls in an isolated validation build') }
         @{ Pattern = @('^\.github/workflows/zstd-sanitizers\.yml$', '^tools/test_zstd_sanitizers\.ps1$')
@@ -540,7 +543,7 @@ function Get-FlitzZipLocalVerificationCommand {
         if ($nativeSelection.mode -eq 'runner') {
             Add-FlitzZipVerificationCommand -List $local -Seen $seen -Command (Get-FlitzZipVerificationCommand -Id 'native-runner-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_native_runner.ps1') -Reason 'native test runner changes require its controlled exact/substring/default registry contracts')
         } elseif ($usesFullNativeDriver) {
-            $nativeArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', "`$ErrorActionPreference = 'Stop'; & ./tools/test.ps1 -Configuration Release; if (Test-Path variable:\LASTEXITCODE) { exit `$LASTEXITCODE }")
+            $nativeArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test.ps1', '-Configuration', 'Release')
             $nativeReason = 'unmapped/shared native dependencies or explicit broad qualification require the full native driver'
         } else {
             $pathJson = ConvertTo-Json -InputObject @($paths) -Compress
@@ -740,6 +743,7 @@ Export-ModuleMember -Function `
     Test-FlitzZipAllPath, `
     Get-FlitzZipVerificationScope, `
     Get-FlitzZipVerificationPlan, `
+    Get-FlitzZipVerificationCommand, `
     Get-FlitzZipHostedWorkflowSelection, `
     Get-FlitzZipHostedNativePlan, `
     Get-FlitzZipNativeCiEvent, `

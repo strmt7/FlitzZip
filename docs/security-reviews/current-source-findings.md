@@ -246,3 +246,12 @@ The value is the public SHA-256 digest of empty input, asserted against the prod
 **Synchronous PPMd input borrow.** `cpp/stack-address-escape` at `third_party/lzma_sdk/C/7zDec.c:159`.
 
 `SzDecodePpmd` stores the caller stream only in its private `CPpmdWithInput` owner. All range decoding and callbacks finish synchronously; `Ppmd7_Free` and `ISzAlloc_Free` release the decoder and bridge before returning. Neither pointer is returned or registered with a worker. The existing PPMd tests independently check callback ownership, both allocation failures, I/O errors, truncation and null empty output. The separate empty-output pointer-arithmetic defect was repaired in f6014cb and remains covered by its regression.
+
+## SBOM action context renewal
+
+The reviewed Actions update changes only the SPDX SBOM action from 0.24.2 to
+0.24.3 in the security workflow. Each finding source, caller, regression,
+DevSkim package and CodeQL configuration remains byte-identical to the reviewed
+FlitzZip commit. The complete workflow diff was checked before renewing these
+contexts. This changes no individual rationale or admitted location; subsequent
+source or scanner changes still expire the corresponding decision.

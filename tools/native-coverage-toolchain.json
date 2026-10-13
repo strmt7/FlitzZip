@@ -1,0 +1,31 @@
+{
+  "version": "0.9.9.0",
+  "url": "https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-0.9.9.0/OpenCppCoverageSetup-x64-0.9.9.0.exe",
+  "installer_bytes": 16864947,
+  "installer_sha256": "2295a733da39412c61e4f478677519dd0bb1893d88313ce56b468c9e50517888",
+  "license": "GPL-3.0",
+  "license_url": "https://github.com/OpenCppCoverage/OpenCppCoverage/blob/release-0.9.9.0/LICENSE.txt",
+  "files": {
+    "boost_date_time-vc142-mt-x64-1_72.dll": "878dd09514c18c99537ccb1c30944114b72ea8a41faedf1c0bfabaa7f67d850e",
+    "boost_filesystem-vc142-mt-x64-1_72.dll": "b3f2c8ab77e0ae489ebfe90b8e474b54222428505e8a9fa226ebad08e391039e",
+    "boost_iostreams.dll": "9c24bb15830bb7f92ae7989f5a8701d073450c9dd129bb8b89d75c6cdc1c5ff3",
+    "boost_locale-vc142-mt-x64-1_72.dll": "a0a9431e1a047edb605f0ce739bc662b7976d1e6ebbf71612ea263c945820b8d",
+    "boost_log-vc142-mt-x64-1_72.dll": "cd432f21235dbf9d3e87db5bb7015b44c089cd89ad2cd5b08dddb5dc9e9cb5ee",
+    "boost_program_options-vc142-mt-x64-1_72.dll": "47be6fc234eff69126b298789d04bddb0b820bd4b7a73cb98687434f5417d143",
+    "boost_thread-vc142-mt-x64-1_72.dll": "c7cc38edb5df21478e05be35fa63eca641b43a6d7f580cdfb93c1eb2faaa86f8",
+    "bz2.dll": "27ddeb5e1447bae58cec00505a128ae3ff53930181e72b7ed98514e28177e253",
+    "CppCoverage.dll": "3a0c2abd394402c7f4d93087649ca4eda3fee30898ea79b6af39f55ed66d0cea",
+    "Exporter.dll": "ef853ab246c43d8601b7bee203829f9969e602d5ae9d7e517456cc315f604955",
+    "FileFilter.dll": "3df1e69866b75c8042ee654766b9bc8232cc37b6bcb9a550b4059c14c5632ff7",
+    "libctemplate.dll": "896bb32a41b0277079dae4afca2a01321a4766344f68f5539a23eba4da7eaa64",
+    "libprotobuf-lite.dll": "437440adffe0c86ae3390b3d1f7bff1c856bfbdbfc6eba7c25faecce31d72f51",
+    "libprotobuf.dll": "fa39833d5a795f6e13cc71e818f38aab9e61f415108de50dff69fc5b1b6356a8",
+    "lzma.dll": "b1d9bac566195e71c98b87c2e4d0f2df24442acefdc03e75e4fb13ca992f88ec",
+    "msdia140.dll": "f3ed358cfb01befb99eae6c8340ca5d111af01873ac26442d24c5c8f9ddb753f",
+    "OpenCppCoverage.exe": "207bd645c603a4429e3135f9935c34f1a5349a7a6d5d99ab779b1b3866a7fbb2",
+    "Plugin.dll": "68f533b88edd997239b9198b90549b1b464bec386ca2d7dec71d468db6e0395a",
+    "Tools.dll": "26cddb1729b3d81c9b412e8e11c03a603283b1f6c41ef12bec8b574d59e406cd",
+    "zlib1.dll": "a15abd5c65f06b3bf394b88dadf6178c986e7f3f282c3c01ab21d298c347164f",
+    "zstd.dll": "023a97a05c71c990aaae9e46b703e99e7ee61fad3c36a089babdd80afad06860"
+  }
+}

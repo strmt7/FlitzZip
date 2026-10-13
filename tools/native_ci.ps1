@@ -7,7 +7,8 @@ function Get-FlitzZipHostedWorkflowSelection {
     $cpu = Get-FlitzZipVerificationScope -ChangedPath $cpuPaths
     $windows = $Full.IsPresent -or $cpu.touchesCpp -or $cpu.touchesProductionSource -or
         $cpu.touchesGui -or $cpu.touchesPackaging -or $cpu.touchesNativeBuildInputs -or
-        (Test-FlitzZipAnyPath -Path $Paths -Pattern @('^\.github/workflows/windows-ci\.yml$'))
+        (Test-FlitzZipAnyPath -Path $Paths -Pattern @('^\.github/workflows/windows-ci\.yml$',
+            '^tools/native_coverage(_report)?\.py$', '^tools/native-coverage-toolchain\.json$'))
     $rocm = $Full.IsPresent -or (Test-FlitzZipAnyPath -Path $Paths -Pattern @(
         '^\.github/workflows/rocm-qualification\.yml$', '^CMakeLists\.txt$', '^cmake/',
         '^src/gpu/', '^src/core/[^/]+\.hpp$', '^third_party/',
@@ -19,11 +20,17 @@ function Get-FlitzZipHostedWorkflowSelection {
 }
 
 # Purpose: Project hosted native work from the canonical planner instead of repeating every product check.
-# Inputs: Paths describe the push/PR range; Full is explicit manual broad CPU qualification.
+# Inputs: Paths describe the event range, Full selects broad work, and Configuration selects built outputs.
 # Outputs: Returns build/test/matrix decisions and the trusted native command; never launches a workload.
 function Get-FlitzZipHostedNativePlan {
-    param([string[]]$Paths, [switch]$Full)
+    param([string[]]$Paths, [switch]$Full,
+          [ValidateSet('Release', 'RelWithDebInfo')][string]$Configuration = 'Release')
     $plan = Get-FlitzZipVerificationPlan -ChangedPath $Paths -SuspectGlobalBug:$Full -Checkpoint intermediate
+    # Collector changes require their real hosted consumer, while local planning remains offline.
+    $coverageChanged = Test-FlitzZipAnyPath -Path $Paths -Pattern @(
+        '^tools/native_coverage(_report)?\.py$', '^tools/native-coverage-toolchain\.json$')
+    $build = ($coverageChanged -and $Configuration -eq 'RelWithDebInfo') -or
+        @($plan.requiredLocalCommands | Where-Object id -eq 'release-build').Count -gt 0
     $unit = @($plan.requiredLocalCommands | Where-Object id -eq 'unit-tests')
     $mode = 'none'
     $command = $null
@@ -31,12 +38,23 @@ function Get-FlitzZipHostedNativePlan {
         if ($unit.Count -ne 1) { throw 'Hosted native plan requires exactly one native test command.' }
         $command = $unit[0]
         $mode = if ('tools/native_component_tests.ps1' -in $command.arguments) { 'component' } else { 'full' }
+        $arguments = @($command.arguments)
+        $position = [Array]::IndexOf($arguments, '-Configuration')
+        if ($position -lt 0 -or $position + 1 -ge $arguments.Count -or
+            @($arguments | Where-Object { $_ -eq '-Configuration' }).Count -ne 1) {
+            throw 'The native command must select exactly one build configuration.'
+        }
+        $arguments[$position + 1] = $Configuration
+        $command = Get-FlitzZipVerificationCommand -Id $command.id -Stage $command.stage `
+            -Executable $command.executable -Arguments $arguments -Reason $command.reason -Requirement $command.requirement
     }
     return [pscustomobject]@{
-        build = @($plan.requiredLocalCommands | Where-Object id -eq 'release-build').Count -gt 0
+        build = $build
+        coverage = $build -and $Configuration -eq 'RelWithDebInfo'
         testMode = $mode; testCommand = $command
         formatMatrix = @($plan.requiredLocalCommands | Where-Object id -eq 'format-matrix-smoke').Count -gt 0
         securityPolicy = @($plan.requiredLocalCommands | Where-Object id -eq 'security-scan').Count -gt 0
+        configuration = $Configuration
         gpuExecutionQualified = $false
     }
 }
