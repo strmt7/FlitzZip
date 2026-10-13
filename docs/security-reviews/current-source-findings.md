@@ -41,6 +41,16 @@ callers, evidence, tool version, repository, rule or location remain blocking.
 No scanner, query, test or coverage path is removed. Renewing a disposition
 requires another substantive review of the changed bytes.
 
+The CodeQL decisions below are qualified against version 2.27.2. Its complete
+CPU and HIP-host analyses of 0fcca6c342bb2963e532cf8fb02d4bf4a0018f77 succeeded.
+The eight reproduced reports were individually re-reviewed: synchronous borrow
+and cleanup for 838, 839 and 8347; staged inclusion for 853; and the unsigned
+SIZE_MAX sentinel at each of 854, 855, 856 and 857. Their source, caller,
+regression and scanner-configuration hashes still match the reviewed context.
+The retained native qualification covers those unchanged consumers. Only these
+exact report identities admit the new scanner version; further version or source
+changes expire them again.
+
 ## Individual Decisions
 
 ### Alert 819
