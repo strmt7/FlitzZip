@@ -89,10 +89,11 @@ foreach ($case in @(
         $plan.formatMatrix -eq $case.matrix -and -not $plan.gpuExecutionQualified) "canonical native projection: $($case.path)"
     Assert-NativeCi (-not $plan.coverage) "Release lane does not duplicate symbols-based coverage: $($case.path)"
 }
-foreach ($path in @('tools/native_coverage.py', 'tools/native_coverage_report.py', 'tools/native-coverage-toolchain.json')) {
+foreach ($path in @('.github/workflows/windows-ci.yml', 'tools/native_coverage.py',
+        'tools/native_coverage_report.py', 'tools/native-coverage-toolchain.json')) {
     $collector = Get-FlitzZipHostedNativePlan -Paths @($path) -Configuration RelWithDebInfo
     Assert-NativeCi ($collector.build -and $collector.coverage -and $collector.testMode -eq 'none' -and
-        -not $collector.formatMatrix) "collector changes require one real hosted measurement: $path"
+        -not $collector.formatMatrix) "collector or integration changes require one real hosted measurement: $path"
 }
 $full = Get-FlitzZipHostedNativePlan -Paths @('README.md') -Full
 Assert-NativeCi ($full.build -and $full.testMode -eq 'full' -and $full.formatMatrix -and $full.securityPolicy) 'explicit broad/manual qualification remains complete'

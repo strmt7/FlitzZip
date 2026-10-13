@@ -26,8 +26,9 @@ function Get-FlitzZipHostedNativePlan {
     param([string[]]$Paths, [switch]$Full,
           [ValidateSet('Release', 'RelWithDebInfo')][string]$Configuration = 'Release')
     $plan = Get-FlitzZipVerificationPlan -ChangedPath $Paths -SuspectGlobalBug:$Full -Checkpoint intermediate
-    # Collector changes require their real hosted consumer, while local planning remains offline.
+    # Collector and workflow changes exercise measurement/upload; local planning remains offline.
     $coverageChanged = Test-FlitzZipAnyPath -Path $Paths -Pattern @(
+        '^\.github/workflows/windows-ci\.yml$',
         '^tools/native_coverage(_report)?\.py$', '^tools/native-coverage-toolchain\.json$')
     $build = ($coverageChanged -and $Configuration -eq 'RelWithDebInfo') -or
         @($plan.requiredLocalCommands | Where-Object id -eq 'release-build').Count -gt 0
