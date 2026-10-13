@@ -1,4 +1,6 @@
 #include "core/file_publish.hpp"
+#include "core/windows_directory.hpp"
+#include <memory>
 #include "core/path_safety.hpp"
 #include "core/stream_archive_path.hpp"
 #include "core/file_size.hpp"
@@ -782,4 +784,145 @@ TEST_CASE(regular_file_size_preserves_unicode_error_diagnostics) {
     REQUIRE_TRUE(refused);
     std::ofstream(path, std::ios::binary) << "size";
     REQUIRE_EQ(flitzzip::regular_file_size(path), std::uint64_t{4});
+}
+
+// Purpose: Reproduce an in-place junction conversion despite a live, non-delete-sharing parent handle.
+// Inputs: Test-owned directories, a positive full-path redirection control and every relative admission mode.
+// Outputs: Proves the attack setup, then rejects both changed parents and leaf reparses without outside creation.
+TEST_CASE(relative_directory_rejects_reparse_after_parent_was_pinned) {
+    using flitzzip::windows_detail::DirectoryOpenMode;
+    using flitzzip::windows_detail::open_directory_relative;
+    const auto root = test_temp_dir("relative-directory-reparse");
+    const auto parent = root / "parent";
+    const auto outside = root / "outside";
+    std::filesystem::create_directory(parent);
+    std::filesystem::create_directory(outside);
+    {
+        std::unique_ptr<void, decltype(&CloseHandle)> root_handle(
+            CreateFileW(root.c_str(), FILE_LIST_DIRECTORY | FILE_TRAVERSE | SYNCHRONIZE,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr),
+            &CloseHandle);
+        REQUIRE_TRUE(root_handle.get() != INVALID_HANDLE_VALUE);
+        std::unique_ptr<void, decltype(&CloseHandle)> parent_handle(
+            open_directory_relative(root_handle.get(), L"parent", DirectoryOpenMode::Existing), &CloseHandle);
+        REQUIRE_TRUE(flitzzip_test::try_create_test_directory_junction(
+            parent, outside, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE));
+        REQUIRE_TRUE(CreateDirectoryW((parent / "control").c_str(), nullptr) != 0);
+        REQUIRE_TRUE(std::filesystem::is_directory(outside / "control"));
+        for (const auto mode :
+             {DirectoryOpenMode::Existing, DirectoryOpenMode::OpenOrCreate, DirectoryOpenMode::CreateNew}) {
+            bool refused = false;
+            try {
+                const auto name = mode == DirectoryOpenMode::Existing ? L"control" : L"escaped";
+                std::unique_ptr<void, decltype(&CloseHandle)> child(
+                    open_directory_relative(parent_handle.get(), name, mode), &CloseHandle);
+            } catch (const flitzzip::SecurityError&) {
+                refused = true;
+            }
+            REQUIRE_TRUE(refused);
+            REQUIRE_TRUE(!std::filesystem::exists(outside / "escaped"));
+        }
+        bool leaf_refused = false;
+        try {
+            std::unique_ptr<void, decltype(&CloseHandle)> leaf(
+                open_directory_relative(root_handle.get(), L"parent", DirectoryOpenMode::Existing), &CloseHandle);
+        } catch (const flitzzip::SecurityError&) {
+            leaf_refused = true;
+        }
+        REQUIRE_TRUE(leaf_refused);
+    }
+    flitzzip_test::remove_test_directory_junction(parent);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Keep directory admission bounded to one name and preserve exclusive reservation semantics.
+// Inputs: An ordinary pinned parent, unsafe components, a Unicode child and an existing-name collision.
+// Outputs: Rejects path interpretation, opens Unicode exactly and reports exclusive collisions without mutation.
+TEST_CASE(relative_directory_preserves_names_and_exclusive_creation) {
+    using flitzzip::windows_detail::DirectoryOpenMode;
+    using flitzzip::windows_detail::open_directory_relative;
+    const auto root = test_temp_dir("relative-directory-names");
+    {
+        std::unique_ptr<void, decltype(&CloseHandle)> parent(
+            CreateFileW(root.c_str(), FILE_LIST_DIRECTORY | FILE_TRAVERSE | SYNCHRONIZE,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr),
+            &CloseHandle);
+        REQUIRE_TRUE(parent.get() != INVALID_HANDLE_VALUE);
+        const auto unicode = L"\u65e5\u672c-\U0001f680";
+        std::unique_ptr<void, decltype(&CloseHandle)> created(
+            open_directory_relative(parent.get(), unicode, DirectoryOpenMode::CreateNew), &CloseHandle);
+        std::unique_ptr<void, decltype(&CloseHandle)> reopened(
+            open_directory_relative(parent.get(), unicode, DirectoryOpenMode::OpenOrCreate), &CloseHandle);
+        REQUIRE_TRUE(std::filesystem::is_directory(root / unicode));
+        REQUIRE_EQ(open_directory_relative(parent.get(), unicode, DirectoryOpenMode::CreateNew), INVALID_HANDLE_VALUE);
+        for (const auto* component : {L"", L".", L"..", L"../escape", L"child\\escape", L"C:escape"}) {
+            bool refused = false;
+            try {
+                std::unique_ptr<void, decltype(&CloseHandle)> unsafe(
+                    open_directory_relative(parent.get(), component, DirectoryOpenMode::CreateNew), &CloseHandle);
+            } catch (const flitzzip::SecurityError&) {
+                refused = true;
+            }
+            REQUIRE_TRUE(refused);
+        }
+        REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(root), std::filesystem::directory_iterator{}), 1);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Prove that private reservations stabilize their parent without blocking overlapping publications.
+// Inputs: Two simultaneous Unicode file transactions and an attempted junction conversion of their shared parent.
+// Outputs: Refuses redirection, publishes both exact payloads and removes staging without creating outside files.
+TEST_CASE(file_publish_overlapping_reservations_keep_parent_stable) {
+    const auto root = test_temp_dir("publish-overlapping-reservations");
+    const auto parent = root / L"\u65e5\u672c";
+    const auto outside = root / "outside";
+    std::filesystem::create_directory(outside);
+    {
+        flitzzip::FilePublishTransaction first(parent / L"caf\u00e9.txt");
+        flitzzip::FilePublishTransaction second(parent / L"\U0001f680.txt");
+        REQUIRE_TRUE(!flitzzip_test::try_create_test_directory_junction(
+            parent, outside, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE));
+        std::ofstream(first.staging_path(), std::ios::binary) << "first bytes";
+        std::ofstream(second.staging_path(), std::ios::binary) << "second bytes";
+        first.commit(false);
+        second.commit(false);
+    }
+    std::ifstream first(parent / L"caf\u00e9.txt", std::ios::binary);
+    std::ifstream second(parent / L"\U0001f680.txt", std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(first), {}), "first bytes");
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(second), {}), "second bytes");
+    first.close();
+    second.close();
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(parent), std::filesystem::directory_iterator{}), 2);
+    REQUIRE_TRUE(std::filesystem::is_empty(outside));
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Keep a valid maximum-length output filename independent of private staging-name overhead.
+// Inputs: A 255-character filename, private temporary payload and ordinary final publication.
+// Outputs: Publishes the exact bytes and identity without exceeding a filesystem component's name limit.
+TEST_CASE(file_publish_supports_maximum_length_filename) {
+    const auto root = test_temp_dir("publish-component-limit");
+    const auto target = root / (std::wstring(251U, L'x') + L".bin");
+    const auto target_io = std::filesystem::path(flitzzip::windows_api_path(target));
+    {
+        flitzzip::FilePublishTransaction transaction(target);
+        const auto staging = transaction.staging_path();
+        REQUIRE_TRUE(staging.parent_path().filename().native().size() <= 255U);
+        std::ofstream(staging, std::ios::binary) << "maximum filename payload";
+        const auto before = publication_file_identity(staging);
+        transaction.commit(false);
+        const auto after = publication_file_identity(target_io);
+        REQUIRE_EQ(before.dwVolumeSerialNumber, after.dwVolumeSerialNumber);
+        REQUIRE_EQ(before.nFileIndexHigh, after.nFileIndexHigh);
+        REQUIRE_EQ(before.nFileIndexLow, after.nFileIndexLow);
+        std::ifstream input(target_io, std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "maximum filename payload");
+        input.close();
+        REQUIRE_TRUE(!std::filesystem::exists(staging.parent_path()));
+    }
+    std::filesystem::remove_all(std::filesystem::path(flitzzip::windows_api_path(root)));
 }

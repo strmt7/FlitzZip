@@ -20,6 +20,16 @@ final file only after the entry has been decoded and verified. A corrupt ZIP,
 TAR, or FLZIP entry can therefore fail after writing temporary bytes without
 exposing a partial final file or replacing an existing final file.
 
+On Windows, output directory components are opened or created relative to the
+already-pinned parent handle with reparse resolution rejected by
+[`NtCreateFile`](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile)
+using `OBJ_DONT_REPARSE`. A live directory handle alone does not prevent in-place junction
+conversion. The private staging directory is created through that boundary with
+its protected security descriptor; its pinned entry then keeps the parent chain
+stable through publication. Regression tests convert an empty parent while its
+handle remains open and verify rejection, alongside ordinary concurrent and
+Unicode publication.
+
 TAR extraction is two-pass: FlitzZip scans all headers and PAX path metadata,
 validates the complete normalized path set, and only then creates output.
 Symbolic links, hard links, devices, and FIFOs are rejected until a dedicated

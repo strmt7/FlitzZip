@@ -25,6 +25,29 @@ function Assert-ReleasePolicyMutation {
     }
 }
 
+# Purpose: Build a small source-offering fixture from real tracked materials without changing those files.
+# Inputs: Destination ZIP, member paths, and an optional missing, altered or duplicate member.
+# Outputs: A bounded fixture ZIP used to exercise source-offering rejection and success paths.
+function Write-SourceOfferingFixture {
+    param([string]$Destination, [string[]]$Member, [string]$Missing = '',
+        [string]$Altered = '', [string]$Duplicate = '')
+
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::Open($Destination, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($relative in $Member) {
+            if ($relative -eq $Missing) { continue }
+            $copies = if ($relative -eq $Duplicate) { 2 } else { 1 }
+            for ($copy = 0; $copy -lt $copies; $copy++) {
+                $source = if ($relative -eq $Altered) { 'LICENSE' } else { $relative }
+                [IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                    $zip, (Join-Path $repoRoot $source), ('FlitzZip-source/' + $relative)) | Out-Null
+            }
+        }
+    } finally { $zip.Dispose() }
+}
+
 try {
     foreach ($relative in @('.github/workflows/release.yml')) {
         $destination = Join-Path $fixtureRoot $relative
@@ -64,6 +87,12 @@ try {
         Assert-ReleasePolicyMutation -FixtureRoot $fixtureRoot -Path $mutation[0] -Original $mutation[1] `
             -Replacement $mutation[2] -Validator $mutation[3]
     }
+    Assert-ReleasePolicyMutation -FixtureRoot $fixtureRoot -Path $workflow `
+        -Original '--output=$source $env:GITHUB_SHA' -Replacement '--output=$source main' `
+        -Validator 'Assert-ReleaseValidationIsolation'
+    Assert-ReleasePolicyMutation -FixtureRoot $fixtureRoot -Path $workflow `
+        -Original '"out\$env:PACKAGE_BASE-source.zip"' -Replacement '"out\missing.zip"' `
+        -Validator 'Assert-ReleaseValidationIsolation'
     foreach ($relative in @($workflow)) {
         $file = Join-Path $fixtureRoot $relative
         $text = Get-Content -LiteralPath $file -Raw
@@ -79,6 +108,36 @@ try {
     try { & (Join-Path $repoRoot 'tools/format_matrix_smoke.ps1') -CliPath $missingCli -WorkRoot $fixtureRoot }
     catch { $missingRejected = $_.Exception.Message.StartsWith("CLI binary not found: $missingCli.") }
     if (-not $missingRejected) { throw 'An absent packaged CLI must not substitute the development binary.' }
+    New-Item -ItemType Directory -Path (Join-Path $fixtureRoot 'docs'), (Join-Path $fixtureRoot 'retired') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $fixtureRoot 'docs/current.md') -Value 'Current package documentation.'
+    $fixtureCmake = Join-Path $fixtureRoot 'CMakeLists.txt'
+    Set-Content -LiteralPath $fixtureCmake -Value 'install(DIRECTORY docs DESTINATION .)'
+    Assert-ReleaseSourceDirectory -RepoRoot $fixtureRoot -TrackedPath @('docs/current.md')
+    foreach ($inventory in @(@('docs/current.md'), @('docs/current.md', 'retired/missing.md'))) {
+        Set-Content -LiteralPath $fixtureCmake -Value 'install(DIRECTORY docs retired DESTINATION .)'
+        $staleRejected = $false
+        try { Assert-ReleaseSourceDirectory -RepoRoot $fixtureRoot -TrackedPath $inventory }
+        catch { $staleRejected = $_.Exception.Message -eq 'Installed source directory contains no existing tracked files: retired' }
+        if (-not $staleRejected) { throw 'An empty local directory must not conceal a stale package install rule.' }
+    }
+    $sourceMembers = @('LICENSE', 'CMakeLists.txt', 'tools/build.ps1', 'tools/package.ps1',
+        'docs/third-party.md', 'third_party/wimlib/COPYING.txt', 'third_party/wimlib/COPYING.GPLv3.txt',
+        'third_party/wimlib/COPYING.LGPL.txt', 'third_party/upstream/wimlib/1.14.5/wimlib-1.14.5.tar.gz',
+        'third_party/upstream/wimlib/1.14.5/SHA256SUMS')
+    $sourceFixture = Join-Path $fixtureRoot 'source.zip'
+    Write-SourceOfferingFixture -Destination $sourceFixture -Member $sourceMembers
+    Assert-ReleaseCorrespondingSource -ArchivePath $sourceFixture -RepoRoot $repoRoot -TrackedPath $sourceMembers
+    foreach ($defect in @('Missing', 'Altered', 'Duplicate')) {
+        Remove-Item -LiteralPath $sourceFixture -Force
+        $options = @{ Destination = $sourceFixture; Member = $sourceMembers }
+        $options[$defect] = 'third_party/upstream/wimlib/1.14.5/wimlib-1.14.5.tar.gz'
+        Write-SourceOfferingFixture @options
+        $rejected = $false
+        try { Assert-ReleaseCorrespondingSource -ArchivePath $sourceFixture -RepoRoot $repoRoot -TrackedPath $sourceMembers }
+        catch { $rejected = $_.Exception.Message -like 'Corresponding source ZIP*' }
+        if (-not $rejected) { throw "Source offering accepted $defect upstream source." }
+    }
+    Assert-ReleaseSourceDirectory -RepoRoot $repoRoot
     Write-Output 'Release workflow identity, replacement, title and candidate-isolation contracts passed.'
 } finally {
     $resolved = [IO.Path]::GetFullPath($fixtureRoot)

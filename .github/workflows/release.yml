@@ -472,6 +472,18 @@ jobs:
               }
           }
 
+      - name: Package corresponding source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . ./tools/release_workflow_policy.ps1
+          $source = Join-Path $PWD "out/$env:PACKAGE_BASE-source.zip"
+          & git archive --format=zip --prefix=FlitzZip-source/ --output=$source $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Exact-commit source archive creation failed.' }
+          Assert-ReleaseCorrespondingSource -ArchivePath $source -RepoRoot $PWD
+          $digest = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$digest  $(Split-Path -Leaf $source)" | Set-Content -LiteralPath "$source.sha256" -Encoding ascii
+
       - name: Generate release notes
         shell: pwsh
         run: |
@@ -507,7 +519,7 @@ jobs:
           - Portable ZIP and compatibility-format smoke tests completed after staging install.
           $msiLine
           - Repository security scan completed before publishing.
-          - SHA-256 checksum files are attached beside each package.
+          - Complete corresponding source and SHA-256 checksum files are attached beside the binary packages.
           "@ | Set-Content -LiteralPath $notes
 
       - name: Retain validated candidate
@@ -520,6 +532,8 @@ jobs:
           path: |
             out/${{ env.PACKAGE_BASE }}-portable.zip
             out/${{ env.PACKAGE_BASE }}-portable.zip.sha256
+            out/${{ env.PACKAGE_BASE }}-source.zip
+            out/${{ env.PACKAGE_BASE }}-source.zip.sha256
             out/${{ env.PACKAGE_BASE }}.msi
             out/${{ env.PACKAGE_BASE }}.msi.sha256
             out/release-notes.md
@@ -562,7 +576,9 @@ jobs:
           $ErrorActionPreference = "Stop"
           $assets = @(
               "out\$env:PACKAGE_BASE-portable.zip",
-              "out\$env:PACKAGE_BASE-portable.zip.sha256"
+              "out\$env:PACKAGE_BASE-portable.zip.sha256",
+              "out\$env:PACKAGE_BASE-source.zip",
+              "out\$env:PACKAGE_BASE-source.zip.sha256"
           )
           if ($env:CREATE_MSI -eq "true") {
               $assets += @(

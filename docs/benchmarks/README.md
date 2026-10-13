@@ -12,6 +12,7 @@ defines equal settings, complete container bytes, correctness and uncertainty.
 | --- | --- |
 | [Neutron Canterbury](data/neutron-canterbury.json) | Eleven complete original files, three actual HIP repetitions, 1 MiB blocks |
 | [Neutron Pythia14M](data/neutron-pythia14m.json) | One complete trained checkpoint, three actual HIP repetitions, 1 MiB blocks |
+| [Neutron Govdocs1](data/neutron-govdocs1.json) | All 991 original thread0 files, one complete actual HIP pass, 1 MiB blocks |
 | [Canterbury standard formats](data/canterbury-standard-reference.json) | Fixed independent ZIP, gzip, bzip2 and XZ size references with RAM readback |
 | [Pythia14M standard formats](data/pythia-standard-reference.json) | Fixed complete-checkpoint size references with RAM readback |
 
@@ -20,8 +21,9 @@ observation and actual completion time. Payloads remain in RAM. Comparative
 timing remains unqualified. Standard-format records retain their original
 measurement identities; they are comparisons, not new runs of current source.
 
-The complete Govdocs1 pruning study belongs to an earlier implementation.
-Current context-codec qualification across that full corpus remains open.
+The Govdocs1 record covers the version-eleven context implementation and binds
+its comparison to the earlier complete pruning study. Nine files improve in
+size and none regresses; the aggregate reduction is only 6,060 bytes.
 Superseded studies, abandoned runs and chronological narratives are recoverable
 from Git history and the local material archive, rather than published as
 current evidence. Follow the operating guide's

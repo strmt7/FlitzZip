@@ -252,6 +252,7 @@ function Test-WorkflowSecurityPolicy {
     Assert-ReleaseReplacementSafeguard -RepoRoot $repo
     Assert-ReleaseWorkflowIdentity -RepoRoot $repo
     Assert-ReleaseValidationIsolation -RepoRoot $repo
+    Assert-ReleaseSourceDirectory -RepoRoot $repo
     Assert-GreenboneTargetBrokerAuthorization
     Assert-ReleaseNotesDoNotDuplicateTitle -RepoRoot $repo
     Assert-ReleaseDocUseVersionPlaceholder

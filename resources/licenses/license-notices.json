@@ -43,7 +43,7 @@
     {
       "title": "wimlib 1.14.5",
       "group": "Other",
-      "source": "third_party/wimlib/COPYING.LGPL.txt"
+      "source": "third_party/wimlib/COPYING.GPLv3.txt"
     },
     {
       "title": "wimlib dual-license terms",
@@ -51,9 +51,9 @@
       "source": "third_party/wimlib/COPYING.txt"
     },
     {
-      "title": "wimlib GPL alternative",
+      "title": "wimlib LGPL alternative",
       "group": "Other",
-      "source": "third_party/wimlib/COPYING.GPLv3.txt"
+      "source": "third_party/wimlib/COPYING.LGPL.txt"
     },
     {
       "title": "libdivsufsort-lite",

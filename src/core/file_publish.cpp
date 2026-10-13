@@ -28,6 +28,7 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <sddl.h>
+#include "core/windows_directory.hpp"
 #endif
 
 namespace flitzzip {
@@ -291,12 +292,9 @@ std::unique_ptr<void, decltype(&LocalFree)> make_private_directory_security_desc
 // Purpose: Open and pin one directory without following a reparse point.
 // Inputs: `directory` is one absolute path component chain.
 // Outputs: Returns an owned non-delete-sharing handle or throws for missing, non-directory, or reparse objects.
-HANDLE open_pinned_directory(const std::filesystem::path& directory, bool publication_parent = false) {
+HANDLE open_pinned_directory(const std::filesystem::path& directory) {
     const auto text = windows_api_path(directory);
-    auto access = FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
-    if (publication_parent) {
-        access |= FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY;
-    }
+    constexpr auto access = FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
     ScopedHandle handle(CreateFileW(text.c_str(), access, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
                                     FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
     if (handle.get() == INVALID_HANDLE_VALUE) {
@@ -314,7 +312,7 @@ HANDLE open_pinned_directory(const std::filesystem::path& directory, bool public
 }
 
 // Purpose: Pin a complete directory chain, optionally creating missing output components.
-// Inputs: `directory` is normalized and absolute; `create_missing` permits creation and final-parent write access.
+// Inputs: `directory` is normalized and absolute; `create_missing` permits atomic relative directory creation.
 // Outputs: Returns owned handles ordered root to leaf, or closes partial state and throws without following reparses.
 std::vector<HANDLE> pin_directory_chain(const std::filesystem::path& directory, bool create_missing) {
     const auto regular = windows_regular_path(directory);
@@ -324,25 +322,19 @@ std::vector<HANDLE> pin_directory_chain(const std::filesystem::path& directory, 
     }
     std::vector<HANDLE> handles;
     try {
-        auto current = root;
-        handles.push_back(open_pinned_directory(current));
+        ScopedHandle root_handle(open_pinned_directory(root));
+        handles.push_back(root_handle.get());
+        static_cast<void>(root_handle.release());
         for (const auto& component : regular.relative_path()) {
             if (component.empty() || component == L".")
                 continue;
             if (component == L"..")
                 throw SecurityError("output directory contains parent traversal");
-            current /= component;
-            const auto text = windows_api_path(current);
-            if (create_missing && CreateDirectoryW(text.c_str(), nullptr) == 0 &&
-                GetLastError() != ERROR_ALREADY_EXISTS) {
-                throw ArchiveError("unable to create output directory: " + path_diagnostic_utf8(current));
-            }
-            handles.push_back(open_pinned_directory(current));
-        }
-        if (create_missing) {
-            ScopedHandle writable_parent(open_pinned_directory(directory, true));
-            CloseHandle(handles.back());
-            handles.back() = writable_parent.release();
+            const auto mode = create_missing ? windows_detail::DirectoryOpenMode::OpenOrCreate
+                                             : windows_detail::DirectoryOpenMode::Existing;
+            ScopedHandle child(windows_detail::open_directory_relative(handles.back(), component.native(), mode));
+            handles.push_back(child.get());
+            static_cast<void>(child.release());
         }
         return handles;
     } catch (...) {
@@ -398,25 +390,18 @@ std::wstring random_publication_suffix() {
 // Outputs: Populates the exact random directory/file paths and staging handle or throws.
 void create_private_staging_directory(const std::filesystem::path& target, FilePublishReservationState& state) {
     const auto descriptor = make_private_directory_security_descriptor();
-    SECURITY_ATTRIBUTES security{sizeof(security), descriptor.get(), FALSE};
     for (std::uint32_t attempt = 0; attempt < 128U; ++attempt) {
-        auto directory = target;
-        directory += L".sztmp-" + random_publication_suffix();
-        const auto text = windows_api_path(directory);
-        if (CreateDirectoryW(text.c_str(), &security) == 0) {
-            if (GetLastError() == ERROR_ALREADY_EXISTS)
-                continue;
-            throw ArchiveError("unable to reserve private publication directory: " + path_diagnostic_utf8(target));
-        }
-        try {
-            state.temporary_directory_handle = open_pinned_directory(directory);
-            state.directory = directory;
-            state.file = directory / "payload.tmp";
-            return;
-        } catch (...) {
-            RemoveDirectoryW(text.c_str());
-            throw;
-        }
+        auto directory = target.parent_path() / (L".fztmp-" + random_publication_suffix());
+        auto file = directory / "payload.tmp";
+        ScopedHandle staged(
+            windows_detail::open_directory_relative(state.parent_handle(), directory.filename().native(),
+                                                    windows_detail::DirectoryOpenMode::CreateNew, descriptor.get()));
+        if (staged.get() == INVALID_HANDLE_VALUE)
+            continue;
+        state.directory = std::move(directory);
+        state.file = std::move(file);
+        state.temporary_directory_handle = staged.release();
+        return;
     }
     throw ArchiveError("unable to reserve a unique publication directory: " + path_diagnostic_utf8(target));
 }
@@ -577,7 +562,7 @@ ReservedFilePublishTarget reserve_file_publish_target(const std::filesystem::pat
     std::filesystem::create_directories(absolute_target.parent_path());
     for (std::uint32_t attempt = 0; attempt < 128U; ++attempt) {
         auto directory = absolute_target;
-        directory += ".sztmp-" + std::to_string(attempt);
+        directory += ".fztmp-" + std::to_string(attempt);
         if (std::filesystem::create_directory(directory)) {
             state->directory = directory;
             state->file = directory / "payload.tmp";
@@ -608,7 +593,7 @@ void cleanup_file_publish_target(const ReservedFilePublishTarget& temporary) {
 
 // Purpose: Publish a fully verified temporary file into its final path.
 // Inputs: `temporary` owns the verified payload and pinned parent, `target` is its reserved final path, and `overwrite`
-// controls replacement. Outputs: Atomically renames the exact payload handle relative to the pinned parent, or throws
+// controls replacement. Outputs: Atomically publishes the exact payload through the pinned parent chain, or throws
 // without deleting the caller-owned temporary tree.
 void commit_verified_file(const ReservedFilePublishTarget& temporary, const std::filesystem::path& target,
                           bool overwrite) {
