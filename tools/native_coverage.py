@@ -33,6 +33,7 @@ SCENARIO_INPUTS = (
     "tools/benchmark_corpus.ps1",
     "tools/format_matrix_smoke.ps1",
 )
+GUI_SCENARIO_INPUTS = ("tools/gui_smoke.ps1", "tools/process_environment.ps1")
 
 
 # Purpose: Hash complete regular files without allocating their full contents.
@@ -176,12 +177,12 @@ def provision(lock: dict, output: Path) -> Path:
 
 
 # Purpose: Bind measured executables, their symbols and scenario drivers to complete immutable identities.
-# Inputs: Existing Debug output and fixed repository scenario paths. Outputs: Complete path-to-digest map.
-def measurement_identity() -> dict[str, str]:
-    binaries = (
-        f"build/Debug/{name}.{extension}" for name in ("flitzzip_tests", "flitzzip_cli") for extension in ("exe", "pdb")
-    )
-    return {name: digest(owned_path(ROOT, ROOT / name)) for name in (*binaries, *SCENARIO_INPUTS)}
+# Inputs: Existing Debug output, explicit GUI selection and fixed scenario paths. Outputs: Complete identity map.
+def measurement_identity(include_gui: bool = False) -> dict[str, str]:
+    programs = ("flitzzip_tests", "flitzzip_cli", *(["FlitzZip"] if include_gui else []))
+    binaries = (f"build/Debug/{name}.{extension}" for name in programs for extension in ("exe", "pdb"))
+    scripts = (*SCENARIO_INPUTS, *(GUI_SCENARIO_INPUTS if include_gui else ()))
+    return {name: digest(owned_path(ROOT, ROOT / name)) for name in (*binaries, *scripts)}
 
 
 # Purpose: Require the requested native build mode without treating a missing GPU as host qualification.
@@ -212,8 +213,8 @@ def require_hip_device(output: Path) -> None:
 
 
 # Purpose: Exercise the native registry and existing CLI failure/readback contracts under one collector tree.
-# Inputs: Current Debug build, explicit host mode and owned directory. Outputs: Diagnostics; any failure stops.
-def run_scenarios(output: Path, hip_host: bool = False) -> None:
+# Inputs: Current Debug build, explicit host/GUI modes and owned directory. Outputs: Diagnostics; any failure stops.
+def run_scenarios(output: Path, hip_host: bool = False, include_gui: bool = False) -> None:
     coverage_build(hip_host)
     if hip_host:
         require_hip_device(output)
@@ -243,20 +244,38 @@ def run_scenarios(output: Path, hip_host: bool = False) -> None:
                 ],
             )
         )
+    if include_gui:
+        scenarios.append(
+            (
+                "gui",
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(ROOT / "tools/gui_smoke.ps1"),
+                    "-Configuration",
+                    "Debug",
+                    "-ScreenshotPath",
+                    str(output / "gui.png"),
+                ],
+            )
+        )
     for name, arguments in scenarios:
         # Full suites launch many instrumented processes; retain the collector's
         # overall deadline and each matrix command's independent timeout.
-        timeout = 900 if name in {"registry", "cli-formats"} else 300
+        timeout = 900 if name in {"registry", "cli-formats", "gui"} else 300
         run_checked(arguments, timeout, output / f"{name}-process.json")
 
 
 # Purpose: Measure native host instructions in an existing symbols-enabled build without inferring device hits.
-# Inputs: Current successful build receipt, explicit host mode and verified collector.
+# Inputs: Current successful build receipt, explicit host/GUI modes and verified collector.
 # Outputs: Normalized Cobertura and source-bound metadata.
-def collect(collector: Path, lock: dict, output: Path, hip_host: bool = False) -> None:
+def collect(collector: Path, lock: dict, output: Path, hip_host: bool = False, include_gui: bool = False) -> None:
     before = coverage_build(hip_host)
     binary = ROOT / "build/Debug"
-    identities = measurement_identity()
+    identities = measurement_identity(include_gui)
     raw = output / "native-raw.xml"
     run_checked(
         [
@@ -278,11 +297,12 @@ def collect(collector: Path, lock: dict, output: Path, hip_host: bool = False) -
             "tools.native_coverage",
             "--run-scenarios",
             *(["--hip-host"] if hip_host else []),
+            *(["--gui"] if include_gui else []),
         ],
         900,
         output / "native-process.json",
     )
-    if coverage_build(hip_host) != before or measurement_identity() != identities:
+    if coverage_build(hip_host) != before or measurement_identity(include_gui) != identities:
         raise ValueError("Native source, binary or symbols changed during coverage measurement")
     verify_collector(collector.parent, lock["files"])
     summary = normalize_report(raw, output / "native.xml", ROOT)
@@ -301,10 +321,13 @@ def collect(collector: Path, lock: dict, output: Path, hip_host: bool = False) -
     }
     if not required.issubset(summary["files"]):
         raise ValueError("Coverage missed required native parser, filesystem or ZIP consumers")
+    if include_gui and not {"src/app/main.cpp", "src/app/main_window.cpp"}.issubset(summary["files"]):
+        raise ValueError("Coverage missed required GUI consumers")
     record = {
         "scope": "native-hip-host-first-party-lines" if hip_host else "native-cpu-first-party-lines",
         "configuration": "Debug",
         "gpu_device_coverage": False,
+        "gui_host_coverage": include_gui,
         "native_inputs_sha256": before["inputs_sha256"],
         "native_receipt_sha256": before["receipt_sha256"],
         "collector_version": lock["version"],
@@ -321,6 +344,7 @@ def collect(collector: Path, lock: dict, output: Path, hip_host: bool = False) -
         json.dumps(
             {
                 "coverage": "native-hip-host" if hip_host else "native-cpu",
+                "gui_host_coverage": include_gui,
                 "files": len(summary["files"]),
                 "lines_covered": summary["lines_covered"],
                 "lines_valid": summary["lines_valid"],
@@ -330,7 +354,7 @@ def collect(collector: Path, lock: dict, output: Path, hip_host: bool = False) -
 
 
 # Purpose: Provision or measure coverage without silently rebuilding the product.
-# Inputs: Provisioning-only or explicit HIP host mode.
+# Inputs: Provisioning-only or explicit HIP host/GUI modes; GUI collection opens owned test windows.
 # Outputs: Verified tool or measured report; unsupported hosts fail explicitly.
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -340,20 +364,22 @@ def main() -> None:
     parser.add_argument(
         "--hip-host", action="store_true", help="Measure host paths with real HIP; excludes device instructions"
     )
+    parser.add_argument("--gui", action="store_true", help="Also open and measure the all-page GUI smoke test")
     args = parser.parse_args()
     if os.name != "nt":
         raise ValueError("Native coverage uses the Windows MSVC/PDB collector")
-    output = owned_path(ROOT, ROOT / ("out/coverage-hip-host" if args.hip_host else "out/coverage"))
+    directory = "coverage" + ("-hip-host" if args.hip_host else "") + ("-gui" if args.gui else "")
+    output = owned_path(ROOT, ROOT / "out" / directory)
     output.mkdir(parents=True, exist_ok=True)
     if args.run_scenarios:
-        run_scenarios(output, args.hip_host)
+        run_scenarios(output, args.hip_host, args.gui)
         return
     lock = json.loads(LOCK.read_text(encoding="utf-8-sig"))
     collector = provision(lock, output)
     if args.provision_only:
         print(f"Verified OpenCppCoverage {lock['version']}")
     else:
-        collect(collector, lock, output, args.hip_host)
+        collect(collector, lock, output, args.hip_host, args.gui)
 
 
 if __name__ == "__main__":

@@ -192,9 +192,16 @@ class CoverageTests(unittest.TestCase):
     def test_collection_rejects_changed_test_executable(self):
         binary = self.root / "build/Debug"
         binary.mkdir(parents=True)
-        for name in ("flitzzip_tests.exe", "flitzzip_tests.pdb", "flitzzip_cli.exe", "flitzzip_cli.pdb"):
+        for name in (
+            "flitzzip_tests.exe",
+            "flitzzip_tests.pdb",
+            "flitzzip_cli.exe",
+            "flitzzip_cli.pdb",
+            "FlitzZip.exe",
+            "FlitzZip.pdb",
+        ):
             (binary / name).write_bytes(b"original native fixture")
-        for name in collector.SCENARIO_INPUTS:
+        for name in (*collector.SCENARIO_INPUTS, *collector.GUI_SCENARIO_INPUTS):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"original scenario fixture")
@@ -217,19 +224,62 @@ class CoverageTests(unittest.TestCase):
             patch.object(collector, "verify_collector"),
             patch.object(collector, "normalize_report") as normalize,
         ):
-            for name in (
-                "build/Debug/flitzzip_tests.exe",
-                "build/Debug/flitzzip_cli.exe",
-                "build/Debug/flitzzip_cli.pdb",
-                "tools/test_memory_benchmark_corpus.ps1",
+            for include_gui, name in (
+                (False, "build/Debug/flitzzip_tests.exe"),
+                (False, "build/Debug/flitzzip_cli.exe"),
+                (False, "build/Debug/flitzzip_cli.pdb"),
+                (False, "tools/test_memory_benchmark_corpus.ps1"),
+                (True, "build/Debug/FlitzZip.exe"),
+                (True, "build/Debug/FlitzZip.pdb"),
+                (True, "tools/gui_smoke.ps1"),
+                (True, "tools/process_environment.ps1"),
             ):
                 target = self.root / name
                 original = target.read_bytes()
                 with self.subTest(name=name), self.assertRaisesRegex(ValueError, "changed during coverage"):
-                    collector.collect(self.root / "collector.exe", {"files": {}}, self.root)
+                    collector.collect(self.root / "collector.exe", {"files": {}}, self.root, include_gui=include_gui)
                 target.write_bytes(original)
             normalize.assert_not_called()
         self.assertFalse((self.root / "summary.json").exists())
+
+    # Purpose: Keep GUI execution explicit and retain its failures through the canonical child-process runner.
+    # Inputs: CPU and HIP selections, an admitted receipt and an independently injected GUI failure.
+    # Outputs: Only requested GUI work opens windows; all-page arguments and failure propagation remain required.
+    def test_gui_scenario_is_explicit_and_fail_closed(self):
+        with (
+            patch.object(collector, "ROOT", self.root),
+            patch.object(collector, "coverage_build"),
+            patch.object(collector, "require_hip_device"),
+        ):
+            for hip_host in (False, True):
+                with self.subTest(hip_host=hip_host), patch.object(collector, "run_checked") as run:
+                    collector.run_scenarios(self.root, hip_host, False)
+                    self.assertEqual(run.call_count, 6)
+                    self.assertNotIn("gui-process.json", [call.args[2].name for call in run.call_args_list])
+                with patch.object(
+                    collector, "run_checked", side_effect=[None] * 6 + [RuntimeError("GUI failure")]
+                ) as run:
+                    with self.assertRaisesRegex(RuntimeError, "GUI failure"):
+                        collector.run_scenarios(self.root, hip_host, True)
+                    arguments, timeout, log = run.call_args.args
+                    self.assertEqual(
+                        arguments,
+                        [
+                            "powershell.exe",
+                            "-NoProfile",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-File",
+                            str(self.root / "tools/gui_smoke.ps1"),
+                            "-Configuration",
+                            "Debug",
+                            "-ScreenshotPath",
+                            str(self.root / "gui.png"),
+                        ],
+                    )
+                    self.assertEqual(log, self.root / "gui-process.json")
+                    self.assertLessEqual(timeout, 900)
+                    self.assertEqual(run.call_count, 7)
 
     # Purpose: Stop collection at every failed scenario without running later commands or rebuilding binaries.
     # Inputs: CPU Debug receipt and independent subprocess failures at each scenario boundary.
@@ -354,6 +404,60 @@ class CoverageTests(unittest.TestCase):
         self.assertIs(summary["gpu_device_coverage"], False)
         self.assertEqual(summary["unmeasured_source_files"], ["src/gpu/unmeasured.cpp"])
         self.assertEqual(summary["uncovered_lines"], report["uncovered_lines"])
+
+    # Purpose: Prevent a CLI-only report or omitted child option from being accepted as GUI coverage.
+    # Inputs: Independent native/GUI source inventories and explicit GUI collection.
+    # Outputs: Missing GUI consumers fail; accepted reports retain original hits, symbols and host-only scope.
+    def test_gui_collection_requires_gui_source_evidence(self):
+        native = [
+            "src/core/archive_format.cpp",
+            "src/core/path_safety.cpp",
+            "src/zip/zip_adapter.cpp",
+            "src/cli/main.cpp",
+            "src/cli/memory_benchmark.cpp",
+            "src/cli/memory_benchmark_source.cpp",
+        ]
+        gui = ["src/app/main.cpp", "src/app/main_window.cpp"]
+        identities = {"build/Debug/flitzzip_tests.pdb": "c" * 64, "build/Debug/flitzzip_tests.exe": "d" * 64}
+        before = {
+            "inputs_sha256": "a" * 64,
+            "receipt_sha256": "b" * 64,
+            "receipt": {"inputs": {"files": native + gui + ["src/app/unmeasured.cpp"]}},
+        }
+        for measured_gui in (False, True):
+            output = self.root / str(measured_gui)
+            output.mkdir()
+            report = {
+                "files": native + (gui if measured_gui else []),
+                "lines_valid": 12,
+                "lines_covered": 9,
+                "uncovered_lines": {"src/app/main_window.cpp": [42, 43, 44]},
+            }
+            with (
+                self.subTest(measured_gui=measured_gui),
+                patch.object(collector, "coverage_build", return_value=before),
+                patch.object(collector, "measurement_identity", return_value=identities) as identity,
+                patch.object(collector, "run_checked") as run,
+                patch.object(collector, "verify_collector"),
+                patch.object(collector, "normalize_report", return_value=report),
+                patch.object(collector, "digest", return_value="e" * 64),
+            ):
+                if not measured_gui:
+                    with self.assertRaisesRegex(ValueError, "missed required GUI consumers"):
+                        collector.collect(self.root / "collector.exe", {"files": {}}, output, True, True)
+                    self.assertFalse((output / "summary.json").exists())
+                    continue
+                collector.collect(self.root / "collector.exe", {"files": {}, "version": "fixture"}, output, True, True)
+                self.assertEqual([call.args for call in identity.call_args_list], [(True,), (True,)])
+                self.assertEqual(run.call_args.args[0][-3:], ["--run-scenarios", "--hip-host", "--gui"])
+            summary = json.loads((output / "summary.json").read_text())
+            self.assertIs(summary["gui_host_coverage"], True)
+            self.assertIs(summary["gpu_device_coverage"], False)
+            self.assertEqual(summary["measurement_inputs"], identities)
+            self.assertEqual(summary["lines_covered"], 9)
+            self.assertEqual(summary["lines_valid"], 12)
+            self.assertEqual(summary["uncovered_lines"], report["uncovered_lines"])
+            self.assertEqual(summary["unmeasured_source_files"], ["src/app/unmeasured.cpp"])
 
 
 if __name__ == "__main__":

@@ -33,7 +33,12 @@ dependencies still require the ordinary maintainer approval.
 ## Acceptance And Recurrence
 
 `scanner_preflight.py` scans frozen changed publication bytes with pinned
-detectors before expensive qualification. `review_findings` keeps exact source
+detectors before expensive qualification. It also rescans reviewed DevSkim source
+when its bound callers, build configuration, scanner configuration or review
+ledger change. The receipt distinguishes changed paths from these affected
+sources. Expired evidence stays blocking; the tool never renews review hashes.
+Unrelated edits do not trigger this additional scope.
+`review_findings` keeps exact source
 review matches informational and unresolved. Public checksum metadata has its
 separate exact identity contract; source code cannot use that metadata path.
 Retain raw reports and stable SARIF categories and paths.
