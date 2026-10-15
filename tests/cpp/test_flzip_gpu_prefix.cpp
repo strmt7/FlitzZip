@@ -291,6 +291,42 @@ TEST_CASE(flzip_entropy_sampling_does_not_alias_periodic_record_headers) {
     }
 }
 
+// Purpose: Exercise every static/adaptive prefix symbol class without depending on a GPU encoder or device.
+// Inputs: Independent reference frames, all byte values, segment boundaries and uneven final segments.
+// Outputs: Requires exact CPU readback with guards intact, including escape symbols absent from adaptive codebooks.
+TEST_CASE(flzip_prefix_reference_cpu_decode_covers_every_symbol) {
+    for (const auto size : {4097U, 16384U, 65537U}) {
+        for (const bool adaptive : {false, true}) {
+            std::vector<std::byte> codebook;
+            if (adaptive) {
+                for (std::uint32_t symbol = 0; symbol < flitzzip::kGpuAdaptivePrefixCodebookBytes; ++symbol) {
+                    codebook.push_back(static_cast<std::byte>(128U + symbol));
+                }
+            }
+            std::vector<std::byte> expected(size, adaptive ? std::byte{128} : std::byte{0});
+            for (std::size_t index = 0; index < expected.size(); index += 8U) {
+                expected[index] = static_cast<std::byte>((index / 8U) & 255U);
+            }
+            const auto payload = reference_prefix_payload(expected, codebook);
+            REQUIRE_TRUE(payload.size() < expected.size());
+            const flitzzip::BlockDescriptor block{
+                .kind = adaptive ? flitzzip::BlockKind::GpuAdaptivePrefix : flitzzip::BlockKind::GpuPrefix,
+                .uncompressed_len = size,
+                .encoded_len = static_cast<std::uint32_t>(payload.size()),
+            };
+            std::vector<std::byte> guarded(expected.size() + 2U, std::byte{0xBA});
+            auto output = std::span(guarded).subspan(1U, expected.size());
+            flitzzip::ArchiveCodecOptions options;
+            options.block_size = 131072U;
+            options.worker_count = 3U;
+            flitzzip::decode_chunk_cpu(payload, std::span(&block, 1U), output, options);
+            REQUIRE_TRUE(std::equal(output.begin(), output.end(), expected.begin()));
+            REQUIRE_EQ(guarded.front(), std::byte{0xBA});
+            REQUIRE_EQ(guarded.back(), std::byte{0xBA});
+        }
+    }
+}
+
 // Purpose: Anchor the independent encoder to manually calculated format bytes even on CPU-only hosts.
 // Inputs: The four three-bit static symbols and a four-byte-aligned segment.
 // Outputs: Requires the exact offset table and 0x0D10 little-bit-order symbol stream.

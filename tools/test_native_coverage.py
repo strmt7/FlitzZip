@@ -36,7 +36,15 @@ class CoverageTests(unittest.TestCase):
     def test_report_preserves_hits_and_uncovered_lines(self):
         self.raw.write_text(self.xml, encoding="utf-8")
         summary = normalize_report(self.raw, self.output, self.root)
-        self.assertEqual(summary, {"files": ["src/example.cpp"], "lines_valid": 2, "lines_covered": 1})
+        self.assertEqual(
+            summary,
+            {
+                "files": ["src/example.cpp"],
+                "lines_valid": 2,
+                "lines_covered": 1,
+                "uncovered_lines": {"src/example.cpp": [2]},
+            },
+        )
         tree = read_report(self.output)
         self.assertEqual(tree.find("./sources/source").text, ".")
         self.assertEqual(tree.find(".//class").get("filename"), "src/example.cpp")
@@ -99,6 +107,7 @@ class CoverageTests(unittest.TestCase):
         self.raw.write_bytes(ET.tostring(element))
         summary = normalize_report(self.raw, self.output, self.root)
         self.assertEqual((summary["lines_valid"], summary["lines_covered"]), (2, 2))
+        self.assertEqual(summary["uncovered_lines"], {})
         self.assertEqual(len(read_report(self.output).findall(".//class")), 2)
 
     # Purpose: Reject entity expansion independently of XML encoding and use the same reader for all consumers.
@@ -176,6 +185,39 @@ class CoverageTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     collector.run_checked(["owned-test-command"], 2, self.root / "process.json")
                 self.assertEqual(json.loads((self.root / "process.json").read_text()), failure)
+
+    # Purpose: Reject executable substitution even when its PDB and application receipt remain unchanged.
+    # Inputs: A frozen test binary, matching symbols and a controlled mutation during the collector invocation.
+    # Outputs: No accepted summary is published for the changed test executable.
+    def test_collection_rejects_changed_test_executable(self):
+        binary = self.root / "build/Debug"
+        binary.mkdir(parents=True)
+        (binary / "flitzzip_tests.pdb").write_bytes(b"fixed symbol fixture")
+        executable = binary / "flitzzip_tests.exe"
+        executable.write_bytes(b"original test fixture")
+        before = {
+            "recipe": {"FLITZZIP_ENABLE_HIP": "OFF"},
+            "inputs_sha256": "a" * 64,
+            "receipt_sha256": "b" * 64,
+            "receipt": {"inputs": {"files": {}}},
+        }
+
+        # Purpose: Model an external process changing only the test executable after launch.
+        # Inputs: Collector command boundary. Outputs: Changed fixture bytes without changing symbols.
+        def substitute(*_args):
+            executable.write_bytes(b"substituted test fixture")
+
+        with (
+            patch.object(collector, "ROOT", self.root),
+            patch.object(collector, "validate_current", return_value=before),
+            patch.object(collector, "run_checked", side_effect=substitute),
+            patch.object(collector, "verify_collector"),
+            patch.object(collector, "normalize_report") as normalize,
+        ):
+            with self.assertRaisesRegex(ValueError, "changed during coverage"):
+                collector.collect(self.root / "collector.exe", {"files": {}}, self.root)
+            normalize.assert_not_called()
+        self.assertFalse((self.root / "summary.json").exists())
 
 
 if __name__ == "__main__":

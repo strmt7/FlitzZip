@@ -6,8 +6,9 @@ performance, or a release qualification by itself.
 
 ## Measurement
 
-The existing Windows 2022 CI build uses optimized `RelWithDebInfo` binaries and
-matching PDB symbols. The Windows 2025 build keeps `Release`; HIP qualification
+The existing Windows 2022 CI build uses unoptimized `Debug` binaries and matching
+PDB symbols, avoiding inlining and removed-code distortions in line mapping.
+The Windows 2025 build keeps `Release`; HIP qualification
 remains separate. After the selected correctness checks, OpenCppCoverage runs the
 complete native test registry, including child processes, against the same build.
 There is no extra compilation or coverage runner. Collector changes select this
@@ -16,12 +17,11 @@ hosted consumer; offline collector tests do not silently rebuild the product.
 The collector selects first-party `src` files linked into the native test
 executable. It publishes their measured executable lines, including zero-hit
 lines. GUI/CLI executable-only paths, Python/PowerShell tooling, and GPU device
-instructions are not measured by this report. Optimized code can map several
-operations to one source line or remove unreachable code. Do not describe this
+instructions are not measured by this report. Do not describe this
 number as whole-repository, branch, or GPU coverage.
 
-`tools/native_coverage.py` verifies the native build receipt and symbols before
-and after collection. `tools/native_coverage_report.py` rejects empty, foreign,
+`tools/native_coverage.py` verifies the native build receipt, test executable and
+symbols before and after collection. `tools/native_coverage_report.py` rejects empty, foreign,
 ambiguous, malformed, or source-inconsistent reports and normalizes paths without
 changing measured hits. The workflow retains raw XML, normalized XML, diagnostics,
 and source/tool identities for seven days. Inspect the `native-cpu-coverage`
@@ -31,6 +31,16 @@ Codecov receives only `out/coverage/native.xml`, using GitHub OIDC and a pinned
 action/CLI. Upload failures fail the check. Fork pull requests retain the report
 as an artifact and omit the authenticated upload. No repository upload token is
 stored in source or workflow configuration.
+
+`summary.json` lists every measured zero-hit line by file and the native source
+files absent from the report. The latter inventory comes from the same frozen
+build inputs, not a manually selected coverage list. Review both inventories:
+100% of instrumented lines would still not establish whole-repository coverage.
+Earlier optimized reports can lack reliable inline-code mappings and are not
+directly comparable with Debug reports. Do not manufacture hits from successful
+test names or collector heuristics. The collector's
+[Debug guidance](https://github.com/OpenCppCoverage/OpenCppCoverage/wiki#release-versus-debug)
+explains the mapping limitation.
 
 ## Meaningful tests
 
@@ -42,6 +52,12 @@ the implementation into assertions, remove untested code from reports, or add
 tests whose only purpose is increasing a percentage. A coverage increase without
 new behavioral evidence is not an engineering improvement.
 
+The requested target is complete meaningful coverage. Work from the gap inventory
+in coherent behavior groups, retaining malformed-input, independent-oracle and
+failure-recovery assertions. Keep device instructions and unmeasured executables
+visible until a suitable measurement mechanism is qualified. Resource exhaustion,
+driver hangs and destruction of host state are not acceptable coverage techniques.
+
 ## Tool provenance and local use
 
 OpenCppCoverage 0.9.9.0 is a development-only GPL-3.0 tool, downloaded from its
@@ -52,6 +68,6 @@ checkout's ignored tool cache and is not distributed with FlitzZip.
 
 On Windows, provision with `py -3 -B -m tools.native_coverage --provision-only`.
 `py -3 -B -m tools.native_coverage` requires an existing current CPU-only
-`RelWithDebInfo` build; it never changes or rebuilds the ordinary HIP product
+`Debug` build; it never changes or rebuilds the ordinary HIP product
 configuration. Use a separate checkout when local coverage would otherwise
 replace a qualified product build.

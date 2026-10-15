@@ -80,6 +80,166 @@ void write_one_entry_tar(const std::filesystem::path& archive, std::string_view 
 
 }  // namespace
 
+namespace {
+
+// Purpose: Serialize metadata and file records with independent TAR block padding.
+// Inputs: An owned output stream, fixture header and bounded payload. Outputs: Complete padded record.
+void append_tar_fixture_record(std::ostream& output, const std::array<char, 512>& header,
+                               std::string_view payload = {}) {
+    output.write(header.data(), header.size());
+    output.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    const std::array<char, 512> zero{};
+    output.write(zero.data(), static_cast<std::streamsize>((512U - payload.size() % 512U) % 512U));
+    REQUIRE_TRUE(output.good());
+}
+
+// Purpose: Test rejection before publication while retaining an unrelated existing destination file.
+// Inputs: One malformed TAR and its owned destination. Outputs: Product error with no new paths or changed bytes.
+void require_tar_fixture_rejected(const std::filesystem::path& archive, const std::filesystem::path& destination) {
+    std::filesystem::create_directories(destination);
+    const auto sentinel = destination / "existing.txt";
+    {
+        std::ofstream output(sentinel);
+        output << "retain";
+    }
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_tar(archive, destination, false);
+    } catch (const flitzzip::Error&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    std::size_t entries = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(destination)) {
+        REQUIRE_EQ(entry.path(), sentinel);
+        ++entries;
+    }
+    REQUIRE_EQ(entries, 1U);
+    std::ifstream input(sentinel);
+    std::string content;
+    input >> content;
+    REQUIRE_EQ(content, "retain");
+}
+
+// Purpose: Recalculate only a fixture's checksum after independently mutating a wire field.
+// Inputs: A complete mutable 512-byte header. Outputs: Valid checksum for the intentionally malformed metadata.
+void checksum_tar_fixture(std::array<char, 512>& header) {
+    std::fill(header.begin() + 148, header.begin() + 156, ' ');
+    std::uint32_t sum = 0;
+    for (const unsigned char value : header) {
+        sum += value;
+    }
+    put_test_tar_octal(header, 148, 7, sum);
+    header[155] = ' ';
+}
+
+}  // namespace
+
+// Purpose: Reject malformed PAX framing and ambiguous path policy before any destination publication.
+// Inputs: Independently authored lengths, terminators, duplicate/empty paths and unsupported character sets.
+// Outputs: Every invalid metadata record fails while retaining an existing destination file.
+TEST_CASE(tar_pax_malformed_records_do_not_publish) {
+    const auto root = test_temp_dir("tar-pax-malformed");
+    const auto archive = root / "input.tar";
+    const std::array<std::string_view, 8> metadata{"missing-space", "x path=a\n",
+                                                   "0 path=a\n",    "99 path=a\n",
+                                                   "10 path=a!",    "10 path=a\n10 path=b\n",
+                                                   "8 path=\n",     "22 hdrcharset=UNKNOWN\n"};
+    for (const auto value : metadata) {
+        std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+        append_tar_fixture_record(output, make_test_tar_header("PaxHeader", 'x', value.size()), value);
+        append_tar_fixture_record(output, make_test_tar_header("payload", '0', 1U), "x");
+        output.close();
+        require_tar_fixture_rejected(archive, root / "output");
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Keep one-entry PAX and GNU path overrides from leaking into later entries.
+// Inputs: A metadata record, overridden empty file and a second ordinary empty file.
+// Outputs: Only the first file takes the override, with exact expected destination entries.
+TEST_CASE(tar_path_extensions_apply_once) {
+    const auto root = test_temp_dir("tar-path-one-shot");
+    for (const char type : {'x', 'L'}) {
+        const auto archive = root / "input.tar";
+        const std::string metadata = type == 'x' ? "17 path=long.txt\n" : std::string("long.txt\0", 9U);
+        std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+        append_tar_fixture_record(output, make_test_tar_header("metadata", type, metadata.size()), metadata);
+        append_tar_fixture_record(output, make_test_tar_header("ignored.txt", '0', 0U));
+        append_tar_fixture_record(output, make_test_tar_header("second.txt", '0', 0U));
+        output.close();
+        const auto destination = root / std::string(1U, type);
+        const auto stats = flitzzip::extract_tar(archive, destination, false);
+        REQUIRE_EQ(stats.output_bytes, 0U);
+        REQUIRE_TRUE(std::filesystem::is_regular_file(destination / "long.txt"));
+        REQUIRE_TRUE(std::filesystem::is_regular_file(destination / "second.txt"));
+        REQUIRE_TRUE(!std::filesystem::exists(destination / "ignored.txt"));
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Validate base-256 sizes independently of the writer and reject hostile numeric representations.
+// Inputs: One-byte positive base-256 size, overflowing/negative encodings, invalid octal and a corrupt checksum.
+// Outputs: Valid bytes restore exactly; malformed headers leave the destination untouched.
+TEST_CASE(tar_numeric_headers_are_bounded_and_checksummed) {
+    const auto root = test_temp_dir("tar-numeric-headers");
+    const auto archive = root / "input.tar";
+    auto positive = make_test_tar_header("payload", '0', 0U);
+    std::fill(positive.begin() + 124, positive.begin() + 136, '\0');
+    positive[124] = static_cast<char>(0x80U);
+    positive[135] = 1;
+    checksum_tar_fixture(positive);
+    {
+        std::ofstream output(archive, std::ios::binary);
+        append_tar_fixture_record(output, positive, "z");
+    }
+    const auto stats = flitzzip::extract_tar(archive, root / "valid", false);
+    REQUIRE_EQ(stats.output_bytes, 1U);
+    {
+        std::ifstream input(root / "valid/payload");
+        REQUIRE_EQ(input.get(), 'z');
+        REQUIRE_EQ(input.get(), EOF);
+    }
+    for (int mutation = 0; mutation < 4; ++mutation) {
+        auto invalid = positive;
+        if (mutation == 0) {
+            invalid[124] = static_cast<char>(0xFFU);
+        }
+        if (mutation == 1) {
+            invalid[125] = 1;
+        }
+        if (mutation == 2) {
+            invalid[124] = '8';
+        }
+        checksum_tar_fixture(invalid);
+        if (mutation == 3) {
+            invalid[0] ^= 1;
+        }
+        {
+            std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+            append_tar_fixture_record(output, invalid, "z");
+        }
+        require_tar_fixture_rejected(archive, root / "rejected");
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Prevent unsupported TAR entry types and empty GNU names from creating filesystem objects.
+// Inputs: Link, device, FIFO and unsupported type flags, plus empty path-override metadata.
+// Outputs: All cases reject before publication and preserve existing files.
+TEST_CASE(tar_special_entries_and_empty_long_names_fail_closed) {
+    const auto root = test_temp_dir("tar-special-types");
+    const auto archive = root / "input.tar";
+    for (const char type : {'1', '2', '3', '4', '6', 'K', 'V', 'L'}) {
+        {
+            std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+            append_tar_fixture_record(output, make_test_tar_header("payload", type, 0U));
+        }
+        require_tar_fixture_rejected(archive, root / "output");
+    }
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Check the production checksum's exact wire width and terminators without reusing its formatter.
 // Inputs: A created TAR archive with a normal binary file; the checksum oracle sums bytes with a blanked field.
 // Outputs: Requires six ASCII octal digits, NUL and space, and an independently reconstructed checksum.

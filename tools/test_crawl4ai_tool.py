@@ -21,6 +21,55 @@ from tools import crawl4ai_tool as tool
 class CrawlerContracts(unittest.TestCase):
     """Test repository integration without installing packages or making network requests."""
 
+    def test_lock_resolution_uses_an_empty_environment_and_preserves_failures(self):
+        """Purpose: Detect masked dependency conflicts. Inputs: Resolver outcomes. Outputs: Isolation checks."""
+        for failure in (False, True):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temp:
+                home = Path(temp)
+                observed = []
+
+                def resolve(command, env, _calls=observed, _home=home, _failure=failure):
+                    """Purpose: Inspect the resolver boundary. Inputs: Actual argv/env. Outputs: Result or error."""
+                    _calls.append(command)
+                    self.assertTrue(Path(command[0]).parent.parent.is_relative_to(_home))
+                    self.assertIn("--dry-run", command)
+                    self.assertIn("--ignore-installed", command)
+                    self.assertIn("--require-hashes", command)
+                    self.assertIn("--only-binary=:all:", command)
+                    self.assertNotIn("--no-deps", command)
+                    self.assertEqual(command[-2:], ["-r", str(tool.LOCK)])
+                    self.assertEqual(env["PYTHONNOUSERSITE"], "1")
+                    if _failure:
+                        raise subprocess.CalledProcessError(1, command)
+
+                with (
+                    patch("tools.nltk_security_build.ensure_wheel", return_value=home / "nltk/a.whl"),
+                    patch("tools.crawl4ai_source_build.ensure_wheel", return_value=home / "crawler/b.whl"),
+                    patch.object(tool.venv, "EnvBuilder") as builder,
+                    patch.object(tool, "run", side_effect=resolve),
+                    patch.object(tool, "install") as install,
+                ):
+                    if failure:
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            tool.check_lock(home)
+                    else:
+                        tool.check_lock(home)
+                    builder.assert_called_once_with(with_pip=True)
+                    install.assert_not_called()
+                self.assertEqual(len(observed), 1)
+                self.assertEqual(list(home.iterdir()), [])
+
+    def test_check_lock_cli_does_not_install_the_runtime_or_browser(self):
+        """Purpose: Separate validation from setup. Inputs: Public command. Outputs: Only resolver invoked."""
+        with (
+            patch.object(sys, "argv", ["crawl4ai_tool.py", "check-lock"]),
+            patch.object(tool, "check_lock") as resolve,
+            patch.object(tool, "install") as install,
+        ):
+            self.assertEqual(tool.main(), 0)
+            resolve.assert_called_once()
+            install.assert_not_called()
+
     def test_git_text_identity_ignores_only_line_endings(self):
         """Purpose: Reuse checkout text. Inputs: Line endings/content changes. Outputs: Identity assertions."""
         with tempfile.TemporaryDirectory() as temp:

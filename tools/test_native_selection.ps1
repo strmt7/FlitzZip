@@ -32,7 +32,22 @@ foreach ($invalidJson in @('"tests/cpp/test_dictionary_block.cpp"', '[]', '[""]'
     Assert-NativeSelectionRejected { ConvertFrom-FlitzZipNativeSelectionPath -Base64 $encoded } 'Native selection requires'
 }
 $entropy = Get-FlitzZipNativeTestSelection -Paths $entropyPaths
-Assert-NativeSelection ($entropy.mode -eq 'component' -and $entropy.requireHip -and $entropy.tests.Count -eq 17) 'reviewed entropy cohort and required HIP'
+$entropyExpected = @(
+    'flzip_gpu_efforts_preserve_dictionary_candidates_after_entropy_gain',
+    'flzip_gpu_entropy_efforts_preserve_per_block_winners',
+    'flzip_gpu_huffman_corruption_is_rejected', 'flzip_gpu_huffman_replaces_static_prefix_when_smaller',
+    'flzip_gpu_huffman_sparse_lookup_validation', 'flzip_gpu_prefix_candidate_selection_is_per_block',
+    'flzip_gpu_prefix_levels_compact_shifted_alphabet', 'flzip_gpu_prefix_malformed_codewords_are_rejected',
+    'flzip_gpu_prefix_packing_matches_reference', 'flzip_gpu_prefix_segment_boundaries_roundtrip',
+    'flzip_prefix_reference_cpu_decode_covers_every_symbol', 'flzip_prefix_reference_known_bytes',
+    'flzip_required_gpu_huffman_blocks_honor_compression_level',
+    'flzip_required_gpu_prefix_blocks_compress_low_entropy_payload',
+    'flzip_required_gpu_prefix_blocks_compress_raw_blocks_inside_mixed_chunk',
+    'flzip_required_gpu_prefix_payload_corruption_is_rejected',
+    'flzip_required_gpu_prefix_table_corruption_is_rejected', 'gpu_block_batch_hip_identity'
+)
+Assert-NativeSelection ($entropy.mode -eq 'component' -and $entropy.requireHip -and
+    (($entropy.tests | Sort-Object) -join '|') -ceq (($entropyExpected | Sort-Object) -join '|')) 'exact reviewed entropy consumers and required HIP'
 Assert-NativeSelection ('flzip_gpu_entropy_efforts_preserve_per_block_winners' -in $entropy.tests -and
     'flzip_gpu_efforts_preserve_dictionary_candidates_after_entropy_gain' -in $entropy.tests) 'direct encoder integration consumers'
 Assert-NativeSelection ('flzip_gpu_mixed_materialization_skips_unaligned_prefix_windows' -notin $entropy.tests) 'unrelated manual decoder fixture exclusion'
@@ -46,7 +61,9 @@ foreach ($name in @('sparse_pattern_hip_batch_rejects_prepopulated_output_fields
     Assert-NativeSelection ($name -in $sparse.tests) "sparse direct admission, layout and archive consumer coverage: $name"
 }
 $gpuBatch = Get-FlitzZipNativeTestSelection -Paths ($entropyPaths + $sparsePaths)
-Assert-NativeSelection ($gpuBatch.tests.Count -eq 27 -and $gpuBatch.requireHip) 'entropy/sparse batch shares two competition cases without repetition'
+$expectedBatch = @($entropyExpected + $sparse.tests | Sort-Object -Unique)
+Assert-NativeSelection ($gpuBatch.requireHip -and
+    (($gpuBatch.tests | Sort-Object) -join '|') -ceq ($expectedBatch -join '|')) 'entropy/sparse batch preserves every consumer without repetition'
 $dictionaryPaths = @('src/gpu/dictionary_candidate.cpp')
 $dictionary = Get-FlitzZipNativeTestSelection -Paths $dictionaryPaths
 Assert-NativeSelection ($dictionary.mode -eq 'component' -and $dictionary.requireHip -and $dictionary.tests.Count -eq 15) 'reviewed dictionary candidate cohort and required HIP'
@@ -71,7 +88,9 @@ foreach ($name in @('dictionary_encoder_benchmark_opt_in', 'dictionary_sparse_pa
         'dictionary_interop_export_preserves_bytes_and_refuses_overwrite')) {
     Assert-NativeSelection ($name -notin $dictionaryCodec.tests) "codec changes do not select unrelated opt-in research or file-export fixtures: $name"
 }
-Assert-NativeSelection ($allCandidates.tests.Count -eq 38 -and $allCandidates.requireHip) 'candidate batch shares four entropy consumers without repetition'
+$expectedCandidates = @($entropyExpected + $sparse.tests + $dictionary.tests | Sort-Object -Unique)
+Assert-NativeSelection ($allCandidates.requireHip -and
+    (($allCandidates.tests | Sort-Object) -join '|') -ceq ($expectedCandidates -join '|')) 'candidate batch preserves every consumer without repetition'
 foreach ($shared in @('src/gpu/dictionary_candidate.hpp', 'src/gpu/dictionary_matcher.cpp', 'src/gpu/dictionary_device.hpp')) {
     Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths ($dictionaryPaths + $shared)).mode -eq 'full') "unmapped dictionary boundary retains broader coverage: $shared"
 }

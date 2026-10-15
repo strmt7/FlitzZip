@@ -368,6 +368,15 @@ function Get-CppFunctionStart {
             if ($balance -eq 0 -and $line -match '\b[A-Za-z_]\w*\s*\(') { break }
         }
     }
+    # clang-format can place a qualified return type on its own line when a
+    # signature is long. It belongs to the declaration, not a documentation barrier.
+    if ($start -gt 0) {
+        $prefix = $Lines[$start - 1].Trim()
+        if ($prefix -match '^[A-Za-z_][\w:\s<>,*&]*$' -and $prefix -notmatch '(?<!:):(?!:)' -and
+            $prefix -notmatch '^(return|throw|break|continue|goto|if|else|for|while|switch|case|default)\b') {
+            --$start
+        }
+    }
     if ($start -gt 0 -and $Lines[$start - 1].Trim() -eq 'extern') {
         # The projection masks the linkage string; keep a separate extern "C"
         # line with its declaration so the preceding contract remains adjacent.

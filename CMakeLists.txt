@@ -896,6 +896,10 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_base64_compat.cpp
     tests/cpp/test_bzip2_compat.cpp
     tests/cpp/test_compression_streams.cpp
+    tests/cpp/test_entropy_sampling.cpp
+    tests/cpp/test_huffman_decode.cpp
+    tests/cpp/test_gzip_headers.cpp
+    tests/cpp/test_stream_corruption.cpp
     tests/cpp/test_gpu_telemetry.cpp
     tests/cpp/test_host_memory_budget.cpp
     tests/cpp/test_memory_benchmark_source.cpp

@@ -7,11 +7,26 @@ param(
     [string[]]$ChangedPath = @(),
     [switch]$InitialPush,
     [string]$DefaultBranch = '',
-    [switch]$PlanOnly
+    [switch]$PlanOnly,
+    [string]$GitHubOutput = ''
 )
 
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'flitzzip_verification.psm1') -Force
+
+# Purpose: Select real dependency resolution only when the research installation inputs change.
+# Inputs: Canonical changed paths. Outputs: True for a lock/provider/recipe or this integration workflow change.
+function Test-FlitzZipResearchLockChange {
+    param([string[]]$Paths)
+    foreach ($path in $Paths) {
+        if ($path.Replace('\', '/') -match ('^(tools/requirements/|' +
+            'tools/(crawl4ai_tool|crawl4ai_source_build|nltk_security_build|crawl4ai_download_opener)\.py$|' +
+            'third_party/upstream/(crawl4ai|nltk)/|\.github/workflows/component-contracts\.yml$)')) {
+            return $true
+        }
+    }
+    return $false
+}
 
 # Purpose: Select a new branch's changes against its default-branch ancestor, without scanning inherited files again.
 # Inputs: Checkout root, GitHub's default branch, and initial-push head. Outputs: Changed paths; fails on missing history.
@@ -39,6 +54,10 @@ if ($InitialPush.IsPresent) {
     }
 }
 $plan = Get-FlitzZipVerificationPlan -ChangedPath $ChangedPath -BaseRef $BaseRef -HeadRef $HeadRef -Checkpoint intermediate
+if ($GitHubOutput) {
+    $needsResolution = (Test-FlitzZipResearchLockChange -Paths $plan.scope.paths).ToString().ToLowerInvariant()
+    Add-Content -LiteralPath $GitHubOutput -Value "research_lock_changed=$needsResolution" -Encoding utf8
+}
 # The dedicated lint/security lanes own their policy scans. This lane runs
 # actual offline mechanism contracts, never product builds or measurements.
 $contracts = @($plan.requiredLocalCommands | Where-Object { Test-FlitzZipToolContractCommand -Command $_ })

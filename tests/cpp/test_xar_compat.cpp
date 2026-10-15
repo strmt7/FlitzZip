@@ -130,6 +130,124 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
 
 }  // namespace
 
+namespace {
+
+// Purpose: Build an independently specified one-byte stored XAR entry for parser boundary tests.
+// Inputs: XML filename text and optional raw data fields. Outputs: A complete file element, not an archive.
+std::string
+stored_xar_entry(std::string_view name,
+                 std::string_view data =
+                     "<length>1</length><offset>0</offset><size>1</size><encoding style='application/octet-stream'/>") {
+    return "<file><name>" + std::string(name) + "</name><type>file</type><data>" + std::string(data) + "</data></file>";
+}
+
+// Purpose: Require malformed metadata to fail before modifying an existing destination.
+// Inputs: Bounded XML TOC, owned archive and destination paths. Outputs: Rejection and unchanged sentinel bytes.
+void require_xar_metadata_rejected(const std::filesystem::path& archive, const std::filesystem::path& destination,
+                                   const std::string& toc) {
+    const std::array<unsigned char, 1> heap{'z'};
+    write_xar_fixture(archive, toc, heap);
+    std::filesystem::create_directories(destination);
+    const auto sentinel = destination / "existing.txt";
+    {
+        std::ofstream output(sentinel);
+        output << "retain";
+    }
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_xar(archive, destination, false);
+    } catch (const flitzzip::Error&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(count_regular_files(destination), 1U);
+    REQUIRE_EQ(read_text_file(sentinel), "retain");
+}
+
+}  // namespace
+
+// Purpose: Reject malformed entities and forbidden Unicode scalars before any filesystem publication.
+// Inputs: Empty, overflow, surrogate, out-of-range, unknown and unterminated XML references.
+// Outputs: All invalid references reject while preserving existing files.
+TEST_CASE(xar_invalid_xml_entities_do_not_publish) {
+    const auto root = test_temp_dir("xar-entity-rejection");
+    for (const auto name : {"&#x;", "&#xD800;", "&#xDFFF;", "&#x110000;", "&#4294967296;", "&#-1;", "&#12q;",
+                            "&unknown;", "&amp", "&#0;", "&#47;", "&#92;"}) {
+        require_xar_metadata_rejected(root / "input.xar", root / "output",
+                                      "<xar><toc>" + stored_xar_entry(name) + "</toc></xar>");
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Validate independent two-, three- and four-byte Unicode decoding and numeric XML field normalization.
+// Inputs: Known scalar references and whitespace-wrapped decimal payload metadata. Outputs: Exact names and bytes.
+TEST_CASE(xar_numeric_entities_preserve_unicode_scalar_widths) {
+    const auto root = test_temp_dir("xar-entity-widths");
+    const std::array<std::string_view, 3> names{"&#162;.txt", "&#x20AC;.txt", "&#x1F680;.txt"};
+    const std::array<std::filesystem::path, 3> expected{u8"\u00a2.txt", u8"\u20ac.txt", u8"\U0001f680.txt"};
+    const std::array<unsigned char, 1> heap{'z'};
+    const std::string fields = "<length> 1 </length><offset>\t0\n</offset><size> 1 </size>"
+                               "<encoding ignored='metadata' style = 'application/octet-stream'/>";
+    for (std::size_t index = 0; index < names.size(); ++index) {
+        const auto destination = root / std::to_string(index);
+        write_xar_fixture(root / "input.xar", "<xar><toc>" + stored_xar_entry(names[index], fields) + "</toc></xar>",
+                          heap);
+        (void)flitzzip::extract_xar(root / "input.xar", destination, false);
+        REQUIRE_EQ(count_regular_files(destination), 1U);
+        REQUIRE_EQ(read_text_file(destination / expected[index]), "z");
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject ambiguous metadata and hostile byte ranges rather than selecting a convenient field value.
+// Inputs: Duplicate/missing fields, decimal overflow, impossible heap extents and malformed encoding attributes.
+// Outputs: Every invalid record fails without replacing a sentinel destination file.
+TEST_CASE(xar_data_fields_are_unique_and_range_checked) {
+    const auto root = test_temp_dir("xar-data-fields");
+    const std::string base = "<length>1</length><offset>0</offset><size>1</size>";
+    const std::array<std::string, 12> fields{
+        base + "<offset>0</offset>",
+        base + "<length>1</length>",
+        base + "<size>1</size>",
+        "<length>1</length><offset>0</offset>",
+        "<length>1</length><offset>18446744073709551616</offset><size>1</size>",
+        "<length>1</length><offset>18446744073709551615</offset><size>1</size>",
+        "<length>1</length><offset>-1</offset><size>1</size>",
+        "<length>1</length><offset>0x0</offset><size>1</size>",
+        "<length>2</length><offset>0</offset><size>2</size>",
+        "<length>1</length><offset>0</offset><size>2</size>",
+        base + "<encoding style=unquoted/>",
+        base + "<encoding style='application/octet-stream'/><encoding style='application/zlib'/>"};
+    for (const auto& data : fields) {
+        require_xar_metadata_rejected(root / "input.xar", root / "output",
+                                      "<xar><toc>" + stored_xar_entry("payload", data) + "</toc></xar>");
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject structurally invalid TOCs before exposing any of their entries.
+// Inputs: Truncated/mismatched tags, misplaced data, invalid file nesting and missing/duplicate identity metadata.
+// Outputs: Every invalid tree fails without changing existing destination bytes.
+TEST_CASE(xar_xml_structure_is_validated_before_extraction) {
+    const auto root = test_temp_dir("xar-xml-structure");
+    const std::array<std::string, 10> entries{"<file/>",
+                                              "<data/>",
+                                              "<file><name>a</name><type>directory</type></wrong>",
+                                              "<file><name>a</name><type>directory</type>",
+                                              "<file><name>a</name><name>b</name><type>directory</type></file>",
+                                              "<file><name>a</name><type>directory</type><type>file</type></file>",
+                                              "<file><type>directory</type></file>",
+                                              "<file><name>a</name></file>",
+                                              "<file><name>a</name><type>file</type>" + stored_xar_entry("child") +
+                                                  "</file>",
+                                              "<file><name>a</name><type>socket</type></file>"};
+    for (const auto& entry : entries) {
+        require_xar_metadata_rejected(root / "input.xar", root / "output", "<xar><toc>" + entry + "</toc></xar>");
+    }
+    require_xar_metadata_rejected(root / "input.xar", root / "output", "<xar><toc><file");
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Verify native `.xar` extraction reads a nested zlib-compressed payload.
 // Inputs: A handcrafted XAR archive with `subdir/hello.txt`.
 // Outputs: Throws if detection, extraction stats, or payload bytes regress.

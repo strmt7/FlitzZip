@@ -143,6 +143,37 @@ void skip_gzip_zero_string(std::ifstream& input, std::uint64_t& offset, std::uin
     throw ArchiveError(std::string("Gzip ") + field + " field is not terminated");
 }
 
+// Purpose: Validate optional Gzip metadata instead of ignoring an advertised header checksum.
+// Inputs: Seekable source, validated header extent before FHCRC, and the payload/trailer boundary.
+// Outputs: Verifies the low 16 CRC32 bits required by RFC 1952; rejects truncation or corruption with bounded memory.
+void verify_gzip_header_crc(std::ifstream& input, std::uint64_t header_bytes, std::uint64_t limit) {
+    if (header_bytes > limit || limit - header_bytes < 2U) {
+        throw ArchiveError("Gzip header CRC field exceeds header bounds");
+    }
+    seek_gzip_input(input, 0U, "header CRC");
+    std::array<unsigned char, kGzipStreamBufferBytes> buffer{};
+    auto crc = static_cast<std::uint32_t>(MZ_CRC32_INIT);
+    auto remaining = header_bytes;
+    while (remaining != 0U) {
+        const auto count = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
+        input.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(count));
+        if (!input) {
+            throw ArchiveError("failed to read Gzip header for CRC validation");
+        }
+        crc = static_cast<std::uint32_t>(mz_crc32(crc, buffer.data(), count));
+        remaining -= count;
+    }
+    std::array<unsigned char, 2> stored{};
+    input.read(reinterpret_cast<char*>(stored.data()), static_cast<std::streamsize>(stored.size()));
+    if (!input) {
+        throw ArchiveError("failed to read Gzip header CRC");
+    }
+    const auto expected = static_cast<std::uint32_t>(stored[0]) | (static_cast<std::uint32_t>(stored[1]) << 8U);
+    if ((crc & 0xFFFFU) != expected) {
+        throw ArchiveError("Gzip header CRC mismatch");
+    }
+}
+
 // Purpose: Parse a single-member Gzip wrapper while ignoring untrusted optional names.
 // Inputs: `input` is a seekable binary Gzip file and `file_size` is its total byte size.
 // Outputs: Returns compressed payload bounds and trailer expectations.
@@ -188,7 +219,8 @@ ParsedGzipHeader parse_gzip_stream_header(std::ifstream& input, std::uint64_t fi
         skip_gzip_zero_string(input, offset, compressed_limit, "comment");
     }
     if ((flags & kGzipFlagHeaderCrc) != 0U) {
-        skip_gzip_header_bytes(input, offset, 2U, compressed_limit, "header CRC");
+        verify_gzip_header_crc(input, offset, compressed_limit);
+        offset += 2U;
     }
     if (offset >= compressed_limit) {
         throw ArchiveError("Gzip stream has no compressed payload");

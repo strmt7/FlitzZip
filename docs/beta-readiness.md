@@ -3,8 +3,8 @@
 The configured candidate is FlitzZip 0.8.0 for Windows 11 x64, built with HIP.
 A candidate build and its validation are separate from permission to publish.
 
-**Not ready for release approval:** remaining acceptance work is explicitly
-deferred in the [implementation plan](../IMPLEMENTATION_PLAN.md#release-blockers).
+**Not ready for release approval:** remaining acceptance work is tracked in the
+[implementation plan](../IMPLEMENTATION_PLAN.md#release-blockers).
 A successful candidate build or workflow summary does not close those blockers.
 
 ## Product Evidence

@@ -104,9 +104,9 @@ After `GetFileInformationByHandleEx` succeeds, the copy transfers the 16-byte `F
 
 ### Alert 838
 
-**Gzip input borrow.** `cpp/stack-address-escape` at `src/gzip/gzip_stream.cpp:340`.
+**Gzip input borrow.** `cpp/stack-address-escape` at `src/gzip/gzip_stream.cpp:372`.
 
-`compress_bytes` consumes each bounded input chunk synchronously. Its `InputBorrow` destructor clears `next_in` and `avail_in` on normal and exceptional exits before the caller storage expires. Compressor state and output storage have their own owners. Stream readback, temporary-buffer and failure controls remain in `test_compression_streams.cpp`.
+`compress_bytes` consumes each bounded input chunk synchronously. Its `InputBorrow` destructor clears `next_in` and `avail_in` on normal and exceptional exits before the caller storage expires. Compressor state and output storage have their own owners. Stream readback, temporary-buffer and failure controls remain in `test_compression_streams.cpp`. The header-checksum repair changes parsing before this function; re-review confirms that the complete compression implementation and its borrow lifetime are unchanged.
 
 ### Alert 839
 
@@ -152,9 +152,9 @@ The macro maps the default C allocator to the corresponding free/calloc family. 
 
 ### Alert 8349
 
-**Serial benchmark opt-in flag.** `DS154189` at `tests/cpp/test_flzip_gpu_prefix.cpp:1016`.
+**Serial benchmark opt-in flag.** `DS154189` at `tests/cpp/test_flzip_gpu_prefix.cpp:1052`.
 
-The test reads `FLITZZIP_PATTERN_GPU_BENCHMARK` once to decide whether an optional benchmark is enabled. It does not modify the environment concurrently, cache the returned pointer across changes, use the value as a command or treat it as trusted input for a buffer size. Production compression does not use this opt-in.
+The test reads `FLITZZIP_PATTERN_GPU_BENCHMARK` once to decide whether an optional benchmark is enabled. It does not modify the environment concurrently, cache the returned pointer across changes, use the value as a command or treat it as trusted input for a buffer size. Production compression does not use this opt-in. Adding the independent CPU prefix-decoder test changes this file's identity and the reported location; the benchmark function and these assumptions remain unchanged on re-review.
 
 ### Alert 853
 

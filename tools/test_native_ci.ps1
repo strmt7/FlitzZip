@@ -91,18 +91,22 @@ foreach ($case in @(
 }
 foreach ($path in @('.github/workflows/windows-ci.yml', 'tools/native_coverage.py',
         'tools/native_coverage_report.py', 'tools/native-coverage-toolchain.json')) {
-    $collector = Get-FlitzZipHostedNativePlan -Paths @($path) -Configuration RelWithDebInfo
+    $collector = Get-FlitzZipHostedNativePlan -Paths @($path) -Configuration Debug
     Assert-NativeCi ($collector.build -and $collector.coverage -and $collector.testMode -eq 'none' -and
         -not $collector.formatMatrix) "collector or integration changes require one real hosted measurement: $path"
+    foreach ($configuration in @('Release', 'RelWithDebInfo')) {
+        $optimized = Get-FlitzZipHostedNativePlan -Paths @($path) -Configuration $configuration
+        Assert-NativeCi (-not $optimized.coverage) 'optimized builds must not publish distorted line coverage'
+    }
 }
 $full = Get-FlitzZipHostedNativePlan -Paths @('README.md') -Full
 Assert-NativeCi ($full.build -and $full.testMode -eq 'full' -and $full.formatMatrix -and $full.securityPolicy) 'explicit broad/manual qualification remains complete'
 foreach ($path in @('tests/cpp/test_dictionary_block.cpp', 'src/zip/zip_adapter.cpp')) {
-    $symbols = Get-FlitzZipHostedNativePlan -Paths @($path) -Configuration RelWithDebInfo
+    $symbols = Get-FlitzZipHostedNativePlan -Paths @($path) -Configuration Debug
     $position = [Array]::IndexOf($symbols.testCommand.arguments, '-Configuration')
-    Assert-NativeCi ($symbols.configuration -eq 'RelWithDebInfo' -and
-        $symbols.testCommand.arguments[$position + 1] -eq 'RelWithDebInfo' -and
-        $symbols.testCommand.command.Contains('-Configuration RelWithDebInfo')) 'symbols build and selected test command must agree'
+    Assert-NativeCi ($symbols.configuration -eq 'Debug' -and
+        $symbols.testCommand.arguments[$position + 1] -eq 'Debug' -and
+        $symbols.testCommand.command.Contains('-Configuration Debug')) 'unoptimized coverage build and selected tests must agree'
 }
 $manual = Get-FlitzZipNativeCiEvent -EventName workflow_dispatch
 Assert-NativeCi $manual.full 'manual dispatch is explicit broad qualification'
@@ -133,7 +137,7 @@ foreach ($output in @('native_build', 'native_tests', 'native_coverage', 'format
     Assert-NativeCi ($workflow.Contains("steps.native_plan.outputs.$output == 'true'")) "actual workflow honors $output admission"
 }
 Assert-NativeCi ($workflow.Contains('fetch-depth: 0')) 'the event base must be available'
-Assert-NativeCi ($workflow.Contains('configuration: RelWithDebInfo') -and $workflow.Contains('configuration: Release') -and
+Assert-NativeCi ($workflow.Contains('configuration: Debug') -and $workflow.Contains('configuration: Release') -and
     [regex]::Matches($workflow, '-Configuration \$env:FLITZZIP_CONFIGURATION').Count -eq 4 -and
     $workflow.Contains('--configuration $env:FLITZZIP_CONFIGURATION')) 'build, test, receipt and matrix use the selected configuration'
 Assert-NativeCi ([regex]::Matches($workflow, 'DISPATCH_BASE: \$\{\{ inputs\.comparison_base \}\}').Count -eq 2 -and

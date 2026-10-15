@@ -66,6 +66,13 @@ request; this does not authorize publication of a replacement.
    requesting release approval. Earlier successful artifacts cover their own
    source identities, not every later commit.
 
+4. **Complete meaningful coverage.** Use the native coverage artifact's uncovered-line
+   and unmeasured-source inventories; the Debug measurement is the current baseline.
+   Close gaps with independent behavior and failure-path tests, and qualify separate
+   measurement for executable-only, tooling and device code. Do not equate a native
+   CPU percentage with whole-repository coverage or declare the requested complete
+   coverage achieved while those gaps remain.
+
 ## Deferred Improvement Work
 
 - **Development dependency:** the maintainer temporarily accepts the exact NLTK
@@ -107,11 +114,6 @@ request; this does not authorize publication of a replacement.
   existing-installation tool qualification where evidence is missing. Keep
   canonical agent rules concise, crawler installation portable and finding
   prevention executable; do not add recurring maintenance for unchanged tools.
-- **Coverage:** the [native CPU Codecov integration](docs/code-coverage.md) has
-  completed a real hosted collection and OIDC upload. Use uncovered behavior to
-  choose root-cause tests. Extend measurement to Python branches and currently unmeasured executable
-  paths when their consumers are qualified. GPU device coverage remains a separate
-  limitation; do not infer it from host line coverage or inflate percentages.
 
 Reuse completed checks only when source, tools, configuration and outputs still
 match. Resume from the retained local evidence and current GitHub audit rather
