@@ -39,7 +39,22 @@ GPU device instructions; those still require the qualification described below.
 Collection never changes the build configuration or silently substitutes a CPU
 execution path. Keep a separate checkout/build when preserving a Release build.
 
-`tools/native_coverage.py` verifies the native build receipt, both measured
+On an interactive Windows desktop, add `--gui` to run the existing all-page
+GUI smoke under the same collector, for example
+`py -3 -B -m tools.native_coverage --hip-host --gui`. Announce this run before
+starting: it opens owned test windows and uses isolated smoke settings. Finish
+the build first and do not rebuild or package until the windows have closed.
+The smoke asserts interaction results, settings persistence, publication failures
+and Neutron admission; inspect every generated capture as well. The added mode
+uses the canonical bounded process runner, including its Windows PowerShell
+environment handling. It requires measured GUI entry points and records the
+GUI executable, PDB and scenario identities. A smoke failure fails collection.
+Evidence goes to `out/coverage-hip-host-gui` (or `out/coverage-gui` without HIP),
+with `gui_host_coverage=true`. These local measurements do not replace the CI
+badge or establish device-instruction coverage. The default collector does not
+open GUI windows.
+
+`tools/native_coverage.py` verifies the native build receipt, all selected
 executables, their symbols and scenario drivers before and after collection.
 `tools/native_coverage_report.py` rejects empty, foreign,
 ambiguous, malformed, or source-inconsistent reports and normalizes paths without

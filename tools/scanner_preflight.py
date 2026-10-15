@@ -42,12 +42,26 @@ def review_repository(root: Path) -> str:
     return match[1]
 
 
-# Purpose: Freeze only relevant current review evidence separately from detector inputs.
-# Inputs: Checkout, changed names and new owned snapshot directory. Outputs: Validated rows and complete hashes.
+# Purpose: Freeze reviews affected by source, caller, build, scanner or approval changes before selecting scans.
+# Inputs: Checkout, changed names and new owned snapshot directory. Outputs: Affected rows and complete hashes.
 def freeze_current_reviews(root: Path, paths: list[str], destination: Path) -> tuple[list[dict], dict[str, str]]:
     policy_hashes = snapshot_inputs(root, [CURRENT_POLICY], destination)
     rows = read_current_reviews((destination / CURRENT_POLICY).read_bytes())
-    rows = [row for row in rows if row["tool"] == "devskim" and row["path"] in paths]
+    changed = set(paths)
+    affected = []
+    for row in rows:
+        if row["tool"] != "devskim" or not (
+            CURRENT_POLICY in changed or changed.intersection(row["context_paths"].split("|"))
+        ):
+            continue
+        try:
+            (root / row["path"]).lstat()
+        except FileNotFoundError:
+            # Removed source cannot produce a current detector finding. Other
+            # I/O errors and redirected/nonregular sources still fail admission.
+            continue
+        affected.append(row)
+    rows = affected
     names = sorted({name for row in rows for name in row["context_paths"].split("|")} - {CURRENT_POLICY})
     sizes = [(root / name).stat().st_size for name in names]
     if any(size > 2 * 1024**2 for size in sizes) or sum(sizes) > MAX_CURRENT_CACHE_BYTES:
@@ -102,6 +116,8 @@ def changed_paths(root: Path, base: str) -> list[str]:
 # Inputs: Checkout-relative paths and a new snapshot directory.
 # Outputs: Path-to-SHA-256 map; unsafe/oversize inputs fail.
 def snapshot_inputs(root: Path, paths: list[str], destination: Path) -> dict[str, str]:
+    if len(paths) > MAX_FILES:
+        raise ValueError("Scanner input files exceed the snapshot budget")
     hashes = {}
     total = 0
     for name in paths:
@@ -204,18 +220,61 @@ def require_versions(gitleaks: str, devskim: str) -> dict:
     return observed
 
 
-# Purpose: Fail publication admission on detector findings, tool failures, or source changes during the check.
-# Inputs: Base ref and pinned detector paths; no credentials are accepted or logged.
-# Outputs: Private reports and exit status.
+# Purpose: Scan one frozen source snapshot with unchanged pinned detector policies and bounded processes.
+# Inputs: Owned source/report directories and verified detector executables. Outputs: Retained process outcomes.
+def scan_snapshot(snapshot: Path, directory: Path, gitleaks: str, devskim: str) -> dict:
+    gitleaks_report, devskim_report = directory / "gitleaks.json", directory / "devskim.sarif"
+    devskim_options = directory / "devskim-options.json"
+    write_options(snapshot, devskim_options)
+    commands = {
+        "gitleaks": [
+            gitleaks,
+            "dir",
+            ".",
+            "--config",
+            str(ROOT / ".github/gitleaks.toml"),
+            "--redact",
+            "--no-banner",
+            "--no-color",
+            "--timeout",
+            "60",
+            "--report-format",
+            "json",
+            "--report-path",
+            str(gitleaks_report),
+        ],
+        "devskim": [
+            devskim,
+            "analyze",
+            "-I",
+            str(snapshot),
+            "--base-path",
+            str(snapshot),
+            "-O",
+            str(devskim_report),
+            "-f",
+            "sarif",
+            "--skip-excerpts",
+            "--disable-supression",
+            "--disable-console",
+            "--options-json",
+            str(devskim_options),
+        ],
+    }
+    return {name: run_scanner(command, directory=snapshot) for name, command in commands.items()}
+
+
+# Purpose: Admit only complete detector results bound to the actual changed and review-dependent source bytes.
+# Inputs: CLI base and pinned scanner locations. Outputs: Receipt and exit status; failures remain blocking.
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="HEAD")
     parser.add_argument("--gitleaks", default=os.environ.get("FLITZZIP_GITLEAKS") or shutil.which("gitleaks"))
     parser.add_argument("--devskim", default=os.environ.get("FLITZZIP_DEVSKIM") or shutil.which("devskim"))
     args = parser.parse_args()
-    paths = changed_paths(ROOT, args.base)
+    publication_paths = changed_paths(ROOT, args.base)
     validate_report_directory(ROOT)
-    if not paths:
+    if not publication_paths:
         print("Scanner preflight: no changed publication inputs; no scan qualification claimed.")
         return 0
     if not args.gitleaks or not args.devskim:
@@ -234,53 +293,17 @@ def main() -> int:
             raise ValueError("Scanner output crosses a reparse point")
     directory.mkdir(parents=True)
     snapshot = directory / "inputs"
+    review_snapshot = directory / "review-inputs"
+    current_rows, current_hashes = freeze_current_reviews(ROOT, publication_paths, review_snapshot)
+    paths = sorted(set(publication_paths) | {row["path"] for row in current_rows})
     hashes = snapshot_inputs(ROOT, paths, snapshot)
     review_policy = read_policy(ROOT)
     source_review_policy = read_source_policy(ROOT)
-    review_snapshot = directory / "review-inputs"
-    current_rows, current_hashes = freeze_current_reviews(ROOT, paths, review_snapshot)
     if any(current_hashes[name] != digest for name, digest in hashes.items() if name in current_hashes):
         raise ValueError("Source changed between detector and review snapshots")
     repository = review_repository(ROOT)
+    status = scan_snapshot(snapshot, directory, args.gitleaks, args.devskim)
     gitleaks_report, devskim_report = directory / "gitleaks.json", directory / "devskim.sarif"
-    devskim_options = directory / "devskim-options.json"
-    write_options(snapshot, devskim_options)
-    commands = {
-        "gitleaks": [
-            args.gitleaks,
-            "dir",
-            ".",
-            "--config",
-            str(ROOT / ".github/gitleaks.toml"),
-            "--redact",
-            "--no-banner",
-            "--no-color",
-            "--timeout",
-            "60",
-            "--report-format",
-            "json",
-            "--report-path",
-            str(gitleaks_report),
-        ],
-        "devskim": [
-            args.devskim,
-            "analyze",
-            "-I",
-            str(snapshot),
-            "--base-path",
-            str(snapshot),
-            "-O",
-            str(devskim_report),
-            "-f",
-            "sarif",
-            "--skip-excerpts",
-            "--disable-supression",
-            "--disable-console",
-            "--options-json",
-            str(devskim_options),
-        ],
-    }
-    status = {name: run_scanner(command, directory=snapshot) for name, command in commands.items()}
     counts = {
         "gitleaks": finding_count(gitleaks_report, "gitleaks"),
         "devskim": finding_count(devskim_report, "devskim"),
@@ -295,7 +318,7 @@ def main() -> int:
         review_snapshot,
     )
     unchanged = all(hashlib.sha256((ROOT / name).read_bytes()).hexdigest() == digest for name, digest in hashes.items())
-    unchanged = unchanged and changed_paths(ROOT, args.base) == paths
+    unchanged = unchanged and changed_paths(ROOT, args.base) == publication_paths
     unchanged = unchanged and read_policy(ROOT) == review_policy
     unchanged = unchanged and read_source_policy(ROOT) == source_review_policy
     unchanged = unchanged and review_repository(ROOT) == repository
@@ -314,6 +337,8 @@ def main() -> int:
     receipt = {
         "passed": passed,
         "input_hashes": hashes,
+        "changed_paths": publication_paths,
+        "review_affected_paths": sorted(set(paths) - set(publication_paths)),
         "tools": tools,
         "finding_counts": counts,
         "devskim_review": review,
@@ -324,7 +349,7 @@ def main() -> int:
         "source_unchanged": unchanged,
         "devskim_passive_reports": validate_report_directory(snapshot),
         "results": status,
-        "scope": "changed_files_only_not_full_repository_security_acceptance",
+        "scope": "changed_files_and_affected_reviews_not_full_repository_security_acceptance",
     }
     (directory / "receipt.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
     print(
