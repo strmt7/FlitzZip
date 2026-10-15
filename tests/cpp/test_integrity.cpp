@@ -18,10 +18,16 @@
 #include <fstream>
 #include <future>
 #include <limits>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 namespace {
 
@@ -529,4 +535,62 @@ TEST_CASE(integrity_sha256_snapshot_vectors_and_update_boundary) {
     REQUIRE_EQ(flitzzip::sha256_bytes(abc), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     const std::vector<std::byte> multiple(1048577U, std::byte{'a'});
     REQUIRE_EQ(flitzzip::sha256_bytes(multiple), "4a3f0c0c213adea174f9a3d4c13177315b588bdb2e9c1012d3d0bf0453ca0f6a");
+}
+
+#ifdef _WIN32
+// Purpose: Detect path/flag merging through Windows' independent native argument parser.
+// Inputs: Drive and UNC roots, extended paths, Unicode, spaces, quotes and trailing backslash runs.
+// Outputs: Requires exactly seven unchanged arguments, including the independent non-remediation flag; launches
+// nothing.
+TEST_CASE(defender_command_preserves_windows_arguments) {
+    constexpr std::wstring_view executable = LR"(Q:\Program Files\Windows Defender\MpCmdRun.exe)";
+    const std::array<std::wstring_view, 8> targets{
+        LR"(Q:\)",         LR"(Q:\folder with spaces\)",   LR"(\\server\share\)",     LR"(\\?\Q:\folder\)",
+        LR"(Q:\file.zip)", L"Q:\\Unicode-\u03bb-\u6f22\\", LR"(Q:\a\"quoted"\name\)", LR"(\\server\share\\)"};
+    for (const auto target : targets) {
+        const auto command = flitzzip::defender_scan_command_line(executable, target);
+        int count = 0;
+        const std::unique_ptr<LPWSTR, decltype(&LocalFree)> parsed(CommandLineToArgvW(command.c_str(), &count),
+                                                                   &LocalFree);
+        REQUIRE_TRUE(parsed != nullptr);
+        REQUIRE_EQ(count, 7);
+        const std::array<std::wstring_view, 7> expected{executable, L"-Scan", L"-ScanType",          L"3",
+                                                        L"-File",   target,   L"-DisableRemediation"};
+        for (std::size_t index = 0U; index < expected.size(); ++index) {
+            REQUIRE_EQ(std::wstring_view(parsed.get()[index]), expected[index]);
+        }
+    }
+}
+#endif
+
+// Purpose: Reject truncation and argument expansion beyond the Windows process boundary before scanner launch.
+// Inputs: Empty/null-bearing paths, an oversized path, and exact complete command-length boundaries.
+// Outputs: Requires rejection of each ambiguous/overlong command and acceptance of the exact maximum length.
+TEST_CASE(defender_command_rejects_invalid_and_expanded_paths) {
+    const std::wstring executable = L"Q:\\scanner.exe";
+    const std::wstring target = L"Q:\\target";
+    const std::array<std::wstring, 4> invalid{L"", std::wstring(L"Q:\\target\0different", 19U),
+                                              std::wstring(32767U, L'a'), std::wstring(17000U, L'\\')};
+    for (const auto& argument : invalid) {
+        for (const bool invalid_executable : {false, true}) {
+            bool rejected = false;
+            try {
+                static_cast<void>(flitzzip::defender_scan_command_line(invalid_executable ? argument : executable,
+                                                                       invalid_executable ? target : argument));
+            } catch (const flitzzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+        }
+    }
+    const auto overhead = flitzzip::defender_scan_command_line(executable, L"a").size() - 1U;
+    const std::wstring largest(32766U - overhead, L'a');
+    REQUIRE_EQ(flitzzip::defender_scan_command_line(executable, largest).size(), 32766U);
+    bool rejected = false;
+    try {
+        static_cast<void>(flitzzip::defender_scan_command_line(executable, largest + L"a"));
+    } catch (const flitzzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
 }
