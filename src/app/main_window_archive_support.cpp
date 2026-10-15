@@ -381,27 +381,6 @@ std::wstring compression_level_text(int index) {
     return std::to_wstring(compression_level_value(index));
 }
 
-// Purpose: Normalize a performance-sampling interval to the closest supported GUI option.
-// Inputs: `seconds` is a persisted or in-memory sampling interval.
-// Outputs: Returns one of 1, 3, 5, or 10 seconds.
-int normalize_performance_update_seconds(int seconds) {
-    return *std::min_element(
-        kPerformanceUpdateSecondsOptions.begin(), kPerformanceUpdateSecondsOptions.end(),
-        [seconds](int left, int right) { return std::abs(left - seconds) < std::abs(right - seconds); });
-}
-
-// Purpose: Resolve the dropdown row for a normalized performance-sampling interval.
-// Inputs: `seconds` is a persisted or in-memory sampling interval.
-// Outputs: Returns a zero-based index in `kPerformanceUpdateSecondsOptions`.
-int performance_update_index_for_seconds(int seconds) {
-    const int normalized = normalize_performance_update_seconds(seconds);
-    const auto found =
-        std::find(kPerformanceUpdateSecondsOptions.begin(), kPerformanceUpdateSecondsOptions.end(), normalized);
-    return found == kPerformanceUpdateSecondsOptions.end()
-               ? 0
-               : static_cast<int>(std::distance(kPerformanceUpdateSecondsOptions.begin(), found));
-}
-
 // Purpose: Return a compact label for the live performance sampling interval.
 // Inputs: `seconds` is a user-facing interval normalized to supported choices.
 // Outputs: Returns a compact label such as `1 s`.
