@@ -2,6 +2,7 @@
 
 #include "app/main_window_state.hpp"
 #include "app/compression_mode_selection.hpp"
+#include "app/performance_options.hpp"
 #include "app/window_layout.hpp"
 #include "core/archive.hpp"
 #include "core/archive_format.hpp"
@@ -84,7 +85,6 @@ constexpr std::array<std::string_view, 19> kCompressionCreateFormatExtensions{
 };
 constexpr int kDefaultCompressionFormatIndex = 0;
 constexpr int kCompressionFormatMaxIndex = static_cast<int>(kCompressionCreateFormatExtensions.size()) - 1;
-constexpr std::array<int, 4> kPerformanceUpdateSecondsOptions{1, 3, 5, 10};
 constexpr std::array<std::uint32_t, 7> kCompressionBlockSizeOptions{
     256U * 1024U,
     512U * 1024U,
@@ -177,8 +177,6 @@ OperationStats validate_detected_archive(ArchiveFormat archive_format, const std
                                          ArchivePathEncoding name_encoding = ArchivePathEncoding::Utf8);
 // Purpose: Label a compression row; inputs: signed UI index; outputs: normalized effort text 1-9.
 std::wstring compression_level_text(int index);
-int normalize_performance_update_seconds(int seconds);
-int performance_update_index_for_seconds(int seconds);
 std::wstring performance_update_speed_text(int seconds);
 std::wstring performance_update_option_text(int index);
 std::vector<std::wstring> fixed_io_drive_options();
