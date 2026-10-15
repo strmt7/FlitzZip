@@ -68,6 +68,8 @@ new behavioral evidence is not an engineering improvement.
 
 Container admission tests compare plain and compressed readers at structural
 truncation boundaries, preserving existing destination bytes on rejection.
+CAB and XAR fixtures additionally exercise binary header fields, optional reserve
+regions and compressed-stream extents through their public extraction APIs.
 Publication tests use real Windows sharing denial and callback cancellation,
 then require successful reuse after cleanup. Native metadata tests exercise
 the public verification and extraction paths with independently framed records;
@@ -79,6 +81,16 @@ in coherent behavior groups, retaining malformed-input, independent-oracle and
 failure-recovery assertions. Keep device instructions and unmeasured executables
 visible until a suitable measurement mechanism is qualified. Resource exhaustion,
 driver hangs and destruction of host state are not acceptable coverage techniques.
+
+HIP device measurement requires a qualified device profiling runtime in addition
+to compiler instrumentation. LLVM documents the
+[AMDGPU runtime and collection prerequisites](https://clang.llvm.org/docs/HIPSupport.html#source-based-code-coverage-for-device-code).
+The pinned Windows SDK emits device coverage mappings, but its link qualification
+currently fails on `__llvm_profile_instrument_gpu` and
+`__llvm_profile_raw_version`; it supplies the host profiling library without the
+required AMDGPU profiling runtime. Qualify that runtime and counter collection
+against independently known hit and miss branches before adding a device report.
+Kernel dispatch counts or CPU-side HIP API coverage cannot substitute for it.
 
 ## Tool provenance and local use
 

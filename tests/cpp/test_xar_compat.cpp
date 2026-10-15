@@ -496,3 +496,142 @@ TEST_CASE(xar_extraction_rejects_corrupt_zlib_payload_before_output) {
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
 }
+
+namespace {
+
+// Purpose: Write independently mutated XAR bytes without invoking its production encoder.
+// Inputs: Small bounded byte string and test-owned path. Outputs: Closed file or an explicit I/O failure.
+void write_xar_bytes(const std::filesystem::path& archive, std::string_view bytes) {
+    std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+    output.exceptions(std::ios::badbit | std::ios::failbit);
+    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    output.close();
+}
+
+// Purpose: Mutate an XAR binary-header field independently of the production parser.
+// Inputs: Complete small fixture, offset, width and unsigned value. Outputs: Exact big-endian replacement.
+void set_xar_field(std::string& bytes, std::size_t offset, std::size_t width, std::uint64_t value) {
+    REQUIRE_TRUE(width > 0U && width <= 8U && offset + width <= bytes.size());
+    for (std::size_t index = 0; index < width; ++index) {
+        bytes[offset + width - index - 1U] = static_cast<char>(value >> (8U * index));
+    }
+}
+
+// Purpose: Verify corrupt XAR input fails before publication and extraction progress.
+// Inputs: Malformed archive, owned destination and required diagnostic fragment.
+// Outputs: Requires rejection, exact original content and no leaked extraction artifacts.
+void require_xar_archive_rejected(const std::filesystem::path& archive, const std::filesystem::path& destination,
+                                  std::string_view diagnostic) {
+    std::filesystem::create_directories(destination);
+    write_xar_bytes(destination / "file.txt", "retain");
+    unsigned callbacks = 0;
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_xar(archive, destination, true,
+                                    [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
+    } catch (const flitzzip::ArchiveError& error) {
+        REQUIRE_TRUE(std::string_view(error.what()).find(diagnostic) != std::string_view::npos);
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(callbacks, 0U);
+    REQUIRE_EQ(read_text_file(destination / "file.txt"), "retain");
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator()),
+               1);
+}
+
+}  // namespace
+
+// Purpose: Exercise binary XAR framing independently of XML and decompression error handling.
+// Inputs: A known-good stored entry and hostile header/TOC sizes, versions and checksum algorithms.
+// Outputs: Precise admission errors without filesystem or callback effects, followed by exact valid readback.
+TEST_CASE(xar_binary_header_failure_matrix_preserves_destination) {
+    const auto root = test_temp_dir("xar-binary-header-matrix");
+    const auto archive = root / "header.xar";
+    const auto output = root / "out";
+    const std::array<unsigned char, 1> heap{'z'};
+    write_xar_fixture(archive, "<xar><toc>" + stored_xar_entry("file.txt") + "</toc></xar>", heap);
+    const auto valid = read_text_file(archive);
+    struct Mutation {
+        std::size_t offset;
+        std::size_t width;
+        std::uint64_t value;
+        const char* diagnostic;
+    };
+    const Mutation mutations[] = {
+        {0, 4, 0, "magic"},
+        {4, 2, 27, "header size"},
+        {4, 2, 0xFFFFU, "header size"},
+        {6, 2, 0, "version"},
+        {6, 2, 2, "version"},
+        {8, 8, 0, "TOC size"},
+        {16, 8, 0, "TOC size"},
+        {8, 8, 0xFFFFFFFFFFFFFFFFULL, "TOC size"},
+        {16, 8, 0xFFFFFFFFFFFFFFFFULL, "TOC size"},
+        {8, 8, static_cast<std::uint64_t>(valid.size()), "TOC extends"},
+        {16, 8, 1, "inflate XAR TOC"},
+        {24, 4, 0xFFFFFFFFU, "checksum algorithms"},
+    };
+    for (const auto& mutation : mutations) {
+        auto bytes = valid;
+        set_xar_field(bytes, mutation.offset, mutation.width, mutation.value);
+        write_xar_bytes(archive, bytes);
+        require_xar_archive_rejected(archive, output, mutation.diagnostic);
+    }
+    write_xar_bytes(archive, valid);
+    const auto stats = flitzzip::extract_xar(archive, output, true);
+    REQUIRE_EQ(stats.output_bytes, 1U);
+    REQUIRE_EQ(read_text_file(output / "file.txt"), "z");
+}
+
+// Purpose: Verify every strict prefix of a complete compressed XAR fails its two-pass admission.
+// Inputs: An independently framed nested entry with a zlib payload and all byte truncation positions.
+// Outputs: No truncated prefix starts extraction, changes a sentinel or leaves temporary artifacts.
+TEST_CASE(xar_all_truncation_boundaries_preserve_destination) {
+    const auto root = test_temp_dir("xar-all-truncations");
+    const auto archive = root / "truncated.xar";
+    write_nested_xar_fixture(archive, "xar payload");
+    const auto valid = read_text_file(archive);
+    for (std::size_t length = 0; length < valid.size(); ++length) {
+        write_xar_bytes(archive, std::string_view(valid).substr(0, length));
+        require_xar_archive_rejected(archive, root / "out", "");
+    }
+    write_xar_bytes(archive, valid);
+    const auto stats = flitzzip::extract_xar(archive, root / "out", true);
+    REQUIRE_EQ(stats.output_bytes, 11U);
+    REQUIRE_EQ(read_text_file(root / "out/subdir/hello.txt"), "xar payload");
+}
+
+// Purpose: Distinguish complete zlib streams from truncated, trailing and incorrect decoded-size payloads.
+// Inputs: One valid compressed payload, independent XML sizes, and corruptions inside admitted heap extents.
+// Outputs: Validation rejects each malformed stream before publication and accepts the exact original.
+TEST_CASE(xar_payload_validation_rejects_inexact_streams_before_output) {
+    const auto root = test_temp_dir("xar-payload-inexact-streams");
+    const auto archive = root / "payload.xar";
+    const auto output = root / "out";
+    const std::string payload = "a payload with independently known length";
+    const auto valid = zlib_compress(payload);
+    for (unsigned scenario = 0; scenario < 5U; ++scenario) {
+        auto heap = valid;
+        std::uint64_t decoded_size = payload.size();
+        if (scenario == 0U) {
+            heap.pop_back();
+        } else if (scenario == 1U) {
+            heap.push_back(0U);
+        } else if (scenario == 2U) {
+            --decoded_size;
+        } else if (scenario == 3U) {
+            ++decoded_size;
+        }
+        const auto data = "<length>" + std::to_string(heap.size()) + "</length><offset>0</offset><size>" +
+                          std::to_string(decoded_size) + "</size><encoding style='application/x-gzip'/>";
+        write_xar_fixture(archive, "<xar><toc>" + stored_xar_entry("file.txt", data) + "</toc></xar>", heap);
+        if (scenario < 4U) {
+            require_xar_archive_rejected(archive, output, "");
+        } else {
+            const auto stats = flitzzip::extract_xar(archive, output, true);
+            REQUIRE_EQ(stats.output_bytes, payload.size());
+            REQUIRE_EQ(read_text_file(output / "file.txt"), payload);
+        }
+    }
+}

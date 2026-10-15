@@ -339,3 +339,142 @@ TEST_CASE(cab_scanner_rejects_file_child_path_conflicts) {
     }
     REQUIRE_TRUE(rejected);
 }
+
+namespace {
+
+// Purpose: Change an independently framed CAB field without a production serializer.
+// Inputs: Small fixture, field offset/width and unsigned value. Outputs: Exact little-endian bytes.
+void set_cab_field(std::vector<unsigned char>& bytes, std::size_t offset, std::size_t width, std::uint32_t value) {
+    REQUIRE_TRUE(width > 0U && width <= 4U && offset + width <= bytes.size());
+    for (std::size_t index = 0; index < width; ++index) {
+        bytes[offset + index] = static_cast<unsigned char>(value >> (8U * index));
+    }
+}
+
+// Purpose: Verify metadata rejection precedes FDI progress and all destination mutation.
+// Inputs: Malformed CAB, owned existing destination and expected diagnostic fragment.
+// Outputs: Requires the specific error, unchanged bytes and no temporary directory leakage.
+void require_cab_admission_rejected(const std::filesystem::path& archive, const std::filesystem::path& destination,
+                                    std::string_view diagnostic) {
+    std::filesystem::create_directories(destination);
+    const auto target = destination / "file.txt";
+    {
+        std::ofstream output(target, std::ios::binary | std::ios::trunc);
+        output.exceptions(std::ios::badbit | std::ios::failbit);
+        output << "retain";
+    }
+    unsigned callbacks = 0;
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_cab(archive, destination, true,
+                                    [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
+    } catch (const flitzzip::ArchiveError& error) {
+        REQUIRE_TRUE(std::string_view(error.what()).find(diagnostic) != std::string_view::npos);
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(callbacks, 0U);
+    REQUIRE_EQ(read_text_file(target), "retain");
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator()),
+               1);
+}
+
+}  // namespace
+
+// Purpose: Exercise each binary CAB admission boundary independently of Windows decompression.
+// Inputs: Known-good stored fixture and hostile sizes, offsets, versions, counts and folder references.
+// Outputs: Each mutation rejects with the intended diagnostic before progress; the original still extracts.
+TEST_CASE(cab_binary_metadata_failure_matrix_preserves_destination) {
+    const auto root = test_temp_dir("cab-binary-metadata-matrix");
+    const auto archive = root / "matrix.cab";
+    const auto output = root / "out";
+    write_uncompressed_cab(archive, {{"file.txt", "cab payload"}});
+    const auto valid = read_binary_file(archive);
+    const auto size = static_cast<std::uint32_t>(valid.size());
+    struct Mutation {
+        std::size_t offset;
+        std::size_t width;
+        std::uint32_t value;
+        const char* diagnostic;
+    };
+    const Mutation mutations[] = {
+        {0, 1, 0, "magic"},
+        {24, 1, 2, "version"},
+        {25, 1, 2, "version"},
+        {8, 4, 35, "declared size"},
+        {8, 4, size + 1U, "declared size"},
+        {26, 2, 4097, "folder count"},
+        {26, 2, 0, "no folder table"},
+        {26, 2, 32, "folder table extends"},
+        {36, 4, size, "folder data offset"},
+        {40, 2, 0, "no data blocks"},
+        {42, 2, 4, "compression type"},
+        {16, 4, 35, "file table offset"},
+        {16, 4, size, "file table offset"},
+        {52, 2, 1, "invalid folder index"},
+        {52, 2, 0xFFFDU, "spans cabinet"},
+        {52, 2, 0xFFFEU, "spans cabinet"},
+        {52, 2, 0xFFFFU, "spans cabinet"},
+        {48, 4, 0xFFFFFFFFU, "folder offset overflows"},
+        {60, 1, 0, "filename is empty"},
+    };
+    for (const auto& mutation : mutations) {
+        auto changed = valid;
+        set_cab_field(changed, mutation.offset, mutation.width, mutation.value);
+        write_binary_file(archive, changed);
+        require_cab_admission_rejected(archive, output, mutation.diagnostic);
+    }
+    write_binary_file(archive, valid);
+    const auto stats = flitzzip::extract_cab(archive, output, true);
+    REQUIRE_EQ(stats.entries, 1U);
+    REQUIRE_EQ(stats.output_bytes, 11U);
+    REQUIRE_EQ(read_text_file(output / "file.txt"), "cab payload");
+}
+
+// Purpose: Reject every strict prefix of a complete CAB before invoking extraction callbacks.
+// Inputs: A small independently framed cabinet, including its header, table and data block.
+// Outputs: No prefix is accepted or changes an existing file; complete bytes retain exact readback.
+TEST_CASE(cab_all_truncation_boundaries_preserve_destination) {
+    const auto root = test_temp_dir("cab-all-truncations");
+    const auto archive = root / "truncated.cab";
+    const auto output = root / "out";
+    write_uncompressed_cab(archive, {{"file.txt", "cab payload"}});
+    const auto valid = read_binary_file(archive);
+    for (std::size_t length = 0; length < valid.size(); ++length) {
+        const std::vector<unsigned char> prefix(valid.begin(), valid.begin() + length);
+        write_binary_file(archive, prefix);
+        require_cab_admission_rejected(archive, output, length < 36U ? "too small" : "declared size");
+    }
+    write_binary_file(archive, valid);
+    (void)flitzzip::extract_cab(archive, output, true);
+    REQUIRE_EQ(read_text_file(output / "file.txt"), "cab payload");
+}
+
+// Purpose: Exercise optional CAB header, folder and CFDATA reserve fields through the actual FDI consumer.
+// Inputs: A valid stored cabinet with distinct opaque bytes inserted into all three reserve regions.
+// Outputs: Exact payload readback and rejection when the header reserve crosses the declared cabinet bound.
+TEST_CASE(cab_reserved_regions_are_bounded_and_extractable) {
+    const auto root = test_temp_dir("cab-reserved-regions");
+    const auto archive = root / "reserved.cab";
+    const std::vector<CabFixtureEntry> entries{{"file.txt", "cab payload"}};
+    write_uncompressed_cab(archive, entries);
+    auto bytes = read_binary_file(archive);
+    const auto original_data = cab_data_header_offset(entries);
+    bytes.insert(bytes.begin() + original_data + 8U, {0xA1U, 0xA2U});
+    bytes.insert(bytes.begin() + 44U, {0xB1U, 0xB2U, 0xB3U});
+    bytes.insert(bytes.begin() + 36U, {2U, 0U, 3U, 2U, 0xC1U, 0xC2U});
+    set_cab_field(bytes, 8, 4, static_cast<std::uint32_t>(bytes.size()));
+    set_cab_field(bytes, 16, 4, 53U);
+    set_cab_field(bytes, 30, 2, 4U);
+    set_cab_field(bytes, 42, 4, static_cast<std::uint32_t>(original_data + 9U));
+    write_binary_file(archive, bytes);
+    const auto metadata = flitzzip::scan_cab_metadata(archive);
+    REQUIRE_EQ(metadata.entries.size(), 1U);
+    const auto stats = flitzzip::extract_cab(archive, root / "out", false);
+    REQUIRE_EQ(stats.output_bytes, 11U);
+    REQUIRE_EQ(read_text_file(root / "out/file.txt"), "cab payload");
+
+    set_cab_field(bytes, 36, 2, 0xFFFFU);
+    write_binary_file(archive, bytes);
+    require_cab_admission_rejected(archive, root / "out", "header reserve extends");
+}
