@@ -7,6 +7,7 @@
 #include "cpio/cpio_adapter.hpp"
 #include "cpio/cpio_numeric.hpp"
 #include "gzip/gzip_adapter.hpp"
+#include "gzip/gzip_stream.hpp"
 
 #include <algorithm>
 #include <array>
@@ -552,4 +553,110 @@ TEST_CASE(cpio_gzip_rejects_gzip_crc_mismatch_before_output) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(0));
+}
+
+namespace {
+
+// Purpose: Check identical fail-closed behavior in the seekable and two-pass CPIO readers.
+// Inputs: Owned root and independently constructed malformed CPIO bytes. Outputs: Both readers preserve the sentinel.
+void require_cpio_bytes_rejected(const std::filesystem::path& root, const std::vector<unsigned char>& bytes) {
+    const auto plain = root / "mutation.cpio";
+    const auto compressed = root / "mutation.cpio.gz";
+    const auto destination = root / "out";
+    std::filesystem::create_directories(destination);
+    {
+        std::ofstream sentinel(destination / "payload.txt", std::ios::binary);
+        sentinel.exceptions(std::ios::badbit | std::ios::failbit);
+        sentinel << "original";
+    }
+    write_binary_file(plain, bytes);
+    {
+        flitzzip::GzipOutputStream output(compressed, 1);
+        output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        output.close();
+    }
+    for (const bool gzip : {false, true}) {
+        bool rejected = false;
+        try {
+            if (gzip) {
+                (void)flitzzip::extract_cpio_gzip(compressed, destination, true);
+            } else {
+                (void)flitzzip::extract_cpio(plain, destination, true);
+            }
+        } catch (const flitzzip::Error&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(read_text_file(destination / "payload.txt"), "original");
+        REQUIRE_EQ(
+            std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}), 1);
+    }
+}
+
+}  // namespace
+
+// Purpose: Detect successful EOF before any required CPIO header, filename, payload or alignment byte.
+// Inputs: Every strict prefix of a complete independently constructed one-file archive.
+// Outputs: Both plain and compressed readers reject every prefix without replacing existing bytes.
+TEST_CASE(cpio_all_truncation_boundaries_preserve_destination) {
+    const auto root = test_temp_dir("cpio-all-truncations");
+    const auto archive = root / "complete.cpio";
+    write_one_entry_cpio(archive, "070701", "payload.txt", kTestCpioRegularMode, 1, "abc", 0);
+    const auto complete = read_binary_file(archive);
+    REQUIRE_TRUE(complete.size() < 1024U);
+    for (std::size_t cut = 0; cut < complete.size(); ++cut) {
+        try {
+            require_cpio_bytes_rejected(root, {complete.begin(), complete.begin() + static_cast<std::ptrdiff_t>(cut)});
+        } catch (const std::exception& error) {
+            throw std::runtime_error("CPIO truncation at " + std::to_string(cut) + ": " + error.what());
+        }
+    }
+    const auto valid = root / "valid";
+    REQUIRE_EQ(flitzzip::extract_cpio(archive, valid, false).output_bytes, 3U);
+    REQUIRE_EQ(read_text_file(valid / "payload.txt"), "abc");
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Validate CPIO fields independently of payload checksum and reject invalid record types/shape.
+// Inputs: Exact mutations of parsed numeric fields, name terminator, hard links, directory payload and trailer size.
+// Outputs: Both reader paths reject before publication; valid lowercase hex and CRC data remain readable.
+TEST_CASE(cpio_metadata_mutation_matrix_covers_both_readers) {
+    const auto root = test_temp_dir("cpio-metadata-mutations");
+    const auto archive = root / "complete.cpio";
+    write_one_entry_cpio(archive, "070702", "payload.txt", kTestCpioRegularMode, 1, "abc", 294);
+    const auto original = read_binary_file(archive);
+    for (const std::size_t offset : {0U, 6U, 14U, 38U, 54U, 94U, 102U, 121U}) {
+        auto changed = original;
+        changed[offset] = '!';
+        require_cpio_bytes_rejected(root, changed);
+    }
+    for (const std::string_view name_size : {"00000000", "FFFFFFFF"}) {
+        auto changed = original;
+        std::copy(name_size.begin(), name_size.end(), changed.begin() + 94);
+        require_cpio_bytes_rejected(root, changed);
+    }
+    for (const auto& [mode, links] :
+         std::array<std::pair<std::uint32_t, std::uint32_t>, 2>{{{0040000U, 1U}, {kTestCpioRegularMode, 2U}}}) {
+        write_one_entry_cpio(archive, "070701", "payload.txt", mode, links, "abc", 0);
+        require_cpio_bytes_rejected(root, read_binary_file(archive));
+    }
+    {
+        std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+        write_cpio_entry(output, "070701", "TRAILER!!!", 0, 1, "x", 0);
+    }
+    require_cpio_bytes_rejected(root, read_binary_file(archive));
+    write_one_entry_cpio(archive, "070702", "payload.txt", kTestCpioRegularMode, 1, "z", 122);
+    auto lowercase = read_binary_file(archive);
+    for (std::size_t index = 6; index < 110; ++index) {
+        if (lowercase[index] >= 'A' && lowercase[index] <= 'F') {
+            lowercase[index] = static_cast<unsigned char>(lowercase[index] + ('a' - 'A'));
+        }
+    }
+    write_binary_file(archive, lowercase);
+    const auto compressed = root / "complete.cpio.gz";
+    (void)flitzzip::compress_gzip_file(archive, compressed);
+    REQUIRE_EQ(flitzzip::extract_cpio(archive, root / "out", true).output_bytes, 1U);
+    REQUIRE_EQ(flitzzip::extract_cpio_gzip(compressed, root / "out", true).output_bytes, 1U);
+    REQUIRE_EQ(read_text_file(root / "out" / "payload.txt"), "z");
+    std::filesystem::remove_all(root);
 }

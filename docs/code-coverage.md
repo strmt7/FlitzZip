@@ -66,6 +66,14 @@ the implementation into assertions, remove untested code from reports, or add
 tests whose only purpose is increasing a percentage. A coverage increase without
 new behavioral evidence is not an engineering improvement.
 
+Container admission tests compare plain and compressed readers at structural
+truncation boundaries, preserving existing destination bytes on rejection.
+Publication tests use real Windows sharing denial and callback cancellation,
+then require successful reuse after cleanup. Native metadata tests exercise
+the public verification and extraction paths with independently framed records;
+malformed GPU block metadata must be rejected before decoder execution. These
+tests complement actual HIP execution and independent format interoperability.
+
 The requested target is complete meaningful coverage. Work from the gap inventory
 in coherent behavior groups, retaining malformed-input, independent-oracle and
 failure-recovery assertions. Keep device instructions and unmeasured executables

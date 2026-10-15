@@ -121,7 +121,7 @@ void discard_stream_bytes(std::istream& input, std::uint64_t size, const char* l
 
 // Purpose: Seek forward by an exact byte count in a CPIO file stream.
 // Inputs: `input` is a seekable archive stream, `size` is the byte count, and `label` names the region.
-// Outputs: Advances the stream or throws on truncation/seek failure.
+// Outputs: Advances only over an existing extent, or throws on truncation/seek failure.
 void skip_file_bytes(std::istream& input, std::uint64_t size, const char* label) {
     if (size == 0) {
         return;
@@ -129,8 +129,10 @@ void skip_file_bytes(std::istream& input, std::uint64_t size, const char* label)
     if (size > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
         throw ArchiveError(std::string(label) + " is too large to seek safely");
     }
-    input.seekg(static_cast<std::streamoff>(size), std::ios::cur);
-    if (!input) {
+    // A successful seek may land beyond EOF. Read the final skipped byte so
+    // truncated payload or trailer padding cannot pass validation.
+    input.seekg(static_cast<std::streamoff>(size - 1U), std::ios::cur);
+    if (!input || input.get() == std::char_traits<char>::eof()) {
         throw ArchiveError(std::string(label) + " is truncated");
     }
 }

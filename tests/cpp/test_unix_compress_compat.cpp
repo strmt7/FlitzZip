@@ -257,3 +257,61 @@ TEST_CASE(unix_compress_rejects_bad_maxbits_without_output) {
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(0));
 }
+
+// Purpose: Exercise LZW's next-code special case and CLEAR group alignment using independent packed codes.
+// Inputs: Fixed 9-bit codewords for literals, dictionary repetition and reset, without invoking the writer.
+// Outputs: Exact decoded bytes, including a clean end directly after a padded CLEAR group.
+TEST_CASE(unix_compress_independent_dictionary_and_clear_vectors) {
+    struct Vector {
+        std::vector<unsigned char> encoded;
+        const char* decoded;
+    };
+    const std::array vectors{
+        Vector{{0x1F, 0x9D, 0x90, 0x41, 0x02, 0x02}, "AAA"},  // A, next code 257.
+        Vector{{0x1F, 0x9D, 0x90, 0x41, 0x00, 0x02, 0, 0, 0, 0x42, 0}, "AB"},
+        Vector{{0x1F, 0x9D, 0x90, 0x41, 0x00, 0x02, 0, 0, 0}, "A"},
+        Vector{{0x1F, 0x9D, 0x09, 0x41, 0x00, 0x02}, "AAA"},  // Non-block mode's next code is 256.
+    };
+    const auto root = test_temp_dir("unix-compress-independent-dictionary");
+    const auto archive = root / "payload.Z";
+    for (const auto& vector : vectors) {
+        write_binary_file(archive, vector.encoded);
+        const auto stats = flitzzip::extract_unix_compress_file(archive, root / "out", true);
+        REQUIRE_EQ(read_text_file(root / "out" / "payload"), vector.decoded);
+        REQUIRE_EQ(stats.output_bytes, std::string_view(vector.decoded).size());
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject undefined LZW references and missing headers without replacing an existing target.
+// Inputs: Fixed malformed codewords, including a nonliteral after CLEAR's 9-byte absolute group boundary.
+// Outputs: Each malformed frame rejects, leaves no staging, and preserves the target's original bytes.
+TEST_CASE(unix_compress_invalid_dictionary_codes_preserve_destination) {
+    const std::vector<std::vector<unsigned char>> invalid{
+        {},
+        {0x1F},
+        {0x1F, 0x9D},
+        {0x1F, 0x9D, 0x90, 0x01, 0x01},
+        {0x1F, 0x9D, 0x90, 0x41, 0x04, 0x02},
+        {0x1F, 0x9D, 0x90, 0x41, 0x00, 0x02, 0, 0, 0, 0x01, 0x01},
+    };
+    const auto root = test_temp_dir("unix-compress-invalid-dictionary");
+    const auto archive = root / "payload.Z";
+    const auto destination = root / "out";
+    std::filesystem::create_directory(destination);
+    write_text_file(destination / "payload", "original");
+    for (const auto& bytes : invalid) {
+        write_binary_file(archive, bytes);
+        bool rejected = false;
+        try {
+            (void)flitzzip::extract_unix_compress_file(archive, destination, true);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(read_text_file(destination / "payload"), "original");
+        REQUIRE_EQ(
+            std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}), 1);
+    }
+    std::filesystem::remove_all(root);
+}
