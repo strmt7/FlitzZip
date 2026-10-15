@@ -65,10 +65,32 @@ class FilePublishReservationState {
     }
 #endif
 
-    // Purpose: Release all operating-system handles owned by the reservation.
+    // Purpose: Remove only the private tree owned by this reservation, including during exception unwinding.
+    // Inputs: The state-bound staging path and its optional directory handle.
+    // Outputs: Closes staging, attempts cleanup once and never replaces an active exception with a cleanup failure.
+    void cleanup() noexcept {
+        if (!active)
+            return;
+        active = false;
+#ifdef _WIN32
+        release_temporary_directory();
+#endif
+        if (directory.empty())
+            return;
+        try {
+            std::error_code ignored;
+            std::filesystem::remove_all(directory, ignored);
+        } catch (...) {
+            // Filesystem traversal may allocate even with error_code; destruction must remain non-throwing.
+            return;
+        }
+    }
+
+    // Purpose: Clean the private tree and release every operating-system handle when its last owner leaves.
     // Inputs: None.
-    // Outputs: Closes staging and parent handles without throwing.
+    // Outputs: Best-effort removes abandoned staging before closing the pinned parent handles, without throwing.
     ~FilePublishReservationState() {
+        cleanup();
 #ifdef _WIN32
         release_temporary_directory();
         for (auto it = directory_handles.rbegin(); it != directory_handles.rend(); ++it) {
@@ -239,7 +261,7 @@ std::vector<std::byte> query_token_information(HANDLE token, TOKEN_INFORMATION_C
 
 // Purpose: Return the current process user SID as an SDDL string.
 // Inputs: `token` is the current process token.
-// Outputs: Returns a stable SID string or throws.
+// Outputs: Returns an owned SID string or throws; always releases the Windows conversion buffer.
 std::wstring token_user_sid(HANDLE token) {
     const auto bytes = query_token_information(token, TokenUser);
     const auto* user = reinterpret_cast<const TOKEN_USER*>(bytes.data());
@@ -247,9 +269,8 @@ std::wstring token_user_sid(HANDLE token) {
     if (ConvertSidToStringSidW(user->User.Sid, &sid_text) == 0) {
         throw ArchiveError("unable to encode process user SID");
     }
-    const std::wstring result(sid_text);
-    LocalFree(sid_text);
-    return result;
+    const std::unique_ptr<wchar_t, decltype(&LocalFree)> owned_sid(sid_text, &LocalFree);
+    return std::wstring(owned_sid.get());
 }
 
 // Purpose: Map the current token integrity RID to an SDDL mandatory-label alias.
@@ -583,12 +604,7 @@ void cleanup_file_publish_target(const ReservedFilePublishTarget& temporary) {
         temporary.file != temporary.state->file) {
         return;
     }
-#ifdef _WIN32
-    temporary.state->release_temporary_directory();
-#endif
-    std::error_code ignored;
-    std::filesystem::remove_all(temporary.directory, ignored);
-    temporary.state->active = false;
+    temporary.state->cleanup();
 }
 
 // Purpose: Publish a fully verified temporary file into its final path.

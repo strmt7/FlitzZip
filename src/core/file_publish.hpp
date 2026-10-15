@@ -21,7 +21,8 @@ void create_verified_directories(const std::filesystem::path& directory);
 
 // Purpose: Reserve a private temporary file target beside a final output file.
 // Inputs: `target` is the final file path that will later receive verified bytes.
-// Outputs: Returns normalized native I/O paths (extended-length on Windows), or throws on reservation failure.
+// Outputs: Returns normalized native I/O paths with shared ownership; the last owner cleans abandoned staging.
+// Windows paths use extended-length form. Throws on reservation failure.
 ReservedFilePublishTarget reserve_file_publish_target(const std::filesystem::path& target);
 
 // Purpose: Remove a reserved private publication tree after success or failure.
