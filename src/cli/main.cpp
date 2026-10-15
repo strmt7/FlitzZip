@@ -473,8 +473,8 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
     CliCompressCommand command;
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--") {
-            for (++i; i < args.size(); ++i) {
-                command.sources.push_back(cli_path_argument(args[i]));
+            for (std::size_t source_index = i + 1; source_index < args.size(); ++source_index) {
+                command.sources.push_back(cli_path_argument(args[source_index]));
             }
             break;
         } else if (args[i] == "--format") {

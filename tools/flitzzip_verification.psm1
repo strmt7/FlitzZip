@@ -673,7 +673,7 @@ function Get-FlitzZipVerificationPlan {
         @("benchmark-graph", ($touchesBenchmarkGraph -or $scope.fullEscalationRequired -or (Test-FlitzZipAnyPath -Path $paths -Pattern @('^\.github/workflows/benchmark-graph\.yml$', '^tools/(native_build_(provenance|receipt)|test_native_build_(provenance|receipt))\.py$')))),
         @('windows-ci', $hostedNative.windows),
         @('rocm-qualification', $hostedNative.rocm),
-        @("security", ($scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
+        @("security", ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
         @("greenbone-openvas-vulnetix", ($scope.fullEscalationRequired -or (Test-FlitzZipAnyPath -Path $paths -Pattern @('^\.github/openvas/', '^\.github/workflows/greenbone-openvas-(vulnetix|live)\.yml$', '^\.github/requirements/requirements-gvm-tools-linux\.txt$')))),
         @("scorecard", ($scope.touchesWorkflow -or $scope.fullEscalationRequired))
     )) {
@@ -690,7 +690,7 @@ function Get-FlitzZipVerificationPlan {
         [void]$longRunningWorkflows.Add("fuzzing")
     }
 
-    $postPushAuditRequired = ($scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)
+    $postPushAuditRequired = $workflowSeen.Contains('security')
     $waitPolicy = Get-FlitzZipWorkflowWaitPolicy -Checkpoint $Checkpoint -Scope $scope `
         -WorkflowCount $workflows.Count -LongRunningCount $longRunningWorkflows.Count
 
