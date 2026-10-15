@@ -934,6 +934,7 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_operation_destination.cpp
     src/app/form_layout.cpp
     tests/cpp/test_path_safety.cpp
+    tests/cpp/test_publication_state.cpp
     tests/cpp/test_rpm_compat.cpp
     tests/cpp/test_resource_usage.cpp
     tests/cpp/test_sdk_byte_access.cpp
