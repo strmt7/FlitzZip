@@ -264,7 +264,7 @@ function Get-FlitzZipVerificationPathPolicy {
             '^tools/.*\.(ps1|psm1|py)$',
             '^CMakeLists\.txt$',
             '^cmake/',
-            '^(src|tests|fuzz)/.*\.(c|cc|cpp|h|hpp)$'
+            '^(src|tests|fuzz|tools)/.*\.(c|cc|cpp|h|hpp)$'
         )
     }
 }
@@ -316,6 +316,7 @@ function Get-FlitzZipVerificationScope {
         '^tools/(native_test_selection|native_component_tests|test_native_selection|test_native_runner)\.ps1$',
         '^tools/(native_ci|ci_native_plan|test_native_ci)\.ps1$',
         '^tools/(native_coverage(_report)?|test_native_coverage)\.py$', '^tools/native-coverage-toolchain\.json$',
+        '^tools/(hip_coverage(_export)?|test_hip_coverage)\.py$', '^tools/fixtures/hip_coverage_probe\.hip\.cpp$',
         '^tools/(cpp_security_plan|test_cpp_security_plan)\.py$',
         '^\.clusterfuzzlite/(build\.sh|local_smoke\.sh|Dockerfile|project\.yaml)$',
         '^mcp/',
@@ -388,6 +389,8 @@ function Get-FlitzZipVerificationScope {
 function Get-FlitzZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
     $definitions = @(
+        @{ Pattern = @('^tools/(hip_coverage(_export)?|test_hip_coverage)\.py$', '^tools/fixtures/hip_coverage_probe\.hip\.cpp$', '^tools/native_coverage\.py$', '^mcp/flitzzip_mcp\.py$')
+           Command = (Get-FlitzZipVerificationCommand -Id 'hip-coverage-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_hip_coverage') -Reason 'device coverage must reject incorrect hit/miss controls, foreign images and incomplete subprocess evidence; offline tests do not execute a GPU or rebuild the product') }
         @{ Pattern = @('^tools/(native_coverage(_report)?|test_native_coverage)\.py$', '^tools/native-coverage-toolchain\.json$', '^tools/native_build_receipt\.py$', '^mcp/flitzzip_mcp\.py$', '^\.github/workflows/windows-ci\.yml$')
            Command = (Get-FlitzZipVerificationCommand -Id 'native-coverage-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_native_coverage') -Reason 'coverage normalization, collector identity and failure propagation require offline contracts; the existing Windows CI lane measures actual native coverage') }
         @{ Pattern = @('^tools/(test_zstd_sanitizers|cmake_toolchain|build_parallelism|local_resources|process_environment)\.ps1$', '^tools/native_build_provenance\.py$', '^tools/cmake-toolchain\.sha256$', '^\.github/workflows/zstd-sanitizers\.yml$', '^third_party/upstream/zstd/', '^tests/cpp/(zstd_legacy_fixture|test_util)\.hpp$', '^tests/cpp/test_main\.cpp$', '^cmake/(PatchZstdLegacy\.cmake|Zstd.*\.(c|cmake))$', '^tests/(cpp/test_zstd.*\.cpp|zstd/|cmake/test_zstd)', '^CMakeLists\.txt$')
