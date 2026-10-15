@@ -48,6 +48,53 @@ function Write-SourceOfferingFixture {
     } finally { $zip.Dispose() }
 }
 
+# Purpose: Exercise the workflow's actual MSI invocation against Windows Installer without installing anything.
+# Inputs: RepoRoot contains the workflow; FixtureRoot owns temporary scripts and a deliberately absent MSI path.
+# Outputs: Throws unless native argument serialization reaches MSI, produces a log and returns package error 1619.
+function Assert-ReleaseMsiInvocation {
+    param([string]$RepoRoot, [string]$FixtureRoot)
+
+    $workflowText = Get-Content -LiteralPath (Join-Path $RepoRoot '.github/workflows/release.yml') -Raw
+    $step = [regex]::Match($workflowText, '(?ms)^      - name: MSI install smoke\r?\n.*?        run: \|\r?\n(?<script>.*?)(?=^      - name:|\z)')
+    if (-not $step.Success) { throw 'MSI smoke workflow script was not found.' }
+    $scriptText = [regex]::Replace($step.Groups['script'].Value, '(?m)^          ', '')
+    $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($scriptText, [ref]$null, [ref]$parseErrors)
+    if ($parseErrors.Count -gt 0) { throw 'MSI smoke workflow script does not parse.' }
+    $functions = @($ast.FindAll({
+                param($node)
+                $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                    $node.Name -in @('Write-MsiLogTail', 'Invoke-CheckedMsiExec')
+            }, $false))
+    if ($functions.Count -ne 2) { throw 'Expected the two production MSI invocation functions.' }
+    $probe = Join-Path $FixtureRoot 'native MSI argument probe.ps1'
+    $log = Join-Path $FixtureRoot 'native MSI argument probe.log'
+    $missingMsi = Join-Path $FixtureRoot 'missing package with spaces.msi'
+    if (Test-Path -LiteralPath $missingMsi) { throw 'MSI argument probe requires an absent package.' }
+    $prefix = @'
+param([string]$MissingMsi, [string]$LogPath)
+$ErrorActionPreference = 'Stop'
+'@
+    $suffix = @'
+$failure = ''
+try {
+    Invoke-CheckedMsiExec -Phase 'MSI argument probe' -TimeoutSeconds 10 -LogPath $LogPath `
+        -Arguments @('/i', $MissingMsi, '/qn', '/norestart', '/L*v', $LogPath)
+} catch { $failure = $_.Exception.Message }
+if ($failure -ne 'MSI argument probe failed with exit code 1619.') {
+    throw "The absent package did not return the expected native MSI error: $failure"
+}
+if (-not (Test-Path -LiteralPath $LogPath) -or (Get-Item -LiteralPath $LogPath).Length -eq 0) {
+    throw 'Windows Installer did not produce the requested verbose log.'
+}
+'@
+    $productionFunctions = ($functions | ForEach-Object { $_.Extent.Text }) -join "`n"
+    Set-Content -LiteralPath $probe -Value ($prefix + "`n" + $productionFunctions + "`n" + $suffix) -Encoding UTF8
+    # The release step uses PowerShell 7/.NET, including ProcessStartInfo.ArgumentList.
+    & pwsh -NoLogo -NoProfile -NonInteractive -File $probe -MissingMsi $missingMsi -LogPath $log
+    if ($LASTEXITCODE -ne 0) { throw 'The production MSI invocation failed its native argument regression.' }
+}
+
 try {
     foreach ($relative in @('.github/workflows/release.yml')) {
         $destination = Join-Path $fixtureRoot $relative
@@ -137,6 +184,7 @@ try {
         catch { $rejected = $_.Exception.Message -like 'Corresponding source ZIP*' }
         if (-not $rejected) { throw "Source offering accepted $defect upstream source." }
     }
+    Assert-ReleaseMsiInvocation -RepoRoot $repoRoot -FixtureRoot $fixtureRoot
     Assert-ReleaseSourceDirectory -RepoRoot $repoRoot
     Write-Output 'Release workflow identity, replacement, title and candidate-isolation contracts passed.'
 } finally {
