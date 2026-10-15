@@ -5,9 +5,14 @@
 #include "core/result.hpp"
 #include "test_flzip_helpers.hpp"
 
+#if FLITZZIP_ENABLE_HIP
+#include "gpu/hip_codec_support.hpp"
+#endif
+
 #include <array>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <sstream>
 
 namespace {
@@ -275,4 +280,63 @@ TEST_CASE(flzip_public_operations_reject_invalid_resource_options_first) {
             REQUIRE_TRUE(!std::filesystem::exists(fixture.archive));
         }
     }
+}
+
+// Purpose: Guard HIP's final host admission even when an internal caller bypasses the public archive parser.
+// Inputs: Independent raw/fill controls and malformed extents for every payload-bearing native block kind.
+// Outputs: Valid controls pass; truncation, overflow, unknown kinds and output mismatches fail without GPU dispatch.
+TEST_CASE(archive_metadata_hip_layout_rejects_untrusted_extents) {
+#if FLITZZIP_ENABLE_HIP
+    using flitzzip::BlockDescriptor;
+    using flitzzip::BlockKind;
+    using flitzzip::hip_detail::validate_decode_layout;
+    std::array<std::byte, 4096> payload{};
+    BlockDescriptor raw{.kind = BlockKind::Raw, .uncompressed_len = 4096U, .encoded_len = 4096U};
+    BlockDescriptor fill{.kind = BlockKind::Fill, .fill_value = 37U, .uncompressed_len = 4096U};
+    validate_decode_layout(payload, std::span(&raw, 1U), 4096U, 0U);
+    validate_decode_layout({}, std::span(&fill, 1U), 4096U, 0U);
+    validate_decode_layout({}, {}, 0U, 0U);
+
+    // Purpose: Require a controlled admission error before any kernel or output buffer exists.
+    // Inputs: One hostile descriptor table and declared output length. Outputs: Assertion on missing rejection.
+    const auto reject = [&](std::span<const BlockDescriptor> blocks, std::size_t output_bytes) {
+        bool rejected = false;
+        try {
+            validate_decode_layout(payload, blocks, output_bytes, 0U);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    };
+    reject({}, 1U);
+    reject(std::span(&raw, 1U), 4095U);
+    reject(std::span(&raw, 1U), 4097U);
+    auto changed = raw;
+    changed.uncompressed_len = 0U;
+    reject(std::span(&changed, 1U), 0U);
+    changed = raw;
+    --changed.encoded_len;
+    reject(std::span(&changed, 1U), 4096U);
+    changed = fill;
+    changed.encoded_len = 1U;
+    reject(std::span(&changed, 1U), 4096U);
+    changed = raw;
+    changed.kind = static_cast<BlockKind>(255U);
+    reject(std::span(&changed, 1U), 4096U);
+    for (const auto kind :
+         {BlockKind::Raw, BlockKind::Deflate, BlockKind::Pattern, BlockKind::GpuPrefix, BlockKind::GpuAdaptivePrefix,
+          BlockKind::GpuDictionary, BlockKind::GpuSparsePattern, BlockKind::CpuZstd, BlockKind::GpuLongSparsePattern,
+          BlockKind::GpuHuffman, BlockKind::GpuCompound, BlockKind::GpuBytePlane, BlockKind::GpuBytePlaneContexts}) {
+        const auto encoded = kind == BlockKind::Raw ? 4096U : kind == BlockKind::Pattern ? 8U : 512U;
+        for (const std::uint64_t offset : {4097ULL - encoded, 4097ULL, std::numeric_limits<std::uint64_t>::max()}) {
+            const BlockDescriptor invalid{
+                .kind = kind, .uncompressed_len = 4096U, .encoded_offset = offset, .encoded_len = encoded};
+            reject(std::span(&invalid, 1U), 4096U);
+        }
+    }
+    for (const auto kind : {BlockKind::Deflate, BlockKind::CpuZstd}) {
+        const BlockDescriptor empty{.kind = kind, .uncompressed_len = 4096U};
+        reject(std::span(&empty, 1U), 4096U);
+    }
+#endif
 }

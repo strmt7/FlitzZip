@@ -7,7 +7,9 @@
 #endif
 
 #include <array>
+#include <limits>
 #include <span>
+#include <utility>
 
 #if FLITZZIP_ENABLE_HIP
 namespace {
@@ -86,6 +88,104 @@ TEST_CASE(gpu_byte_plane_kernel_independent_oracle_and_guards) {
     }
 #else
     REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+// Purpose: Preserve device-buffer ownership after rejected reuse and allow explicit release and reacquisition.
+// Inputs: One real 64-byte allocation, independent byte pattern and a second allocation attempt.
+// Outputs: Refusal preserves the pointer and bytes; empty/repeated cleanup and subsequent reuse remain valid.
+TEST_CASE(gpu_device_buffer_rejection_preserves_owner_and_bytes) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    using namespace flitzzip::hip_detail;
+    std::array<std::byte, 64> expected{}, actual{};
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        expected[index] = std::byte((index * 19U + 7U) & 255U);
+    }
+    HipDeviceBuffer<std::byte> buffer;
+    buffer.allocate_checked(0, "empty test allocation");
+    REQUIRE_TRUE(buffer.get() == nullptr);
+    buffer.reset_checked("release empty test buffer");
+    buffer.allocate_checked(expected.size(), "allocate ownership test buffer");
+    auto* const original = buffer.get();
+    check_hip(copy_on_codec_stream(original, expected.data(), expected.size(), hipMemcpyHostToDevice),
+              "upload ownership test bytes");
+    for (const auto attempted : {0U, 32U, 128U}) {
+        bool rejected = false;
+        try {
+            buffer.allocate_checked(attempted, "reject occupied test owner");
+        } catch (const flitzzip::GpuError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_TRUE(buffer.get() == original);
+        check_hip(copy_on_codec_stream(actual.data(), buffer.get(), actual.size(), hipMemcpyDeviceToHost),
+                  "read preserved ownership test bytes");
+        REQUIRE_TRUE(actual == expected);
+    }
+    buffer.reset_checked("release ownership test buffer");
+    REQUIRE_TRUE(buffer.get() == nullptr);
+    buffer.reset_checked("repeat empty test release");
+    buffer.allocate_checked(expected.size(), "reacquire ownership test buffer");
+    check_hip(copy_on_codec_stream(buffer.get(), expected.data(), expected.size(), hipMemcpyHostToDevice),
+              "upload reacquired test bytes");
+    check_hip(copy_on_codec_stream(actual.data(), buffer.get(), actual.size(), hipMemcpyDeviceToHost),
+              "read reacquired test bytes");
+    REQUIRE_TRUE(actual == expected);
+    buffer.reset_checked("release reacquired test buffer");
+#endif
+}
+
+// Purpose: Prove reservation moves, rejected requests and exception unwinding preserve exact device accounting.
+// Inputs: Real selected device, small bookkeeping reservations and an impossible request rejected before allocation.
+// Outputs: Each transfer releases exactly its prior ownership; all scope and failure exits restore the baseline.
+TEST_CASE(gpu_device_reservation_move_and_failure_accounting) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    using namespace flitzzip::hip_detail;
+    int device = -1;
+    check_hip(hipGetDevice(&device), "select reservation test device");
+    auto& accounting = hip_device_reservation_state();
+    const auto baseline = accounting.reserved_bytes(device);
+    {
+        HipDeviceMemoryReservation empty;
+        HipDeviceMemoryReservation first(4096U, "first test reservation");
+        REQUIRE_EQ(accounting.reserved_bytes(device), baseline + 4096U);
+        HipDeviceMemoryReservation moved(std::move(first));
+        REQUIRE_EQ(accounting.reserved_bytes(device), baseline + 4096U);
+        HipDeviceMemoryReservation second(8192U, "second test reservation");
+        REQUIRE_EQ(accounting.reserved_bytes(device), baseline + 12288U);
+        moved = std::move(second);
+        REQUIRE_EQ(accounting.reserved_bytes(device), baseline + 8192U);
+        auto* same = &moved;
+        moved = std::move(*same);
+        REQUIRE_EQ(accounting.reserved_bytes(device), baseline + 8192U);
+        moved = std::move(empty);
+        REQUIRE_EQ(accounting.reserved_bytes(device), baseline);
+    }
+    REQUIRE_EQ(accounting.reserved_bytes(device), baseline);
+    bool rejected = false;
+    try {
+        HipDeviceMemoryReservation impossible(std::numeric_limits<std::size_t>::max(), "reject impossible reservation");
+    } catch (const flitzzip::GpuError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(accounting.reserved_bytes(device), baseline);
+    bool unwound = false;
+    try {
+        HipDeviceMemoryReservation scoped(4096U, "exception test reservation");
+        REQUIRE_EQ(accounting.reserved_bytes(device), baseline + 4096U);
+        throw std::runtime_error("reservation test cancellation");
+    } catch (const std::runtime_error& error) {
+        unwound = std::string_view(error.what()) == "reservation test cancellation";
+    }
+    REQUIRE_TRUE(unwound);
+    REQUIRE_EQ(accounting.reserved_bytes(device), baseline);
 #endif
 }
 

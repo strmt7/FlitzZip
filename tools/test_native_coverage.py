@@ -262,6 +262,99 @@ class CoverageTests(unittest.TestCase):
                 collector.run_scenarios(self.root)
             run.assert_not_called()
 
+    # Purpose: Keep CPU-only CI and actual HIP host collection distinct at the receipt and subprocess boundaries.
+    # Inputs: Independently selected build modes and a deliberately conflicting receipt.
+    # Outputs: Matching modes propagate; mismatches fail before any scenario launches.
+    def test_host_modes_require_matching_build_and_real_gpu(self):
+        for hip_host in (False, True):
+            for configured in ("OFF", "ON"):
+                before = {"recipe": {"FLITZZIP_ENABLE_HIP": configured}}
+                with (
+                    self.subTest(hip_host=hip_host, configured=configured),
+                    patch.object(collector, "validate_current", return_value=before) as validate,
+                    patch.object(collector, "require_hip_device") as require,
+                    patch.object(collector, "run_checked") as run,
+                ):
+                    if hip_host != (configured == "ON"):
+                        with self.assertRaisesRegex(ValueError, "selected measurement mode"):
+                            collector.run_scenarios(self.root, hip_host)
+                        run.assert_not_called()
+                        require.assert_not_called()
+                    else:
+                        collector.run_scenarios(self.root, hip_host)
+                        self.assertEqual(run.call_count, 6)
+                        self.assertEqual(require.call_count, int(hip_host))
+                    validate.assert_called_once_with(collector.ROOT, "Debug", hip_host)
+
+    # Purpose: Prevent unavailable, truncated or ambiguous device output from qualifying a HIP host run.
+    # Inputs: Native capability fields and independent field, count, duplication and truncation failures.
+    # Outputs: Each invalid report fails before the native registry; complete capability evidence is accepted.
+    def test_hip_host_requires_complete_capability_evidence(self):
+        fields = ("hip_compiled", "hip_runtime_loadable", "hip_kernel_loadable", "available")
+        text = "\n".join([*(name + "=true" for name in fields), "device_count=1", "status=AMD HIP ready"])
+        valid = {"stdout": text, "output_truncated": False}
+        invalid = [
+            {"stdout": text.replace(name + "=true", name + "=false"), "output_truncated": False} for name in fields
+        ]
+        invalid.extend(
+            {"stdout": text.replace("device_count=1", "device_count=" + count), "output_truncated": False}
+            for count in ("0", "-1", "", "unknown", "1.5")
+        )
+        invalid.extend(
+            [
+                {"stdout": text, "output_truncated": True},
+                {"stdout": text + "\navailable=true", "output_truncated": False},
+                {"stdout": text + "\nmalformed", "output_truncated": False},
+            ]
+        )
+        for result in invalid:
+            with (
+                self.subTest(result=result),
+                patch.object(collector, "run_checked", return_value=result),
+                self.assertRaisesRegex(ValueError, "HIP host coverage requires"),
+            ):
+                collector.require_hip_device(self.root)
+        with patch.object(collector, "run_checked", return_value=valid) as run:
+            collector.require_hip_device(self.root)
+            self.assertEqual(run.call_args.args[0][-1], "gpu-info")
+            self.assertEqual(run.call_args.args[2], self.root / "gpu-info-process.json")
+
+    # Purpose: Never label debugger coverage of a HIP-enabled executable as measured device instructions.
+    # Inputs: A source-bound host report and explicit HIP selection.
+    # Outputs: The child uses HIP mode; summary retains host scope and leaves device measurement false.
+    def test_hip_collection_preserves_host_only_scope(self):
+        sources = [
+            "src/core/archive_format.cpp",
+            "src/core/path_safety.cpp",
+            "src/zip/zip_adapter.cpp",
+            "src/cli/main.cpp",
+            "src/cli/memory_benchmark.cpp",
+            "src/cli/memory_benchmark_source.cpp",
+        ]
+        before = {
+            "inputs_sha256": "a" * 64,
+            "receipt_sha256": "b" * 64,
+            "receipt": {"inputs": {"files": sources + ["src/gpu/unmeasured.cpp"]}},
+        }
+        identities = {"build/Debug/flitzzip_tests.pdb": "c" * 64, "build/Debug/flitzzip_tests.exe": "d" * 64}
+        report = {"files": sources, "lines_valid": 8, "lines_covered": 7, "uncovered_lines": {sources[0]: [1]}}
+        with (
+            patch.object(collector, "coverage_build", return_value=before) as build,
+            patch.object(collector, "measurement_identity", return_value=identities),
+            patch.object(collector, "run_checked") as run,
+            patch.object(collector, "verify_collector"),
+            patch.object(collector, "normalize_report", return_value=report),
+            patch.object(collector, "digest", return_value="e" * 64),
+        ):
+            collector.collect(self.root / "collector.exe", {"files": {}, "version": "fixture"}, self.root, True)
+        self.assertEqual([call.args for call in build.call_args_list], [(True,), (True,)])
+        self.assertEqual(run.call_args.args[0][-2:], ["--run-scenarios", "--hip-host"])
+        summary = json.loads((self.root / "summary.json").read_text())
+        self.assertEqual(summary["scope"], "native-hip-host-first-party-lines")
+        self.assertIs(summary["gpu_device_coverage"], False)
+        self.assertEqual(summary["unmeasured_source_files"], ["src/gpu/unmeasured.cpp"])
+        self.assertEqual(summary["uncovered_lines"], report["uncovered_lines"])
+
 
 if __name__ == "__main__":
     unittest.main()

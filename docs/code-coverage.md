@@ -28,6 +28,17 @@ lines. GUI executable-only paths, Python/PowerShell tooling, and GPU device
 instructions are not measured by this report. Do not describe this
 number as whole-repository, branch, or GPU coverage.
 
+On a HIP-capable development host, build `Debug` with the ordinary HIP-enabled
+build command, then run `py -3 -B -m tools.native_coverage --hip-host`.
+This explicit mode requires a current HIP build receipt and a real admitted
+device before executing the same native registry and CLI contracts. It writes
+separate evidence to `out/coverage-hip-host`; the default CPU-only CI report and
+upload remain unchanged. This measures CPU instructions in HIP host orchestration,
+including driver calls and resource management. OpenCppCoverage cannot measure
+GPU device instructions; those still require the qualification described below.
+Collection never changes the build configuration or silently substitutes a CPU
+execution path. Keep a separate checkout/build when preserving a Release build.
+
 `tools/native_coverage.py` verifies the native build receipt, both measured
 executables, their symbols and scenario drivers before and after collection.
 `tools/native_coverage_report.py` rejects empty, foreign,
