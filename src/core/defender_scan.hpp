@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
+#include <string_view>
 
 namespace flitzzip {
 
@@ -20,10 +22,15 @@ struct DefenderScanResult {
     int exit_code = 0;
 };
 
+// Purpose: Preserve the exact scanner and target arguments across the Windows command-line boundary.
+// Inputs: Resolved executable and caller-selected target paths; neither may be empty or contain a null character.
+// Outputs: Returns the bounded quoted command, retaining non-remediation policy, or throws ArchiveError.
+std::wstring defender_scan_command_line(std::wstring_view executable, std::wstring_view target);
+
 // Purpose: Optionally scan a file or directory with Microsoft Defender without opening a visible console window.
 // Inputs: `path` is the target to scan and `mode` controls whether scanning is disabled or full-path scanning is
-// requested. Outputs: Returns scan attempt/clean/timeout/exit-code state; throws `ArchiveError` only when an enabled
-// scan target does not exist.
+// requested. Outputs: Returns scan attempt/clean/timeout/exit-code state; throws `ArchiveError` when the enabled
+// target or scanner command cannot be admitted.
 DefenderScanResult scan_with_windows_defender(const std::filesystem::path& path, DefenderScanMode mode);
 
 // Purpose: Apply the fail-closed product policy to one completed Defender result.
