@@ -11,8 +11,10 @@ local action has been removed: the latest stable actionlint 1.7.12 rejects
 GitHub's newer `$/` syntax ([upstream issue](https://github.com/rhysd/actionlint/issues/711)),
 and the current Semgrep action-pin rule also flags it. No scanner is suppressed.
 `tools/release_workflow_policy.ps1` checks the checkout identity and preserves the
-replacement acknowledgement and release-note guards. Its offline contracts
-never publish a release or run an installer.
+replacement acknowledgement and release-note guards. Its contracts never
+publish a release or install a product. A bounded Windows Installer probe uses
+a deliberately absent package to verify the workflow's native argument handling
+and expected error logging. It runs the actual workflow functions in PowerShell 7.
 
 ## Release Artifacts
 
