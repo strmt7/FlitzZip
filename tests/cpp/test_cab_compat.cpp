@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -477,4 +478,72 @@ TEST_CASE(cab_reserved_regions_are_bounded_and_extractable) {
     set_cab_field(bytes, 36, 2, 0xFFFFU);
     write_binary_file(archive, bytes);
     require_cab_admission_rejected(archive, root / "out", "header reserve extends");
+}
+
+// Purpose: Keep a validated CAB source immutable while the Windows decoder reopens it for extraction.
+// Inputs: An owned valid cabinet and a callback that requests real Windows write access during extraction.
+// Outputs: Write admission fails with a sharing violation until extraction finishes, then succeeds after cleanup.
+TEST_CASE(cab_source_remains_pinned_through_extraction) {
+    const auto root = test_temp_dir("cab-source-lifetime");
+    const auto archive = root / "source.cab";
+    write_uncompressed_cab(archive, {{"file.txt", "cab payload"}});
+    const auto original = read_binary_file(archive);
+    bool observed = false;
+    bool writable = false;
+    DWORD admission_error = ERROR_SUCCESS;
+    const auto callback = [&](const flitzzip::ProgressSnapshot&) {
+        if (observed) {
+            return;
+        }
+        observed = true;
+        const HANDLE writer =
+            CreateFileW(archive.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        admission_error = writer == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+        writable = writer != INVALID_HANDLE_VALUE;
+        if (writable) {
+            CloseHandle(writer);
+        }
+    };
+    const auto stats = flitzzip::extract_cab(archive, root / "out", false, callback);
+    REQUIRE_TRUE(observed);
+    REQUIRE_TRUE(!writable);
+    REQUIRE_EQ(admission_error, static_cast<DWORD>(ERROR_SHARING_VIOLATION));
+    REQUIRE_EQ(stats.output_bytes, 11U);
+    REQUIRE_EQ(read_binary_file(archive), original);
+    REQUIRE_EQ(read_text_file(root / "out/file.txt"), "cab payload");
+    const HANDLE released =
+        CreateFileW(archive.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE_TRUE(released != INVALID_HANDLE_VALUE);
+    REQUIRE_TRUE(CloseHandle(released) != FALSE);
+}
+
+// Purpose: Reject an actively writable CAB before metadata validation or destination creation.
+// Inputs: A valid cabinet with an independently held Windows write handle, then the same cabinet after release.
+// Outputs: Security rejection without callbacks or output, followed by successful exact extraction.
+TEST_CASE(cab_active_writer_is_rejected_before_output_and_recovers) {
+    const auto root = test_temp_dir("cab-active-writer");
+    const auto archive = root / "source.cab";
+    const auto output = root / "out";
+    write_uncompressed_cab(archive, {{"file.txt", "cab payload"}});
+    const HANDLE writer =
+        CreateFileW(archive.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE_TRUE(writer != INVALID_HANDLE_VALUE);
+    std::unique_ptr<void, decltype(&CloseHandle)> writer_owner(writer, &CloseHandle);
+    bool rejected = false;
+    unsigned callbacks = 0;
+    try {
+        (void)flitzzip::extract_cab(archive, output, false, [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
+    } catch (const flitzzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(callbacks, 0U);
+    REQUIRE_TRUE(!std::filesystem::exists(output));
+    writer_owner.reset();
+    const auto stats = flitzzip::extract_cab(archive, output, false);
+    REQUIRE_EQ(stats.output_bytes, 11U);
+    REQUIRE_EQ(read_text_file(output / "file.txt"), "cab payload");
 }

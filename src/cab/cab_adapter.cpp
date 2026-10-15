@@ -1,6 +1,7 @@
 #include "cab/cab_adapter.hpp"
 
 #include "cab/cab_format.hpp"
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/path_text.hpp"
@@ -425,10 +426,10 @@ void run_cab_fdi_pass(const std::filesystem::path& archive_path, const std::file
 }  // namespace
 
 // Purpose: Extract a validated CAB archive through the Windows FDI engine.
-// Inputs: `archive_path` is the user-selected CAB, `destination` receives safe entries, `overwrite` controls existing
+// Inputs: `archive_path` is pinned for both passes; `destination` receives safe entries, `overwrite` controls existing
 // output replacement, and `progress_callback` receives extraction progress.
-// Outputs: Returns extraction statistics or throws on unsupported platform, malformed CAB data, unsafe paths, or I/O
-// failures.
+// Outputs: Returns extraction statistics while preserving one source identity, or throws on unsupported platform,
+// malformed CAB data, unsafe paths, source mutation admission, or I/O failures.
 OperationStats extract_cab(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                            bool overwrite, const ProgressCallback& progress_callback) {
 #ifndef _WIN32
@@ -439,15 +440,16 @@ OperationStats extract_cab(const std::filesystem::path& archive_path, const std:
     throw ArchiveError("CAB extraction requires the Windows Cabinet API");
 #else
     const auto started = std::chrono::steady_clock::now();
-    const auto metadata = scan_cab_metadata(archive_path);
+    const auto archive_source = pin_source_file(archive_path);
+    const auto metadata = scan_cab_metadata(archive_source.path());
 
-    run_cab_fdi_pass(archive_path, destination, metadata, CabFdiPass::Validate, overwrite, {});
+    run_cab_fdi_pass(archive_source.path(), destination, metadata, CabFdiPass::Validate, overwrite, {});
     create_verified_directories(destination);
 
-    run_cab_fdi_pass(archive_path, destination, metadata, CabFdiPass::Extract, overwrite, progress_callback);
+    run_cab_fdi_pass(archive_source.path(), destination, metadata, CabFdiPass::Extract, overwrite, progress_callback);
 
     OperationStats stats;
-    stats.input_bytes = std::filesystem::file_size(archive_path);
+    stats.input_bytes = archive_source.size();
     stats.output_bytes = metadata.total_file_bytes;
     stats.entries = static_cast<std::uint64_t>(metadata.entries.size());
     stats.gpu_used = false;
