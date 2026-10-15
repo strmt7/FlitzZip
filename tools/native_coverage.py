@@ -1,4 +1,4 @@
-"""Measure native CPU test coverage with the pinned Windows debugger-based collector."""
+"""Measure native host instructions with the pinned Windows debugger-based collector."""
 
 from __future__ import annotations
 
@@ -87,14 +87,15 @@ def process_owner():
 
 
 # Purpose: Retain bounded diagnostics and reject collector/installer errors without running a replacement command.
-# Inputs: Fixed argv, seconds and owned report path. Outputs: Successful invocation or diagnostic-bearing failure.
-def run_checked(arguments: list[str], timeout: int, log: Path) -> None:
+# Inputs: Fixed argv, seconds and owned report path. Outputs: Retained result or diagnostic-bearing failure.
+def run_checked(arguments: list[str], timeout: int, log: Path) -> dict:
     result = process_owner().run_bounded_command(
         arguments, timeout_seconds=timeout, max_output_bytes=8 * 1024 * 1024, response_tail_bytes=8 * 1024 * 1024
     )
     log.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     if result["exit_code"] != 0 or result["timed_out"] or result["output_limit_exceeded"]:
         raise RuntimeError(f"Coverage command failed; retained diagnostics: {log}")
+    return result
 
 
 # Purpose: Keep installer acquisition on authenticated official release transports, including every redirect.
@@ -183,12 +184,39 @@ def measurement_identity() -> dict[str, str]:
     return {name: digest(owned_path(ROOT, ROOT / name)) for name in (*binaries, *SCENARIO_INPUTS)}
 
 
+# Purpose: Require the requested native build mode without treating a missing GPU as host qualification.
+# Inputs: CPU-only or HIP host selection. Outputs: Current receipt; incompatible build mode fails explicitly.
+def coverage_build(hip_host: bool) -> dict:
+    current = validate_current(ROOT, "Debug", hip_host)
+    required = "ON" if hip_host else "OFF"
+    if current["recipe"]["FLITZZIP_ENABLE_HIP"] != required:
+        raise ValueError(f"Native coverage requires HIP {required} for the selected measurement mode")
+    return current
+
+
+# Purpose: Reject unavailable or incomplete GPU admission before claiming a HIP-enabled host measurement.
+# Inputs: Current Debug CLI and owned evidence directory. Outputs: Retained real capability result or failure.
+def require_hip_device(output: Path) -> None:
+    result = run_checked([str(ROOT / "build/Debug/flitzzip_cli.exe"), "gpu-info"], 60, output / "gpu-info-process.json")
+    pairs = [line.split("=", 1) for line in result["stdout"].splitlines()]
+    if result["output_truncated"] or any(len(pair) != 2 for pair in pairs):
+        raise ValueError("HIP host coverage requires complete GPU capability evidence")
+    values = dict(pairs)
+    if len(values) != len(pairs) or any(
+        values.get(name) != "true"
+        for name in ("hip_compiled", "hip_runtime_loadable", "hip_kernel_loadable", "available")
+    ):
+        raise ValueError("HIP host coverage requires an available compiled HIP device")
+    if not re.fullmatch(r"[1-9][0-9]*", values.get("device_count", "")):
+        raise ValueError("HIP host coverage requires at least one real device")
+
+
 # Purpose: Exercise the native registry and existing CLI failure/readback contracts under one collector tree.
-# Inputs: Current CPU Debug build and owned evidence directory. Outputs: Per-scenario diagnostics; any failure stops.
-def run_scenarios(output: Path) -> None:
-    current = validate_current(ROOT, "Debug", False)
-    if current["recipe"]["FLITZZIP_ENABLE_HIP"] != "OFF":
-        raise ValueError("CPU coverage scenarios require HIP OFF")
+# Inputs: Current Debug build, explicit host mode and owned directory. Outputs: Diagnostics; any failure stops.
+def run_scenarios(output: Path, hip_host: bool = False) -> None:
+    coverage_build(hip_host)
+    if hip_host:
+        require_hip_device(output)
     binary = ROOT / "build/Debug"
     scenarios = [
         ("registry", [str(binary / "flitzzip_tests.exe")]),
@@ -222,13 +250,11 @@ def run_scenarios(output: Path) -> None:
         run_checked(arguments, timeout, output / f"{name}-process.json")
 
 
-# Purpose: Measure the native registry and CLI contracts in their existing symbols-enabled CPU build.
-# Inputs: Current successful build receipt and verified collector.
+# Purpose: Measure native host instructions in an existing symbols-enabled build without inferring device hits.
+# Inputs: Current successful build receipt, explicit host mode and verified collector.
 # Outputs: Normalized Cobertura and source-bound metadata.
-def collect(collector: Path, lock: dict, output: Path) -> None:
-    before = validate_current(ROOT, "Debug", False)
-    if before["recipe"]["FLITZZIP_ENABLE_HIP"] != "OFF":
-        raise ValueError("The native CPU coverage lane requires HIP OFF; GPU qualification runs separately")
+def collect(collector: Path, lock: dict, output: Path, hip_host: bool = False) -> None:
+    before = coverage_build(hip_host)
     binary = ROOT / "build/Debug"
     identities = measurement_identity()
     raw = output / "native-raw.xml"
@@ -251,11 +277,12 @@ def collect(collector: Path, lock: dict, output: Path) -> None:
             "-m",
             "tools.native_coverage",
             "--run-scenarios",
+            *(["--hip-host"] if hip_host else []),
         ],
         900,
         output / "native-process.json",
     )
-    if validate_current(ROOT, "Debug", False) != before or measurement_identity() != identities:
+    if coverage_build(hip_host) != before or measurement_identity() != identities:
         raise ValueError("Native source, binary or symbols changed during coverage measurement")
     verify_collector(collector.parent, lock["files"])
     summary = normalize_report(raw, output / "native.xml", ROOT)
@@ -275,7 +302,7 @@ def collect(collector: Path, lock: dict, output: Path) -> None:
     if not required.issubset(summary["files"]):
         raise ValueError("Coverage missed required native parser, filesystem or ZIP consumers")
     record = {
-        "scope": "native-cpu-first-party-lines",
+        "scope": "native-hip-host-first-party-lines" if hip_host else "native-cpu-first-party-lines",
         "configuration": "Debug",
         "gpu_device_coverage": False,
         "native_inputs_sha256": before["inputs_sha256"],
@@ -293,7 +320,7 @@ def collect(collector: Path, lock: dict, output: Path) -> None:
     print(
         json.dumps(
             {
-                "coverage": "native-cpu",
+                "coverage": "native-hip-host" if hip_host else "native-cpu",
                 "files": len(summary["files"]),
                 "lines_covered": summary["lines_covered"],
                 "lines_valid": summary["lines_valid"],
@@ -303,26 +330,30 @@ def collect(collector: Path, lock: dict, output: Path) -> None:
 
 
 # Purpose: Provision or measure coverage without silently rebuilding the product.
-# Inputs: Optional provisioning-only flag. Outputs: Verified tool or measured report; unsupported hosts fail explicitly.
+# Inputs: Provisioning-only or explicit HIP host mode.
+# Outputs: Verified tool or measured report; unsupported hosts fail explicitly.
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--provision-only", action="store_true")
     modes.add_argument("--run-scenarios", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--hip-host", action="store_true", help="Measure host paths with real HIP; excludes device instructions"
+    )
     args = parser.parse_args()
     if os.name != "nt":
         raise ValueError("Native coverage uses the Windows MSVC/PDB collector")
-    output = owned_path(ROOT, ROOT / "out/coverage")
+    output = owned_path(ROOT, ROOT / ("out/coverage-hip-host" if args.hip_host else "out/coverage"))
     output.mkdir(parents=True, exist_ok=True)
     if args.run_scenarios:
-        run_scenarios(output)
+        run_scenarios(output, args.hip_host)
         return
     lock = json.loads(LOCK.read_text(encoding="utf-8-sig"))
     collector = provision(lock, output)
     if args.provision_only:
         print(f"Verified OpenCppCoverage {lock['version']}")
     else:
-        collect(collector, lock, output)
+        collect(collector, lock, output, args.hip_host)
 
 
 if __name__ == "__main__":
