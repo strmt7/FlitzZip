@@ -638,6 +638,38 @@ TEST_CASE(file_publish_pins_parent_identity_until_commit) {
     REQUIRE_TRUE(!std::filesystem::exists(reservation.directory));
 }
 
+// Purpose: Keep staging alive for shared owners and remove it when the last reservation unwinds or returns.
+// Inputs: Two tiny private payloads, a copied reservation and normal/exceptional scope exit.
+// Outputs: Preserves the live shared payload, then removes only staging without publishing a final target.
+TEST_CASE(file_publish_last_reservation_owner_cleans_abandoned_staging) {
+    struct ExpectedUnwind {};
+    for (const bool unwind : {false, true}) {
+        const auto root = test_temp_dir(unwind ? "reservation-unwind" : "reservation-return");
+        const auto target = root / "final.txt";
+        std::filesystem::path staging;
+        bool unwound = false;
+        try {
+            flitzzip::ReservedFilePublishTarget survivor;
+            {
+                const auto original = flitzzip::reserve_file_publish_target(target);
+                staging = original.directory;
+                std::ofstream(original.file, std::ios::binary) << "private";
+                survivor = original;
+            }
+            REQUIRE_TRUE(std::filesystem::is_regular_file(survivor.file));
+            REQUIRE_TRUE(!std::filesystem::exists(target));
+            if (unwind)
+                throw ExpectedUnwind{};
+        } catch (const ExpectedUnwind&) {
+            unwound = true;
+        }
+        REQUIRE_EQ(unwound, unwind);
+        REQUIRE_TRUE(!std::filesystem::exists(staging));
+        REQUIRE_TRUE(!std::filesystem::exists(target));
+        REQUIRE_TRUE(std::filesystem::is_directory(root));
+    }
+}
+
 // Purpose: Verify publication state cannot be reused to redirect a verified payload to another path.
 // Inputs: A valid reservation and a different final filename in the same parent.
 // Outputs: Throws `SecurityError` and leaves both final paths absent.
