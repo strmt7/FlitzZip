@@ -264,7 +264,7 @@ while ($true) {
     Start-Sleep -Seconds ([Math]::Min($delay, $remainingSeconds))
 }
 
-if ($Mode -eq 'final' -and $plan.postPushAuditRequired) {
+if ($Mode -eq 'final' -and $finalScopeCovered -and $plan.postPushAuditRequired) {
     try {
         & (Join-Path $PSScriptRoot "github_post_push_audit.ps1") -Repository $repositorySlug -Commit $commitSha
         $auditState = 'passed'
@@ -277,3 +277,4 @@ if ($Mode -eq 'final' -and $plan.postPushAuditRequired) {
 Write-Output ("Snapshot: " + (Save-WorkflowCheckpoint -Root $repoRoot -Repository $repositorySlug -Commit $commitSha `
         -Mode $Mode -Selected $selected -Status $status -Runs $runs -AuditState $auditState -FinalScopeCovered $finalScopeCovered))
 if ($Mode -eq 'opportunistic') { Write-Output 'Final acceptance remains pending even when this intermediate workflow sample is green.' }
+elseif (-not $finalScopeCovered) { Write-Output 'Final acceptance and required audit remain pending until every planned workflow is selected and complete.' }

@@ -169,6 +169,15 @@ Assert-Selector ($sourcePlan.manualLocalCommands.Count -eq 0) "ordinary non-perf
 Assert-Selector (-not $sourcePlan.workflowWaitPolicy.deferAllowed) "final source acceptance must not defer workflow waiting"
 Assert-Selector ($sourcePlan.workflowWaitPolicy.recommendedMode -eq "final") "source acceptance must recommend final wait"
 
+foreach ($path in @('src/cli/main.cpp', 'tests/cpp/test_windows_compatibility.cpp', 'src/gpu/hip_device.cpp', 'src/gzip/gzip_stream.cpp',
+        'src/app/main_window_archive_support.cpp', 'CMakeLists.txt', 'cmake/PatchZstdLegacy.cmake')) {
+    $productionPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-Workflow -Plan $productionPlan -Name 'security') "native source and build changes must qualify current scanner results: $path"
+    Assert-Selector $productionPlan.postPushAuditRequired "successful workflow jobs do not establish an empty current findings list: $path"
+}
+$packagingAuditPlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/package.ps1')
+Assert-Selector $packagingAuditPlan.postPushAuditRequired 'a selected security workflow must be followed by its findings audit'
+
 $entropyPlan = Get-FlitzZipVerificationPlan -ChangedPath @('src/gpu/hip_codec_static_prefix.hip.cpp', 'src/gpu/hip_codec_adaptive_prefix.hip.cpp')
 $entropyCommand = @($entropyPlan.requiredLocalCommands | Where-Object id -eq 'unit-tests')
 Assert-Selector ($entropyCommand.Count -eq 1 -and 'tools/native_component_tests.ps1' -in $entropyCommand[0].arguments) 'reviewed encoder mechanisms must select the component driver once'

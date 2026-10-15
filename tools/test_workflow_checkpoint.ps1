@@ -119,7 +119,11 @@ try {
     $arguments.ChangedPath = @('src/core/checksum.cpp')
     & $waiter @arguments | Out-Null
     $narrow = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
-    Assert-Checkpoint (-not $narrow.accepted -and -not $narrow.finalScopeCovered) 'a narrower selected subset is not final acceptance'
+    Assert-Checkpoint (-not $narrow.accepted -and -not $narrow.finalScopeCovered -and $narrow.postPushAudit -eq 'pending') `
+        'a narrower selected subset must retain pending acceptance and audit without auditing unfinished analyses'
+    $arguments.FinalCommit = $true
+    Assert-CheckpointFailure '*selection must include every workflow*' $arguments
+    $arguments.Remove('FinalCommit')
     $arguments.ChangedPath = @('README.md')
     $state.Conclusion = ''
     $state.AllowSleep = $true

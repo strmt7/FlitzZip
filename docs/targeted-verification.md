@@ -77,14 +77,20 @@ repository-relative paths and produces:
   autonomously when more development is planned.
 - `fullEscalationRequired`: whether the change must use the broad local profile.
 
+Native source, test and build-input changes require the hosted `security`
+workflow. Every selected security workflow also requires the exact-commit
+post-push findings audit: successful analysis jobs may still report new findings.
+Intermediate checkpoints retain opportunistic waiting; final acceptance waits
+for the analysis and its audit.
+
 ### Normal Targeting
 
 | Change area | Required local verification | Relevant post-push workflows |
 | --- | --- | --- |
 | Docs only | changed-file hygiene, language lint | `lint` |
-| C++ source, tests, CMake | hygiene, language lint, Release build, affected native mechanism or full native driver, changed-code refactor audit | `lint`, `windows-ci` |
+| C++ source, tests, CMake | hygiene, language lint, Release build, affected native mechanism or full native driver, changed-code refactor audit | `lint`, `windows-ci`, `security` and its findings audit |
 | Archive parser, path safety, extraction publication | C++ checks plus external compatibility interop smoke, registry-wide format matrix smoke, security scan, and short fuzz smoke | `lint`, `windows-ci`, `security`; observe `fuzzing` |
-| GUI or visual resources | C++ checks plus GUI smoke and screenshot inspection | `lint`, `windows-ci` |
+| GUI or visual resources | C++ checks plus GUI smoke and screenshot inspection | `lint`, `windows-ci`; production source changes also require `security` and its findings audit |
 | Workflows, security scanners, release actions | hygiene, language lint, security scan | `lint`, `security`, scanner-specific workflows, `scorecard` |
 | Release workflow orchestration and shared release policy | hygiene, language lint, security scan, offline release identity/replacement/title contracts | `lint`, `component-contracts`, `security`, `scorecard` |
 | Packaging or installer files | Release build, C++ tests, security scan, MSI identity smoke, package smoke | `lint`, `windows-ci`, `security` |
