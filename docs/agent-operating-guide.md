@@ -908,10 +908,13 @@ manufacture a clean scan. Individual authorizations belong in review records.
   a restrained header band and separator line. Keep the select-all tick aligned
   with body ticks, keep the first column narrow, and keep Name/Size/Type/Path
   column resizing hover cursors and minimum readable header widths intact.
-- Elevated Windows drag/drop is a supported shell workflow. Keep `WM_DROPFILES`
-  and the drag-query message narrowly allowed through UIPI for elevated
-  FlitzZip windows, keep the HDROP handler exception-safe, and do not replace
-  this with a broad UIAccess manifest or unrelated privilege workaround.
+- Preserve Windows UIPI defaults, including when FlitzZip is elevated. Interactive
+  shell drops use the Queue-local OLE target; do not allow lower-integrity legacy
+  drop messages through the window filter or enable UIAccess. Keep the bounded
+  HDROP handler exception-safe. OLE callbacks must intersect the source's allowed
+  operations with the target's copy-only capability, reject invalid effect
+  pointers and coordinate conversion failures, and release acquired storage
+  exactly once. Validate these contracts through the production COM adapter.
 - Never add or redesign a GUI feature by breaking an existing interaction.
   File-picker queueing, folder-picker queueing, drag/drop queueing, row
   selection, destination selection, dropdowns, toggles, tab changes, and primary
