@@ -1,4 +1,5 @@
 #include "app/main_window_impl.hpp"
+#include "app/queue_drop_target.hpp"
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -13,187 +14,6 @@
 #define DWMWA_BORDER_COLOR 34
 #endif
 namespace flitzzip::app {
-
-class QueueDropTarget final : public IDropTarget {
-  public:
-    explicit QueueDropTarget(MainWindow& owner) : owner_(owner) {}
-
-    // Purpose: Return the COM interfaces supported by the Queue drop target.
-    // Inputs: `iid` selects the interface and `object` receives the result.
-    // Outputs: Returns `S_OK` for IUnknown/IDropTarget or `E_NOINTERFACE`.
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** object) override {
-        if (object == nullptr) {
-            return E_POINTER;
-        }
-        if (iid == IID_IUnknown || iid == IID_IDropTarget) {
-            *object = static_cast<IDropTarget*>(this);
-            AddRef();
-            return S_OK;
-        }
-        *object = nullptr;
-        return E_NOINTERFACE;
-    }
-
-    // Purpose: Increment the COM lifetime count.
-    // Inputs: None.
-    // Outputs: Returns the new reference count.
-    ULONG STDMETHODCALLTYPE AddRef() override {
-        return ++ref_count_;
-    }
-
-    // Purpose: Decrement the COM lifetime count and delete when it reaches zero.
-    // Inputs: None.
-    // Outputs: Returns the remaining reference count.
-    ULONG STDMETHODCALLTYPE Release() override {
-        const ULONG remaining = --ref_count_;
-        if (remaining == 0U) {
-            delete this;
-        }
-        return remaining;
-    }
-
-    // Purpose: Enter shell drag/drop tracking for the Queue table.
-    // Inputs: `data`, key state, screen point, and requested effect are supplied by OLE.
-    // Outputs: Enables copy only for HDROP data over the Queue table and updates highlight state.
-    HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data, DWORD, POINTL point, DWORD* effect) override {
-        try {
-            data_object_has_files_ = data_has_hdrop(data);
-            return update_effect(point, effect);
-        } catch (...) {
-            return reject_after_exception(effect, "OLE drag enter failed");
-        }
-    }
-
-    // Purpose: Update Queue table drag/drop highlight while the shell pointer moves.
-    // Inputs: Screen point and requested effect are supplied by OLE.
-    // Outputs: Enables copy only while still inside the Queue table.
-    HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL point, DWORD* effect) override {
-        try {
-            return update_effect(point, effect);
-        } catch (...) {
-            return reject_after_exception(effect, "OLE drag over failed");
-        }
-    }
-
-    // Purpose: Clear Queue drag/drop highlighting when the shell drag leaves.
-    // Inputs: None.
-    // Outputs: Clears live highlighting.
-    HRESULT STDMETHODCALLTYPE DragLeave() override {
-        try {
-            owner_.set_queue_drop_highlight(false);
-            data_object_has_files_ = false;
-        } catch (...) {
-            data_object_has_files_ = false;
-        }
-        return S_OK;
-    }
-
-    // Purpose: Accept a shell drop only inside the Queue table.
-    // Inputs: `data`, key state, screen point, and requested effect are supplied by OLE.
-    // Outputs: Queues dropped paths or rejects the drop with `DROPEFFECT_NONE`.
-    HRESULT STDMETHODCALLTYPE Drop(IDataObject* data, DWORD, POINTL point, DWORD* effect) override {
-        try {
-            owner_.set_queue_drop_highlight(false);
-            POINT client{point.x, point.y};
-            ScreenToClient(owner_.hwnd_, &client);
-            auto paths = paths_from_data_object(data);
-            const bool accepted = owner_.accept_dropped_paths(std::move(paths), client);
-            if (effect != nullptr) {
-                *effect = accepted ? DROPEFFECT_COPY : DROPEFFECT_NONE;
-            }
-            data_object_has_files_ = false;
-            return S_OK;
-        } catch (...) {
-            return reject_after_exception(effect, "OLE drop failed");
-        }
-    }
-
-  private:
-    // Purpose: Fail closed when a C++ exception reaches the OLE drop-target boundary.
-    // Inputs: `effect` receives the rejected drop effect and `message` names the failed callback.
-    // Outputs: Clears highlight state, records a best-effort warning, and returns `S_OK` to OLE.
-    HRESULT reject_after_exception(DWORD* effect, const char* message) noexcept {
-        data_object_has_files_ = false;
-        if (effect != nullptr) {
-            *effect = DROPEFFECT_NONE;
-        }
-        try {
-            owner_.set_queue_drop_highlight(false);
-            owner_.append_operation_log(LogSeverity::Warning, "Queue", message);
-        } catch (...) {
-        }
-        return S_OK;
-    }
-
-    // Purpose: Check whether an OLE data object offers shell file paths.
-    // Inputs: `data` is the OLE data object from drag/drop.
-    // Outputs: Returns true when `CF_HDROP` data can be queried.
-    static bool data_has_hdrop(IDataObject* data) {
-        if (data == nullptr) {
-            return false;
-        }
-        FORMATETC format{CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-        return data->QueryGetData(&format) == S_OK;
-    }
-
-    // Purpose: Extract HDROP paths from an OLE data object.
-    // Inputs: `data` is the OLE data object from a drop event.
-    // Outputs: Returns shell paths and always releases OLE storage before returning.
-    static std::vector<std::filesystem::path> paths_from_data_object(IDataObject* data) {
-        if (data == nullptr) {
-            return {};
-        }
-        FORMATETC format{CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-        STGMEDIUM medium{};
-        if (data->GetData(&format, &medium) != S_OK) {
-            return {};
-        }
-        struct MediumGuard {
-            // Purpose: Release OLE storage exactly once when extracting shell drop paths.
-            // Inputs: `value` points to the STGMEDIUM returned by `IDataObject::GetData`.
-            // Outputs: Stores the medium reference for scope-exit cleanup.
-            explicit MediumGuard(STGMEDIUM& value) : medium(value) {}
-
-            MediumGuard(const MediumGuard&) = delete;
-            MediumGuard& operator=(const MediumGuard&) = delete;
-
-            // Purpose: Release the OLE storage returned by `IDataObject::GetData`.
-            // Inputs: None.
-            // Outputs: Calls `ReleaseStgMedium` exactly once.
-            ~MediumGuard() {
-                ReleaseStgMedium(&medium);
-            }
-
-            STGMEDIUM& medium;
-        } guard{medium};
-        if (medium.tymed != TYMED_HGLOBAL || medium.hGlobal == nullptr) {
-            return {};
-        }
-        std::vector<std::filesystem::path> paths = paths_from_dropfiles_global(medium.hGlobal);
-        if (paths.empty()) {
-            paths = paths_from_hdrop(reinterpret_cast<HDROP>(medium.hGlobal));
-        }
-        return paths;
-    }
-
-    // Purpose: Convert an OLE screen point into the current Queue-table copy/drop effect.
-    // Inputs: `point` is in screen coordinates and `effect` receives the accepted operation.
-    // Outputs: Updates table highlight and returns `S_OK`.
-    HRESULT update_effect(POINTL point, DWORD* effect) {
-        POINT client{point.x, point.y};
-        ScreenToClient(owner_.hwnd_, &client);
-        const bool allowed = data_object_has_files_ && owner_.queue_drop_target_contains(client);
-        owner_.set_queue_drop_highlight(allowed);
-        if (effect != nullptr) {
-            *effect = allowed ? DROPEFFECT_COPY : DROPEFFECT_NONE;
-        }
-        return S_OK;
-    }
-
-    MainWindow& owner_;
-    std::atomic_ulong ref_count_{1};
-    bool data_object_has_files_ = false;
-};
 
 // Purpose: Append native shell-dropped paths to the queue.
 // Inputs: `wparam` contains the HDROP handle from `WM_DROPFILES`.
@@ -315,7 +135,15 @@ LRESULT MainWindow::handle_create() {
     const HRESULT ole_status = OleInitialize(nullptr);
     ole_initialized_ = SUCCEEDED(ole_status);
     if (ole_initialized_) {
-        drop_target_ = new QueueDropTarget(*this);
+        drop_target_ = new QueueDropTarget(
+            hwnd_, {
+                       [this](POINT point) { return queue_drop_target_contains(point); },
+                       [this](std::vector<std::filesystem::path> paths, POINT point) {
+                           return accept_dropped_paths(std::move(paths), point);
+                       },
+                       [this](bool active) { set_queue_drop_highlight(active); },
+                       [this](const char* message) { append_operation_log(LogSeverity::Warning, "Queue", message); },
+                   });
         if (RegisterDragDrop(hwnd_, drop_target_) != S_OK) {
             drop_target_->Release();
             drop_target_ = nullptr;

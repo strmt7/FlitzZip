@@ -36,8 +36,6 @@ namespace flitzzip::app {
 class QueueDropTarget;
 
 class MainWindow {
-    friend class QueueDropTarget;
-
   public:
     // Purpose: Construct a main window controller with default UI state.
     // Inputs: None.

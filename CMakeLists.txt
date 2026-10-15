@@ -788,6 +788,7 @@ if(FLITZZIP_BUILD_GUI AND WIN32)
     src/app/main_window_commands.cpp
     src/app/main_window_controls.cpp
     src/app/main_window_dragdrop.cpp
+    src/app/queue_drop_target.cpp
     src/app/main_window_dropdowns.cpp
     src/app/main_window_extract_jobs.cpp
     src/app/main_window_focus.cpp
@@ -914,6 +915,8 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_compat_compression_levels.cpp
     tests/cpp/test_cpio_compat.cpp
     tests/cpp/test_drop_payload.cpp
+    tests/cpp/test_queue_drop_target.cpp
+    src/app/queue_drop_target.cpp
     tests/cpp/test_file_manifest.cpp
     tests/cpp/test_gzip_compat.cpp
     tests/cpp/test_hqx_compat.cpp
