@@ -82,15 +82,97 @@ failure-recovery assertions. Keep device instructions and unmeasured executables
 visible until a suitable measurement mechanism is qualified. Resource exhaustion,
 driver hangs and destruction of host state are not acceptable coverage techniques.
 
-HIP device measurement requires a qualified device profiling runtime in addition
-to compiler instrumentation. LLVM documents the
-[AMDGPU runtime and collection prerequisites](https://clang.llvm.org/docs/HIPSupport.html#source-based-code-coverage-for-device-code).
-The pinned Windows SDK emits device coverage mappings, but its link qualification
-currently fails on `__llvm_profile_instrument_gpu` and
-`__llvm_profile_raw_version`; it supplies the host profiling library without the
-required AMDGPU profiling runtime. Qualify that runtime and counter collection
-against independently known hit and miss branches before adding a device report.
-Kernel dispatch counts or CPU-side HIP API coverage cannot substitute for it.
+## Device counter qualification
+
+HIP device measurement requires both compiler instrumentation and an AMDGPU
+profiling runtime. The product SDK remains pinned independently from development
+coverage tools. Its existing Windows profiling support cannot produce the required
+device report by itself. LLVM documents the
+[AMDGPU runtime and collection prerequisites](https://clang.llvm.org/docs/HIPSupport.html#source-based-code-coverage-for-device-code);
+its [Windows GPU profiling repair](https://github.com/llvm/llvm-project/pull/202095)
+also fixes registration of the device profile sections.
+
+`tools/hip_coverage.py` qualifies the measurement mechanism with a 768-byte GPU
+operation across three workgroups. Separate processes take opposite branches, verify
+the independently expected output and report the actual GPU architecture. The
+tool extracts the AMDGPU ELF, merges native device profiles with LLVM and requires
+counter pairs `(0, 192)`, `(192, 0)` and `(192, 192)` for the separate and combined
+runs. It disables offload PGO sampling explicitly with
+`-mllvm -offload-pgo-sampling=0`; the compiler otherwise samples one in eight
+workgroups, which is unsuitable for coverage. The multiple-workgroup control
+rejects that undercount, which a single-thread probe would miss.
+Host executable mappings, an absent device profile, wrong readback, changed input
+bytes, truncated diagnostics or incorrect counters fail qualification. Complete
+LLVM JSON exports use an eight-MiB bounded artifact writer inside the existing
+Windows process job; response-tail limits remain unchanged. Raw native
+profiles, exports and failed-command diagnostics remain in the selected ignored
+output directory. Existing output directories are never overwritten.
+
+This control has passed on gfx1201 with the unmodified AMD ROCm 10.1 compiler and
+its matching upstream device profiling runtime. It qualifies that control on
+that device; it does not measure FlitzZip's kernels or establish complete device
+coverage. [Windows registration in this compiler](https://github.com/ROCm/llvm-project/blob/d6f6cb691863e9258034ab48c1dfce21689d5606/clang/lib/CodeGen/CGCUDANV.cpp#L1444)
+enumerates emitted kernels;
+device-only helpers require a separate qualification before their apparent
+zero counts can be interpreted. Product kernel reports remain separate work. Kernel dispatch counts
+and CPU-side HIP API coverage cannot substitute for device counters.
+
+Prepare an isolated coverage compiler from AMD's
+[ROCm 10.1 distribution](https://rocm.docs.amd.com/en/docs-10.1.0/install/rocm.html).
+The tested compiler source is the ROCm LLVM commit
+`d6f6cb691863e9258034ab48c1dfce21689d5606`, identified by that distribution's
+manifest and `clang++ --version`. Keep its LLVM license and LLVM exceptions with
+the development installation. These tools and runtime are not shipped with the
+application. A generic LLVM Windows distribution may omit the AMDGPU backend;
+the qualifier checks `--print-targets` before compiling.
+
+Build `clang_rt.profile-amdgpu` from that exact, unmodified
+[ROCm LLVM source](https://github.com/ROCm/llvm-project) using its
+`compiler-rt/cmake/caches/AMDGPU.cmake` cache. From an existing compatible x64
+Visual Studio developer shell, set the following variables to your isolated
+compiler, source checkout, Ninja, CMake, build directory and actual GPU target:
+
+```powershell
+& $coverageCmake -S "$coverageSource/runtimes" -B $coverageBuild -G Ninja `
+  -C "$coverageSource/compiler-rt/cmake/caches/AMDGPU.cmake" `
+  "-DCMAKE_MAKE_PROGRAM=$coverageNinja" `
+  "-DCMAKE_C_COMPILER=$coverageCompiler/bin/clang.exe" `
+  "-DCMAKE_CXX_COMPILER=$coverageCompiler/bin/clang++.exe" `
+  "-DCMAKE_ASM_COMPILER=$coverageCompiler/bin/clang.exe" `
+  "-DCMAKE_AR=$coverageCompiler/bin/llvm-ar.exe" `
+  "-DCMAKE_RANLIB=$coverageCompiler/bin/llvm-ranlib.exe" `
+  -DCMAKE_SYSTEM_NAME=Generic -DCMAKE_SYSTEM_PROCESSOR=amdgcn `
+  -DCMAKE_C_COMPILER_TARGET=amdgpu-amd-amdhsa `
+  -DCMAKE_CXX_COMPILER_TARGET=amdgpu-amd-amdhsa `
+  -DCMAKE_ASM_COMPILER_TARGET=amdgpu-amd-amdhsa `
+  "-DCMAKE_C_FLAGS=--target=amdgpu-amd-amdhsa -mcpu=$coverageArch -nogpulib -ffreestanding" `
+  "-DCMAKE_CXX_FLAGS=--target=amdgpu-amd-amdhsa -mcpu=$coverageArch -nogpulib -ffreestanding" `
+  "-DCMAKE_ASM_FLAGS=--target=amdgpu-amd-amdhsa -mcpu=$coverageArch -nogpulib" `
+  -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCMAKE_BUILD_TYPE=Release `
+  '-DLLVM_ENABLE_RUNTIMES=compiler-rt;libc' -DRUNTIMES_USE_LIBC=llvm-libc `
+  -DLLVM_DEFAULT_TARGET_TRIPLE=amdgpu-amd-amdhsa -DLLVM_RUNTIMES_TARGET=amdgpu-amd-amdhsa `
+  -DLLVM_LIBC_FULL_BUILD=ON -DLLVM_INCLUDE_TESTS=OFF -DLIBC_INCLUDE_TESTS=OFF `
+  "-DLIBC_LLVM_LINK=$coverageCompiler/bin/llvm-link.exe" `
+  -DCOMPILER_RT_INCLUDE_TESTS=OFF -DCOMPILER_RT_BUILD_BUILTINS=OFF `
+  -DCOMPILER_RT_BUILD_SANITIZERS=OFF -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF
+& $coverageCmake --build $coverageBuild --target clang_rt.profile-amdgpu
+```
+
+The omitted upstream runtime test targets are build options for this isolated
+profiling library; FlitzZip's product tests and security workflows remain enabled.
+Run the qualification with explicit paths, using the existing product SDK for
+HIP headers and runtime. No machine-specific installation path is embedded:
+
+```powershell
+py -3 -B -m tools.hip_coverage --compiler-root $coverageCompiler --sdk $productSdk `
+  --device-runtime "$coverageBuild/compiler-rt/lib/generic/libclang_rt.profile-amdgpu.a" `
+  --arch $coverageArch --output out/hip-coverage-qualification
+```
+
+Repeat qualification when the compiler, profiler, runtime or device changes.
+Run the offline counter-admission regressions with
+`py -3 -B -m unittest tools.test_hip_coverage`; the existing component-contract
+workflow selects these tests when their inputs change and never launches a GPU.
 
 ## Tool provenance and local use
 

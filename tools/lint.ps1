@@ -157,12 +157,12 @@ function Get-LintTargetFile {
 
 # Purpose: Select C/C++ files owned by FlitzZip rather than vendored upstream code.
 # Inputs: `Path` contains repository-relative paths.
-# Outputs: Returns source, test, and fuzz C/C++ files suitable for clang-format checks.
+# Outputs: Returns source, test, fuzz and development-tool C/C++ files suitable for clang-format checks.
 function Select-FlitzZipCppLintFile {
     param([string[]]$Path)
 
     return @($Path | Where-Object {
-            $_ -match '^(src|tests|fuzz)/.*\.(c|cc|cpp|h|hpp)$'
+            $_ -match '^(src|tests|fuzz|tools)/.*\.(c|cc|cpp|h|hpp)$'
         } | Sort-Object -Unique)
 }
 
@@ -266,7 +266,7 @@ try {
 
     if ($CppMode -ne "Off") {
         $cppFiles = if ($CppMode -eq "All") {
-            $allCppFiles = @(Get-TrackedLintFile -Pathspec @("src/*", "tests/*", "fuzz/*")) + $changedFiles
+            $allCppFiles = @(Get-TrackedLintFile -Pathspec @("src/*", "tests/*", "fuzz/*", "tools/*")) + $changedFiles
             Select-FlitzZipCppLintFile -Path $allCppFiles
         } else {
             Select-FlitzZipCppLintFile -Path $changedFiles

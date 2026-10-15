@@ -69,6 +69,13 @@ if ($configuration -notcontains 'tools/new_fixture.py' -or
 }
 Write-Output 'Lint routing changed/all/configuration/new-file checks passed.'
 
+$cppExpected = @('src/core/example.cpp', 'tests/cpp/example.cpp', 'fuzz/example.cpp',
+    'tools/fixtures/hip_coverage_probe.hip.cpp', 'tools/new_native_tool.hpp')
+$cppSelected = @(Select-FlitzZipCppLintFile -Path ($cppExpected + @('third_party/vendor/example.cpp', 'docs/example.md')))
+if (($cppSelected -join '|') -ne (($cppExpected | Sort-Object -Unique) -join '|')) {
+    throw 'Owned development C++ fixtures must receive the same format checks as native sources.'
+}
+
 # Exercise the production grammar gate with the parser error that analyzer lint
 # failed to report, without executing either fixture.
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('flitzzip-lint-' + [guid]::NewGuid().ToString('N') + '.ps1')
