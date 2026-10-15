@@ -216,7 +216,10 @@ def run_scenarios(output: Path) -> None:
             )
         )
     for name, arguments in scenarios:
-        run_checked(arguments, 900 if name == "registry" else 300, output / f"{name}-process.json")
+        # Full suites launch many instrumented processes; retain the collector's
+        # overall deadline and each matrix command's independent timeout.
+        timeout = 900 if name in {"registry", "cli-formats"} else 300
+        run_checked(arguments, timeout, output / f"{name}-process.json")
 
 
 # Purpose: Measure the native registry and CLI contracts in their existing symbols-enabled CPU build.

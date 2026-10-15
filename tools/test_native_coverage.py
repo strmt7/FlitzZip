@@ -254,6 +254,9 @@ class CoverageTests(unittest.TestCase):
                     for call in run.call_args_list[3:]:
                         self.assertEqual(call.args[0][0], "powershell.exe")
                         self.assertEqual(call.args[0][-2:], ["-Configuration", "Debug"])
+                    if failure_at == 5:
+                        self.assertEqual(run.call_args_list[-1].args[1], run.call_args_list[0].args[1])
+                        self.assertGreater(run.call_args_list[-1].args[1], run.call_args_list[-2].args[1])
             before["recipe"]["FLITZZIP_ENABLE_HIP"] = "ON"
             with patch.object(collector, "run_checked") as run, self.assertRaisesRegex(ValueError, "HIP OFF"):
                 collector.run_scenarios(self.root)
