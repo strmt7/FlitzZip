@@ -1,6 +1,7 @@
 #include "app/main_window_support.hpp"
 
 #include "app/drop_payload.hpp"
+#include "core/com_task_string.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -17,17 +18,12 @@ namespace {
 // Inputs: `folder_id` names the known folder and `flags` are passed to SHGetKnownFolderPath.
 // Outputs: Returns the resolved path, or an empty path when Windows cannot provide one.
 std::filesystem::path known_folder_or_empty(REFKNOWNFOLDERID folder_id, DWORD flags) {
-    PWSTR value = nullptr;
-    const HRESULT result = SHGetKnownFolderPath(folder_id, flags, nullptr, &value);
-    if (FAILED(result) || value == nullptr || value[0] == L'\0') {
-        if (value != nullptr) {
-            CoTaskMemFree(value);
-        }
+    CoTaskMemWideString value;
+    const HRESULT result = SHGetKnownFolderPath(folder_id, flags, nullptr, value.put());
+    if (FAILED(result) || value.get() == nullptr || value.get()[0] == L'\0') {
         return {};
     }
-    std::filesystem::path path(value);
-    CoTaskMemFree(value);
-    return path;
+    return std::filesystem::path(value.get());
 }
 
 }  // namespace

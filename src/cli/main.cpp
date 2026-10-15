@@ -138,7 +138,8 @@ void usage() {
            "gz|cpgz|ar|arj|arc|ark|deb|rpm|7z|lha|lzh|wim|swm|xar --output <directory> [--overwrite] [--sha256] "
            "[--defender-scan] [--validate-before-publish] [--name-encoding utf8|system] <archive>\n"
         << "  flitzzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] "
-           "[--defender-scan] <archive.flzip|archive.zip|archive.zipx> (GPU options: FLZIP only)\n";
+           "[--defender-scan] <archive.flzip|archive.zip|archive.zipx> (GPU options: FLZIP only)\n"
+        << "  Use -- before positional paths in compress, extract, or verify to preserve option-shaped filenames.\n";
 }
 
 // Purpose: Convert byte/second statistics to MiB/s for display.
@@ -471,7 +472,12 @@ void reject_compat_extract_tuning(std::string_view label, bool require_gpu, bool
 CliCompressCommand parse_compress_command(const std::vector<std::string>& args) {
     CliCompressCommand command;
     for (std::size_t i = 1; i < args.size(); ++i) {
-        if (args[i] == "--format") {
+        if (args[i] == "--") {
+            for (++i; i < args.size(); ++i) {
+                command.sources.push_back(cli_path_argument(args[i]));
+            }
+            break;
+        } else if (args[i] == "--format") {
             command.format = require_arg(args, i, "--format");
         } else if (args[i] == "--output") {
             command.output = cli_path_argument(require_arg(args, i, "--output"));
@@ -500,6 +506,8 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
             command.sha256 = true;
         } else if (args[i] == "--defender-scan") {
             command.defender_scan = true;
+        } else if (args[i].starts_with("--")) {
+            throw flitzzip::ArchiveError("unknown compress argument: " + args[i]);
         } else {
             command.sources.push_back(cli_path_argument(args[i]));
         }
@@ -621,7 +629,13 @@ int run_compress_command(const std::vector<std::string>& args) {
 CliExtractCommand parse_extract_command(const std::vector<std::string>& args) {
     CliExtractCommand command;
     for (std::size_t i = 1; i < args.size(); ++i) {
-        if (args[i] == "--format") {
+        if (args[i] == "--") {
+            if (!command.archive.empty() || args.size() - i != 2) {
+                throw flitzzip::ArchiveError("extract accepts exactly one archive");
+            }
+            command.archive = cli_path_argument(args[i + 1]);
+            break;
+        } else if (args[i] == "--format") {
             command.format = require_arg(args, i, "--format");
         } else if (args[i] == "--name-encoding") {
             command.name_encoding = flitzzip::parse_archive_name_encoding(require_arg(args, i, "--name-encoding"));
@@ -1057,7 +1071,13 @@ int run_benchmark_suite_command(const std::vector<std::string>& args) {
 CliVerifyCommand parse_verify_command(const std::vector<std::string>& args) {
     CliVerifyCommand command;
     for (std::size_t i = 1; i < args.size(); ++i) {
-        if (args[i] == "--require-gpu") {
+        if (args[i] == "--") {
+            if (!command.archive.empty() || args.size() - i != 2) {
+                throw flitzzip::ArchiveError("verify accepts exactly one archive");
+            }
+            command.archive = cli_path_argument(args[i + 1]);
+            break;
+        } else if (args[i] == "--require-gpu") {
             command.require_gpu = true;
         } else if (args[i] == "--force-cpu") {
             command.force_cpu = true;
@@ -1135,11 +1155,19 @@ std::optional<int> run_info_command(const std::vector<std::string>& args) {
         return 0;
     }
     if (args[0] == "gpu-info") {
+        if (args.size() != 1) {
+            usage();
+            return 2;
+        }
         const auto info = flitzzip::query_gpu_info();
         print_gpu_info(info);
         return info.available ? 0 : 1;
     }
     if (args[0] == "dependency-check") {
+        if (args.size() != 1) {
+            usage();
+            return 2;
+        }
         const auto info = flitzzip::query_gpu_info();
         print_gpu_info(info);
         const int code = dependency_exit_code(info);

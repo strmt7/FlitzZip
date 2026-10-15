@@ -28,6 +28,7 @@
 #include <wintrust.h>
 #include <winver.h>
 #include <hip/hip_runtime.h>
+#include "core/com_task_string.hpp"
 #include "gpu/hip_kernel_api.hpp"
 #endif
 
@@ -61,13 +62,12 @@ std::wstring widen_ascii(const char* text) {
 // Inputs: `folder_id` names the system-owned folder registration.
 // Outputs: Returns the absolute folder path or an empty optional when Windows cannot resolve it.
 std::optional<std::filesystem::path> known_folder_path(REFKNOWNFOLDERID folder_id) {
-    PWSTR raw_path = nullptr;
-    if (FAILED(SHGetKnownFolderPath(folder_id, KF_FLAG_DEFAULT, nullptr, &raw_path)) || raw_path == nullptr) {
+    CoTaskMemWideString raw_path;
+    if (FAILED(SHGetKnownFolderPath(folder_id, KF_FLAG_DEFAULT, nullptr, raw_path.put())) ||
+        raw_path.get() == nullptr) {
         return std::nullopt;
     }
-    std::filesystem::path path(raw_path);
-    CoTaskMemFree(raw_path);
-    return path;
+    return std::filesystem::path(raw_path.get());
 }
 
 // Purpose: Reject a runtime path whose existing namespace contains a reparse point or non-file leaf.

@@ -184,6 +184,11 @@ instead. Input and output paths below are examples; quote paths containing
 spaces. Commands return `0` on success, `1` on operation or option-validation
 failure and `2` when a missing or unknown command prints usage.
 
+Archive commands reject unknown options before writing output. For a filename
+beginning with `--`, put `--` after all options and before the input paths, for
+example `& $FlitzZip verify --sha256 -- "--archive.zip"`. Extraction and
+verification each accept exactly one archive, including after this separator.
+
 ### Check readiness and inspect archives
 
 ```powershell
