@@ -339,16 +339,56 @@ def install(home: Path) -> Path:
         return provision(home, directory, python, identity)
 
 
+def check_lock(home: Path, requirements: Path = LOCK) -> None:
+    """Purpose: Reject incompatible dependencies. Inputs: Cache/lock. Outputs: Resolver result; no runtime install."""
+    from tools import crawl4ai_source_build, nltk_security_build
+
+    if not (3, 13) <= sys.version_info[:2] <= (3, 14):
+        raise ValueError("Use CPython 3.13 or 3.14; this lock has not qualified other Python versions")
+    home.mkdir(parents=True, exist_ok=True)
+    repaired = nltk_security_build.ensure_wheel(home)
+    crawler = crawl4ai_source_build.ensure_wheel(home)
+    with tempfile.TemporaryDirectory(prefix="lock-validation-", dir=home) as owned:
+        directory = Path(owned)
+        venv.EnvBuilder(with_pip=True).create(directory)
+        python = directory / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--dry-run",
+                "--ignore-installed",
+                "--require-hashes",
+                "--only-binary=:all:",
+                "--find-links",
+                str(repaired.parent),
+                "--find-links",
+                str(crawler.parent),
+                "-r",
+                str(requirements),
+            ],
+            tool_environment(home),
+        )
+    print(json.dumps({"dependency_lock": "resolved", "lock_sha256": text_identity(requirements)}))
+
+
 def main() -> int:
     """Purpose: Expose installer and crawler entry points. Inputs: CLI options. Outputs: Child exit status."""
     parser = argparse.ArgumentParser(description=__doc__, epilog=ATTRIBUTION)
     parser.add_argument("--home", help="Absolute external cache root; environment override: FLITZZIP_CRAWL4AI_HOME")
-    parser.add_argument("command", choices=("install", "doctor", "crawl", "qualify"))
+    parser.add_argument("command", choices=("install", "doctor", "crawl", "qualify", "check-lock"))
     parser.add_argument("arguments", nargs=argparse.REMAINDER, help="Arguments forwarded to the selected tool")
     args = parser.parse_args()
     remaining = args.arguments
     home = cache_home(args.home)
     env = tool_environment(home)
+    if args.command == "check-lock":
+        if remaining:
+            parser.error("check-lock takes no additional arguments")
+        check_lock(home)
+        return 0
     if args.command == "install":
         if remaining:
             parser.error("install takes no additional arguments")

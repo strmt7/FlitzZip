@@ -98,6 +98,17 @@ on Windows and macOS with Python 3.13, and Linux with Python 3.13 and 3.14.
 That run built and admitted both repaired wheels, resolved dependencies normally,
 ran `pip check`, and passed the model and download consumers. The dedicated
 qualification workflow was then retired at the maintainer's request.
+
+Dependency updates must still resolve as a complete graph. Run
+`python -B tools/crawl4ai_tool.py check-lock` before admitting a changed lock.
+The existing component-contract workflow selects this check only when the
+installation lock, provider, source recipe or integration changes. It uses
+pip's normal hash-locked resolver in an empty temporary environment, with
+`--dry-run --ignore-installed`; it does not install the crawler or browser.
+Offline mechanism tests remain separate. This catches incompatible transitive
+updates that otherwise pass syntax, vulnerability and hash-format checks.
+A successful resolution is not a substitute for fresh-install and live
+consumer qualification when the dependency cohort changes.
 Ordinary product changes do not reinstall or requalify this research tool.
 The portable installer retains the package, byte-admission and API checks before
 accepting any new environment. Actual tool changes still select their offline

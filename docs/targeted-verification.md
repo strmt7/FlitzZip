@@ -107,6 +107,10 @@ Tool contracts have explicit component/dependency patterns in the canonical
 planner. Production build inputs require a build; receipt fixture edits select
 receipt regressions without rebuilding unrelated codec code. Fuzz build and
 production resource changes retain their actual bounded sanitizer smoke.
+Content changes with timestamps no newer than the prior completed build or native outputs require
+clean compilation: copied or restored source must not qualify stale incremental
+objects. Ordinary newer edits retain incremental compilation. Deleted inputs also
+require a clean build so removed definitions cannot remain in linked artifacts.
 The full native driver already includes four toolchain helper contracts, so the
 planner does not add duplicate standalone invocations of those same helpers.
 The component driver does not execute them; separately changed helper contracts

@@ -73,7 +73,7 @@ jobs:
           - os: windows-2022
             generator: Visual Studio 17 2022
             disable_pch: true
-            configuration: RelWithDebInfo
+            configuration: Debug
             coverage: true
           - os: windows-2025-vs2026
             generator: Visual Studio 18 2026

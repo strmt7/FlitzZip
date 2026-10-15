@@ -80,4 +80,13 @@ def normalize_report(source: Path, destination: Path, root: Path) -> dict:
     roots.clear()
     ET.SubElement(roots, "source").text = "."
     ET.ElementTree(report).write(destination, encoding="utf-8", xml_declaration=True)
-    return {"files": sorted({path for path, _ in measured}), "lines_valid": len(measured), "lines_covered": covered}
+    uncovered: dict[str, list[int]] = {}
+    for (path, line), hit in sorted(measured.items()):
+        if not hit:
+            uncovered.setdefault(path, []).append(line)
+    return {
+        "files": sorted({path for path, _ in measured}),
+        "lines_valid": len(measured),
+        "lines_covered": covered,
+        "uncovered_lines": uncovered,
+    }

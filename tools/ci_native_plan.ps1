@@ -6,7 +6,7 @@ param(
     [switch]$Full, [switch]$RunTests, [string]$GitHubOutput = '',
     [ValidateSet('push', 'pull_request', 'workflow_dispatch')][string]$EventName,
     [string]$PushBase = '', [string]$PullRequestBase = '', [string]$DispatchBase = '',
-    [ValidateSet('Release', 'RelWithDebInfo')][string]$Configuration = 'Release'
+    [ValidateSet('Debug', 'Release', 'RelWithDebInfo')][string]$Configuration = 'Release'
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'flitzzip_verification.psm1') -Force

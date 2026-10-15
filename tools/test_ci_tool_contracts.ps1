@@ -53,6 +53,20 @@ Assert-CiContractPlan -Path '.github/workflows/security-code-scanning.yml' -Requ
 
 # Load the actual production comparison helper without executing any selected command.
 . $runner -ChangedPath 'README.md' -PlanOnly | Out-Null
+foreach ($path in @('tools/requirements/crawl4ai.txt', 'tools/requirements/nltk-build.txt',
+        'tools/crawl4ai_tool.py', 'tools/crawl4ai_source_build.py', 'tools/nltk_security_build.py',
+        'tools/crawl4ai_download_opener.py', 'third_party/upstream/crawl4ai/0.9.4/build.json',
+        'third_party/upstream/nltk/source.zip', '.github/workflows/component-contracts.yml')) {
+    if (-not (Test-FlitzZipResearchLockChange -Paths @('README.md', $path))) {
+        throw "Dependency integration omitted changed input: $path"
+    }
+}
+foreach ($path in @('README.md', 'src/gpu/hip_kernels.hip.cpp', 'tests/cpp/test_integrity.cpp',
+        'tools/test_crawl4ai_tool.py', 'tools/native_coverage.py', 'docs/crawl4ai.md')) {
+    if (Test-FlitzZipResearchLockChange -Paths @($path)) {
+        throw "Unrelated development selected dependency resolution: $path"
+    }
+}
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("flitzzip-ci-ancestry-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 try {

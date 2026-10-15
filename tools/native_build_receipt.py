@@ -433,6 +433,29 @@ def observe_toolchain(root: Path, cache: dict, cmake: Path) -> dict:
     return toolchain
 
 
+# Purpose: Detect source replacements that timestamp-based incremental compilers can silently miss.
+# Inputs: Previous successful receipt and current frozen input manifest. Outputs: True when a clean build is required.
+def changed_inputs_need_clean(root: Path, previous: dict, current: dict) -> bool:
+    old_files = previous["inputs"]["files"]
+    new_files = current["files"]
+    if old_files.keys() - new_files.keys():
+        return True
+    changed = [name for name, digest in new_files.items() if old_files.get(name) != digest]
+    if not changed:
+        return False
+    # A successful receipt is published after every consumer finishes, including
+    # test/library targets that may rebuild without relinking the application.
+    completed = input_path(root, f"build/{RECEIPT}").stat().st_mtime_ns
+    # Exclude generated manifests: configuration can rewrite them before compilation.
+    newest_output = max(
+        input_path(root, name).stat().st_mtime_ns
+        for name in previous["outputs_sha256"]
+        if Path(name).suffix.lower() in {".exe", ".dll"}
+    )
+    boundary = max(completed, newest_output)
+    return any(input_path(root, name).stat().st_mtime_ns <= boundary for name in changed)
+
+
 # Purpose: Freeze configured tool bytes and decide whether existing objects need a fresh build.
 # Inputs: Owned pending transaction and selected CMake executable.
 # Outputs: Required clean-first decision and stored observations.
@@ -459,6 +482,7 @@ def prepare(root: Path, token: str, cmake: Path) -> dict:
             or previous.get("recipe") != recipe
             or previous.get("toolchain") != toolchain
             or previous.get("outputs_sha256") != current_outputs
+            or changed_inputs_need_clean(root, previous, state["inputs"])
         )
     state.update(recipe=recipe, toolchain=toolchain, clean_first_required=fresh)
     publish(root, TRANSACTION, state)

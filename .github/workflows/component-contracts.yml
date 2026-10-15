@@ -65,6 +65,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Test changed tool contracts
+        id: contracts
         shell: pwsh
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -76,15 +77,26 @@ jobs:
           $base = if ($env:EVENT_NAME -eq 'pull_request') { $env:PR_BASE } else { $env:PUSH_BASE }
           if ($base -and $base -notmatch '^0{40}$') {
             if ($base -notmatch '^[0-9a-f]{40}$') { throw 'Invalid comparison commit.' }
-            tools/ci_tool_contracts.ps1 -BaseRef $base -HeadRef HEAD
+            tools/ci_tool_contracts.ps1 -BaseRef $base -HeadRef HEAD -GitHubOutput $env:GITHUB_OUTPUT
           } elseif ($env:EVENT_NAME -eq 'push') {
             if ($env:PUSH_REF -eq "refs/heads/$($env:DEFAULT_BRANCH)") {
               $paths = @(git ls-files)
               if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate initial default-branch inputs.' }
-              tools/ci_tool_contracts.ps1 -ChangedPath $paths
+              tools/ci_tool_contracts.ps1 -ChangedPath $paths -GitHubOutput $env:GITHUB_OUTPUT
             } else {
-              tools/ci_tool_contracts.ps1 -InitialPush -DefaultBranch $env:DEFAULT_BRANCH -HeadRef HEAD
+              tools/ci_tool_contracts.ps1 -InitialPush -DefaultBranch $env:DEFAULT_BRANCH -HeadRef HEAD -GitHubOutput $env:GITHUB_OUTPUT
             }
           } else {
-            tools/ci_tool_contracts.ps1 -BaseRef HEAD~1 -HeadRef HEAD
+            tools/ci_tool_contracts.ps1 -BaseRef HEAD~1 -HeadRef HEAD -GitHubOutput $env:GITHUB_OUTPUT
           }
+      - name: Select Python for changed research dependencies
+        if: steps.contracts.outputs.research_lock_changed == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Resolve changed research dependency lock
+        if: steps.contracts.outputs.research_lock_changed == 'true'
+        shell: pwsh
+        run: |
+          python -B tools/crawl4ai_tool.py check-lock
+          if ($LASTEXITCODE -ne 0) { throw 'The research dependency lock cannot be resolved.' }

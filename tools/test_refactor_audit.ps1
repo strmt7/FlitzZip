@@ -145,6 +145,18 @@ try {
     Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('template <typename Stream>',
         'void parse(Stream& input) {', '    input.read();', '}'))
     Test-AuditCase -Name 'template declaration retains its adjacent contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('std::string',
+        'parse(std::string_view input,', '      std::string_view suffix = "bounded fixture") {',
+        '    return std::string(input) + std::string(suffix);', '}'))
+    Test-AuditCase -Name 'formatter-wrapped return type retains its adjacent contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('std::string', 'parse(int value) {', '    return {};', '}')
+    Test-AuditCase -Name 'wrapped return type still requires documentation' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('int unrelated;',
+        'std::string', 'parse(int value) {', '    return {};', '}'))
+    Test-AuditCase -Name 'preceding declaration cannot lend its documentation to a wrapped function' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines (@('class Owner {') + $contract +
+        @('public:', 'std::string', 'parse(int value) {', '    return {};', '}', '};'))
+    Test-AuditCase -Name 'access label cannot lend its documentation to a wrapped function' -Options '-ChangedOnly' -Expected @($vendorPath)
     Write-AuditFixture -RelativePath $vendorPath -Lines @('TEST_CASE(registered_test) {',
         '    if (first_call() ||', '        second_call()) {', '        return;', '    }', '}')
     Test-AuditCase -Name 'multiline test conditions are not function definitions' -Options '-ChangedOnly'

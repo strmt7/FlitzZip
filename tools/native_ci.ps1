@@ -24,13 +24,13 @@ function Get-FlitzZipHostedWorkflowSelection {
 # Outputs: Returns build/test/matrix decisions and the trusted native command; never launches a workload.
 function Get-FlitzZipHostedNativePlan {
     param([string[]]$Paths, [switch]$Full,
-          [ValidateSet('Release', 'RelWithDebInfo')][string]$Configuration = 'Release')
+          [ValidateSet('Debug', 'Release', 'RelWithDebInfo')][string]$Configuration = 'Release')
     $plan = Get-FlitzZipVerificationPlan -ChangedPath $Paths -SuspectGlobalBug:$Full -Checkpoint intermediate
     # Collector and workflow changes exercise measurement/upload; local planning remains offline.
     $coverageChanged = Test-FlitzZipAnyPath -Path $Paths -Pattern @(
         '^\.github/workflows/windows-ci\.yml$',
         '^tools/native_coverage(_report)?\.py$', '^tools/native-coverage-toolchain\.json$')
-    $build = ($coverageChanged -and $Configuration -eq 'RelWithDebInfo') -or
+    $build = ($coverageChanged -and $Configuration -eq 'Debug') -or
         @($plan.requiredLocalCommands | Where-Object id -eq 'release-build').Count -gt 0
     $unit = @($plan.requiredLocalCommands | Where-Object id -eq 'unit-tests')
     $mode = 'none'
@@ -51,7 +51,7 @@ function Get-FlitzZipHostedNativePlan {
     }
     return [pscustomobject]@{
         build = $build
-        coverage = $build -and $Configuration -eq 'RelWithDebInfo'
+        coverage = $build -and $Configuration -eq 'Debug'
         testMode = $mode; testCommand = $command
         formatMatrix = @($plan.requiredLocalCommands | Where-Object id -eq 'format-matrix-smoke').Count -gt 0
         securityPolicy = @($plan.requiredLocalCommands | Where-Object id -eq 'security-scan').Count -gt 0

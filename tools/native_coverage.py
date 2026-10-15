@@ -165,10 +165,12 @@ def provision(lock: dict, output: Path) -> Path:
 # Inputs: Current successful build receipt and verified collector.
 # Outputs: Normalized Cobertura and source-bound metadata.
 def collect(collector: Path, lock: dict, output: Path) -> None:
-    before = validate_current(ROOT, "RelWithDebInfo", False)
+    before = validate_current(ROOT, "Debug", False)
     if before["recipe"]["FLITZZIP_ENABLE_HIP"] != "OFF":
         raise ValueError("The native CPU coverage lane requires HIP OFF; GPU qualification runs separately")
-    binary = ROOT / "build/RelWithDebInfo"
+    binary = ROOT / "build/Debug"
+    executable = binary / "flitzzip_tests.exe"
+    executable_hash = digest(executable)
     pdb = binary / "flitzzip_tests.pdb"
     pdb_hash = digest(pdb)
     raw = output / "native-raw.xml"
@@ -186,27 +188,39 @@ def collect(collector: Path, lock: dict, output: Path) -> None:
             "--export_type",
             f"cobertura:{raw}",
             "--",
-            str(binary / "flitzzip_tests.exe"),
+            str(executable),
         ],
         900,
         output / "native-process.json",
     )
-    if validate_current(ROOT, "RelWithDebInfo", False) != before or digest(pdb) != pdb_hash:
+    if (
+        validate_current(ROOT, "Debug", False) != before
+        or digest(pdb) != pdb_hash
+        or digest(executable) != executable_hash
+    ):
         raise ValueError("Native source, binary or symbols changed during coverage measurement")
     verify_collector(collector.parent, lock["files"])
     summary = normalize_report(raw, output / "native.xml", ROOT)
+    source_files = {
+        name
+        for name in before["receipt"]["inputs"]["files"]
+        if name.startswith("src/") and Path(name).suffix in {".c", ".cpp", ".h", ".hpp"}
+    }
     required = {"src/core/archive_format.cpp", "src/core/path_safety.cpp", "src/zip/zip_adapter.cpp"}
     if not required.issubset(summary["files"]):
         raise ValueError("Coverage missed required native parser, filesystem or ZIP consumers")
     record = {
         "scope": "native-cpu-first-party-lines",
+        "configuration": "Debug",
         "gpu_device_coverage": False,
         "native_inputs_sha256": before["inputs_sha256"],
         "native_receipt_sha256": before["receipt_sha256"],
         "collector_version": lock["version"],
         "toolchain_sha256": digest(LOCK),
         "test_pdb_sha256": pdb_hash,
+        "test_binary_sha256": executable_hash,
         "report_sha256": digest(output / "native.xml"),
+        "unmeasured_source_files": sorted(source_files - set(summary["files"])),
         **summary,
     }
     (output / "summary.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")

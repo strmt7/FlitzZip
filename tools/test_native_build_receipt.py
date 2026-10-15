@@ -219,6 +219,59 @@ class NativeBuildReceiptTests(unittest.TestCase):
         token = receipt.begin(self.root, "Release")["transaction_id"]
         self.assertTrue(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
 
+    # Purpose: Prevent copied/restored source from being blessed when the incremental compiler sees an old timestamp.
+    # Inputs: A successful build, changed source bytes, and the original older modification time.
+    # Outputs: Requires clean-first acknowledgement and rejects a nominally successful incremental invocation.
+    def test_preserved_timestamp_source_change_requires_clean_build(self):
+        source = self.root / "src/main.cpp"
+        original_time = source.stat().st_mtime_ns
+        self.successful()
+        source.write_text("replacement source with preserved timestamp", encoding="utf-8")
+        os.utime(source, ns=(original_time, original_time))
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        self.assertTrue(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+        with self.assertRaisesRegex(ValueError, "fresh build"):
+            receipt.finish(self.root, token, self.cmake, False)
+
+    # Purpose: Cover consumers compiled after the last relink of the application executables.
+    # Inputs: Changed bytes newer than unchanged application outputs but older than build completion.
+    # Outputs: Requires a clean build, preventing stale test/library objects from being accepted.
+    def test_source_older_than_completed_invocation_requires_clean_build(self):
+        self.successful()
+        completed = self.build / receipt.RECEIPT
+        output_time = max(path.stat().st_mtime_ns for path in (self.build / "Release").glob("*"))
+        completed_time = output_time + 2_000_000_000
+        os.utime(completed, ns=(completed_time, completed_time))
+        source = self.root / "src/main.cpp"
+        source.write_text("copied source predating the last compiled consumer", encoding="utf-8")
+        copied_time = output_time + 1_000_000_000
+        os.utime(source, ns=(copied_time, copied_time))
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        self.assertTrue(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+
+    # Purpose: Keep removed inputs and coarse filesystem timestamps from retaining stale compiled definitions.
+    # Inputs: A removed source or changed bytes with exactly an output's timestamp.
+    # Outputs: Both cases require a fresh build; ordinary newer edits retain the existing incremental test.
+    def test_removed_or_equal_timestamp_inputs_require_clean_build(self):
+        for deleted in (False, True):
+            with self.subTest(deleted=deleted):
+                self.successful()
+                source = self.root / "src/main.cpp"
+                if deleted:
+                    source.unlink()
+                    subprocess.run(
+                        ["git", "-C", str(self.root), "update-index", "--force-remove", "--", "src/main.cpp"],
+                        check=True,
+                        capture_output=True,
+                    )
+                else:
+                    output = self.root / "build/Release/flitzzip_cli.exe"
+                    timestamp = output.stat().st_mtime_ns
+                    source.write_text("same tick different bytes", encoding="utf-8")
+                    os.utime(source, ns=(timestamp, timestamp))
+                token = receipt.begin(self.root, "Release")["transaction_id"]
+                self.assertTrue(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+
     # Purpose: Refuse source/compiler/configuration changes during an invocation without publishing success.
     # Inputs: Changed frozen source or observed tool bytes. Outputs: Failed completion and preserved old receipt.
     def test_mid_build_changes(self):
