@@ -124,7 +124,7 @@ def read_current_reviews(payload: bytes) -> list[dict[str, str]]:
     reader = csv.DictReader(io.StringIO(payload.decode("utf-8")))
     if tuple(reader.fieldnames or ()) != CURRENT_FIELDS:
         raise ValueError("Current false-positive review has an unknown schema")
-    rows, seen = [], set()
+    rows, seen, incidents = [], set(), {}
     for row in reader:
         if len(rows) >= 256 or set(row) != set(CURRENT_FIELDS) or any(not value for value in row.values()):
             raise ValueError("Invalid current false-positive review record")
@@ -152,9 +152,16 @@ def read_current_reviews(payload: bytes) -> list[dict[str, str]]:
             raise ValueError("Individual false-positive evidence is missing")
         if not set(CURRENT_CONFIGURATION).issubset(context) or row["path"] not in context:
             raise ValueError("False-positive review omits source or scanner configuration")
-        identity = (row["repository"], int(row["alert"]))
+        incident = (row["repository"], int(row["alert"]))
+        identity = (*incident, row["category"])
         if identity in seen:
             raise ValueError("Duplicate false-positive review identity")
+        # GitHub selects either completed analysis as the latest instance. Each
+        # category needs an explicit decision over the same reviewed incident.
+        decision = {key: value for key, value in row.items() if key != "category"}
+        if incident in incidents and (row["tool"] != "CodeQL" or incidents[incident] != decision):
+            raise ValueError("Conflicting false-positive review categories")
+        incidents[incident] = decision
         seen.add(identity)
         rows.append(row)
     return rows
@@ -240,17 +247,24 @@ def match_current_false_positives(root: Path, alerts: list[dict], commit: str, r
     policy = blob(commit, CURRENT_POLICY)
     if source_digest(root, CURRENT_POLICY) != hashlib.sha256(policy.replace(b"\r\n", b"\n")).hexdigest():
         raise ValueError("Current false-positive ledger differs from the audited commit")
-    rows = {int(row["alert"]): row for row in read_current_reviews(policy) if row["repository"] == repository}
+    rows = {
+        (int(row["alert"]), row["category"]): row
+        for row in read_current_reviews(policy)
+        if row["repository"] == repository
+    }
     accepted, seen = [], set()
     for alert in alerts:
         number = alert.get("number")
         if type(number) is not int or number <= 0 or number in seen:
             raise ValueError("Invalid or duplicate hosted alert identity")
         seen.add(number)
-        row = rows.get(number)
+        tool, instance = alert.get("tool", {}), alert.get("most_recent_instance", {})
+        category = instance.get("category")
+        if not isinstance(category, str):
+            continue
+        row = rows.get((number, category))
         if row is None or alert.get("state") not in ("open", "dismissed"):
             continue
-        tool, instance = alert.get("tool", {}), alert.get("most_recent_instance", {})
         if (tool.get("name"), tool.get("version"), instance.get("category"), alert.get("rule", {}).get("id")) != tuple(
             row[key] for key in ("tool", "version", "category", "rule")
         ):

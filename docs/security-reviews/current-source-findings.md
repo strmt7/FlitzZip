@@ -51,6 +51,16 @@ The retained native qualification covers those unchanged consumers. Only these
 exact report identities admit the new scanner version; further version or source
 changes expire them again.
 
+GitHub can choose either completed CPU or HIP-host analysis as an alert's
+`most_recent_instance`. Both complete analyses of
+e42a5883bb3bc4891702816c46fc6a70bca1fd43 reproduced these eight findings at the
+same locations. Each finding's source, lifetime or sentinel rationale and
+consumer evidence was reviewed against that revision. The ledger now records
+both exact categories for each incident; all other fields must agree. This
+removes an analysis-order dependency without admitting another scanner version,
+category, location, source or caller. The matcher rejects conflicting category
+records, and regression tests alternate which reviewed analysis arrives last.
+
 ## Individual Decisions
 
 ### Alert 819

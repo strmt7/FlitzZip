@@ -143,6 +143,7 @@ Assert-NativeCi ($workflow.Contains('configuration: Debug') -and $workflow.Conta
 Assert-NativeCi ([regex]::Matches($workflow, 'DISPATCH_BASE: \$\{\{ inputs\.comparison_base \}\}').Count -eq 2 -and
     [regex]::Matches($workflow, '-DispatchBase \$env:DISPATCH_BASE').Count -eq 2) 'planning and execution share the reviewed manual base'
 Assert-NativeCi ($workflow.Contains('tools/security_scan.ps1') -and $workflow.Contains("matrix.os == 'windows-2022'")) 'selected policy checks remain without duplicating compiler-independent scans'
+Assert-NativeCi ($workflow.Contains("!(matrix.coverage && steps.native_plan.outputs.native_coverage == 'true')")) 'the matrix runs inside Debug coverage or standalone, never both'
 $hipWorkflow = Get-Content -LiteralPath (Join-Path $root '.github/workflows/rocm-qualification.yml') -Raw
 Assert-NativeCi ($hipWorkflow.Contains('--require-hip') -and $hipWorkflow.Contains("inputs.runner || 'windows-2025-vs2026'")) 'automatic HIP compilation uses an explicit runner and actual required-HIP receipt'
 $entry = Join-Path $PSScriptRoot 'ci_native_plan.ps1'

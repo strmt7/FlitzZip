@@ -9,6 +9,7 @@ import json
 import os
 import re
 import stat
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -20,6 +21,18 @@ from tools.native_coverage_report import normalize_report
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "tools/native-coverage-toolchain.json"
+SCENARIO_INPUTS = (
+    "tools/native_coverage.py",
+    "tools/native_coverage_report.py",
+    "tools/native-coverage-toolchain.json",
+    "mcp/flitzzip_mcp.py",
+    "tools/test_memory_benchmark_plan.ps1",
+    "tools/test_memory_benchmark_corpus.ps1",
+    "tools/bench.ps1",
+    "tools/benchmark_statistics.ps1",
+    "tools/benchmark_corpus.ps1",
+    "tools/format_matrix_smoke.ps1",
+)
 
 
 # Purpose: Hash complete regular files without allocating their full contents.
@@ -161,7 +174,52 @@ def provision(lock: dict, output: Path) -> Path:
     return verify_collector(directory, lock["files"])
 
 
-# Purpose: Measure the real native registry in its existing symbols-enabled CPU build.
+# Purpose: Bind measured executables, their symbols and scenario drivers to complete immutable identities.
+# Inputs: Existing Debug output and fixed repository scenario paths. Outputs: Complete path-to-digest map.
+def measurement_identity() -> dict[str, str]:
+    binaries = (
+        f"build/Debug/{name}.{extension}" for name in ("flitzzip_tests", "flitzzip_cli") for extension in ("exe", "pdb")
+    )
+    return {name: digest(owned_path(ROOT, ROOT / name)) for name in (*binaries, *SCENARIO_INPUTS)}
+
+
+# Purpose: Exercise the native registry and existing CLI failure/readback contracts under one collector tree.
+# Inputs: Current CPU Debug build and owned evidence directory. Outputs: Per-scenario diagnostics; any failure stops.
+def run_scenarios(output: Path) -> None:
+    current = validate_current(ROOT, "Debug", False)
+    if current["recipe"]["FLITZZIP_ENABLE_HIP"] != "OFF":
+        raise ValueError("CPU coverage scenarios require HIP OFF")
+    binary = ROOT / "build/Debug"
+    scenarios = [
+        ("registry", [str(binary / "flitzzip_tests.exe")]),
+        ("cli-help", [str(binary / "flitzzip_cli.exe"), "--help"]),
+        ("cli-version", [str(binary / "flitzzip_cli.exe"), "--version"]),
+    ]
+    for name, script in (
+        ("plan", "test_memory_benchmark_plan.ps1"),
+        ("corpus", "test_memory_benchmark_corpus.ps1"),
+        ("formats", "format_matrix_smoke.ps1"),
+    ):
+        scenarios.append(
+            (
+                "cli-" + name,
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(ROOT / "tools" / script),
+                    "-Configuration",
+                    "Debug",
+                ],
+            )
+        )
+    for name, arguments in scenarios:
+        run_checked(arguments, 900 if name == "registry" else 300, output / f"{name}-process.json")
+
+
+# Purpose: Measure the native registry and CLI contracts in their existing symbols-enabled CPU build.
 # Inputs: Current successful build receipt and verified collector.
 # Outputs: Normalized Cobertura and source-bound metadata.
 def collect(collector: Path, lock: dict, output: Path) -> None:
@@ -169,10 +227,7 @@ def collect(collector: Path, lock: dict, output: Path) -> None:
     if before["recipe"]["FLITZZIP_ENABLE_HIP"] != "OFF":
         raise ValueError("The native CPU coverage lane requires HIP OFF; GPU qualification runs separately")
     binary = ROOT / "build/Debug"
-    executable = binary / "flitzzip_tests.exe"
-    executable_hash = digest(executable)
-    pdb = binary / "flitzzip_tests.pdb"
-    pdb_hash = digest(pdb)
+    identities = measurement_identity()
     raw = output / "native-raw.xml"
     run_checked(
         [
@@ -188,16 +243,16 @@ def collect(collector: Path, lock: dict, output: Path) -> None:
             "--export_type",
             f"cobertura:{raw}",
             "--",
-            str(executable),
+            sys.executable,
+            "-B",
+            "-m",
+            "tools.native_coverage",
+            "--run-scenarios",
         ],
         900,
         output / "native-process.json",
     )
-    if (
-        validate_current(ROOT, "Debug", False) != before
-        or digest(pdb) != pdb_hash
-        or digest(executable) != executable_hash
-    ):
+    if validate_current(ROOT, "Debug", False) != before or measurement_identity() != identities:
         raise ValueError("Native source, binary or symbols changed during coverage measurement")
     verify_collector(collector.parent, lock["files"])
     summary = normalize_report(raw, output / "native.xml", ROOT)
@@ -206,7 +261,14 @@ def collect(collector: Path, lock: dict, output: Path) -> None:
         for name in before["receipt"]["inputs"]["files"]
         if name.startswith("src/") and Path(name).suffix in {".c", ".cpp", ".h", ".hpp"}
     }
-    required = {"src/core/archive_format.cpp", "src/core/path_safety.cpp", "src/zip/zip_adapter.cpp"}
+    required = {
+        "src/core/archive_format.cpp",
+        "src/core/path_safety.cpp",
+        "src/zip/zip_adapter.cpp",
+        "src/cli/main.cpp",
+        "src/cli/memory_benchmark.cpp",
+        "src/cli/memory_benchmark_source.cpp",
+    }
     if not required.issubset(summary["files"]):
         raise ValueError("Coverage missed required native parser, filesystem or ZIP consumers")
     record = {
@@ -217,8 +279,9 @@ def collect(collector: Path, lock: dict, output: Path) -> None:
         "native_receipt_sha256": before["receipt_sha256"],
         "collector_version": lock["version"],
         "toolchain_sha256": digest(LOCK),
-        "test_pdb_sha256": pdb_hash,
-        "test_binary_sha256": executable_hash,
+        "test_pdb_sha256": identities["build/Debug/flitzzip_tests.pdb"],
+        "test_binary_sha256": identities["build/Debug/flitzzip_tests.exe"],
+        "measurement_inputs": identities,
         "report_sha256": digest(output / "native.xml"),
         "unmeasured_source_files": sorted(source_files - set(summary["files"])),
         **summary,
@@ -240,12 +303,17 @@ def collect(collector: Path, lock: dict, output: Path) -> None:
 # Inputs: Optional provisioning-only flag. Outputs: Verified tool or measured report; unsupported hosts fail explicitly.
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provision-only", action="store_true")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--provision-only", action="store_true")
+    modes.add_argument("--run-scenarios", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if os.name != "nt":
         raise ValueError("Native coverage uses the Windows MSVC/PDB collector")
     output = owned_path(ROOT, ROOT / "out/coverage")
     output.mkdir(parents=True, exist_ok=True)
+    if args.run_scenarios:
+        run_scenarios(output)
+        return
     lock = json.loads(LOCK.read_text(encoding="utf-8-sig"))
     collector = provision(lock, output)
     if args.provision_only:
