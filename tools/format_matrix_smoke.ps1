@@ -46,15 +46,15 @@ function ConvertTo-MatrixArgument {
 }
 
 # Purpose: Execute one matrix command without leaking its native exit code to the host shell.
-# Inputs: FilePath/Arguments select the executable; FixtureRoot optionally requests native fixture export.
+# Inputs: FilePath/Arguments select the executable; optional fixture paths select export and working directory.
 # Outputs: Returns exit code and captured lines; throws on launch failure or the two-minute deadline.
 function Invoke-MatrixProcess {
-    param([string]$FilePath, [string[]]$Arguments, [string]$FixtureRoot = "")
+    param([string]$FilePath, [string[]]$Arguments, [string]$FixtureRoot = "", [string]$WorkingDirectory = "")
 
     $start = [System.Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $FilePath
     $start.Arguments = (($Arguments | ForEach-Object { ConvertTo-MatrixArgument -Value $_ }) -join ' ')
-    $start.WorkingDirectory = $repo
+    $start.WorkingDirectory = if ($WorkingDirectory) { $WorkingDirectory } else { $repo }
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
     $start.RedirectStandardOutput = $true
@@ -81,15 +81,16 @@ function Invoke-MatrixProcess {
 }
 
 # Purpose: Run the FlitzZip CLI and fail with captured output on nonzero exit.
-# Inputs: `Arguments` are passed verbatim and `Label` names the operation.
+# Inputs: Arguments are passed verbatim, Label names the operation, and WorkingDirectory selects an owned fixture.
 # Outputs: Returns combined output lines or throws with the native exit code.
 function Invoke-FlitzZipMatrixCommand {
     param(
         [string[]]$Arguments = @(),
-        [Parameter(Mandatory = $true)][string]$Label
+        [Parameter(Mandatory = $true)][string]$Label,
+        [string]$WorkingDirectory = ""
     )
 
-    $result = Invoke-MatrixProcess -FilePath $cli -Arguments $Arguments
+    $result = Invoke-MatrixProcess -FilePath $cli -Arguments $Arguments -WorkingDirectory $WorkingDirectory
     if ($result.ExitCode -ne 0) {
         throw "$Label failed with exit code $($result.ExitCode). Output: $($result.Output -join "`n")"
     }
@@ -97,16 +98,17 @@ function Invoke-FlitzZipMatrixCommand {
 }
 
 # Purpose: Run a FlitzZip CLI command that must fail with a specific diagnostic fragment.
-# Inputs: `Arguments` are passed verbatim, `Label` names the operation, and `ExpectedText` is matched in output.
+# Inputs: Arguments, diagnostic fragment, label and optional owned fixture working directory.
 # Outputs: Returns normally only when the command fails and reports the expected text.
 function Invoke-ExpectedMatrixFailure {
     param(
         [string[]]$Arguments = @(),
         [Parameter(Mandatory = $true)][string]$Label,
-        [Parameter(Mandatory = $true)][string]$ExpectedText
+        [Parameter(Mandatory = $true)][string]$ExpectedText,
+        [string]$WorkingDirectory = ""
     )
 
-    $result = Invoke-MatrixProcess -FilePath $cli -Arguments $Arguments
+    $result = Invoke-MatrixProcess -FilePath $cli -Arguments $Arguments -WorkingDirectory $WorkingDirectory
     $output = $result.Output
     if ($result.ExitCode -eq 0) {
         throw "$Label unexpectedly succeeded. Output: $($output -join "`n")"
@@ -114,6 +116,114 @@ function Invoke-ExpectedMatrixFailure {
     if (($output -join "`n") -notmatch [regex]::Escape($ExpectedText)) {
         throw "$Label failed without expected diagnostic '$ExpectedText'. Output: $($output -join "`n")"
     }
+}
+
+# Purpose: Reject invalid archive and resource arguments before publication or native execution.
+# Inputs: Root is an owned temporary fixture directory; all payloads together remain below 4 KiB.
+# Outputs: Checks exact failure causes, unchanged existing bytes and absence of unexpected output files.
+function Test-MatrixCliArgumentRejection {
+    param([string]$Root)
+    New-Item -ItemType Directory -Path $Root | Out-Null
+    $source = Join-Path $Root '--not-a-real-option'
+    $sentinel = Join-Path $Root 'existing.zip'
+    [IO.File]::WriteAllText($source, 'a real filename must not turn a misspelled option into an input')
+    [IO.File]::WriteAllText($sentinel, 'existing archive bytes must survive argument rejection')
+    $original = (Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash
+    $create = @('compress', '--format', 'zip', '--output', (Join-Path $Root 'unexpected.zip'))
+    Invoke-ExpectedMatrixFailure -Arguments ($create + '--not-a-real-option') -WorkingDirectory $Root `
+        -Label 'Compression option typo with a matching existing filename' -ExpectedText 'unknown compress argument'
+    $cases = [Collections.Generic.List[object]]::new()
+    foreach ($command in @('compress', 'extract', 'verify')) {
+        foreach ($value in @('', '-1', '+1', '1x', '0x10', ' 1', '4294967296', '18446744073709551616')) {
+            $cases.Add(@{ args = @($command, '--workers', $value); cause = 'invalid value for --workers' })
+        }
+        foreach ($option in @('--workers', '--inflight')) {
+            $cases.Add(@{ args = @($command, $option); cause = "missing value for $option" })
+        }
+        $cases.Add(@{ args = @($command, '--not-a-real-option'); cause = "unknown $command argument" })
+    }
+    foreach ($command in @('compress', 'memory-benchmark', 'benchmark-suite')) {
+        foreach ($value in @('', '-1', '0', '10', '2147483648', '1x')) {
+            $cases.Add(@{ args = @($command, '--compression-level', $value); cause = 'invalid value for --compression-level' })
+        }
+        foreach ($value in @('0', '255', '257', '4294967295')) {
+            $cases.Add(@{ args = @($command, '--block-size-kib', $value); cause = 'unsupported block size' })
+        }
+        foreach ($option in @('--compression-level', '--block-size-kib')) {
+            $cases.Add(@{ args = @($command, $option); cause = "missing value for $option" })
+        }
+    }
+    foreach ($command in @('gpu-diagnostic', 'memory-benchmark', 'benchmark-suite')) {
+        $cases.Add(@{ args = @($command, '--not-a-real-option'); cause = "unknown $command argument" })
+    }
+    foreach ($value in @('0', '31', '2147483648')) {
+        $cases.Add(@{ args = @('gpu-diagnostic', '--seconds', $value); cause = 'invalid value for --seconds' })
+    }
+    foreach ($command in @('compress', 'extract')) {
+        foreach ($option in @('--format', '--output')) {
+            $cases.Add(@{ args = @($command, $option); cause = "missing value for $option" })
+        }
+        $cases.Add(@{ args = @($command, '--require-gpu', '--force-cpu', '--output', $sentinel, $source); cause = 'mutually exclusive' })
+    }
+    $cases.Add(@{ args = @('verify', '--require-gpu', '--force-cpu', $source); cause = 'mutually exclusive' })
+    $cases.Add(@{ args = @('compress', '--format', 'auto', '--output', $sentinel, $source); cause = 'only supported for extraction' })
+    $cases.Add(@{ args = @('compress', '--format', 'invalid', '--output', $sentinel, $source); cause = 'unknown archive format' })
+    $cases.Add(@{ args = @('compress', '--neutron-star', '--force-cpu'); cause = 'excludes --force-cpu' })
+    $cases.Add(@{ args = @('compress', '--neutron-star', '--compression-level', '8'); cause = 'requires compression level 9' })
+    $cases.Add(@{ args = @('compress', '--neutron-star', '--format', 'zip', '--output', $sentinel, $source); cause = 'only for native FLZIP' })
+    foreach ($case in $cases) {
+        Invoke-ExpectedMatrixFailure -Arguments $case.args -Label ($case.args -join ' ') -ExpectedText $case.cause
+    }
+    foreach ($arguments in @(
+            @('--help', 'extra'), @('--version', 'extra'), @('formats', 'extra'),
+            @('gpu-info', 'extra'), @('dependency-check', 'extra'), @('identify'),
+            @('compress'), @('extract'), @('verify'), @('not-a-command')
+        )) {
+        $result = Invoke-MatrixProcess -FilePath $cli -Arguments $arguments
+        if ($result.ExitCode -ne 2 -or ($result.Output -join "`n") -notmatch 'Usage:') {
+            throw "Invalid command shape did not report usage with exit code 2: $arguments"
+        }
+    }
+    if ((Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash -cne $original -or
+        @(Get-ChildItem -LiteralPath $Root -Force).Count -ne 2) {
+        throw 'Argument rejection changed existing bytes or published unexpected output.'
+    }
+    Write-Output "cli_arguments rejection_cases=$($cases.Count + 11) status=passed"
+}
+
+# Purpose: Preserve literal option-shaped filenames through the standard end-of-options boundary.
+# Inputs: Root is an owned fixture directory; two tiny files and one ZIP are created and read back independently.
+# Outputs: Compression, verification and extraction agree on positional arguments; extra archives remain rejected.
+function Test-MatrixCliLiteralPath {
+    param([string]$Root)
+    New-Item -ItemType Directory -Path $Root | Out-Null
+    foreach ($name in @('--output', 'space and trailing.txt')) {
+        [IO.File]::WriteAllText((Join-Path $Root $name), "literal fixture: $name")
+    }
+    $archive = Join-Path $Root '--archive.zip'
+    Invoke-FlitzZipMatrixCommand -WorkingDirectory $Root -Label 'Literal path compression' `
+        -Arguments @('compress', '--format', 'zip', '--verify-after-write', '--sha256', '--output', $archive,
+            '--', '--output', 'space and trailing.txt') | Out-Null
+    $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $verification = Invoke-FlitzZipMatrixCommand -WorkingDirectory $Root -Label 'Literal path verification' `
+        -Arguments @('verify', '--sha256', '--', '--archive.zip')
+    if ($verification -cnotcontains "integrity_sha256=$archiveHash") { throw 'CLI SHA-256 disagrees with the independent digest.' }
+    $output = Join-Path $Root 'readback'
+    Invoke-FlitzZipMatrixCommand -WorkingDirectory $Root -Label 'Literal path extraction' `
+        -Arguments @('extract', '--output', $output, '--sha256', '--validate-before-publish', '--', '--archive.zip') | Out-Null
+    foreach ($name in @('--output', 'space and trailing.txt')) {
+        Test-MatrixFileMatch -ExpectedFile (Join-Path $Root $name) -ActualFile (Join-Path $output $name)
+    }
+    foreach ($command in @('extract', 'verify')) {
+        foreach ($tail in @(@('--'), @('--', '--archive.zip', '--archive.zip'), @($archive, '--', '--archive.zip'))) {
+            Invoke-ExpectedMatrixFailure -WorkingDirectory $Root -Arguments (@($command) + $tail) `
+                -Label "Literal path count for $command" -ExpectedText "$command accepts exactly one archive"
+        }
+    }
+    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $archiveHash) {
+        throw 'Verification or extraction modified its source archive.'
+    }
+    Write-Output 'cli_arguments literal_paths=passed independent_sha256=passed'
 }
 
 # Purpose: Parse one `flitzzip_cli formats` line into structured metadata.
@@ -503,6 +613,8 @@ if (-not $work.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreC
 }
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 try {
+    Test-MatrixCliArgumentRejection -Root (Join-Path $work 'argument-rejection')
+    Test-MatrixCliLiteralPath -Root (Join-Path $work 'literal-paths')
     Test-MatrixUnicodePath -Root (Join-Path $work 'unicode')
     Test-MatrixLegacyName -Root (Join-Path $work 'legacy-names')
     $fixtures = Initialize-FormatMatrixFixture -Root (Join-Path $work "fixtures")

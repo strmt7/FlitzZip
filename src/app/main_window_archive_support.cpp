@@ -10,6 +10,7 @@
 #include "cab/cab_adapter.hpp"
 #include "core/archive.hpp"
 #include "core/archive_format.hpp"
+#include "core/com_task_string.hpp"
 #include "core/file_publish.hpp"
 #include "core/result.hpp"
 #include "cpio/cpio_adapter.hpp"
@@ -849,13 +850,12 @@ std::filesystem::path app_storage_directory() {
     if (smoke_redirect_length == 1 && smoke_redirect[0] == L'1') {
         return std::filesystem::temp_directory_path() / L"FlitzZip";
     }
-    PWSTR local_app_data = nullptr;
-    const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &local_app_data);
-    if (FAILED(result) || local_app_data == nullptr) {
+    CoTaskMemWideString local_app_data;
+    const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, local_app_data.put());
+    if (FAILED(result) || local_app_data.get() == nullptr) {
         throw ArchiveError("could not resolve Local AppData for settings");
     }
-    std::filesystem::path path(local_app_data);
-    CoTaskMemFree(local_app_data);
+    std::filesystem::path path(local_app_data.get());
     return path / L"FlitzZip";
 }
 

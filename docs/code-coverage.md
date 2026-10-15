@@ -15,6 +15,8 @@ against the same build. CLI coverage includes help/version entry points and the
 existing planning, invalid-input, binary-stdin and exact round-trip contracts,
 plus the complete registry-driven archive format matrix. The Debug CI lane runs
 that matrix inside collection; the Release lane retains its standalone check.
+The matrix also checks option rejection without output changes, literal filenames
+after `--`, and CLI SHA-256 against an independently calculated digest.
 These correctness workloads retain their bounds; their timing is not performance
 evidence. A failed scenario stops collection and retains its diagnostics.
 There is no extra compilation or coverage runner. Collector changes select this
@@ -38,6 +40,11 @@ Codecov receives only `out/coverage/native.xml`, using GitHub OIDC and a pinned
 action/CLI. Upload failures fail the check. Fork pull requests retain the report
 as an artifact and omit the authenticated upload. No repository upload token is
 stored in source or workflow configuration.
+
+Codecov applies its documented [report adjustments](https://docs.codecov.com/docs/fixing-reports),
+including removing C++ brace-only lines. Its displayed totals can therefore
+differ from the retained collector report. Compare like-for-like measurements
+and report the actual Codecov result separately from raw collector totals.
 
 `summary.json` lists every measured zero-hit line by file and the native source
 files absent from the report. The latter inventory comes from the same frozen

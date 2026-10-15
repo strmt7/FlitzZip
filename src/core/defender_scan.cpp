@@ -1,5 +1,6 @@
 #include "core/defender_scan.hpp"
 
+#include "core/com_task_string.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -60,13 +61,12 @@ class UniqueHandle {
 // Inputs: `folder_id` is the requested known folder and `fallback` is used when Windows cannot resolve it.
 // Outputs: Returns a nonempty absolute folder path without trusting mutable process environment variables.
 std::filesystem::path known_folder_path(REFKNOWNFOLDERID folder_id, const std::filesystem::path& fallback) {
-    PWSTR raw_path = nullptr;
-    const HRESULT result = SHGetKnownFolderPath(folder_id, KF_FLAG_DEFAULT, nullptr, &raw_path);
-    if (FAILED(result) || raw_path == nullptr) {
+    CoTaskMemWideString raw_path;
+    const HRESULT result = SHGetKnownFolderPath(folder_id, KF_FLAG_DEFAULT, nullptr, raw_path.put());
+    if (FAILED(result) || raw_path.get() == nullptr) {
         return fallback;
     }
-    std::filesystem::path path(raw_path);
-    CoTaskMemFree(raw_path);
+    std::filesystem::path path(raw_path.get());
     return path.empty() ? fallback : path;
 }
 

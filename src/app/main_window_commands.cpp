@@ -1,5 +1,6 @@
 #include "app/main_window_impl.hpp"
 
+#include "core/com_task_string.hpp"
 #include "core/path_text.hpp"
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
@@ -69,43 +70,6 @@ template <typename Interface> class ComPtr final {
     }
 
     Interface* value_ = nullptr;
-};
-
-class CoTaskMemWideString final {
-  public:
-    CoTaskMemWideString(const CoTaskMemWideString&) = delete;
-    CoTaskMemWideString& operator=(const CoTaskMemWideString&) = delete;
-
-    // Purpose: Create an empty task-allocator string wrapper.
-    // Inputs: None.
-    // Outputs: Stores a null string pointer.
-    CoTaskMemWideString() = default;
-
-    // Purpose: Release a shell string allocated with `CoTaskMemAlloc`.
-    // Inputs: None.
-    // Outputs: Calls `CoTaskMemFree` for a non-null pointer.
-    ~CoTaskMemWideString() {
-        CoTaskMemFree(value_);
-    }
-
-    // Purpose: Prepare this wrapper as an output parameter for shell APIs.
-    // Inputs: None.
-    // Outputs: Frees the current string and returns storage for a new pointer.
-    PWSTR* put() noexcept {
-        CoTaskMemFree(value_);
-        value_ = nullptr;
-        return &value_;
-    }
-
-    // Purpose: Access the stored shell string.
-    // Inputs: None.
-    // Outputs: Returns the UTF-16 pointer without transferring ownership.
-    [[nodiscard]] PWSTR get() const noexcept {
-        return value_;
-    }
-
-  private:
-    PWSTR value_ = nullptr;
 };
 
 // Purpose: Format an HRESULT for concise diagnostics.
