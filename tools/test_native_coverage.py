@@ -192,9 +192,12 @@ class CoverageTests(unittest.TestCase):
     def test_collection_rejects_changed_test_executable(self):
         binary = self.root / "build/Debug"
         binary.mkdir(parents=True)
-        (binary / "flitzzip_tests.pdb").write_bytes(b"fixed symbol fixture")
-        executable = binary / "flitzzip_tests.exe"
-        executable.write_bytes(b"original test fixture")
+        for name in ("flitzzip_tests.exe", "flitzzip_tests.pdb", "flitzzip_cli.exe", "flitzzip_cli.pdb"):
+            (binary / name).write_bytes(b"original native fixture")
+        for name in collector.SCENARIO_INPUTS:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"original scenario fixture")
         before = {
             "recipe": {"FLITZZIP_ENABLE_HIP": "OFF"},
             "inputs_sha256": "a" * 64,
@@ -202,10 +205,10 @@ class CoverageTests(unittest.TestCase):
             "receipt": {"inputs": {"files": {}}},
         }
 
-        # Purpose: Model an external process changing only the test executable after launch.
-        # Inputs: Collector command boundary. Outputs: Changed fixture bytes without changing symbols.
+        # Purpose: Model external substitution after the collector captures its initial evidence identity.
+        # Inputs: Collector boundary and current subtest path. Outputs: A changed binary, symbols or scenario.
         def substitute(*_args):
-            executable.write_bytes(b"substituted test fixture")
+            target.write_bytes(b"substituted fixture")
 
         with (
             patch.object(collector, "ROOT", self.root),
@@ -214,10 +217,47 @@ class CoverageTests(unittest.TestCase):
             patch.object(collector, "verify_collector"),
             patch.object(collector, "normalize_report") as normalize,
         ):
-            with self.assertRaisesRegex(ValueError, "changed during coverage"):
-                collector.collect(self.root / "collector.exe", {"files": {}}, self.root)
+            for name in (
+                "build/Debug/flitzzip_tests.exe",
+                "build/Debug/flitzzip_cli.exe",
+                "build/Debug/flitzzip_cli.pdb",
+                "tools/test_memory_benchmark_corpus.ps1",
+            ):
+                target = self.root / name
+                original = target.read_bytes()
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, "changed during coverage"):
+                    collector.collect(self.root / "collector.exe", {"files": {}}, self.root)
+                target.write_bytes(original)
             normalize.assert_not_called()
         self.assertFalse((self.root / "summary.json").exists())
+
+    # Purpose: Stop collection at every failed scenario without running later commands or rebuilding binaries.
+    # Inputs: CPU Debug receipt and independent subprocess failures at each scenario boundary.
+    # Outputs: The original failure propagates, only preceding scenarios run, and each has retained diagnostics.
+    def test_scenario_failure_stops_collection(self):
+        before = {"recipe": {"FLITZZIP_ENABLE_HIP": "OFF"}}
+        expected = ("registry", "cli-help", "cli-version", "cli-plan", "cli-corpus", "cli-formats")
+        with (
+            patch.object(collector, "ROOT", self.root),
+            patch.object(collector, "validate_current", return_value=before),
+        ):
+            for failure_at in range(len(expected)):
+                outcomes = [None] * failure_at + [RuntimeError("scenario failure")]
+                with patch.object(collector, "run_checked", side_effect=outcomes) as run:
+                    with self.assertRaisesRegex(RuntimeError, "scenario failure"):
+                        collector.run_scenarios(self.root)
+                    self.assertEqual(run.call_count, failure_at + 1)
+                    self.assertEqual(
+                        [call.args[2].name for call in run.call_args_list],
+                        [name + "-process.json" for name in expected[: failure_at + 1]],
+                    )
+                    for call in run.call_args_list[3:]:
+                        self.assertEqual(call.args[0][0], "powershell.exe")
+                        self.assertEqual(call.args[0][-2:], ["-Configuration", "Debug"])
+            before["recipe"]["FLITZZIP_ENABLE_HIP"] = "ON"
+            with patch.object(collector, "run_checked") as run, self.assertRaisesRegex(ValueError, "HIP OFF"):
+                collector.run_scenarios(self.root)
+            run.assert_not_called()
 
 
 if __name__ == "__main__":

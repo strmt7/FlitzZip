@@ -348,6 +348,51 @@ class CurrentFalsePositiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate"):
             self.match([self.alert, self.alert])
 
+    # Purpose: Make independently reviewed CPU/HIP decisions stable under GitHub completion ordering.
+    # Inputs: Two explicit category records and alternating latest-instance responses.
+    # Outputs: Either reviewed instance matches; another category or changed location remains blocking.
+    def test_explicit_analysis_categories_are_order_independent(self):
+        other_category = "/language:c-cpp/configuration:hip-host"
+        other = {**self.row, "category": other_category}
+        output = io.StringIO(newline="")
+        writer = csv.DictWriter(output, fieldnames=review.CURRENT_FIELDS, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows([other, self.row])
+        (self.root / review.CURRENT_POLICY).write_text(output.getvalue(), encoding="utf-8", newline="\n")
+        self.commit = self.save_commit()
+        for category in (self.row["category"], other_category, self.row["category"], other_category):
+            self.alert["most_recent_instance"]["category"] = category
+            self.assertEqual(self.match(), [17])
+        self.alert["most_recent_instance"]["category"] = "/language:c-cpp/configuration:unreviewed"
+        self.assertEqual(self.match(), [])
+        self.alert["most_recent_instance"]["category"] = other_category
+        self.alert["most_recent_instance"]["location"]["end_column"] += 1
+        self.assertEqual(self.match(), [])
+        self.alert["most_recent_instance"]["location"]["end_column"] -= 1
+        self.alert["tool"]["version"] = "next-scanner"
+        self.assertEqual(self.match(), [])
+
+    # Purpose: Prevent category alternatives from introducing conflicting source or scanner decisions.
+    # Inputs: A second category with each non-category field independently changed.
+    # Outputs: Every ambiguous incident fails policy parsing instead of selecting one record by order.
+    def test_conflicting_analysis_categories_are_rejected(self):
+        for field, value in (
+            ("input_sha256", "f" * 64),
+            ("context_sha256", "e" * 64),
+            ("version", "another-version"),
+            ("rule", "cpp/another-rule"),
+            ("end_column", "7"),
+            ("path", "src/caller.c"),
+            ("tool", "devskim"),
+        ):
+            other = {**self.row, "category": "/language:c-cpp/configuration:hip-host", field: value}
+            output = io.StringIO(newline="")
+            writer = csv.DictWriter(output, fieldnames=review.CURRENT_FIELDS, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows([self.row, other])
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "Conflicting"):
+                review.read_current_reviews(output.getvalue().encode("utf-8"))
+
     # Purpose: Expire decisions on source, caller, scanner configuration and evidence changes.
     # Inputs: Successive committed mutations without renewing the review.
     # Outputs: Every mutation keeps the existing report unresolved.

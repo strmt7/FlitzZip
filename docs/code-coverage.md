@@ -10,18 +10,25 @@ The existing Windows 2022 CI build uses unoptimized `Debug` binaries and matchin
 PDB symbols, avoiding inlining and removed-code distortions in line mapping.
 The Windows 2025 build keeps `Release`; HIP qualification
 remains separate. After the selected correctness checks, OpenCppCoverage runs the
-complete native test registry, including child processes, against the same build.
+complete native test registry and CLI contracts, including child processes,
+against the same build. CLI coverage includes help/version entry points and the
+existing planning, invalid-input, binary-stdin and exact round-trip contracts,
+plus the complete registry-driven archive format matrix. The Debug CI lane runs
+that matrix inside collection; the Release lane retains its standalone check.
+These correctness workloads retain their bounds; their timing is not performance
+evidence. A failed scenario stops collection and retains its diagnostics.
 There is no extra compilation or coverage runner. Collector changes select this
 hosted consumer; offline collector tests do not silently rebuild the product.
 
-The collector selects first-party `src` files linked into the native test
-executable. It publishes their measured executable lines, including zero-hit
-lines. GUI/CLI executable-only paths, Python/PowerShell tooling, and GPU device
+The collector selects first-party `src` files linked into the native test and
+CLI executables. It publishes their measured executable lines, including zero-hit
+lines. GUI executable-only paths, Python/PowerShell tooling, and GPU device
 instructions are not measured by this report. Do not describe this
 number as whole-repository, branch, or GPU coverage.
 
-`tools/native_coverage.py` verifies the native build receipt, test executable and
-symbols before and after collection. `tools/native_coverage_report.py` rejects empty, foreign,
+`tools/native_coverage.py` verifies the native build receipt, both measured
+executables, their symbols and scenario drivers before and after collection.
+`tools/native_coverage_report.py` rejects empty, foreign,
 ambiguous, malformed, or source-inconsistent reports and normalizes paths without
 changing measured hits. The workflow retains raw XML, normalized XML, diagnostics,
 and source/tool identities for seven days. Inspect the `native-cpu-coverage`
