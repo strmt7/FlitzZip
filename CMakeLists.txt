@@ -887,6 +887,7 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_compound_block.cpp
     tests/cpp/test_byte_plane_block.cpp
     tests/cpp/test_archive_verification.cpp
+    tests/cpp/test_archive_metadata_failures.cpp
     tests/cpp/test_integrity.cpp
     tests/cpp/test_archive_format.cpp
     tests/cpp/test_ar_compat.cpp
@@ -894,6 +895,7 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_arc_compat.cpp
     tests/cpp/test_arj_compat.cpp
     tests/cpp/test_base64_compat.cpp
+    tests/cpp/test_transfer_failures.cpp
     tests/cpp/test_bzip2_compat.cpp
     tests/cpp/test_compression_streams.cpp
     tests/cpp/test_entropy_sampling.cpp

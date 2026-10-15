@@ -1,6 +1,7 @@
 #include "test_util.hpp"
 
 #include "core/result.hpp"
+#include "gzip/gzip_adapter.hpp"
 #include "tar/tar_adapter.hpp"
 
 #include <algorithm>
@@ -94,8 +95,10 @@ void append_tar_fixture_record(std::ostream& output, const std::array<char, 512>
 }
 
 // Purpose: Test rejection before publication while retaining an unrelated existing destination file.
-// Inputs: One malformed TAR and its owned destination. Outputs: Product error with no new paths or changed bytes.
-void require_tar_fixture_rejected(const std::filesystem::path& archive, const std::filesystem::path& destination) {
+// Inputs: One malformed TAR, its owned destination and optional Gzip transport.
+// Outputs: Product error with no new paths or changed bytes.
+void require_tar_fixture_rejected(const std::filesystem::path& archive, const std::filesystem::path& destination,
+                                  bool gzip = false) {
     std::filesystem::create_directories(destination);
     const auto sentinel = destination / "existing.txt";
     {
@@ -104,7 +107,11 @@ void require_tar_fixture_rejected(const std::filesystem::path& archive, const st
     }
     bool rejected = false;
     try {
-        (void)flitzzip::extract_tar(archive, destination, false);
+        if (gzip) {
+            (void)flitzzip::extract_tar_gzip(archive, destination, false);
+        } else {
+            (void)flitzzip::extract_tar(archive, destination, false);
+        }
     } catch (const flitzzip::Error&) {
         rejected = true;
     }
@@ -373,4 +380,60 @@ TEST_CASE(tar_extraction_refuses_overwrite_by_default) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
+}
+
+// Purpose: Keep seekable and filtered TAR admission consistent at partial header/payload/padding boundaries.
+// Inputs: Independently constructed one-member TAR truncated at each structural edge.
+// Outputs: Both readers reject before publication; an unrelated original file remains unchanged.
+TEST_CASE(tar_structural_truncations_reject_in_both_readers) {
+    const auto root = test_temp_dir("tar-structural-truncations");
+    const auto archive = root / "truncated.tar";
+    const auto compressed = root / "truncated.tar.gz";
+    for (const std::uintmax_t length : {1U, 511U, 512U, 513U, 514U, 515U, 1023U}) {
+        write_one_entry_tar(archive, "payload.txt", '0', "abc");
+        std::filesystem::resize_file(archive, length);
+        (void)flitzzip::compress_gzip_file(archive, compressed);
+        require_tar_fixture_rejected(archive, root / "out");
+        require_tar_fixture_rejected(compressed, root / "out", true);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Apply a GNU long filename once while consuming global extension metadata identically in both passes.
+// Inputs: Independent TAR records containing a global comment, GNU long name, file and sibling file.
+// Outputs: Plain and Gzip readers restore both correct paths and bytes without leaking extension names as entries.
+TEST_CASE(tar_global_and_long_name_metadata_match_between_passes) {
+    const auto root = test_temp_dir("tar-extensions-both-passes");
+    const auto archive = root / "extended.tar";
+    const auto compressed = root / "extended.tar.gz";
+    const std::string global = "16 comment=note\n";
+    const std::string long_name("restored.txt\0", 13);
+    {
+        std::ofstream output(archive, std::ios::binary);
+        append_tar_fixture_record(output, make_test_tar_header("GlobalHead", 'g', global.size()), global);
+        append_tar_fixture_record(output, make_test_tar_header("LongName", 'L', long_name.size()), long_name);
+        append_tar_fixture_record(output, make_test_tar_header("placeholder", '0', 3), "abc");
+        append_tar_fixture_record(output, make_test_tar_header("sibling.txt", '0', 3), "xyz");
+        const std::array<char, 1024> end{};
+        output.write(end.data(), end.size());
+        REQUIRE_TRUE(output.good());
+    }
+    (void)flitzzip::compress_gzip_file(archive, compressed);
+    for (const bool gzip : {false, true}) {
+        const auto destination = root / (gzip ? "filtered" : "plain");
+        const auto stats = gzip ? flitzzip::extract_tar_gzip(compressed, destination, false)
+                                : flitzzip::extract_tar(archive, destination, false);
+        REQUIRE_EQ(stats.entries, 2U);
+        REQUIRE_EQ(stats.output_bytes, 6U);
+        for (const auto& [name, expected] :
+             std::array<std::pair<const char*, const char*>, 2>{{{"restored.txt", "abc"}, {"sibling.txt", "xyz"}}}) {
+            std::ifstream input(destination / name, std::ios::binary);
+            REQUIRE_TRUE(input.is_open());
+            const std::string bytes(std::istreambuf_iterator<char>(input), {});
+            REQUIRE_EQ(bytes, expected);
+        }
+        REQUIRE_EQ(
+            std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}), 2);
+    }
+    std::filesystem::remove_all(root);
 }
