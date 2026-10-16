@@ -318,96 +318,53 @@ disposition, scanner exclusion or source-pin removal followed this review.
 
 ## Scanner Dependency Remediation
 
-On 2026-09-30, OSV and Grype reported PyJWT 2.13.0 in
-`.github/requirements/requirements-semgrep-linux.txt`. The affected package is
-CI scanner tooling, not a dependency shipped in the FlitzZip application.
-[PyJWT's newer pre-verification advisory](https://github.com/advisories/GHSA-42vr-xj54-vc7v)
-requires at least 2.15.0; the latest stable PyJWT checked on 2026-10-01 is 2.15.1.
-At that point Semgrep 1.178.0 declared `pyjwt[crypto]~=2.13.0`, excluding that version.
+The Semgrep environment is CI/development tooling. It is not shipped with the
+native FlitzZip application. Its complete dependency graph is hash-locked in
+`.github/requirements/requirements-semgrep-linux.txt`; installation uses normal
+resolution followed by `pip check`, actual consumer regressions, and the full
+scanner with its tracked coverage audit.
 
-The Linux CPython 3.14 target was checked with uv's dependency resolver:
-`semgrep==1.178.0` together with a patched PyJWT is unsatisfiable. The
-[upstream constraint issue](https://github.com/semgrep/semgrep/issues/11925)
-remains open. The maintainer explicitly authorized compatibility investigation
-and production promotion on 2026-10-01. An isolated, non-root CPython 3.14.7
-Linux run compared the original dependency graph with PyJWT 2.15.1. Normal
-installation and `pip check` passed for the baseline; the experimental child
-upgrade correctly reported the published metadata conflict. Runtime controls
-passed for both: signed HMAC/RSA decode, invalid signatures/expiry, the actual
-Semgrep MCP token-verifier call sites with local JWKS, CLI positive/negative
-controls and SARIF output. No credentials or live authentication service were used.
+[The MCP session-retention advisory](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv)
+is fixed in official MCP 1.30.0. Semgrep 1.181.0 still requires exactly MCP
+1.29.0, so those official distributions cannot be installed together normally.
+The repository identifies its narrow downstream packaging revision as
+`semgrep==1.181.0+flitzzip.mcp1`. This is not an official Semgrep release.
+The pinned artifact manifest records the original and derived Linux/Windows
+x64 wheels. `tools/semgrep_distribution.py` validates the complete original
+wheel and RECORD, then changes only the distribution version and MCP requirement.
+Scanner source, executables, other requirements, executable permissions, licenses
+and notices remain unchanged. The version displayed by scanner code continues
+to identify its upstream source; installed distribution metadata identifies the
+downstream packaging revision.
 
-The paired repository scans used 1,086 frozen `p/default` and `p/github-actions`
-rules and the same 638-file working-tree snapshot. Both reported the same 619
-scanned paths, zero Semgrep findings and 71 identical parsing/matching diagnostics.
-These diagnostics are coverage limits, not proof of a vulnerability-free tree.
-Other scanners and all current GitHub alerts remain required.
+The builder generates standard wheel records and deterministic stored ZIP members.
+It checks the derived digest before publication and refuses existing output
+directories. CI installs that exact wheel with the official fixed MCP release
+through normal hash-checked dependency resolution. It does not edit an installed
+environment or suppress the advisory. PyJWT remains on its official fixed release;
+its malformed-token and actual Semgrep token-verifier regressions remain required.
 
-The October 1 production workflow built the explicit downstream distribution
-`semgrep==1.178.0+flitzzip.1` through a reviewed wheel builder. The
-official upstream wheel and its RECORD are verified before transformation.
-Every code/notice byte stays unchanged; the distribution version and requirement
-become the reviewed local identity and `pyjwt[crypto]==2.15.1`. Complete RECORD
-hashes and dist-info paths are rebuilt. The hash-locked install uses normal
-dependency resolution, then `pip check` and `tools.test_semgrep_runtime`, before
-the unchanged full scan. There is no production dependency-check bypass,
-installed-metadata edit, scanner removal or alert suppression. The native app
-does not acquire a Python dependency.
+The packaging contract tests corrupt source records, metadata drift, unsafe member
+names, network extent/hash mismatches, output collisions and Windows/Linux metadata
+line endings. Runtime tests and the full hosted scan qualify the actual consumer;
+an offline packaging test alone does not establish compatibility or alert closure.
+Retire this packaging revision when a compatible official Semgrep release passes
+the same installation, runtime and scanner coverage checks. Historical experiments
+remain in Git history and ignored local evidence, not in the current instructions.
 
-The local production-path execution on CPython 3.14.7 passed normal hashed
-installation, `pip check`, all five runtime tests and the full frozen-rule scan:
-625 scanned paths, zero findings and the same 71 known diagnostics. Windows
-CPython 3.12.14 and Linux CPython 3.14.7 produced the identical derived wheel
-SHA-256 recorded in the lock. Eight offline packaging/configuration tests cover
-payload and notice parity, complete RECORD hashes, repeatability, corrupted
-inputs, metadata drift, collision refusal and the actual production workflow.
-
-The advisory regression follows
-[PyJWT's deterministic cross-version test](https://github.com/jpadilla/pyjwt/commit/9bc06658f875b9b40091539140bbbdc4639161c3),
-not an assumed interpreter nesting limit. A differential control reproduced
-uncaught `RecursionError` for PyJWT 2.13.0 and contained `DecodeError` for 2.15.1
-through both direct pre-verification decode and the JWKS consumer, with no
-network access. A live OSV query on 2026-10-01 returned no advisories matching
-PyJWT 2.15.1. This is local package/runtime evidence, not GitHub alert closure.
-
-On October 2, official Semgrep 1.179.0 changed its declaration to
-`pyjwt[crypto]>=2.15.0,<3`. The current production workflow therefore uses that
-unmodified official release with PyJWT 2.15.1. Its complete hash lock resolves
-for Linux CPython 3.14; non-root Linux CPython 3.14.7 installation, `pip check`
-and all five runtime tests pass without dependency overrides. The obsolete
-wheel builder, local distribution manifest and `--find-links` are removed.
-Offline installation tests retain input/lock parity, per-dependency hashes and
-no-bypass workflow contracts. Coverage audits, runtime controls and the full
-scanner remain mandatory; no scanner, rule or alert is suppressed by this update.
-
-The official-release scan used a new 677-file frozen working-tree snapshot and
-the current registry configurations: 1,075 loaded rules, 493 applicable rules,
-658 admitted files, zero findings and valid SARIF 2.1.0. The complete inventory
-audit reports no unscanned source paths and 43 parsing/matching diagnostics.
-Remaining non-source omissions are binary artwork and provenance archives;
-compiled dependency coverage belongs to the separate build-traced analysis.
-The changed snapshot and registry contents prevent treating these numbers as a
-controlled improvement over the earlier 71 diagnostics. Admission and zero
-findings do not prove complete parsing or absence of vulnerabilities.
-An October 2 OSV batch query returned no matching advisories for all 66 packages
-in the refreshed scanner lock. All 31 full-profile local checks also pass; these
-results do not establish hosted workflow or alert acceptance.
-
-Local Linux verification uses the same installation and runtime commands as CI:
+Local Linux verification uses the same steps as CI, in fresh owned directories:
 
 ```sh
-python -m unittest tools.test_semgrep_installation
+python -m unittest tools.test_semgrep_installation tools.test_semgrep_distribution
+python -m tools.semgrep_distribution --output /tmp/flitzzip-semgrep-distribution
 python -m venv /tmp/flitzzip-semgrep
-/tmp/flitzzip-semgrep/bin/python -m pip install --require-hashes --only-binary=:all: -r .github/requirements/requirements-semgrep-linux.txt
+/tmp/flitzzip-semgrep/bin/python -m pip install --require-hashes --only-binary=:all: --find-links /tmp/flitzzip-semgrep-distribution -r .github/requirements/requirements-semgrep-linux.txt
 /tmp/flitzzip-semgrep/bin/python -m pip check
 /tmp/flitzzip-semgrep/bin/python -m unittest tools.test_semgrep_runtime
 ```
 
-Hosted remediation is not confirmed until the exact pushed commit passes its
-scanner workflows and the post-push audit shows the affected alerts fixed.
-The earlier downstream revision remains historical evidence, not the current
-installation or an official release. CI tooling does not add a Python dependency
-to FlitzZip's native runtime.
+Hosted remediation is complete only after the exact pushed commit passes its
+scanner workflows and the post-push audit verifies the current alert instances.
 
 ## Required GitHub Repository Settings
 

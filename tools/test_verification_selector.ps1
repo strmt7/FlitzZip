@@ -394,7 +394,7 @@ foreach ($path in @("tools/devskim_report.py", "tools/test_devskim_report.py")) 
     Assert-Selector (-not (Test-RequiredCommand -Plan $reportPlan -Id "release-build")) "scanner report changes alone must not rebuild the product: $path"
 }
 
-foreach ($path in @("tools/test_semgrep_installation.py", "tools/test_semgrep_runtime.py", ".github/requirements/requirements-semgrep-linux.in", ".github/requirements/requirements-semgrep-linux.txt", ".github/workflows/security-code-scanning.yml")) {
+foreach ($path in @("tools/test_semgrep_installation.py", "tools/test_semgrep_runtime.py", "tools/semgrep_distribution.py", "tools/test_semgrep_distribution.py", ".github/requirements/semgrep-distribution.json", ".github/requirements/requirements-semgrep-linux.in", ".github/requirements/requirements-semgrep-linux.txt", ".github/workflows/security-code-scanning.yml")) {
     $scannerPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path)
     Assert-Selector (Test-RequiredCommand -Plan $scannerPlan -Id "scanner-installation-tests") "scanner changes require official pin, hash and production-install regressions: $path"
     Assert-Selector (Test-Workflow -Plan $scannerPlan -Name "security") "scanner changes require Linux runtime checks in the hosted security workflow: $path"

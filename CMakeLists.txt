@@ -785,6 +785,7 @@ if(FLITZZIP_BUILD_GUI AND WIN32)
     src/app/main.cpp
     src/app/main_window.cpp
     src/app/main_window_archive_support.cpp
+    src/app/settings_json.cpp
     src/app/main_window_commands.cpp
     src/app/main_window_controls.cpp
     src/app/main_window_dragdrop.cpp
@@ -820,6 +821,8 @@ if(FLITZZIP_BUILD_GUI AND WIN32)
             uxtheme
             dwmapi
             ole32
+            oleaut32
+            RuntimeObject
             gdiplus
             pdh
             psapi)
@@ -927,6 +930,8 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_macbinary_compat.cpp
     tests/cpp/test_log_retention.cpp
     tests/cpp/test_settings_migration.cpp
+    tests/cpp/test_settings_json.cpp
+    src/app/settings_json.cpp
     tests/cpp/test_folder_size_cache.cpp
     tests/cpp/test_queue_metadata.cpp
     src/app/queue_metadata.cpp
@@ -971,7 +976,8 @@ if(FLITZZIP_BUILD_TESTS)
       FLITZZIP_TEST_GUI_BUILT=$<TARGET_EXISTS:FlitzZip>
       FLITZZIP_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
   add_executable(flitzzip_tests $<TARGET_OBJECTS:flitzzip_test_objects>)
-  target_link_libraries(flitzzip_tests PRIVATE flitzzip_core gdi32 user32)
+  target_link_libraries(flitzzip_tests PRIVATE flitzzip_core gdi32 user32
+                                               oleaut32 RuntimeObject)
   flitzzip_copy_zstd_runtime(flitzzip_tests)
   flitzzip_copy_wimlib_runtime(flitzzip_tests)
   add_dependencies(flitzzip_tests flitzzip_cli)

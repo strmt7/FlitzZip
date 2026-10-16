@@ -1,9 +1,10 @@
-"""Offline gates for official scanner pins and the production hash-locked install."""
+"""Offline gates for identified scanner pins and the production hash-locked install."""
 
 import re
 import shlex
 import unittest
 
+from tools.semgrep_distribution import recipe
 from tools.test_semgrep_runtime import REQUIREMENTS, pinned_version
 
 EXTRAS_PATTERN = r"(?:\[[a-z0-9][a-z0-9_-]*(?:,[a-z0-9][a-z0-9_-]*)*\])?"
@@ -26,7 +27,7 @@ def validate_requirements_options(contents: str) -> None:
             name, value = "--only-binary", ":all:"
             index += 1
         elif re.fullmatch(r"--hash=sha256:[a-f0-9]{64}", token) or re.fullmatch(
-            rf"[a-z][a-z0-9-]*{EXTRAS_PATTERN}(?:==|>=)[0-9][a-zA-Z0-9.-]*", token
+            rf"[a-z][a-z0-9-]*{EXTRAS_PATTERN}(?:==|>=)[0-9][a-zA-Z0-9.+-]*", token
         ):
             index += 1
             continue
@@ -49,7 +50,7 @@ def validate_locked_packages(contents: str) -> set[str]:
     packages: set[str] = set()
     index = 4
     while index < len(tokens):
-        package = re.fullmatch(rf"([a-z0-9-]+){EXTRAS_PATTERN}==([0-9][a-zA-Z0-9.-]*)", tokens[index])
+        package = re.fullmatch(rf"([a-z0-9-]+){EXTRAS_PATTERN}==([0-9][a-zA-Z0-9.+-]*)", tokens[index])
         if package is None or package[1] in packages:
             raise ValueError("Invalid or duplicate locked distribution")
         packages.add(package[1])
@@ -63,14 +64,20 @@ def validate_locked_packages(contents: str) -> set[str]:
 
 
 class InstallationTests(unittest.TestCase):
-    # Purpose: Keep direct scanner/JWT pins aligned with the complete official dependency lock.
-    # Inputs: tracked requirements input and lock. Outputs: matching identities without local metadata revisions.
+    # Purpose: Keep the reviewed scanner packaging revision and official fixed dependencies aligned.
+    # Inputs: Requirements, artifact provenance and complete lock. Outputs: Exact identities and derived hashes.
     def test_official_configuration_parity(self):
         source = (REQUIREMENTS / "requirements-semgrep-linux.in").read_text(encoding="utf-8")
         locked = (REQUIREMENTS / "requirements-semgrep-linux.txt").read_text(encoding="utf-8")
         for package in ("semgrep", "pyjwt"):
             self.assertEqual(pinned_version(source, package), pinned_version(locked, package))
-            self.assertNotIn("+", pinned_version(locked, package))
+        data = recipe()
+        self.assertEqual(pinned_version(locked, "semgrep"), data["version"])
+        self.assertEqual(pinned_version(locked, "mcp"), data["mcp_after"])
+        self.assertIn("mcp>=" + data["mcp_after"], source)
+        for pin in data["wheels"].values():
+            self.assertIn("--hash=sha256:" + pin["derived_sha256"], locked)
+        self.assertNotIn("+", pinned_version(locked, "pyjwt"))
         self.assertIn("pyjwt[crypto]==", source)
         for contents in (source, locked):
             validate_requirements_options(contents)
@@ -140,6 +147,9 @@ class InstallationTests(unittest.TestCase):
         )
         for command in (
             "python -m unittest tools.test_semgrep_installation",
+            "tools.test_semgrep_distribution",
+            'python -m tools.semgrep_distribution --output "$RUNNER_TEMP/semgrep-distribution"',
+            '--find-links "$RUNNER_TEMP/semgrep-distribution"',
             "--require-hashes",
             "--only-binary=:all:",
             "-r .github/requirements/requirements-semgrep-linux.txt",

@@ -1,7 +1,7 @@
 --index-url https://pypi.org/simple
 --only-binary=:all:
-semgrep==1.179.0
+semgrep==1.181.0+flitzzip.mcp1
 pyjwt[crypto]==2.15.1
 # Advisory floors still apply to the complete resolved graph.
 cryptography>=50.0.2
-mcp>=1.28.1
+mcp>=1.30.0
