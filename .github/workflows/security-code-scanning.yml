@@ -294,12 +294,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m unittest tools.test_semgrep_installation
+          python -m unittest tools.test_semgrep_installation tools.test_semgrep_distribution
+          python -m tools.semgrep_distribution --output "$RUNNER_TEMP/semgrep-distribution"
           python -m venv "$RUNNER_TEMP/semgrep"
           "$RUNNER_TEMP/semgrep/bin/python" -m pip install \
             --disable-pip-version-check \
             --require-hashes \
             --only-binary=:all: \
+            --find-links "$RUNNER_TEMP/semgrep-distribution" \
             -r .github/requirements/requirements-semgrep-linux.txt
           "$RUNNER_TEMP/semgrep/bin/python" -m pip check
           "$RUNNER_TEMP/semgrep/bin/python" -m unittest tools.test_semgrep_runtime

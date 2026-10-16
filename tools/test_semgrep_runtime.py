@@ -17,6 +17,8 @@ from functools import partial
 from pathlib import Path
 from unittest.mock import patch
 
+from tools.semgrep_distribution import recipe
+
 REQUIREMENTS = Path(__file__).resolve().parents[1] / ".github/requirements"
 
 
@@ -51,14 +53,15 @@ class SemgrepRuntimeTests(unittest.TestCase):
             "exp": int(time.time()) + 300,
         }
 
-    # Purpose: Require the official locked scanner/JWT identities and a satisfied upstream dependency contract.
-    # Inputs: installed distribution metadata. Outputs: exact scanner/JWT identity and declaration assertions.
+    # Purpose: Require the identified scanner revision and official fixed MCP/JWT distributions.
+    # Inputs: Installed metadata and pinned recipe. Outputs: Exact identities and satisfied declared dependencies.
     def test_distribution_identity(self):
         from packaging.requirements import Requirement
         from packaging.version import Version
 
         self.assertEqual(importlib.metadata.version("semgrep"), self.scanner_version)
-        self.assertNotIn("+", self.scanner_version)
+        self.assertEqual(self.scanner_version, recipe()["version"])
+        self.assertEqual(importlib.metadata.version("mcp"), recipe()["mcp_after"])
         self.assertEqual(importlib.metadata.version("pyjwt"), self.jwt_version)
         requirements = [Requirement(item) for item in importlib.metadata.requires("semgrep")]
         jwt_requirements = [item for item in requirements if item.name.lower() == "pyjwt"]
@@ -190,6 +193,59 @@ class SemgrepRuntimeTests(unittest.TestCase):
             sarif = json.loads(completed.stdout)
             self.assertEqual(sarif["version"], "2.1.0")
             self.assertEqual(len(sarif["runs"][0]["results"]), 1)
+
+
+class McpSessionTests(unittest.IsolatedAsyncioTestCase):
+    # Purpose: Exercise the repaired session lifecycle through actual HTTP requests without sockets.
+    # Inputs: The installed official MCP implementation and two small initialized sessions.
+    # Outputs: Closed/refused sessions release their state; capacity recovers without restarting the server.
+    async def test_session_capacity_cleanup_and_reuse(self):
+        from httpx import ASGITransport, AsyncClient
+        from mcp.server.lowlevel import Server
+        from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+
+        manager = StreamableHTTPSessionManager(Server("session-fixture"), json_response=True, max_sessions=2)
+        headers = {"Accept": "application/json, text/event-stream"}
+        request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "clientInfo": {"name": "fixture", "version": "1"},
+                "capabilities": {},
+            },
+        }
+        async with (
+            manager.run(),
+            AsyncClient(
+                transport=ASGITransport(app=manager.handle_request), base_url="https://fixture.invalid"
+            ) as client,
+        ):
+            sessions = []
+            for _ in range(2):
+                response = await client.post("/", json=request, headers=headers)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["result"]["serverInfo"]["name"], "session-fixture")
+                sessions.append(response.headers["mcp-session-id"])
+            self.assertNotEqual(*sessions)
+            refused = await client.post("/", json=request, headers=headers)
+            self.assertEqual(refused.status_code, 503)
+            self.assertEqual(len(manager._server_instances), 2)
+            for session in sessions:
+                session_headers = {**headers, "mcp-session-id": session, "mcp-protocol-version": "2025-03-26"}
+                removed = await client.delete("/", headers=session_headers)
+                self.assertEqual(removed.status_code, 200, removed.text)
+                self.assertNotIn(session, manager._server_instances)
+                stale = await client.post("/", json=request, headers=session_headers)
+                self.assertEqual(stale.status_code, 404)
+            invalid = await client.post("/", json=request, headers={"Accept": "text/plain"})
+            self.assertEqual(invalid.status_code, 406)
+            self.assertEqual(manager._server_instances, {})
+            reopened = await client.post("/", json=request, headers=headers)
+            self.assertEqual(reopened.status_code, 200, reopened.text)
+            self.assertNotIn(reopened.headers["mcp-session-id"], sessions)
+        self.assertEqual(manager._server_instances, {})
 
 
 if __name__ == "__main__":

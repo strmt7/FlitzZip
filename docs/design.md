@@ -87,6 +87,31 @@ window now chooses its size from the monitor work area, within these tested
 minimum/preferred dimensions. This does not enable unrestricted user resizing
 or establish support for untested monitor configurations; see `docs/portability.md`.
 
+## Persisted Settings
+
+Settings are one UTF-8 JSON object, limited to 64 KiB and 64 container levels.
+An optional UTF-8 BOM is accepted. The
+[Windows JSON implementation](https://learn.microsoft.com/en-us/uwp/api/windows.data.json.jsonobject)
+decodes the
+document once; only typed top-level values can affect preferences. Nested keys,
+key-looking string values and malformed boolean prefixes cannot enable overwrite
+or change GPU policy. Unknown fields are ignored, and absent or incorrectly typed
+known fields use their documented defaults. Duplicate keys follow the platform's
+documented last-value rule. Whole numbers must fit an `int` before the setting's
+own bounds are applied.
+
+Invalid encoding, malformed documents, oversized content and read failures stop
+settings loading and are reported through the existing startup status/log path.
+Startup does not rewrite a file that failed to load. The parser releases its
+local Windows Runtime objects before balancing apartment initialization; parsed
+settings retain ordinary C++ values and no COM ownership. Activation requires the
+registered OS implementation and does not search for replacement DLLs. Existing schema and
+predecessor-file migration remain supported.
+
+Saving uses a unique private staging file and the core publication transaction.
+Writes, flushes and close must succeed before replacement. Failed saves preserve
+the previous settings file; no shared `.tmp` filename is truncated or removed.
+
 ## Queue Metadata
 
 Queue size/type cells and Extract/Verify candidate selection use display-only

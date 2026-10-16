@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "upstream_version": "1.181.0",
+  "version": "1.181.0+flitzzip.mcp1",
+  "mcp_before": "1.29.0",
+  "mcp_after": "1.30.0",
+  "advisory": "https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv",
+  "wheels": {
+    "linux": {
+      "filename": "semgrep-1.181.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-manylinux_2_34_x86_64.whl",
+      "url": "https://files.pythonhosted.org/packages/b0/1d/aed54e9cea5491f0dd54286126216f97ef817a356734d3c9d5e40c124c34/semgrep-1.181.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-manylinux_2_34_x86_64.whl",
+      "bytes": 70540779,
+      "sha256": "c142ec04a2ed144970cb0a92f6877651dd3c088505eec737bb7f4db7ae5f0ffa",
+      "derived_sha256": "35c54d467bb62b6a8506e0d4a68ea4f8b0b660affa743f9082ae348e9afe2add"
+    },
+    "windows": {
+      "filename": "semgrep-1.181.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/53/d0/c35c85e860b722b86108ecef78c104558d65fddb6d00e6e83be54b4b263b/semgrep-1.181.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-win_amd64.whl",
+      "bytes": 58091264,
+      "sha256": "c3d7295bfd26f994231d82145888bd0a73ef0ad66ffb0c0341f0350a90ac3136",
+      "derived_sha256": "0928014d5f442ab80134525ea0bd1716ab271944927d1e7719cda23b55e4eafb"
+    }
+  }
+}

@@ -2,6 +2,8 @@
 
 #include "app/log_policy.hpp"
 #include "app/log_retention.hpp"
+#include "app/settings_json.hpp"
+#include "app/settings_storage.hpp"
 #include "ar/ar_adapter.hpp"
 #include "arc/arc_adapter.hpp"
 #include "arj/arj_adapter.hpp"
@@ -36,7 +38,6 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <charconv>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -98,13 +99,10 @@ int migrate_settings_v1_compression_format_index(int old_index) {
 }
 
 // Purpose: Detect whether settings were written before extension-specific format rows existed.
-// Inputs: `json` is the settings document being parsed.
+// Inputs: `json` is the parsed settings object; only its top-level schema participates.
 // Outputs: Returns true for schema v1 or schema-less early settings.
-bool settings_uses_v1_format_rows(std::string_view json) {
-    if (json.find("\"flitzzip.settings.v1\"") != std::string_view::npos) {
-        return true;
-    }
-    return json.find("\"schema\"") == std::string_view::npos;
+bool settings_uses_v1_format_rows(const SettingsJson& json) {
+    return !json.contains(L"schema") || json.string_equals(L"schema", L"flitzzip.settings.v1");
 }
 
 }  // namespace
@@ -622,61 +620,6 @@ std::string json_string(std::string_view value) {
     return escaped;
 }
 
-// Purpose: Extract an integer setting from the versioned JSON config.
-// Inputs: `json`, `key`, and fallback/bounds define the accepted value.
-// Outputs: Returns a bounded integer or fallback; malformed scalars cannot consume an adjacent field's number.
-int json_int_setting(std::string_view json, std::string_view key, int fallback, int minimum, int maximum) {
-    const std::string quoted_key = json_string(key);
-    const auto key_pos = json.find(std::string_view(quoted_key));
-    if (key_pos == std::string_view::npos) {
-        return fallback;
-    }
-    const auto colon_pos = json.find(':', key_pos + quoted_key.size());
-    if (colon_pos == std::string_view::npos) {
-        return fallback;
-    }
-    const auto value_pos = json.find_first_not_of(" \t\r\n", colon_pos + 1U);
-    if (value_pos == std::string_view::npos) {
-        return fallback;
-    }
-    int parsed = 0;
-    const auto result = std::from_chars(json.data() + value_pos, json.data() + json.size(), parsed);
-    if (result.ec != std::errc{}) {
-        return fallback;
-    }
-    const auto end_pos = json.find_first_not_of(" \t\r\n", static_cast<std::size_t>(result.ptr - json.data()));
-    if (end_pos == std::string_view::npos || (json[end_pos] != ',' && json[end_pos] != '}')) {
-        return fallback;
-    }
-    return std::clamp(parsed, minimum, maximum);
-}
-
-// Purpose: Extract a boolean setting from the versioned JSON config.
-// Inputs: `json`, `key`, and `fallback` identify the setting and default.
-// Outputs: Returns the parsed boolean or fallback when the setting is absent/malformed.
-bool json_bool_setting(std::string_view json, std::string_view key, bool fallback) {
-    const std::string quoted_key = json_string(key);
-    const auto key_pos = json.find(std::string_view(quoted_key));
-    if (key_pos == std::string_view::npos) {
-        return fallback;
-    }
-    const auto colon_pos = json.find(':', key_pos + quoted_key.size());
-    if (colon_pos == std::string_view::npos) {
-        return fallback;
-    }
-    const auto value_pos = json.find_first_not_of(" \t\r\n", colon_pos + 1U);
-    if (value_pos == std::string_view::npos) {
-        return fallback;
-    }
-    if (json.substr(value_pos, 4) == "true") {
-        return true;
-    }
-    if (json.substr(value_pos, 5) == "false") {
-        return false;
-    }
-    return fallback;
-}
-
 // Purpose: Copy persisted settings into visible UI state.
 // Inputs: `settings` is already validated and `state` is the UI model to mutate.
 // Outputs: Updates Settings-owned fields without touching queue/history/runtime-only state.
@@ -744,48 +687,47 @@ bool settings_equal(const AppSettings& left, const AppSettings& right) {
 
 // Purpose: Parse a settings JSON document into a validated snapshot.
 // Inputs: `json` is the complete UTF-8 settings document.
-// Outputs: Returns defaulted settings, preserving legacy effort/publication preferences and ignoring obsolete no-op
-// keys.
+// Outputs: Returns typed/defaulted settings, preserving legacy effort/publication preferences and ignoring obsolete
+// keys. Rejects malformed documents before applying any field.
 AppSettings parse_settings_json(std::string_view json) {
+    const SettingsJson document(json);
     AppSettings settings;
-    const bool migrate_format_rows = settings_uses_v1_format_rows(json);
+    const bool migrate_format_rows = settings_uses_v1_format_rows(document);
     if (migrate_format_rows) {
-        const int v1_index = json_int_setting(json, "compressionFormatIndex", 0, 0,
+        const int v1_index = document.integer(L"compressionFormatIndex", 0, 0,
                                               static_cast<int>(kSettingsV1CompressionFormatExtensions.size()) - 1);
         settings.compression_format_index = migrate_settings_v1_compression_format_index(v1_index);
     } else {
-        settings.compression_format_index = json_int_setting(
-            json, "compressionFormatIndex", settings.compression_format_index, 0, kCompressionFormatMaxIndex);
+        settings.compression_format_index = document.integer(
+            L"compressionFormatIndex", settings.compression_format_index, 0, kCompressionFormatMaxIndex);
     }
-    const int legacy_effort_index = json_int_setting(json, "compressionLevelIndex", 2, 0, 4);
-    const int persisted_effort = json_int_setting(json, "compressionLevel", 2 * legacy_effort_index + 1,
-                                                  kMinCompressionLevel, kMaxCompressionLevel);
+    const int legacy_effort_index = document.integer(L"compressionLevelIndex", 2, 0, 4);
+    const int persisted_effort =
+        document.integer(L"compressionLevel", 2 * legacy_effort_index + 1, kMinCompressionLevel, kMaxCompressionLevel);
     settings.compression_level_index = persisted_effort - kMinCompressionLevel;
-    settings.compression_block_size_index = json_int_setting(
-        json, "compressionBlockSizeIndex", settings.compression_block_size_index, 0, kCompressionBlockSizeMaxIndex);
-    settings.log_level_index = json_int_setting(json, "logLevelIndex", settings.log_level_index, 0, 2);
-    settings.log_retention_index = json_int_setting(json, "logRetentionIndex", settings.log_retention_index, 0, 2);
+    settings.compression_block_size_index = document.integer(
+        L"compressionBlockSizeIndex", settings.compression_block_size_index, 0, kCompressionBlockSizeMaxIndex);
+    settings.log_level_index = document.integer(L"logLevelIndex", settings.log_level_index, 0, 2);
+    settings.log_retention_index = document.integer(L"logRetentionIndex", settings.log_retention_index, 0, 2);
     settings.performance_update_seconds = normalize_performance_update_seconds(
-        json_int_setting(json, "performanceUpdateSeconds", settings.performance_update_seconds, 1, 10));
+        document.integer(L"performanceUpdateSeconds", settings.performance_update_seconds, 1, 10));
     settings.open_destination_after_operation =
-        json_bool_setting(json, "openDestinationAfterOperation", settings.open_destination_after_operation);
-    settings.show_operation_summary = json_bool_setting(json, "showOperationSummary", settings.show_operation_summary);
-    settings.validate_before_publish =
-        json_bool_setting(json, "validateBeforePublish",
-                          json_bool_setting(json, "verifyMetadataBeforeExtract", settings.validate_before_publish));
+        document.boolean(L"openDestinationAfterOperation", settings.open_destination_after_operation);
+    settings.show_operation_summary = document.boolean(L"showOperationSummary", settings.show_operation_summary);
+    settings.validate_before_publish = document.boolean(
+        L"validateBeforePublish", document.boolean(L"verifyMetadataBeforeExtract", settings.validate_before_publish));
     settings.open_destination_after_extract =
-        json_bool_setting(json, "openDestinationAfterExtract", settings.open_destination_after_extract);
-    settings.gpu_required = json_bool_setting(json, "gpuRequired", settings.gpu_required);
-    if (json_bool_setting(json, "neutronStarMode", false) && persisted_effort == kMaxCompressionLevel &&
+        document.boolean(L"openDestinationAfterExtract", settings.open_destination_after_extract);
+    settings.gpu_required = document.boolean(L"gpuRequired", settings.gpu_required);
+    if (document.boolean(L"neutronStarMode", false) && persisted_effort == kMaxCompressionLevel &&
         settings.gpu_required &&
         compression_format_value(settings.compression_format_index) == ArchiveFormat::FlitzZip) {
         settings.compression_level_index = kNeutronCompressionLevelIndex;
     }
-    settings.overwrite = json_bool_setting(json, "overwrite", settings.overwrite);
-    settings.integrity_hash_opt_in = json_bool_setting(json, "integrityHashOptIn", settings.integrity_hash_opt_in);
-    settings.defender_scan_opt_in = json_bool_setting(json, "defenderScanOptIn", settings.defender_scan_opt_in);
-    settings.verify_after_write_opt_in =
-        json_bool_setting(json, "verifyAfterWriteOptIn", settings.verify_after_write_opt_in);
+    settings.overwrite = document.boolean(L"overwrite", settings.overwrite);
+    settings.integrity_hash_opt_in = document.boolean(L"integrityHashOptIn", settings.integrity_hash_opt_in);
+    settings.defender_scan_opt_in = document.boolean(L"defenderScanOptIn", settings.defender_scan_opt_in);
+    settings.verify_after_write_opt_in = document.boolean(L"verifyAfterWriteOptIn", settings.verify_after_write_opt_in);
     return settings;
 }
 
@@ -918,44 +860,28 @@ void append_log_file_entry(const std::filesystem::path& path, LogSeverity severi
 
 // Purpose: Read the per-user settings file when it exists.
 // Inputs: `path` is the settings file location.
-// Outputs: Returns parsed settings or defaults when the file is absent.
+// Outputs: Returns bounded, completely parsed settings or defaults only when the file is absent; read errors throw.
 AppSettings read_settings_file(const std::filesystem::path& path) {
     std::error_code ec;
-    if (!std::filesystem::exists(path, ec)) {
+    const bool exists = std::filesystem::exists(path, ec);
+    if (ec) {
+        throw ArchiveError("could not inspect settings file");
+    }
+    if (!exists) {
         return {};
     }
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         throw ArchiveError("could not open settings file for reading");
     }
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-    return parse_settings_json(buffer.str());
+    return parse_settings_json(read_settings_json_text(input));
 }
 
-// Purpose: Atomically write the per-user settings file.
+// Purpose: Publish the per-user settings file through a private, verified file transaction.
 // Inputs: `path` is the target file and `settings` is the validated snapshot.
-// Outputs: Creates the settings directory and replaces the target with deterministic JSON.
+// Outputs: Replaces the target with completely written JSON; failed saves preserve the preceding file.
 void write_settings_file(const std::filesystem::path& path, const AppSettings& settings) {
-    std::filesystem::create_directories(path.parent_path());
-    const auto temporary = path.parent_path() / (path.filename().wstring() + L".tmp");
-    {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        if (!output) {
-            throw ArchiveError("could not open settings file for writing");
-        }
-        const auto json = settings_to_json(settings);
-        output.write(json.data(), static_cast<std::streamsize>(json.size()));
-        if (!output) {
-            throw ArchiveError("could not write complete settings file");
-        }
-    }
-    if (!MoveFileExW(temporary.wstring().c_str(), path.wstring().c_str(),
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        std::error_code cleanup_ec;
-        std::filesystem::remove(temporary, cleanup_ec);
-        throw ArchiveError("could not replace settings file atomically");
-    }
+    publish_settings_json(path, settings_to_json(settings));
 }
 
 // Purpose: Return the visible history operation filter label.
