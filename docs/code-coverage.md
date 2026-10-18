@@ -108,6 +108,14 @@ failure-recovery assertions. Keep device instructions and unmeasured executables
 visible until a suitable measurement mechanism is qualified. Resource exhaustion,
 driver hangs and destruction of host state are not acceptable coverage techniques.
 
+The local GUI/HIP-host collector has completed the full native registry, CLI
+contracts and all-page interactive smoke on the same source identity. Its captures
+were visually reviewed, including compact layouts, Neutron selection, overwrite
+confirmation, scrollable tables, monitor graphs and both license tabs. This
+qualifies those exercised paths; it does not make the remaining zero-hit lines
+covered. The current source-bound totals and inventories remain in the collector
+artifacts, rather than in reusable agent instructions.
+
 ## Device counter qualification
 
 HIP device measurement requires both compiler instrumentation and an AMDGPU
