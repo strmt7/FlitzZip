@@ -102,6 +102,23 @@ the public verification and extraction paths with independently framed records;
 malformed GPU block metadata must be rejected before decoder execution. These
 tests complement actual HIP execution and independent format interoperability.
 
+Native index I/O tests use independently packed wire bytes across every readable
+version. Forward-only streams exercise every truncation boundary without relying
+on seek-based size checks. Partial-seek fixtures also reject lost positions and
+require unsupported end queries to preserve the caller's exception policy and
+next unread byte. Bounded output streams fail at each byte position,
+checking error propagation with and without stream exceptions and exact wire
+output on success. Invalid identities and allocation counts fail before the
+affected metadata is consumed. These fixtures remain in RAM and do not simulate
+failure by exhausting storage or memory.
+
+The collector also runs the executable's CLI admission contracts. These reject
+malformed Unicode, integer overflow, missing values, unknown options and
+incompatible format/GPU settings before work begins. Each case checks the exit
+status, diagnostic, absence of success output and preservation of caller files;
+unexpected publication debris fails the run. The fixtures are small local
+correctness inputs, not benchmark workloads.
+
 The requested target is complete meaningful coverage. Work from the gap inventory
 in coherent behavior groups, retaining malformed-input, independent-oracle and
 failure-recovery assertions. Keep device instructions and unmeasured executables
