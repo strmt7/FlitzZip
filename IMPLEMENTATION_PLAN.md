@@ -59,6 +59,10 @@ request; this does not authorize publication of a replacement.
    retained incident evidence. The original watchdog dumps are unavailable, and
    retained event logs no longer cover the incident. Do not label the freeze
    resolved from successful later GPU tests.
+   A separate intermittent concurrent dictionary-encoding regression has also
+   produced bytes that disagree with the independent decoder's source oracle.
+   Isolate and repair that failure before release; subsequent passing isolated
+   runs do not close the original failure.
 3. **Finish source and release qualification.** Complete the remaining parser,
    extraction, codec, driver and kernel review, plus the required current
    source and dependency scanner audit. Qualify the final pushed SHA's

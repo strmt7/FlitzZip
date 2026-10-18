@@ -8,7 +8,11 @@
 #include <array>
 #include <cstdint>
 #include <fstream>
+#include <iterator>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -140,7 +144,238 @@ void checksum_tar_fixture(std::array<char, 512>& header) {
     header[155] = ' ';
 }
 
+// Purpose: Frame independent PAX test data without calling the product writer.
+// Inputs: Fixture keyword and value bytes. Outputs: A decimal-length record including its newline.
+std::string test_pax_record(std::string_view key, std::string_view value) {
+    const auto body = std::string(key) + "=" + std::string(value) + "\n";
+    for (auto length = body.size() + 2U;; ++length) {
+        const auto prefix = std::to_string(length) + " ";
+        if (prefix.size() + body.size() == length) {
+            return prefix + body;
+        }
+    }
+}
+
+// Purpose: Check exact output from the seekable reader and both passes of the compressed reader.
+// Inputs: Fixture archive, isolated output root and independently expected path/byte pairs.
+// Outputs: Requires identical contents, file count and size telemetry from both production entry points.
+void require_tar_fixture_contents(const std::filesystem::path& archive, const std::filesystem::path& root,
+                                  const std::vector<std::pair<std::filesystem::path, std::string>>& expected) {
+    const auto compressed = root / "input.tar.gz";
+    (void)flitzzip::compress_gzip_file(archive, compressed);
+    for (const bool gzip : {false, true}) {
+        const auto destination = root / (gzip ? "filtered" : "plain");
+        const auto stats = gzip ? flitzzip::extract_tar_gzip(compressed, destination, false)
+                                : flitzzip::extract_tar(archive, destination, false);
+        std::uint64_t bytes = 0;
+        for (const auto& [name, content] : expected) {
+            std::ifstream input(destination / name, std::ios::binary);
+            REQUIRE_TRUE(input.is_open());
+            REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), content);
+            bytes += content.size();
+        }
+        REQUIRE_EQ(stats.entries, expected.size());
+        REQUIRE_EQ(stats.output_bytes, bytes);
+        REQUIRE_EQ(static_cast<std::size_t>(std::distance(std::filesystem::directory_iterator(destination),
+                                                          std::filesystem::directory_iterator{})),
+                   expected.size());
+    }
+}
+
+// Purpose: Prove invalid metadata cannot publish files through either TAR reader.
+// Inputs: An owned fixture and output root. Outputs: Both parsers fail while preserving the destination sentinel.
+void require_tar_fixture_rejected_by_both(const std::filesystem::path& archive, const std::filesystem::path& root) {
+    const auto compressed = root / "input.tar.gz";
+    (void)flitzzip::compress_gzip_file(archive, compressed);
+    require_tar_fixture_rejected(archive, root / "plain");
+    require_tar_fixture_rejected(compressed, root / "filtered", true);
+}
+
 }  // namespace
+
+// Purpose: Prevent silent truncation and wrong header alignment when PAX overrides the USTAR size.
+// Inputs: Empty, short and block-crossing files with deliberately conflicting or invalid old size fields.
+// Outputs: Plain and compressed TAR readers restore exact bytes and leave the next entry unaffected.
+TEST_CASE(tar_pax_sizes_override_headers_without_leaking) {
+    const auto root = test_temp_dir("tar-pax-effective-size");
+    for (const auto size : {0U, 3U, 511U, 512U, 513U}) {
+        const auto work = root / std::to_string(size);
+        std::filesystem::create_directories(work);
+        const auto archive = work / "input.tar";
+        const auto metadata = test_pax_record("size", std::to_string(size));
+        const std::string payload(size, 'a');
+        {
+            std::ofstream output(archive, std::ios::binary);
+            append_tar_fixture_record(output, make_test_tar_header("PaxHeader", 'x', metadata.size()), metadata);
+            auto header = make_test_tar_header("payload", '0', 1U);
+            if (size == 512U) {
+                std::fill(header.begin() + 124, header.begin() + 136, '9');
+                checksum_tar_fixture(header);
+            }
+            append_tar_fixture_record(output, header, payload);
+            append_tar_fixture_record(output, make_test_tar_header("sibling", '0', 2U), "ok");
+        }
+        require_tar_fixture_contents(archive, work, {{"payload", payload}, {"sibling", "ok"}});
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Apply global sizes until changed or deleted while keeping per-file overrides local.
+// Inputs: A global size, local zero/nonzero sizes, another global value and a global deletion.
+// Outputs: Both readers agree on every file's independent byte oracle and subsequent header position.
+TEST_CASE(tar_pax_global_sizes_follow_scope_and_precedence) {
+    const auto root = test_temp_dir("tar-pax-global-sizes");
+    const auto archive = root / "input.tar";
+    const std::array<std::string_view, 5> records{"9 size=3\n", "9 size=0\n", "9 size=2\n", "9 size=1\n", "8 size=\n"};
+    {
+        std::ofstream output(archive, std::ios::binary);
+        append_tar_fixture_record(output, make_test_tar_header("Global", 'g', records[0].size()), records[0]);
+        append_tar_fixture_record(output, make_test_tar_header("first", '0', 1U), "abc");
+        append_tar_fixture_record(output, make_test_tar_header("Local", 'x', records[1].size()), records[1]);
+        append_tar_fixture_record(output, make_test_tar_header("empty", '0', 1U));
+        append_tar_fixture_record(output, make_test_tar_header("Local", 'x', records[2].size()), records[2]);
+        append_tar_fixture_record(output, make_test_tar_header("short", '0', 1U), "xy");
+        append_tar_fixture_record(output, make_test_tar_header("inherited", '0', 1U), "def");
+        append_tar_fixture_record(output, make_test_tar_header("Global", 'g', records[3].size()), records[3]);
+        append_tar_fixture_record(output, make_test_tar_header("changed", '0', 0U), "z");
+        append_tar_fixture_record(output, make_test_tar_header("Global", 'g', records[4].size()), records[4]);
+        append_tar_fixture_record(output, make_test_tar_header("original", '0', 2U), "ok");
+    }
+    require_tar_fixture_contents(
+        archive, root,
+        {{"first", "abc"}, {"empty", ""}, {"short", "xy"}, {"inherited", "def"}, {"changed", "z"}, {"original", "ok"}});
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Preserve PAX path/charset inheritance without leaking overrides into GNU or ordinary names.
+// Inputs: Global UTF-8 path, local replacement, global deletion and a GNU path with a local size override.
+// Outputs: Both extraction paths restore only the expected names and bytes.
+TEST_CASE(tar_pax_global_paths_and_gnu_names_preserve_encoding) {
+    const auto root = test_temp_dir("tar-pax-global-paths");
+    const auto archive = root / "input.tar";
+    const std::string name = "caf\xC3\xA9.txt";
+    const auto global = test_pax_record("path", name) + test_pax_record("hdrcharset", "ISO-IR 10646 2000 UTF-8");
+    const auto local = test_pax_record("path", "local.txt");
+    const auto reset = test_pax_record("path", "") + test_pax_record("hdrcharset", "");
+    const std::string long_name("gnu.txt\0", 8);
+    {
+        std::ofstream output(archive, std::ios::binary);
+        append_tar_fixture_record(output, make_test_tar_header("Global", 'g', global.size()), global);
+        append_tar_fixture_record(output, make_test_tar_header("ignored", '0', 1U), "a");
+        append_tar_fixture_record(output, make_test_tar_header("Local", 'x', local.size()), local);
+        append_tar_fixture_record(output, make_test_tar_header("ignored", '0', 1U), "b");
+        append_tar_fixture_record(output, make_test_tar_header("Global", 'g', reset.size()), reset);
+        append_tar_fixture_record(output, make_test_tar_header("ordinary", '0', 1U), "c");
+        append_tar_fixture_record(output, make_test_tar_header("Local", 'x', 9U), "9 size=2\n");
+        append_tar_fixture_record(output, make_test_tar_header("LongName", 'L', long_name.size()), long_name);
+        append_tar_fixture_record(output, make_test_tar_header("ignored", '0', 0U), "de");
+    }
+    require_tar_fixture_contents(
+        archive, root,
+        {{std::filesystem::path(u8"caf\u00e9.txt"), "a"}, {"local.txt", "b"}, {"ordinary", "c"}, {"gnu.txt", "de"}});
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject invalid PAX sizes and framing before an earlier valid file can be published.
+// Inputs: Decimal overflow, signed/trailing/empty values, duplicate fields and incomplete record bodies.
+// Outputs: Both reader paths fail atomically at the validation boundary with the existing sentinel intact.
+TEST_CASE(tar_pax_invalid_sizes_and_framing_prevent_publication) {
+    const auto root = test_temp_dir("tar-pax-invalid-size");
+    const auto archive = root / "input.tar";
+    std::vector<std::string> records{
+        "4 a\n", "5 =x\n", "1 \n", "8 size=\n", "9 size=3\n9 size=2\n", "21 hdrcharset=BINARY\n21 hdrcharset=BINARY\n"};
+    for (const auto value : {"-1", "+3", "3x", "3.0", " 3", "3 ", "18446744073709551616", "18446744073709551615"}) {
+        records.push_back(test_pax_record("size", value));
+    }
+    records.push_back(test_pax_record("size", std::string("3\0x", 3)));
+    for (const auto& metadata : records) {
+        {
+            std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+            append_tar_fixture_record(output, make_test_tar_header("before", '0', 1U), "a");
+            append_tar_fixture_record(output, make_test_tar_header("PaxHeader", 'x', metadata.size()), metadata);
+            append_tar_fixture_record(output, make_test_tar_header("payload", '0', 1U), "b");
+        }
+        require_tar_fixture_rejected_by_both(archive, root);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject unsupported sparse transformations and malformed global metadata instead of extracting corrupt bytes.
+// Inputs: GNU, Schily and Solaris sparse keys plus a malformed record in a global header.
+// Outputs: No ordinary or transformed entry is published through either reader.
+TEST_CASE(tar_pax_sparse_and_invalid_global_metadata_fail_closed) {
+    const auto root = test_temp_dir("tar-pax-unsupported-transform");
+    const auto archive = root / "input.tar";
+    for (const auto type : {'x', 'g'}) {
+        std::vector<std::string> records{"malformed", "4 a\n", test_pax_record("path", "../escape")};
+        for (const auto key : {"GNU.sparse", "GNU.sparse.map", "GNU.sparse.major", "GNU.sparse.realsize",
+                               "SCHILY.realsize", "SUN.holesdata"}) {
+            records.push_back(test_pax_record(key, "3"));
+        }
+        for (const auto& metadata : records) {
+            {
+                std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+                append_tar_fixture_record(output, make_test_tar_header("before", '0', 1U), "a");
+                append_tar_fixture_record(output, make_test_tar_header("Extension", type, metadata.size()), metadata);
+                append_tar_fixture_record(output, make_test_tar_header("payload", '0', 1U), "b");
+            }
+            require_tar_fixture_rejected_by_both(archive, root);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Prevent truncated archives ending in one-file extension metadata from reporting successful extraction.
+// Inputs: PAX/GNU metadata followed by EOF or an end marker, after an otherwise valid file.
+// Outputs: Both reader paths reject before publishing that earlier file.
+TEST_CASE(tar_dangling_local_extensions_are_truncation_errors) {
+    const auto root = test_temp_dir("tar-dangling-extension");
+    const auto archive = root / "input.tar";
+    for (const auto type : {'x', 'L'}) {
+        for (const bool end_marker : {false, true}) {
+            const std::string metadata = type == 'x' ? "9 size=3\n" : std::string("missing\0", 8);
+            {
+                std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+                append_tar_fixture_record(output, make_test_tar_header("before", '0', 1U), "a");
+                append_tar_fixture_record(output, make_test_tar_header("Extension", type, metadata.size()), metadata);
+                if (end_marker) {
+                    const std::array<char, 1024> end{};
+                    output.write(end.data(), end.size());
+                }
+            }
+            require_tar_fixture_rejected_by_both(archive, root);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Preserve GNU filename bytes so control characters cannot be trimmed into an accepted path.
+// Inputs: Names with literal trailing newlines, NUL padding, embedded NULs and a valid leading space.
+// Outputs: Unsafe names reject without output; both readers restore the exact valid name and payload.
+TEST_CASE(tar_gnu_long_names_preserve_significant_whitespace) {
+    const auto root = test_temp_dir("tar-gnu-name-bytes");
+    const auto archive = root / "input.tar";
+    const std::array<std::string, 5> invalid{"unsafe\n", std::string("unsafe\n\0", 8), std::string("unsafe\n\0\0", 9),
+                                             std::string("safe\0hidden", 11), "unsafe \n"};
+    for (const auto& name : invalid) {
+        {
+            std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+            append_tar_fixture_record(output, make_test_tar_header("LongName", 'L', name.size()), name);
+            append_tar_fixture_record(output, make_test_tar_header("ignored", '0', 1U), "x");
+        }
+        require_tar_fixture_rejected_by_both(archive, root);
+    }
+    const auto valid_root = root / "valid";
+    std::filesystem::create_directories(valid_root);
+    const std::string name(" leading.txt\0\0", 14);
+    {
+        std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+        append_tar_fixture_record(output, make_test_tar_header("LongName", 'L', name.size()), name);
+        append_tar_fixture_record(output, make_test_tar_header("ignored", '0', 1U), "x");
+    }
+    require_tar_fixture_contents(archive, valid_root, {{" leading.txt", "x"}});
+    std::filesystem::remove_all(root);
+}
 
 // Purpose: Reject malformed PAX framing and ambiguous path policy before any destination publication.
 // Inputs: Independently authored lengths, terminators, duplicate/empty paths and unsupported character sets.

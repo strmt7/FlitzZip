@@ -43,6 +43,9 @@ Broad size superiority and comparative GPU speed remain research targets.
 - The previously reported system freeze has no confirmed cause. The original
   watchdog dumps are unavailable, and retained event logs no longer cover the
   incident. Later successful GPU tests cannot establish that it is resolved.
+- Concurrent dictionary encoding has a separately reproduced byte-corruption
+  failure. Its root cause remains under investigation; passing isolated reruns
+  do not establish a repair or qualify a release.
 - Current source-analysis reports also require review even when GitHub retains
   an earlier dismissed state. The audit checks those current instances and does
   not equate a dismissal or an empty open-alert list with a production repair.

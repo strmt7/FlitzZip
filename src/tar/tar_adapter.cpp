@@ -21,6 +21,7 @@
 #include <limits>
 #include <optional>
 #include <sstream>
+#include <utility>
 
 namespace flitzzip {
 namespace {
@@ -53,9 +54,21 @@ struct TarWriteStats {
     std::uint64_t entries = 0;
 };
 
+struct TarPathOverride {
+    std::string bytes;
+    bool pax = true;
+};
+
 struct PendingTarExtensions {
-    std::optional<std::string> path;
-    ArchivePathEncoding encoding = ArchivePathEncoding::HostCodePage;
+    std::optional<TarPathOverride> path;
+    std::optional<ArchivePathEncoding> encoding;
+    std::optional<std::uint64_t> size;
+};
+
+struct TarExtensionState {
+    PendingTarExtensions global;
+    PendingTarExtensions local;
+    bool awaiting_entry = false;
 };
 
 // Purpose: Add two TAR byte counters while detecting unsigned wraparound.
@@ -448,15 +461,10 @@ void validate_tar_checksum(const std::array<char, kTarBlockSize>& header) {
     }
 }
 
-// Purpose: Return a validated TAR entry path from header fields and pending extension metadata.
-// Inputs: `header` contains USTAR fields and `pending` may contain a PAX/GNU long path override.
-// Outputs: Returns the path used for validation/extraction and clears one-shot path metadata.
-std::string tar_entry_path(const std::array<char, kTarBlockSize>& header, PendingTarExtensions& pending) {
-    if (pending.path.has_value()) {
-        auto path = *pending.path;
-        pending.path.reset();
-        return path;
-    }
+// Purpose: Read the path when no PAX or GNU extension overrides the USTAR fields.
+// Inputs: `header` contains the original name and prefix fields.
+// Outputs: Returns the combined path or throws for an empty entry name.
+std::string tar_entry_path(const std::array<char, kTarBlockSize>& header) {
     const auto name = read_tar_string(header, 0, 100);
     const auto prefix = read_tar_string(header, 345, 155);
     if (name.empty()) {
@@ -502,65 +510,91 @@ std::string read_tar_metadata_payload(std::istream& input, std::uint64_t size) {
     return payload;
 }
 
-// Purpose: Parse POSIX PAX records relevant to secure extraction.
-// Inputs: `payload` is a bounded PAX extended-header payload.
-// Outputs: Returns pending one-shot path metadata; ignores unrelated keys.
-PendingTarExtensions parse_pax_payload(const std::string& payload) {
-    PendingTarExtensions parsed;
-    parsed.encoding = ArchivePathEncoding::Utf8;
+// Purpose: Decode an unsigned decimal PAX length or size without accepting signs or trailing data.
+// Inputs: `value` is an untrusted bounded byte view. Outputs: Exact value or an archive-format error.
+std::uint64_t parse_pax_decimal(std::string_view value) {
+    std::uint64_t number = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), number, 10);
+    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) {
+        throw ArchiveError("malformed or overflowing TAR PAX decimal value");
+    }
+    return number;
+}
+
+// Purpose: Validate one complete PAX record before deriving its key and value views.
+// Inputs: Bounded metadata `payload` and the next record `offset`.
+// Outputs: Views into the payload and an advanced offset; throws for malformed framing.
+std::pair<std::string_view, std::string_view> read_pax_record(std::string_view payload, std::size_t& offset) {
+    const auto space = payload.find(' ', offset);
+    if (space == std::string_view::npos) {
+        throw ArchiveError("malformed TAR PAX record");
+    }
+    const auto length = parse_pax_decimal(payload.substr(offset, space - offset));
+    const auto prefix_bytes = space - offset + 1U;
+    if (length < prefix_bytes || length - prefix_bytes < 3U || length > payload.size() - offset) {
+        throw ArchiveError("TAR PAX record length does not bound a key, separator and newline");
+    }
+    const auto record_end = offset + static_cast<std::size_t>(length);
+    if (payload[record_end - 1U] != '\n') {
+        throw ArchiveError("TAR PAX record is not newline terminated");
+    }
+    const auto body = payload.substr(space + 1U, record_end - space - 2U);
+    const auto equals = body.find('=');
+    if (equals == std::string_view::npos || equals == 0 ||
+        body.substr(0, equals).find('\0') != std::string_view::npos) {
+        throw ArchiveError("malformed TAR PAX keyword");
+    }
+    offset = record_end;
+    return {body.substr(0, equals), body.substr(equals + 1U)};
+}
+
+// Purpose: Apply the extraction-relevant PAX fields without silently ignoring payload transformations.
+// Inputs: Bounded metadata, retained local/global attributes and the global-header flag.
+// Outputs: Updates attributes; rejects malformed, duplicate, unsupported sparse or empty local fields.
+void parse_pax_payload(std::string_view payload, PendingTarExtensions& attributes, bool global) {
+    std::array<bool, 3> seen{};
     std::size_t offset = 0;
     while (offset < payload.size()) {
-        const auto space = payload.find(' ', offset);
-        if (space == std::string::npos) {
-            throw ArchiveError("malformed TAR PAX record");
+        const auto [key, value] = read_pax_record(payload, offset);
+        if (key == "GNU.sparse" || key.starts_with("GNU.sparse.") || key == "SCHILY.realsize" ||
+            key == "SUN.holesdata") {
+            throw ArchiveError("sparse TAR PAX payloads are not supported");
         }
-        std::uint64_t record_length = 0;
-        const auto length_begin = payload.data() + offset;
-        const auto length_end = payload.data() + space;
-        const auto length_result = std::from_chars(length_begin, length_end, record_length, 10);
-        if (length_result.ec != std::errc{} || length_result.ptr != length_end || record_length == 0) {
-            throw ArchiveError("malformed TAR PAX record length");
+        const auto field = key == "path" ? 0U : key == "size" ? 1U : key == "hdrcharset" ? 2U : 3U;
+        if (field == seen.size()) {
+            continue;
         }
-        if (record_length > payload.size() - offset) {
-            throw ArchiveError("TAR PAX record exceeds metadata payload");
+        if (seen[field]) {
+            throw ArchiveError("TAR PAX metadata contains duplicate extraction fields");
         }
-        const auto record_begin = space + 1U;
-        const auto record_end = offset + static_cast<std::size_t>(record_length);
-        if (record_end == 0 || payload[record_end - 1U] != '\n') {
-            throw ArchiveError("TAR PAX record is not newline terminated");
+        seen[field] = true;
+        if (value.empty() && !global) {
+            throw ArchiveError("empty TAR PAX extraction field is not supported");
         }
-        const auto equals = payload.find('=', record_begin);
-        if (equals != std::string::npos && equals < record_end) {
-            const auto key = std::string_view(payload).substr(record_begin, equals - record_begin);
-            const auto value = std::string_view(payload).substr(equals + 1U, record_end - equals - 2U);
-            if (key == "path") {
-                if (parsed.path.has_value()) {
-                    throw ArchiveError("TAR PAX metadata contains duplicate path records");
-                }
-                if (value.empty() || value.size() > kMaxArchivePathBytes) {
-                    throw ArchiveError("TAR PAX path exceeds FlitzZip path limits");
-                }
-                parsed.path = std::string(value);
-            } else if (key == "hdrcharset") {
-                if (value == "BINARY") {
-                    parsed.encoding = ArchivePathEncoding::HostCodePage;
-                } else if (value == "ISO-IR 10646 2000 UTF-8") {
-                    parsed.encoding = ArchivePathEncoding::Utf8;
-                } else {
-                    throw ArchiveError("unsupported TAR PAX header character set");
-                }
+        if (field == 0U) {
+            if (value.size() > kMaxArchivePathBytes) {
+                throw ArchiveError("TAR PAX path exceeds FlitzZip path limits");
             }
+            attributes.path = value.empty() ? std::nullopt : std::optional(TarPathOverride{std::string(value), true});
+        } else if (field == 1U) {
+            attributes.size = value.empty() ? std::nullopt : std::optional(parse_pax_decimal(value));
+        } else if (value.empty()) {
+            attributes.encoding.reset();
+        } else if (value == "BINARY") {
+            attributes.encoding = ArchivePathEncoding::HostCodePage;
+        } else if (value == "ISO-IR 10646 2000 UTF-8") {
+            attributes.encoding = ArchivePathEncoding::Utf8;
+        } else {
+            throw ArchiveError("unsupported TAR PAX header character set");
         }
-        offset = record_end;
     }
-    return parsed;
 }
 
 // Purpose: Parse a GNU long-name metadata payload.
-// Inputs: `payload` contains a NUL-terminated or newline-terminated path.
-// Outputs: Returns the path for the next file entry.
+// Inputs: `payload` contains a length-bounded path with optional trailing NUL terminators.
+// Outputs: Removes only NUL padding; preserves name bytes for the shared path-safety validation.
 std::string parse_gnu_long_name(std::string payload) {
-    while (!payload.empty() && (payload.back() == '\0' || payload.back() == '\n')) {
+    while (!payload.empty() && payload.back() == '\0') {
         payload.pop_back();
     }
     if (payload.empty()) {
@@ -572,6 +606,64 @@ std::string parse_gnu_long_name(std::string payload) {
     return payload;
 }
 
+// Purpose: Consume extension records identically during metadata validation and streamed extraction.
+// Inputs: Current header/type, payload stream, persistent extension state and cumulative metadata bytes.
+// Outputs: Returns whether a bounded extension was consumed; throws before accepting invalid metadata.
+bool consume_tar_extension(std::istream& input, const std::array<char, kTarBlockSize>& header, char typeflag,
+                           TarExtensionState& extensions, std::uint64_t& metadata_bytes) {
+    if (typeflag != 'x' && typeflag != 'g' && typeflag != 'L') {
+        return false;
+    }
+    const auto size = parse_tar_number(header, 124, 12, "metadata size");
+    metadata_bytes = checked_add_archive_path_metadata_bytes(metadata_bytes, size, "TAR extension metadata");
+    auto payload = read_tar_metadata_payload(input, size);
+    if (typeflag == 'L') {
+        extensions.local.path = TarPathOverride{parse_gnu_long_name(std::move(payload)), false};
+    } else {
+        parse_pax_payload(payload, typeflag == 'g' ? extensions.global : extensions.local, typeflag == 'g');
+    }
+    extensions.awaiting_entry = extensions.awaiting_entry || typeflag != 'g';
+    return true;
+}
+
+// Purpose: Resolve PAX/GNU precedence before trusting the payload extent or publishing a file.
+// Inputs: A checksummed ordinary header, its type and retained local/global extension state.
+// Outputs: Effective metadata with the wire payload size; consumes every one-entry override.
+TarEntryMetadata resolve_tar_entry(const std::array<char, kTarBlockSize>& header, char typeflag,
+                                   TarExtensionState& extensions) {
+    TarEntryMetadata entry;
+    const auto& path = extensions.local.path ? extensions.local.path : extensions.global.path;
+    entry.path = path ? path->bytes : tar_entry_path(header);
+    if (path && path->pax) {
+        entry.encoding =
+            extensions.local.encoding.value_or(extensions.global.encoding.value_or(ArchivePathEncoding::Utf8));
+    }
+    // An overridden USTAR field is ignored, including an unrepresentable original value.
+    const auto size = extensions.local.size ? extensions.local.size : extensions.global.size;
+    entry.size = size ? *size : parse_tar_number(header, 124, 12, "size");
+    entry.directory = typeflag == '5';
+    extensions.local = {};
+    extensions.awaiting_entry = false;
+    return entry;
+}
+
+// Purpose: Prove a seekable payload's padded extent lies inside the pinned archive.
+// Inputs: Payload-positioned stream, effective byte size and known archive extent.
+// Outputs: Absolute payload offset or an error before seeking beyond valid bytes.
+std::uint64_t bounded_tar_payload_offset(std::istream& input, std::uint64_t size,
+                                         std::optional<std::uint64_t> archive_size) {
+    const auto position = input.tellg();
+    if (position < 0 || !archive_size.has_value()) {
+        throw ArchiveError("seekable TAR payload has no valid offset or archive-size bound");
+    }
+    const auto offset = static_cast<std::uint64_t>(position);
+    const auto padded = checked_add_tar_bytes(size, tar_padding(size), "TAR payload extent overflows");
+    if (offset > *archive_size || padded > *archive_size - offset) {
+        throw ArchiveError("TAR payload extent extends past the end of the archive");
+    }
+    return offset;
+}
+
 // Purpose: Scan a TAR stream and validate metadata before any extraction writes occur.
 // Inputs: `input` is positioned at the TAR start, `seekable` controls payload
 // skipping, and `archive_size` bounds seekable extents. Outputs: Returns validated metadata or throws on malformed,
@@ -579,7 +671,7 @@ std::string parse_gnu_long_name(std::string payload) {
 TarScanResult scan_tar_stream(std::istream& input, bool seekable,
                               std::optional<std::uint64_t> archive_size = std::nullopt) {
     TarScanResult result;
-    PendingTarExtensions pending;
+    TarExtensionState extensions;
     for (;;) {
         std::array<char, kTarBlockSize> header{};
         input.read(header.data(), static_cast<std::streamsize>(header.size()));
@@ -593,78 +685,41 @@ TarScanResult scan_tar_stream(std::istream& input, bool seekable,
             break;
         }
         validate_tar_checksum(header);
-        const auto size = parse_tar_number(header, 124, 12, "size");
         const auto typeflag = header[156] == '\0' ? '0' : header[156];
-        std::uint64_t payload_offset = 0;
-        // Check the padded extent before a seek can skip malformed trailing payloads.
-        if (seekable) {
-            const auto position = input.tellg();
-            if (position < 0) {
-                throw ArchiveError("TAR payload offset is invalid");
-            }
-            payload_offset = static_cast<std::uint64_t>(position);
-            if (!archive_size.has_value()) {
-                throw ArchiveError("seekable TAR scan is missing an archive-size bound");
-            }
-            const auto padded_size = checked_add_tar_bytes(size, tar_padding(size), "TAR payload extent overflows");
-            const auto payload_end = checked_add_tar_bytes(payload_offset, padded_size, "TAR payload extent overflows");
-            if (payload_end > *archive_size) {
-                throw ArchiveError("TAR payload extent extends past the end of the archive");
-            }
-        }
-
-        // Extension records consume bounded metadata, but never become extractable entries.
-        if (typeflag == 'x') {
-            result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(result.path_metadata_bytes, size,
-                                                                                 "TAR extended metadata payloads");
-            pending = parse_pax_payload(read_tar_metadata_payload(input, size));
+        if (consume_tar_extension(input, header, typeflag, extensions, result.path_metadata_bytes)) {
             continue;
         }
-        if (typeflag == 'g') {
-            result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(result.path_metadata_bytes, size,
-                                                                                 "TAR global metadata payloads");
-            static_cast<void>(read_tar_metadata_payload(input, size));
-            continue;
-        }
-        if (typeflag == 'L') {
-            result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(result.path_metadata_bytes, size,
-                                                                                 "TAR long-name metadata payloads");
-            pending.path = parse_gnu_long_name(read_tar_metadata_payload(input, size));
-            pending.encoding = ArchivePathEncoding::HostCodePage;
-            continue;
-        }
-        const auto encoding = pending.path ? pending.encoding : ArchivePathEncoding::HostCodePage;
-        const auto entry_path = tar_entry_path(header, pending);
+        auto entry = resolve_tar_entry(header, typeflag, extensions);
+        const auto size = entry.size;
+        entry.payload_offset = seekable ? bounded_tar_payload_offset(input, size, archive_size) : 0;
         if (typeflag == '0' || typeflag == '5') {
             if (result.entries.size() >= kMaxArchiveEntries) {
                 throw ArchiveError("TAR entry count exceeds FlitzZip resource limit");
             }
-            const bool directory = typeflag == '5';
             result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
-                result.path_metadata_bytes, entry_path.size(), "TAR retained entry paths");
-            if (!directory) {
+                result.path_metadata_bytes, entry.path.size(), "TAR retained entry paths");
+            if (!entry.directory) {
                 result.total_file_bytes =
                     checked_add_extracted_output_bytes(result.total_file_bytes, size, "TAR uncompressed payload");
+            } else {
+                entry.size = 0;
             }
-            result.entries.push_back(TarEntryMetadata{
-                .path = entry_path,
-                .encoding = encoding,
-                .directory = directory,
-                .size = directory ? 0 : size,
-                .payload_offset = payload_offset,
-            });
+            result.entries.push_back(std::move(entry));
             skip_tar_payload(input, size, seekable);
             continue;
         }
         if (typeflag == '1' || typeflag == '2') {
-            throw SecurityError("refusing to extract TAR link entry: " + entry_path);
+            throw SecurityError("refusing to extract TAR link entry: " + entry.path);
         }
         if (typeflag == '3' || typeflag == '4' || typeflag == '6') {
-            throw SecurityError("refusing to extract TAR device or FIFO entry: " + entry_path);
+            throw SecurityError("refusing to extract TAR device or FIFO entry: " + entry.path);
         }
         throw ArchiveError("unsupported TAR entry type");
     }
 
+    if (extensions.awaiting_entry) {
+        throw ArchiveError("TAR stream ends before the entry described by its extension metadata");
+    }
     // Compare all retained paths together before any extraction can publish output.
     std::vector<ArchivePathValidationEntry> validation_entries;
     validation_entries.reserve(result.entries.size());
@@ -757,7 +812,8 @@ void extract_validated_tar_stream(std::istream& input, const TarScanResult& scan
                                   const ProgressCallback& progress_callback) {
     ProgressState progress;
     progress.start(OperationKind::Extract, scanned.total_file_bytes, scanned.entries.size());
-    PendingTarExtensions pending;
+    TarExtensionState extensions;
+    std::uint64_t metadata_bytes = 0;
     std::size_t entry_index = 0;
     for (;;) {
         std::array<char, kTarBlockSize> header{};
@@ -772,36 +828,17 @@ void extract_validated_tar_stream(std::istream& input, const TarScanResult& scan
             break;
         }
         validate_tar_checksum(header);
-        const auto size = parse_tar_number(header, 124, 12, "size");
         const auto typeflag = header[156] == '\0' ? '0' : header[156];
-
-        if (typeflag == 'x') {
-            pending = parse_pax_payload(read_tar_metadata_payload(input, size));
+        if (consume_tar_extension(input, header, typeflag, extensions, metadata_bytes)) {
             continue;
         }
-        if (typeflag == 'g') {
-            static_cast<void>(read_tar_metadata_payload(input, size));
-            continue;
-        }
-        if (typeflag == 'L') {
-            pending.path = parse_gnu_long_name(read_tar_metadata_payload(input, size));
-            pending.encoding = ArchivePathEncoding::HostCodePage;
-            continue;
-        }
-        const auto encoding = pending.path ? pending.encoding : ArchivePathEncoding::HostCodePage;
-        const auto entry_path = tar_entry_path(header, pending);
+        auto actual = resolve_tar_entry(header, typeflag, extensions);
+        const auto size = actual.size;
         if (typeflag == '0' || typeflag == '5') {
-            const bool directory = typeflag == '5';
             if (entry_index >= scanned.entries.size()) {
                 throw ArchiveError("TAR stream contains entries not present during validation");
             }
-            const TarEntryMetadata actual{
-                .path = entry_path,
-                .encoding = encoding,
-                .directory = directory,
-                .size = directory ? 0 : size,
-                .payload_offset = 0,
-            };
+            actual.size = actual.directory ? 0 : size;
             const auto& expected = scanned.entries[entry_index];
             require_matching_scanned_entry(actual, expected);
             progress.set_current(expected.path);
@@ -820,14 +857,14 @@ void extract_validated_tar_stream(std::istream& input, const TarScanResult& scan
             continue;
         }
         if (typeflag == '1' || typeflag == '2') {
-            throw SecurityError("refusing to extract TAR link entry: " + entry_path);
+            throw SecurityError("refusing to extract TAR link entry: " + actual.path);
         }
         if (typeflag == '3' || typeflag == '4' || typeflag == '6') {
-            throw SecurityError("refusing to extract TAR device or FIFO entry: " + entry_path);
+            throw SecurityError("refusing to extract TAR device or FIFO entry: " + actual.path);
         }
         throw ArchiveError("unsupported TAR entry type");
     }
-    if (entry_index != scanned.entries.size()) {
+    if (extensions.awaiting_entry || entry_index != scanned.entries.size()) {
         throw ArchiveError("TAR stream ended before all validated entries were extracted");
     }
 }

@@ -404,10 +404,10 @@ std::vector<std::byte> decode_reference_block(const EncodedSegment& segment) {
     throw std::runtime_error("dictionary output has no final literal sequence");
 }
 
-// Purpose: Inspect the initial LZ4 literal extent without relying on the HIP decoder.
+// Purpose: Describe the first LZ4 sequence without relying on the HIP decoder.
 // Inputs: One nonempty independently encoded dictionary segment.
-// Outputs: Returns its first literal count or throws for an incomplete extension.
-std::size_t first_dictionary_literals(const EncodedSegment& segment) {
+// Outputs: Returns literal count and match distance/length, or rejects an incomplete sequence.
+std::string describe_first_dictionary_sequence(const EncodedSegment& segment) {
     if (segment.payload.empty()) {
         throw std::runtime_error("dictionary segment is empty");
     }
@@ -423,7 +423,32 @@ std::size_t first_dictionary_literals(const EncodedSegment& segment) {
             length += extension;
         }
     }
-    return length;
+    std::string result = "literals=" + std::to_string(length);
+    if (length > segment.payload.size() - offset) {
+        throw std::runtime_error("dictionary literals exceed their payload");
+    }
+    offset += length;
+    if (offset == segment.payload.size()) {
+        return result + " final=true";
+    }
+    if (segment.payload.size() - offset < 2U) {
+        throw std::runtime_error("dictionary offset is truncated");
+    }
+    const auto distance = std::to_integer<unsigned int>(segment.payload[offset]) |
+                          (std::to_integer<unsigned int>(segment.payload[offset + 1U]) << 8U);
+    offset += 2U;
+    auto match = std::to_integer<unsigned int>(segment.payload.front()) & 15U;
+    if (match == 15U) {
+        unsigned int extension = 255U;
+        while (extension == 255U) {
+            if (offset == segment.payload.size()) {
+                throw std::runtime_error("dictionary match extension is truncated");
+            }
+            extension = std::to_integer<unsigned int>(segment.payload[offset++]);
+            match += extension;
+        }
+    }
+    return result + " distance=" + std::to_string(distance) + " match=" + std::to_string(match + 4U);
 }
 
 // Purpose: Write one independently verified dictionary fixture without replacing an existing output.
@@ -1248,7 +1273,7 @@ TEST_CASE(dictionary_concurrent_equal_input_encoding) {
 
 // Purpose: Isolate dictionary batch state from native chunk classification under sustained concurrent HIP calls.
 // Inputs: Four callers by default, or thirty-two opt-in callers, encode the same 4 MiB source repeatedly.
-// Outputs: Every independent LZ4 segment matches the serial reference exactly.
+// Outputs: Independently decoded reference bytes and every concurrent segment match the immutable source.
 TEST_CASE(dictionary_concurrent_repeated_batch_encoding) {
     if (!flitzzip::query_gpu_info().available) {
         return;
@@ -1263,14 +1288,21 @@ TEST_CASE(dictionary_concurrent_repeated_batch_encoding) {
         input[index] = static_cast<std::byte>(value >> 56U);
     }
     const auto reference = encode_segments(input, 5);
+    for (std::size_t segment = 0; segment < reference.segments.size(); ++segment) {
+        const auto decoded = decode_reference_block(reference.segments[segment]);
+        REQUIRE_TRUE(std::equal(decoded.begin(), decoded.end(), input.begin() + segment * kSegmentBytes));
+    }
     wchar_t enabled[2]{};
     const bool stress = GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_STRESS", enabled, 2U) == 1U && enabled[0] == L'1';
     const std::size_t workers = stress ? 32U : 4U;
-    const std::size_t repetitions = stress ? 32U : 4U;
+    const std::size_t repetitions = stress ? 32U : 16U;
     std::vector<std::future<void>> pending;
     pending.reserve(workers);
+    std::promise<void> start;
+    const auto ready = start.get_future().share();
     for (std::size_t worker = 0; worker < workers; ++worker) {
-        pending.push_back(std::async(std::launch::async, [&input, &reference, worker, repetitions] {
+        pending.push_back(std::async(std::launch::async, [&input, &reference, worker, repetitions, ready] {
+            ready.get();
             for (std::size_t iteration = 0; iteration < repetitions; ++iteration) {
                 const auto candidate = encode_segments(input, 5);
                 for (std::size_t segment = 0; segment < reference.segments.size(); ++segment) {
@@ -1279,32 +1311,35 @@ TEST_CASE(dictionary_concurrent_repeated_batch_encoding) {
                         const auto source = std::span<const std::byte>(input).subspan(
                             segment * kSegmentBytes, candidate.segments[segment].input_bytes);
                         const auto first_bad = std::mismatch(decoded.begin(), decoded.end(), source.begin());
+                        const auto payload_bad = std::mismatch(
+                            reference.segments[segment].payload.begin(), reference.segments[segment].payload.end(),
+                            candidate.segments[segment].payload.begin(), candidate.segments[segment].payload.end());
                         throw std::runtime_error(
                             "dictionary batch differs at worker " + std::to_string(worker) + " iteration " +
                             std::to_string(iteration) + " segment " + std::to_string(segment) + " reference_bytes " +
                             std::to_string(reference.segments[segment].payload.size()) + " candidate_bytes " +
-                            std::to_string(candidate.segments[segment].payload.size()) + " reference_literals " +
-                            std::to_string(first_dictionary_literals(reference.segments[segment])) +
-                            " candidate_literals " +
-                            std::to_string(first_dictionary_literals(candidate.segments[segment])) + " first_bad " +
-                            std::to_string(first_bad.first - decoded.begin()));
+                            std::to_string(candidate.segments[segment].payload.size()) + " reference_sequence " +
+                            describe_first_dictionary_sequence(reference.segments[segment]) + " candidate_sequence " +
+                            describe_first_dictionary_sequence(candidate.segments[segment]) + " first_bad " +
+                            std::to_string(first_bad.first - decoded.begin()) + " payload_first_bad " +
+                            std::to_string(payload_bad.first - reference.segments[segment].payload.begin()));
                     }
                 }
             }
         }));
     }
+    start.set_value();
     for (auto& task : pending) {
         task.get();
     }
 }
 
 // Purpose: Separate dense match-table instability from the dictionary segment encoder.
-// Inputs: Opt-in thirty-two-way concurrent repeated searches over the same repeated 4 MiB source.
-// Outputs: Every dense GPU match record matches the serial reference exactly.
+// Inputs: Four concurrent repeated 4 MiB searches by default, or thirty-two callers for opt-in stress.
+// Outputs: Every dense GPU match record matches the independently validated serial reference exactly.
 TEST_CASE(dictionary_concurrent_dense_match_table) {
     wchar_t enabled[2]{};
-    if (GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_STRESS", enabled, 2U) != 1U || enabled[0] != L'1' ||
-        !flitzzip::query_gpu_info().available) {
+    if (!flitzzip::query_gpu_info().available) {
         return;
     }
     std::vector<std::byte> input(4U * 1024U * 1024U);
@@ -1317,11 +1352,18 @@ TEST_CASE(dictionary_concurrent_dense_match_table) {
         input[index] = static_cast<std::byte>(value >> 56U);
     }
     const auto reference = find_matches(input, 5);
+    require_valid_matches(input, reference, 5);
+    const bool stress = GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_STRESS", enabled, 2U) == 1U && enabled[0] == L'1';
+    const std::size_t workers = stress ? 32U : 4U;
+    const std::size_t repetitions = stress ? 8U : 2U;
     std::vector<std::future<void>> pending;
-    pending.reserve(32U);
-    for (std::size_t worker = 0; worker < 32U; ++worker) {
-        pending.push_back(std::async(std::launch::async, [&input, &reference] {
-            for (std::size_t iteration = 0; iteration < 8U; ++iteration) {
+    pending.reserve(workers);
+    std::promise<void> start;
+    const auto ready = start.get_future().share();
+    for (std::size_t worker = 0; worker < workers; ++worker) {
+        pending.push_back(std::async(std::launch::async, [&input, &reference, repetitions, ready] {
+            ready.get();
+            for (std::size_t iteration = 0; iteration < repetitions; ++iteration) {
                 const auto candidate = find_matches(input, 5);
                 const auto difference =
                     std::mismatch(reference.matches.begin(), reference.matches.end(), candidate.matches.begin());
@@ -1332,6 +1374,7 @@ TEST_CASE(dictionary_concurrent_dense_match_table) {
             }
         }));
     }
+    start.set_value();
     for (auto& task : pending) {
         task.get();
     }

@@ -277,6 +277,9 @@ by default. Microsoft Defender scanning and SHA-256 integrity hashing are
 available as opt-in checks. Defender scans are hidden subprocesses with a
 bounded timeout, and a timeout is reported as a failed scan rather than as a
 clean result.
+Requested SHA-256 and Defender checks must finish before compression or
+verification reports completion. Read-only verification pins its source across
+format validation, hashing and scanning so those checks inspect the same file.
 
 GitHub Actions run build/test validation, CodeQL, Trivy, Semgrep, DevSkim, OSV,
 Dependency Review, default-branch OSSF Scorecard, workflow linting, secret

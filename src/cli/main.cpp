@@ -613,13 +613,14 @@ int run_compress_command(const std::vector<std::string>& args) {
     const auto archive_format = resolve_cli_archive_format(command.format, command.output, false);
     reject_unsupported_cli_format(archive_format, "create");
     const auto stats = compress_by_format(archive_format, command);
+    const auto archive_source = flitzzip::pin_source_file(command.output);
     if (command.defender_scan) {
-        print_defender_scan(command.output, true);
+        print_defender_scan(archive_source.path(), true);
+    }
+    if (command.sha256) {
+        print_integrity_hash(archive_source.path());
     }
     print_stats(stats);
-    if (command.sha256) {
-        print_integrity_hash(command.output);
-    }
     return 0;
 }
 
@@ -1105,9 +1106,9 @@ CliVerifyCommand parse_verify_command(const std::vector<std::string>& args) {
 
 // Purpose: Execute read-only verification for native FLZIP and supported ZIP archives.
 // Inputs: `args` is the full argument vector beginning with `verify`; GPU/worker flags apply only to FLZIP.
-// Outputs: Returns an exit code and telemetry, or throws on unsupported formats, flags, or archive validation errors.
+// Outputs: Reports completion only after all requested checks succeed on one pinned source; errors fail the command.
 int run_verify_command(const std::vector<std::string>& args) {
-    const auto command = parse_verify_command(args);
+    auto command = parse_verify_command(args);
     if (command.archive.empty()) {
         usage();
         return 2;
@@ -1115,17 +1116,20 @@ int run_verify_command(const std::vector<std::string>& args) {
     if (command.require_gpu && command.force_cpu) {
         throw flitzzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
     }
+    const auto archive_source = flitzzip::pin_source_file(command.archive);
+    command.archive = archive_source.path();
     const auto format = flitzzip::detect_archive_format(command.archive);
+    flitzzip::OperationStats stats;
     if (format == flitzzip::ArchiveFormat::Zip || format == flitzzip::ArchiveFormat::Zipx) {
         reject_compat_extract_tuning("ZIP", command.require_gpu, command.force_cpu, command.flzip_tuning_requested);
-        print_stats(flitzzip::verify_zip(command.archive));
+        stats = flitzzip::verify_zip(command.archive);
     } else if (format == flitzzip::ArchiveFormat::FlitzZip) {
         flitzzip::ExtractOptions options;
         options.gpu_required = command.require_gpu;
         options.force_cpu = command.force_cpu;
         options.worker_count = command.workers;
         options.max_inflight_chunks = command.inflight;
-        print_stats(flitzzip::verify_flzip(command.archive, options));
+        stats = flitzzip::verify_flzip(command.archive, options);
     } else {
         throw flitzzip::ArchiveError("read-only verify is currently supported only for FLZIP and ZIP");
     }
@@ -1135,6 +1139,7 @@ int run_verify_command(const std::vector<std::string>& args) {
     if (command.defender_scan) {
         print_defender_scan(command.archive, true);
     }
+    print_stats(stats);
     return 0;
 }
 
