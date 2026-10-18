@@ -63,18 +63,13 @@ An unsupported target or incompatible SDK must fail compilation, not silently
 drop a target. This does not add support for non-AMD GPUs, unlisted GPU
 families, unsupported operating systems, or arbitrary driver versions.
 
-The September 2026 multi-target build passed the 356 native tests on an
-RX 9070 XT. LLVM section extraction and the offload bundler confirmed all six
-images in the main, static-prefix, adaptive-prefix, and experimental dictionary
-objects. Other targets are compile-validated, not hardware-tested. Timing,
-correctness, and memory behavior on additional GPUs remain release validation
-work; a fat binary alone cannot prove them.
-
-On October 2, all five production HIP objects and their dependency scans also
-compiled for all six targets with the complete pinned ROCm 10 distribution.
-Both SDK and isolated build directories contained spaces. The migrated main
-build passed 570 native tests and the full local verifier on the available
-`gfx1201`. Other target hardware remains untested.
+Qualification must confirm all six target images in every production HIP object,
+retain dependency scans, and exercise SDK and build paths containing spaces.
+Record the exact source, SDK, binaries and devices used. Compilation establishes
+target-image availability; correctness, timing and memory behavior require actual
+execution on the reported hardware. Keep those results in candidate artifacts
+and current benchmark records rather than treating historical test totals as
+qualification of a newer candidate.
 
 ## Installation
 
