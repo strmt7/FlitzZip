@@ -332,3 +332,169 @@ TEST_CASE(iso_extraction_rejects_directory_extent_cycles_before_output) {
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
 }
+
+namespace {
+
+// Purpose: Load a small independent ISO image for controlled metadata mutations.
+// Inputs: Owned fixture path. Outputs: Complete known-good image bytes, bounded to the fixture's 32 sectors.
+std::vector<unsigned char> iso_boundary_fixture(const std::filesystem::path& archive) {
+    write_iso_fixture(archive, IsoFixtureMode::Good);
+    std::ifstream input(archive, std::ios::binary);
+    std::vector<unsigned char> bytes(std::istreambuf_iterator<char>(input), {});
+    REQUIRE_EQ(bytes.size(), 32U * kTestIsoSectorBytes);
+    return bytes;
+}
+
+// Purpose: Persist one bounded ISO metadata mutation without touching the expected output data.
+// Inputs: Owned archive path and at most 64 KiB of fixture bytes. Outputs: A complete checked fixture file.
+void write_iso_boundary_bytes(const std::filesystem::path& archive, std::span<const unsigned char> bytes) {
+    REQUIRE_TRUE(bytes.size() <= 64U * 1024U);
+    std::ofstream output(archive, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    output.close();
+    REQUIRE_TRUE(output.good());
+}
+
+// Purpose: Require malformed or unsupported ISO metadata to fail before any output publication.
+// Inputs: Mutated archive, isolated destination, expected error category. Outputs: Unchanged sentinel and no debris.
+void require_iso_boundary_rejected(const std::filesystem::path& archive, const std::filesystem::path& destination,
+                                   std::string_view category) {
+    std::filesystem::create_directory(destination);
+    std::ofstream(destination / "sentinel.txt", std::ios::binary) << "preserve caller data";
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_iso(archive, destination, true);
+    } catch (const flitzzip::Error& error) {
+        REQUIRE_TRUE(std::string_view(error.what()).find(category) != std::string_view::npos);
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(read_text_file(destination / "sentinel.txt"), "preserve caller data");
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+               1);
+}
+}  // namespace
+
+// Purpose: Reject attribute-bearing extents instead of treating attribute bytes as file or directory data.
+// Inputs: Independent ISO records in the PVD, root, child directory and regular-file positions.
+// Outputs: Every unsupported record rejects before publication; the unchanged base image still reads exactly.
+TEST_CASE(iso_attribute_extents_reject_before_any_publication) {
+    const auto root = test_temp_dir("iso-attribute-extents");
+    const auto archive = root / "input.iso";
+    const auto original = iso_boundary_fixture(archive);
+    constexpr std::array record_offsets{16U * 2048U + 156U, 20U * 2048U,        20U * 2048U + 34U,
+                                        20U * 2048U + 68U,  20U * 2048U + 104U, 21U * 2048U + 68U};
+    for (const auto offset : record_offsets) {
+        auto bytes = original;
+        REQUIRE_TRUE(bytes.at(offset) >= 34U);
+        bytes.at(offset + 1U) = 1U;
+        write_iso_boundary_bytes(archive, bytes);
+        require_iso_boundary_rejected(archive, root / std::to_string(offset), "extended attribute records");
+    }
+    write_iso_boundary_bytes(archive, original);
+    const auto destination = root / "valid";
+    REQUIRE_EQ(flitzzip::extract_iso(archive, destination, false).entries, 3U);
+    REQUIRE_EQ(read_text_file(destination / "ROOT.TXT"), "root payload\n");
+    REQUIRE_EQ(read_text_file(destination / "DIR" / "README"), "nested payload\n");
+}
+
+// Purpose: Keep ISO logical-block units explicit and bound every extent by the declared volume.
+// Inputs: Independently encoded block sizes, duplicated-field mismatches and volume lengths.
+// Outputs: Unsupported geometry and out-of-volume metadata fail without changing caller data.
+TEST_CASE(iso_volume_geometry_rejects_mismatch_and_outside_extents) {
+    const auto root = test_temp_dir("iso-volume-geometry");
+    const auto archive = root / "input.iso";
+    const auto original = iso_boundary_fixture(archive);
+    constexpr std::size_t pvd = 16U * 2048U;
+    constexpr std::array<std::uint16_t, 4> block_sizes{0U, 512U, 1024U, 4096U};
+    for (const auto block_size : block_sizes) {
+        auto bytes = original;
+        put_both_endian_u16(bytes, pvd + 128U, block_size);
+        write_iso_boundary_bytes(archive, bytes);
+        require_iso_boundary_rejected(archive, root / ("block-" + std::to_string(block_size)), "logical block sizes");
+    }
+    for (const std::uint32_t blocks : {0U, 21U, 33U}) {
+        auto bytes = original;
+        put_both_endian_u32(bytes, pvd + 80U, blocks);
+        write_iso_boundary_bytes(archive, bytes);
+        require_iso_boundary_rejected(archive, root / ("volume-" + std::to_string(blocks)),
+                                      blocks == 21U ? "extent extends past" : "declared volume size");
+    }
+    for (const std::size_t mismatch : {pvd + 130U, pvd + 84U}) {
+        auto bytes = original;
+        bytes.at(mismatch) ^= 1U;
+        write_iso_boundary_bytes(archive, bytes);
+        require_iso_boundary_rejected(archive, root / ("mismatch-" + std::to_string(mismatch)),
+                                      "both-endian field mismatch");
+    }
+}
+
+// Purpose: Exercise malformed directory fields and names through the complete ISO extraction boundary.
+// Inputs: One-field mutations of independently framed root and member records.
+// Outputs: Specific metadata errors precede publication and preserve all caller data.
+TEST_CASE(iso_record_boundaries_reject_before_publication) {
+    const auto root = test_temp_dir("iso-record-boundaries");
+    const auto archive = root / "input.iso";
+    const auto original = iso_boundary_fixture(archive);
+    constexpr std::size_t pvd = 16U * 2048U;
+    constexpr std::size_t file = 20U * 2048U + 104U;
+    struct Mutation {
+        std::size_t offset;
+        unsigned char value;
+        std::string_view category;
+    };
+    constexpr std::array mutations{
+        Mutation{pvd + 156U, 0U, "root directory record length"},
+        Mutation{pvd + 156U, 1U, "record is too short"},
+        Mutation{pvd + 181U, 0U, "not a directory"},
+        Mutation{file, 1U, "record length is invalid"},
+        Mutation{file + 26U, 1U, "interleaved files"},
+        Mutation{file + 27U, 1U, "interleaved files"},
+        Mutation{file + 32U, 0U, "identifier length is invalid"},
+        Mutation{file + 32U, 255U, "identifier length is invalid"},
+        Mutation{file + 33U, '/', "path separator"},
+        Mutation{file + 33U, '\\', "path separator"},
+        Mutation{file + 6U, 1U, "both-endian field mismatch"},
+        Mutation{pvd + 1U, 0U, "primary volume descriptor was not found"},
+    };
+    unsigned index = 0;
+    for (const auto& mutation : mutations) {
+        auto bytes = original;
+        bytes.at(mutation.offset) = mutation.value;
+        write_iso_boundary_bytes(archive, bytes);
+        require_iso_boundary_rejected(archive, root / std::to_string(index++), mutation.category);
+    }
+}
+
+// Purpose: Preserve caller cancellation and release the pinned ISO source before a subsequent extraction.
+// Inputs: Valid image, existing destination data and a callback failing before the first entry is published.
+// Outputs: Exact cancellation, unchanged old data, no debris, then complete byte-exact extraction on reuse.
+TEST_CASE(iso_cancellation_preserves_destination_and_allows_reuse) {
+    const auto root = test_temp_dir("iso-cancellation");
+    const auto archive = root / "input.iso";
+    write_iso_fixture(archive, IsoFixtureMode::Good);
+    const auto destination = root / "out";
+    std::filesystem::create_directory(destination);
+    std::ofstream(destination / "ROOT.TXT", std::ios::binary) << "original";
+    unsigned callbacks = 0;
+    bool cancelled = false;
+    try {
+        (void)flitzzip::extract_iso(archive, destination, true, [&](const flitzzip::ProgressSnapshot&) {
+            ++callbacks;
+            throw std::runtime_error("independent ISO cancellation");
+        });
+    } catch (const std::runtime_error& error) {
+        REQUIRE_EQ(std::string(error.what()), "independent ISO cancellation");
+        cancelled = true;
+    }
+    REQUIRE_TRUE(cancelled);
+    REQUIRE_EQ(callbacks, 1U);
+    REQUIRE_EQ(read_text_file(destination / "ROOT.TXT"), "original");
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+               1);
+    // Rewriting also requires the previous operation's archive pin to have been released.
+    write_iso_fixture(archive, IsoFixtureMode::Good);
+    REQUIRE_EQ(flitzzip::extract_iso(archive, destination, true).entries, 3U);
+    REQUIRE_EQ(read_text_file(destination / "ROOT.TXT"), "root payload\n");
+    REQUIRE_EQ(read_text_file(destination / "DIR" / "README"), "nested payload\n");
+}
