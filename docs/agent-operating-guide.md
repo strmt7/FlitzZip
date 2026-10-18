@@ -214,6 +214,14 @@ Guidelines, and SEI CERT C++.
 
 - Keep changes small, reviewable, and behavior-preserving unless the task
   explicitly asks for a behavior change.
+- Keep code, tools and verification independent of the development machine and
+  its installation layout, within each component's documented platform support.
+  Resolve paths through OS locations, explicit configuration or validated discovery;
+  select hardware paths through verified capabilities. Do not turn the current
+  user's directories, drive letters, CPU/GPU model or incidental host state into
+  production assumptions or correctness fixes. Qualify supported capabilities and
+  explicit unavailable-tool/device behavior. Benchmark records may describe the
+  measured machine without changing product policy.
 - Design secure-by-default paths: fail closed, make risky behavior opt-in, and
   keep trust boundaries visible in code comments and tests.
 - Admit optional accelerator modules explicitly after runtime/device checks;

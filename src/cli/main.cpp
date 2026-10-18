@@ -613,12 +613,14 @@ int run_compress_command(const std::vector<std::string>& args) {
     const auto archive_format = resolve_cli_archive_format(command.format, command.output, false);
     reject_unsupported_cli_format(archive_format, "create");
     const auto stats = compress_by_format(archive_format, command);
-    const auto archive_source = flitzzip::pin_source_file(command.output);
-    if (command.defender_scan) {
-        print_defender_scan(archive_source.path(), true);
-    }
-    if (command.sha256) {
-        print_integrity_hash(archive_source.path());
+    if (command.defender_scan || command.sha256) {
+        const auto archive_source = flitzzip::pin_source_file(command.output);
+        if (command.defender_scan) {
+            print_defender_scan(archive_source.path(), true);
+        }
+        if (command.sha256) {
+            print_integrity_hash(archive_source.path());
+        }
     }
     print_stats(stats);
     return 0;
