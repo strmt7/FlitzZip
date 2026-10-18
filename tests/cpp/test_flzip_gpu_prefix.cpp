@@ -699,6 +699,25 @@ TEST_CASE(flzip_gpu_huffman_sparse_lookup_validation) {
     REQUIRE_TRUE(!flitzzip::huffman_lookup_is_complete(lookup));
 }
 
+// Purpose: Reject truncated and overlong Huffman tables even when their available entries are individually valid.
+// Inputs: A complete two-symbol lookup with every shorter byte extent and one extra trailing byte.
+// Outputs: Requires rejection at the length boundary and valid reuse without changing the caller's bytes.
+TEST_CASE(flzip_gpu_huffman_lookup_requires_exact_extent) {
+    std::vector<std::byte> lookup(flitzzip::kGpuHuffmanLookupBytes + 1U);
+    for (std::size_t slot = 0U; slot < flitzzip::kGpuHuffmanLookupEntries; ++slot) {
+        lookup[slot * 2U] = static_cast<std::byte>(201U + (slot & 1U));
+        lookup[slot * 2U + 1U] = std::byte{1};
+    }
+    const auto original = lookup;
+    const auto bytes = std::span<const std::byte>(lookup);
+    for (std::size_t length = 0; length < flitzzip::kGpuHuffmanLookupBytes; ++length) {
+        REQUIRE_TRUE(!flitzzip::huffman_lookup_is_complete(bytes.first(length)));
+    }
+    REQUIRE_TRUE(!flitzzip::huffman_lookup_is_complete(bytes));
+    REQUIRE_TRUE(flitzzip::huffman_lookup_is_complete(bytes.first(flitzzip::kGpuHuffmanLookupBytes)));
+    REQUIRE_TRUE(lookup == original);
+}
+
 // Purpose: Reject malformed version-eight Huffman lookup and segment metadata in both decoders.
 // Inputs: Fully populated and sparse-alphabet Huffman blocks with invalid widths, leaves, or offsets.
 // Outputs: CPU and GPU decode reject each mutation rather than publishing a partial result.

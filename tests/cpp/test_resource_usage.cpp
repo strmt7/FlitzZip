@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <string_view>
 
 using flitzzip::reconcile_vram_usage;
 
@@ -141,6 +142,39 @@ TEST_CASE(extracted_output_accounting_rejects_policy_limit_excess) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
+}
+
+// Purpose: Distinguish arithmetic overflow from resource-policy rejection without allocating hostile sizes.
+// Inputs: Both public byte-accounting functions at zero, their exact limit, one-byte excess and uint64 wraparound.
+// Outputs: Requires exact valid totals, contextual rejection and successful subsequent valid accounting.
+TEST_CASE(resource_accounting_checks_overflow_before_policy_limits) {
+    struct Accounting {
+        std::uint64_t (*add)(std::uint64_t, std::uint64_t, std::string_view);
+        std::uint64_t limit;
+    };
+    const std::array policies{
+        Accounting{flitzzip::checked_add_extracted_output_bytes, flitzzip::kMaxExtractedOutputBytes},
+        Accounting{flitzzip::checked_add_archive_path_metadata_bytes, flitzzip::kMaxArchivePathMetadataBytes},
+    };
+    for (const auto& policy : policies) {
+        REQUIRE_EQ(policy.add(0U, 0U, "boundary"), 0U);
+        REQUIRE_EQ(policy.add(policy.limit - 1U, 1U, "boundary"), policy.limit);
+        REQUIRE_EQ(policy.add(policy.limit, 0U, "boundary"), policy.limit);
+        for (const bool overflow : {false, true}) {
+            bool rejected = false;
+            try {
+                const auto total = overflow ? std::numeric_limits<std::uint64_t>::max() : policy.limit;
+                (void)policy.add(total, 1U, "boundary");
+            } catch (const flitzzip::ArchiveError& error) {
+                const std::string_view message(error.what());
+                REQUIRE_TRUE(message.starts_with("boundary"));
+                REQUIRE_TRUE((message.find("overflows") != std::string_view::npos) == overflow);
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+        }
+        REQUIRE_EQ(policy.add(41U, 1U, "boundary"), 42U);
+    }
 }
 
 }  // namespace

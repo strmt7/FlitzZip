@@ -354,6 +354,39 @@ TEST_CASE(neutron_dictionary_progress_failure_cancels_siblings) {
     REQUIRE_EQ(calls, 1U);
 }
 
+// Purpose: Honor cancellation requested by an observer before the current checkpoint returns to codec work.
+// Inputs: One observer that cancels through the public state API, plus a copied checkpoint.
+// Outputs: Requires both checkpoints to throw, one observer invocation, and clean progress for a new operation.
+TEST_CASE(neutron_dictionary_observer_cancellation_stops_current_checkpoint) {
+    flitzzip::ProgressState progress;
+    progress.start(flitzzip::OperationKind::Compress, 128U, 1U);
+    unsigned int calls = 0U;
+    const auto checkpoint = flitzzip::make_cancellation_checkpoint(progress, [&](const auto& snapshot) {
+        REQUIRE_TRUE(!snapshot.cancel_requested);
+        ++calls;
+        progress.request_cancel();
+    });
+    const auto sibling = checkpoint;
+    for (const auto& check : {checkpoint, sibling}) {
+        bool cancelled = false;
+        try {
+            check();
+        } catch (const flitzzip::ArchiveError& error) {
+            cancelled = std::string_view(error.what()) == "operation cancelled";
+        }
+        REQUIRE_TRUE(cancelled);
+    }
+    REQUIRE_EQ(calls, 1U);
+    const auto cancelled_snapshot = progress.snapshot();
+    progress.start(flitzzip::OperationKind::Verify, 64U, 2U);
+    const auto next = flitzzip::make_cancellation_checkpoint(progress, {});
+    next();
+    REQUIRE_TRUE(cancelled_snapshot.cancel_requested);
+    REQUIRE_TRUE(!progress.cancelled());
+    REQUIRE_TRUE(progress.snapshot().operation == flitzzip::OperationKind::Verify);
+    REQUIRE_TRUE(!flitzzip::serialize_progress_callback({}));
+}
+
 // Purpose: Preserve the complete ordinary GPU portfolio and CPU/HIP readability through the real chunk dispatcher.
 // Inputs: Nonperiodic source with isolated repeats missed by the ordinary sampling heuristic, at the same level nine.
 // Outputs: Requires a strictly smaller dictionary winner, complete CRC semantics and exact CPU/HIP decoding.
