@@ -45,6 +45,9 @@ against these layout requirements and the prior executable's actual appearance.
   distinct numeric suffixes, including Unicode case pairs and existing suffixed
   names. Each component fits the Windows 255 UTF-16-unit limit without splitting
   a surrogate pair. Single-archive extraction preserves the selected root.
+- File-picker selections are admitted completely before changing the Queue.
+  More than 4,096 paths, malformed shell results and excessive path text fail
+  visibly without silently dropping selected files.
 - Work starts on a background thread and updates progress through coalesced
   repaint requests.
 - Text is ellipsized or wrapped instead of overflowing.
