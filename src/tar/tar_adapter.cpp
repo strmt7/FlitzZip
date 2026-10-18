@@ -462,12 +462,15 @@ void validate_tar_checksum(const std::array<char, kTarBlockSize>& header) {
 }
 
 // Purpose: Read the path when no PAX or GNU extension overrides the USTAR fields.
-// Inputs: `header` contains the original name and prefix fields.
-// Outputs: Returns the combined path or throws for an empty entry name.
-std::string tar_entry_path(const std::array<char, kTarBlockSize>& header) {
+// Inputs: `header` contains the original name and prefix fields; `typeflag` identifies directories.
+// Outputs: Returns the combined path, including USTAR prefix-only directories, or rejects an absent name.
+std::string tar_entry_path(const std::array<char, kTarBlockSize>& header, char typeflag) {
     const auto name = read_tar_string(header, 0, 100);
     const auto prefix = read_tar_string(header, 345, 155);
     if (name.empty()) {
+        if (typeflag == '5' && !prefix.empty()) {
+            return prefix;
+        }
         throw ArchiveError("TAR entry path is empty");
     }
     return prefix.empty() ? name : prefix + "/" + name;
@@ -633,7 +636,7 @@ TarEntryMetadata resolve_tar_entry(const std::array<char, kTarBlockSize>& header
                                    TarExtensionState& extensions) {
     TarEntryMetadata entry;
     const auto& path = extensions.local.path ? extensions.local.path : extensions.global.path;
-    entry.path = path ? path->bytes : tar_entry_path(header);
+    entry.path = path ? path->bytes : tar_entry_path(header, typeflag);
     if (path && path->pax) {
         entry.encoding =
             extensions.local.encoding.value_or(extensions.global.encoding.value_or(ArchivePathEncoding::Utf8));

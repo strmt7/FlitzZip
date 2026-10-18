@@ -484,6 +484,9 @@ TAR symbolic links, hard links, device entries, and FIFOs are rejected. This is
 intentional: extracting those entries safely on Windows needs a dedicated policy
 and UI surface.
 
+USTAR directories may store their entire name in the prefix field, including its
+full 155-byte width. These names pass the same path validation as every other entry.
+
 PAX `path`, `size` and `hdrcharset` attributes take precedence over their USTAR
 fields. Global attributes persist until replaced or deleted by an empty global
 value; local attributes expire after one ordinary entry. Both scan and extraction

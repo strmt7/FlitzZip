@@ -193,6 +193,70 @@ void require_tar_fixture_rejected_by_both(const std::filesystem::path& archive, 
 
 }  // namespace
 
+// Purpose: Preserve the POSIX directory layout whose complete path occupies the USTAR prefix field.
+// Inputs: Empty name fields, short/full-width prefixes, plain/Gzip readers and a following ordinary file.
+// Outputs: Both readers create the exact directory and sibling file with consistent entry and byte counts.
+TEST_CASE(tar_prefix_only_directories_preserve_paths_and_following_entries) {
+    const auto root = test_temp_dir("tar-prefix-only-directory");
+    for (const std::size_t length : {1U, 101U, 155U}) {
+        const auto fixture = root / std::to_string(length);
+        std::filesystem::create_directories(fixture);
+        const std::string name(length, 'd');
+        auto directory = make_test_tar_header("", '5', 0U);
+        put_test_tar_string(directory, 345, 155, name);
+        checksum_tar_fixture(directory);
+        const auto archive = fixture / "input.tar";
+        {
+            std::ofstream output(archive, std::ios::binary);
+            append_tar_fixture_record(output, directory);
+            append_tar_fixture_record(output, make_test_tar_header("sibling.txt", '0', 3U), "abc");
+        }
+        const auto compressed = fixture / "input.tar.gz";
+        (void)flitzzip::compress_gzip_file(archive, compressed);
+        for (const bool gzip : {false, true}) {
+            const auto destination = fixture / (gzip ? "filtered" : "plain");
+            const auto stats = gzip ? flitzzip::extract_tar_gzip(compressed, destination, false)
+                                    : flitzzip::extract_tar(archive, destination, false);
+            REQUIRE_EQ(stats.entries, 2U);
+            REQUIRE_EQ(stats.output_bytes, 3U);
+            REQUIRE_TRUE(std::filesystem::is_directory(destination / name));
+            REQUIRE_TRUE(std::filesystem::is_empty(destination / name));
+            std::ifstream sibling(destination / "sibling.txt", std::ios::binary);
+            REQUIRE_TRUE(sibling.is_open());
+            REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(sibling), {}), "abc");
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Keep directory-only prefix support behind the existing filename and extraction safety boundary.
+// Inputs: A regular file with no name, an unnamed directory and unsafe prefix-only directory paths.
+// Outputs: Both readers reject every fixture before publication and preserve an unrelated destination file.
+TEST_CASE(tar_prefix_only_directory_admission_rejects_unsafe_or_absent_paths) {
+    const auto root = test_temp_dir("tar-prefix-only-rejection");
+    std::size_t ordinal = 0;
+    for (const auto& [type, prefix] : std::array<std::pair<char, std::string_view>, 6>{{{'0', "directory"},
+                                                                                        {'5', ""},
+                                                                                        {'5', "../escape"},
+                                                                                        {'5', "/absolute"},
+                                                                                        {'5', "C:/absolute"},
+                                                                                        {'5', "trailing "}}}) {
+        const auto fixture = root / std::to_string(ordinal++);
+        std::filesystem::create_directories(fixture);
+        const auto archive = fixture / "input.tar";
+        auto header = make_test_tar_header("", type, 0U);
+        put_test_tar_string(header, 345, 155, prefix);
+        checksum_tar_fixture(header);
+        {
+            std::ofstream output(archive, std::ios::binary);
+            append_tar_fixture_record(output, header);
+        }
+        require_tar_fixture_rejected_by_both(archive, fixture);
+        REQUIRE_TRUE(!std::filesystem::exists(fixture / "escape"));
+    }
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Prevent silent truncation and wrong header alignment when PAX overrides the USTAR size.
 // Inputs: Empty, short and block-crossing files with deliberately conflicting or invalid old size fields.
 // Outputs: Plain and compressed TAR readers restore exact bytes and leave the next entry unaffected.
