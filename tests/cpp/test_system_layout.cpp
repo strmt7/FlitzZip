@@ -15,6 +15,45 @@ void require_contained(const RECT& child, const RECT& parent) {
 }
 }  // namespace
 
+// Purpose: Prevent a refreshed drive count from indexing an earlier inventory after a host drive change.
+// Inputs: Independently captured empty, one-drive and two-drive inventories, with forward/backward selections.
+// Outputs: Each selection remains in its own snapshot and empty inventories produce no index.
+TEST_CASE(system_drive_selection_binds_indices_to_the_captured_inventory) {
+    const std::vector<std::wstring> absent;
+    const std::vector<std::wstring> before{L"fixture-A"};
+    const std::vector<std::wstring> after{L"fixture-A", L"fixture-B"};
+    for (const int index : {-1, 1, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()}) {
+        REQUIRE_TRUE(!flitzzip::app::fixed_drive_index(absent, index));
+        const auto earlier = flitzzip::app::fixed_drive_index(before, index);
+        const auto later = flitzzip::app::fixed_drive_index(after, index);
+        REQUIRE_TRUE(earlier && later);
+        REQUIRE_EQ(before.at(*earlier), L"fixture-A");
+        REQUIRE_EQ(after.at(*later), index == std::numeric_limits<int>::min() ? L"fixture-A" : L"fixture-B");
+        REQUIRE_EQ(flitzzip::app::fixed_drive_index(before, index), earlier);
+    }
+}
+
+// Purpose: Exercise circular drive selection at every possible Windows drive count and signed boundaries.
+// Inputs: Inventories of 1-26 drive labels, small signed indices and both signed-int extremes.
+// Outputs: Matches independently evaluated signed modular arithmetic and never indexes outside the snapshot.
+TEST_CASE(system_drive_selection_handles_all_drive_counts_and_signed_extremes) {
+    for (std::size_t count = 1; count <= 26; ++count) {
+        const std::vector<std::wstring> drives(count, L"fixture");
+        std::vector<int> indices{std::numeric_limits<int>::min(), std::numeric_limits<int>::max()};
+        for (int index = -52; index <= 52; ++index) {
+            indices.push_back(index);
+        }
+        for (const int index : indices) {
+            const auto width = static_cast<std::int64_t>(count);
+            const auto expected = (static_cast<std::int64_t>(index) % width + width) % width;
+            const auto actual = flitzzip::app::fixed_drive_index(drives, index);
+            REQUIRE_TRUE(actual && *actual < count);
+            REQUIRE_EQ(*actual, static_cast<std::size_t>(expected));
+            REQUIRE_EQ(flitzzip::app::fixed_drive_index(drives, static_cast<int>(*actual)), actual);
+        }
+    }
+}
+
 // Purpose: Verify refresh-interval choices against independently specified transition thresholds.
 // Inputs: Every integer around the supported options, including both exact midpoint ties.
 // Outputs: Requires stable nearest values, valid indices, and idempotent normalization.

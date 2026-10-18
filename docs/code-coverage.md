@@ -37,7 +37,11 @@ upload remain unchanged. This measures CPU instructions in HIP host orchestratio
 including driver calls and resource management. OpenCppCoverage cannot measure
 GPU device instructions; those still require the qualification described below.
 Collection never changes the build configuration or silently substitutes a CPU
-execution path. Keep a separate checkout/build when preserving a Release build.
+execution path. Switching configurations still runs the selected build and
+publishes a new qualification receipt. Matching per-configuration rebuild
+evidence permits incremental compilation when source, toolchain, configuration
+and outputs allow it; changed or unproven outputs still require a clean build.
+Use a separate checkout when simultaneous independent builds are necessary.
 
 On an interactive Windows desktop, add `--gui` to run the existing all-page
 GUI smoke under the same collector, for example
