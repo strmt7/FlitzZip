@@ -1192,10 +1192,12 @@ $smokeRoot = Join-Path $repo "out\gui-smoke-work"
 $smokeDestination = Join-Path $smokeRoot ("FlitzZip-destination-" + [char]0x03A9)
 New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
 $smokeInput = Join-Path $smokeRoot "drag-drop-input.txt"
-$smokeInputTwo = Join-Path $smokeRoot "drag-drop-input-two.txt"
+$secondArchiveRoot = Join-Path $smokeRoot "second-archive"
+New-Item -ItemType Directory -Force -Path $secondArchiveRoot | Out-Null
+$smokeInputTwo = Join-Path $secondArchiveRoot "drag-drop-input.txt"
 $smokeFolder = Join-Path $smokeRoot "folder-input"
 $smokeArchive = Join-Path $smokeRoot "valid-input.flzip"
-$smokeArchiveTwo = Join-Path $smokeRoot "valid-input-two.flzip"
+$smokeArchiveTwo = Join-Path $secondArchiveRoot "VALID-INPUT.flzip"
 $badArchive = Join-Path $smokeRoot "invalid-input.flzip"
 $overflowFiles = @()
 $bulkDropFiles = @()
@@ -1541,7 +1543,7 @@ try {
     Start-Sleep -Milliseconds 120
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     $multiFirst = Join-Path $extractOutput "valid-input\drag-drop-input.txt"
-    $multiSecond = Join-Path $extractOutput "valid-input-two\drag-drop-input-two.txt"
+    $multiSecond = Join-Path $extractOutput "VALID-INPUT (2)\drag-drop-input.txt"
     foreach ($attempt in 1..50) {
         if ((Test-Path -LiteralPath $multiFirst) -and (Test-Path -LiteralPath $multiSecond)) {
             break
@@ -1550,6 +1552,12 @@ try {
     }
     if (-not (Test-Path -LiteralPath $multiFirst) -or -not (Test-Path -LiteralPath $multiSecond)) {
         throw "GUI multi-archive extraction did not restore both expected files under $extractOutput."
+    }
+    if ((Get-FileHash -LiteralPath $multiFirst -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $smokeInput -Algorithm SHA256).Hash -or
+        (Get-FileHash -LiteralPath $multiSecond -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $smokeInputTwo -Algorithm SHA256).Hash) {
+        throw 'GUI batch extraction merged or changed same-name members from case-equivalent archives.'
     }
 
     $captures += Assert-LegacyNameExtraction -Handle $windowHandle -Dpi $windowDpi -FixtureRoot $legacyFixture -OutputRoot $extractOutput -BasePath $basePath -Extension $extension

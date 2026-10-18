@@ -40,6 +40,11 @@ against these layout requirements and the prior executable's actual appearance.
 - Microsoft Defender scanning and SHA-256 hashing remain off until the user opts
   in.
 - Overwrite remains off by default.
+- Batch extraction plans all per-archive directories before writing. Names that
+  compare equal under Windows ordinal case-insensitive comparison receive
+  distinct numeric suffixes, including Unicode case pairs and existing suffixed
+  names. Each component fits the Windows 255 UTF-16-unit limit without splitting
+  a surrogate pair. Single-archive extraction preserves the selected root.
 - Work starts on a background thread and updates progress through coalesced
   repaint requests.
 - Text is ellipsized or wrapped instead of overflowing.
