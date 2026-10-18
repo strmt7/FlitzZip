@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -29,6 +30,17 @@ class CoverageTests(unittest.TestCase):
         self.xml = '<coverage><sources><source>src</source></sources><packages><package name="native"><classes>'
         self.xml += '<class name="example" filename="example.cpp"><lines><line number="1" hits="2"/>'
         self.xml += '<line number="2" hits="0"/></lines></class></classes></package></packages></coverage>'
+
+    # Purpose: Keep literal PowerShell helper imports in the measured GUI scenario's source closure.
+    # Inputs: Actual scenario files and their PSScriptRoot-relative imports. Outputs: Missing helper identities fail.
+    def test_gui_scenarios_bind_imported_tool_sources(self):
+        pattern = r"""(?:Import-Module|\.)\s+\(Join-Path\s+\$PSScriptRoot\s+["']([^"']+)["']\)"""
+        imports = set()
+        for name in collector.GUI_SCENARIO_INPUTS:
+            text = (collector.ROOT / name).read_text(encoding="utf-8-sig")
+            imports.update((Path(name).parent / relative).as_posix() for relative in re.findall(pattern, text))
+        self.assertTrue(imports, "The real GUI driver must expose its imported helper dependencies")
+        self.assertLessEqual(imports, set(collector.GUI_SCENARIO_INPUTS))
 
     # Purpose: Prove normalization retains executed and unexecuted lines rather than manufacturing coverage.
     # Inputs: Hand-authored source roots and line evidence.
@@ -307,6 +319,7 @@ class CoverageTests(unittest.TestCase):
                 (True, "build/Debug/FlitzZip.exe"),
                 (True, "build/Debug/FlitzZip.pdb"),
                 (True, "tools/gui_smoke.ps1"),
+                (True, "tools/FlitzZip.GuiSmoke.Ui.psm1"),
                 (True, "tools/process_environment.ps1"),
             ):
                 target = self.root / name
