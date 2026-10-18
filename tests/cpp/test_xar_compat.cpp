@@ -199,6 +199,43 @@ TEST_CASE(xar_numeric_entities_preserve_unicode_scalar_widths) {
     std::filesystem::remove_all(root);
 }
 
+// Purpose: Preserve significant filename whitespace independently from numeric/type field formatting.
+// Inputs: Literal/entity leading spaces and XML punctuation in valid Windows names.
+// Outputs: Exact names and bytes are restored without silently creating trimmed aliases.
+TEST_CASE(xar_filename_text_preserves_whitespace_and_entities) {
+    const auto root = test_temp_dir("xar-filename-text");
+    const std::array<std::pair<std::string_view, std::string_view>, 4> names{
+        {{" leading.txt", " leading.txt"},
+         {"&#32;leading.txt", " leading.txt"},
+         {"two words.txt", "two words.txt"},
+         {"rock&apos;n&amp;roll.txt", "rock'n&roll.txt"}}};
+    const std::array<unsigned char, 1> heap{'z'};
+    for (std::size_t index = 0; index < names.size(); ++index) {
+        const auto destination = root / std::to_string(index);
+        const auto& [xml_name, expected_name] = names[index];
+        write_xar_fixture(root / "input.xar", "<xar><toc>" + stored_xar_entry(xml_name) + "</toc></xar>", heap);
+        (void)flitzzip::extract_xar(root / "input.xar", destination, false);
+        REQUIRE_EQ(count_regular_files(destination), 1U);
+        REQUIRE_EQ(read_text_file(destination / expected_name), "z");
+        REQUIRE_EQ(std::filesystem::directory_iterator(destination)->path().filename().string(), expected_name);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Apply the same Windows name policy to literal and XML-escaped whitespace and reserved characters.
+// Inputs: Trailing spaces, control characters and punctuation that cannot name a safe Windows file.
+// Outputs: Every representation rejects before altering the destination sentinel or creating a normalized alias.
+TEST_CASE(xar_filename_whitespace_cannot_bypass_path_validation) {
+    const auto root = test_temp_dir("xar-filename-policy");
+    for (const auto name : {"unsafe.txt ", "unsafe.txt&#32;", "\tunsafe.txt", "unsafe.txt\t", "\nunsafe.txt",
+                            "unsafe.txt\n", "\runsafe.txt", "unsafe.txt\r", "&#9;unsafe.txt", "unsafe.txt&#13;",
+                            "&lt;unsafe.txt", "&gt;unsafe.txt", "&quot;unsafe.txt", " &#32; "}) {
+        require_xar_metadata_rejected(root / "input.xar", root / "output",
+                                      "<xar><toc>" + stored_xar_entry(name) + "</toc></xar>");
+    }
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Reject ambiguous metadata and hostile byte ranges rather than selecting a convenient field value.
 // Inputs: Duplicate/missing fields, decimal overflow, impossible heap extents and malformed encoding attributes.
 // Outputs: Every invalid record fails without replacing a sentinel destination file.

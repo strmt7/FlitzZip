@@ -201,13 +201,16 @@ function Test-MatrixCliLiteralPath {
         [IO.File]::WriteAllText((Join-Path $Root $name), "literal fixture: $name")
     }
     $archive = Join-Path $Root '--archive.zip'
-    Invoke-FlitzZipMatrixCommand -WorkingDirectory $Root -Label 'Literal path compression' `
+    $creation = Invoke-FlitzZipMatrixCommand -WorkingDirectory $Root -Label 'Literal path compression' `
         -Arguments @('compress', '--format', 'zip', '--verify-after-write', '--sha256', '--output', $archive,
-            '--', '--output', 'space and trailing.txt') | Out-Null
+            '--', '--output', 'space and trailing.txt')
     $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     $verification = Invoke-FlitzZipMatrixCommand -WorkingDirectory $Root -Label 'Literal path verification' `
         -Arguments @('verify', '--sha256', '--', '--archive.zip')
     if ($verification -cnotcontains "integrity_sha256=$archiveHash") { throw 'CLI SHA-256 disagrees with the independent digest.' }
+    foreach ($lines in @($creation, $verification)) {
+        if ($lines[-1] -cnotmatch '^entries=2 ') { throw 'CLI completed before the requested integrity check finished.' }
+    }
     $output = Join-Path $Root 'readback'
     Invoke-FlitzZipMatrixCommand -WorkingDirectory $Root -Label 'Literal path extraction' `
         -Arguments @('extract', '--output', $output, '--sha256', '--validate-before-publish', '--', '--archive.zip') | Out-Null
@@ -224,6 +227,45 @@ function Test-MatrixCliLiteralPath {
         throw 'Verification or extraction modified its source archive.'
     }
     Write-Output 'cli_arguments literal_paths=passed independent_sha256=passed'
+}
+
+# Purpose: Qualify opt-in inspection and completion ordering on hosts with or without usable Microsoft Defender.
+# Inputs: An owned tiny fixture, both verifiable formats and the actual local scanner state; no security settings change.
+# Outputs: Checks independent hashes, unchanged verify inputs, scan-state/exit agreement and completion only on success.
+function Test-MatrixCliInspection {
+    param([string]$Root)
+    New-Item -ItemType Directory -Path $Root | Out-Null
+    $source = Join-Path $Root 'payload.txt'
+    [IO.File]::WriteAllText($source, 'Benign CLI inspection fixture.')
+    foreach ($format in @('zip', 'flzip')) {
+        $mode = if ($format -eq 'flzip') { @('--force-cpu') } else { @() }
+        $control = Join-Path $Root "control.$format"
+        $unflagged = Invoke-FlitzZipMatrixCommand -Label "Unflagged $format control" `
+            -Arguments (@('compress', '--format', $format, '--output', $control) + $mode + $source)
+        if (($unflagged -join "`n") -match '(?m)^(defender_|integrity_)') { throw 'Unrequested inspection executed.' }
+        foreach ($command in @('compress', 'verify')) {
+            $archive = if ($command -eq 'verify') { $control } else { Join-Path $Root "flagged.$format" }
+            $before = if ($command -eq 'verify') { (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash }
+            $arguments = @($command, '--sha256', '--defender-scan') + $mode
+            $arguments += if ($command -eq 'compress') { @('--format', $format, '--output', $archive, $source) } else { @($archive) }
+            $result = Invoke-MatrixProcess -FilePath $cli -Arguments $arguments
+            $fields = @($result.Output | Where-Object { $_ -cmatch '^defender_(attempted|clean|timed_out|exit_code)=' })
+            if ($fields.Count -ne 4) { throw "$command $format did not report the complete Defender result." }
+            $clean = $fields -ccontains 'defender_attempted=true' -and $fields -ccontains 'defender_clean=true' -and
+                $fields -ccontains 'defender_timed_out=false' -and $fields -ccontains 'defender_exit_code=0'
+            $expectedExit = if ($clean) { 0 } else { 1 }
+            $statistics = @($result.Output | Where-Object { $_ -cmatch '^entries=' })
+            if ($result.ExitCode -ne $expectedExit -or ($clean -and $statistics.Count -ne 1) -or
+                (-not $clean -and $statistics.Count -ne 0)) { throw "$command $format scan and completion states disagree." }
+            $after = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+            if ($command -eq 'verify' -and $before -cne $after) { throw 'Read-only verification changed its archive.' }
+            if ($clean -and ($result.Output[-1] -cnotmatch '^entries=1 ' -or
+                    $result.Output -cnotcontains "integrity_sha256=$($after.ToLowerInvariant())")) {
+                throw "$command $format reported completion before the requested checks or returned a wrong digest."
+            }
+            Write-Output "cli_inspection command=$command format=$format contract=passed defender_clean=$clean"
+        }
+    }
 }
 
 # Purpose: Parse one `flitzzip_cli formats` line into structured metadata.
@@ -615,6 +657,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 try {
     Test-MatrixCliArgumentRejection -Root (Join-Path $work 'argument-rejection')
     Test-MatrixCliLiteralPath -Root (Join-Path $work 'literal-paths')
+    Test-MatrixCliInspection -Root (Join-Path $work 'inspections')
     Test-MatrixUnicodePath -Root (Join-Path $work 'unicode')
     Test-MatrixLegacyName -Root (Join-Path $work 'legacy-names')
     $fixtures = Initialize-FormatMatrixFixture -Root (Join-Path $work "fixtures")

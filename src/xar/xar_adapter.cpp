@@ -96,7 +96,7 @@ bool is_ascii_space(char ch) {
     return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r';
 }
 
-// Purpose: Trim ASCII whitespace around XML text nodes and attribute values.
+// Purpose: Trim surrounding ASCII whitespace for XML syntax and non-name scalar fields.
 // Inputs: `text` is a raw XML substring.
 // Outputs: Returns a view without leading or trailing ASCII whitespace.
 std::string_view trim_ascii(std::string_view text) {
@@ -161,10 +161,9 @@ std::uint32_t parse_xml_numeric_entity(std::string_view entity) {
 }
 
 // Purpose: Decode XML text for the limited XAR TOC parser.
-// Inputs: `text` is trimmed or untrimmed XML character data.
-// Outputs: Returns decoded UTF-8 text; rejects unsupported entities.
+// Inputs: `text` is raw XML character data or an attribute value.
+// Outputs: Returns decoded UTF-8 text with significant whitespace preserved; rejects unsupported entities.
 std::string decode_xml_text(std::string_view text) {
-    text = trim_ascii(text);
     std::string output;
     output.reserve(text.size());
     std::size_t index = 0;
@@ -201,7 +200,7 @@ std::string decode_xml_text(std::string_view text) {
 // Inputs: `text` is the raw field value and `field` names diagnostics.
 // Outputs: Returns the decoded integer or throws on malformed/overflowing input.
 std::uint64_t parse_decimal_u64(std::string_view text, const char* field) {
-    const auto decoded = decode_xml_text(text);
+    const auto decoded = decode_xml_text(trim_ascii(text));
     if (decoded.empty() || !std::ranges::all_of(decoded, [](unsigned char ch) { return ch >= '0' && ch <= '9'; })) {
         throw ArchiveError(std::string("XAR ") + field + " is not a decimal integer");
     }
@@ -433,7 +432,7 @@ void set_xar_file_name(XarFileContext& context, std::string_view text, XarMetada
     if (context.has_name) {
         throw ArchiveError("XAR file entry contains duplicate name metadata");
     }
-    if (trim_ascii(text).size() > kMaxArchivePathComponentBytes) {
+    if (text.size() > kMaxArchivePathComponentBytes) {
         throw ArchiveError("XAR filename exceeds FlitzZip component length limit");
     }
     auto name = decode_xml_text(text);
@@ -531,7 +530,7 @@ void apply_xar_text(std::string_view tag, std::string_view text, std::vector<Xar
         if (current.has_type || trim_ascii(text).size() > kMaxXarScalarTextBytes) {
             throw ArchiveError("XAR file entry contains duplicate or oversized type metadata");
         }
-        current.type = decode_xml_text(text);
+        current.type = decode_xml_text(trim_ascii(text));
         current.has_type = true;
     } else if (current.in_data && tag == "offset") {
         if (current.has_offset || trim_ascii(text).size() > kMaxXarScalarTextBytes) {

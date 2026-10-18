@@ -484,6 +484,23 @@ TAR symbolic links, hard links, device entries, and FIFOs are rejected. This is
 intentional: extracting those entries safely on Windows needs a dedicated policy
 and UI surface.
 
+PAX `path`, `size` and `hdrcharset` attributes take precedence over their USTAR
+fields. Global attributes persist until replaced or deleted by an empty global
+value; local attributes expire after one ordinary entry. Both scan and extraction
+passes use the same interpretation. Payload bounds and byte totals use the
+effective size, including zero, rather than the superseded USTAR field. These
+rules follow the [POSIX PAX format](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/pax.html#tag_20_94_13_03).
+
+The supported subset rejects duplicate extraction fields within one PAX header,
+empty local extraction attributes, malformed record framing and local extensions
+without a following entry. GNU, Schily and Solaris sparse metadata is rejected
+before output because reconstructing sparse payloads is not implemented. It must
+never be treated as ordinary file data. Unknown informational keys remain
+non-extracting. Fixtures exercise local/global precedence, block alignment,
+truncation, bounds and unchanged destinations through plain TAR and TAR.GZ.
+GNU long-name records remove only their NUL padding. Newlines and spaces remain
+part of the filename and must pass the shared Windows path policy.
+
 ```mermaid
 flowchart TD
     A["Open TAR archive"] --> B["Scan headers and PAX metadata"]
@@ -738,6 +755,12 @@ eXtensible ARchiver files:
    path.
 5. Fail closed on declared TOC checksum algorithms until checksum verification
    is implemented for that exact XAR variant.
+
+XML filename text preserves whitespace and decoded entities. Leading spaces in
+valid names remain intact; trailing spaces and control characters are rejected
+by the Windows path policy. Only numeric and type fields trim surrounding
+formatting whitespace. An unsafe filename must never become acceptable through
+trimming or another silent rename.
 
 ```mermaid
 flowchart TD
