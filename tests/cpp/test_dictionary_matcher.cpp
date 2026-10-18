@@ -456,6 +456,31 @@ std::string describe_first_dictionary_sequence(const EncodedSegment& segment) {
     return result + " distance=" + std::to_string(distance) + " match=" + std::to_string(match + 4U);
 }
 
+// Purpose: Preserve a complete bounded failed payload without depending on a later rerun or filesystem export.
+// Inputs: One independently decoded segment and the exact source bytes it should reproduce.
+// Outputs: Returns decoder diagnostics and hexadecimal payload bytes, including when the sequence is malformed.
+std::string describe_dictionary_payload_failure(const EncodedSegment& segment, std::span<const std::byte> source) {
+    REQUIRE_TRUE(segment.payload.size() <= kEncodedSegmentCapacity);
+    std::string result = "input_bytes=" + std::to_string(segment.input_bytes) +
+                         " payload_bytes=" + std::to_string(segment.payload.size());
+    try {
+        result += " " + describe_first_dictionary_sequence(segment);
+        const auto decoded = decode_reference_block(segment);
+        const auto first_bad = std::mismatch(decoded.begin(), decoded.end(), source.begin(), source.end());
+        result += " first_bad=" + std::to_string(first_bad.first - decoded.begin());
+    } catch (const std::exception& error) {
+        result += " decoder_error=" + std::string(error.what());
+    }
+    constexpr std::string_view digits = "0123456789abcdef";
+    result += " payload_hex=";
+    for (const auto value : segment.payload) {
+        const auto byte = std::to_integer<unsigned int>(value);
+        result.push_back(digits[byte >> 4U]);
+        result.push_back(digits[byte & 15U]);
+    }
+    return result;
+}
+
 // Purpose: Write one independently verified dictionary fixture without replacing an existing output.
 // Inputs: `path` belongs to the opt-in export root and `bytes` holds the complete bounded fixture.
 // Outputs: Publishes complete bytes atomically without following reparse parents or replacing an existing file.
@@ -689,6 +714,25 @@ std::vector<std::byte> encode_reference_matches(std::span<const std::byte> input
 }
 
 #if FLITZZIP_ENABLE_HIP
+// Purpose: Separate changed device inputs from encoder failures while the failed call still owns its buffers.
+// Inputs: An initialized device allocation and its immutable CPU oracle of the same bounded extent.
+// Outputs: Reports a transfer error or first differing record without replacing the original payload diagnostic.
+template <typename T> std::string describe_dictionary_device_difference(const T* device, std::span<const T> expected) {
+    std::vector<T> actual(expected.size());
+    const auto status =
+        flitzzip::hip_detail::copy_on_codec_stream(actual.data(), device, expected.size_bytes(), hipMemcpyDeviceToHost);
+    if (status != hipSuccess) {
+        return "copy_error=" + std::to_string(static_cast<int>(status));
+    }
+    const auto mismatch = std::mismatch(actual.begin(), actual.end(), expected.begin(), expected.end());
+    if (mismatch.first == actual.end()) {
+        return "unchanged";
+    }
+    return "first_bad=" + std::to_string(mismatch.first - actual.begin()) +
+           " expected=" + std::to_string(static_cast<std::uint64_t>(*mismatch.second)) +
+           " actual=" + std::to_string(static_cast<std::uint64_t>(*mismatch.first));
+}
+
 // Purpose: Build exact-prefix predecessor links independently of the GPU sort and link kernels.
 // Inputs: A bounded source split into the production segment extent.
 // Outputs: The nearest earlier equal four-byte prefix, or a sentinel including each segment's final three bytes.
@@ -798,12 +842,20 @@ void require_dictionary_encoder_from_oracle(std::span<const std::byte> input, st
         const auto begin = payload.begin() + segment * kEncodedSegmentCapacity;
         const auto input_bytes = std::min(input.size() - segment * kSegmentBytes, std::size_t{kSegmentBytes});
         EncodedSegment encoded{{begin, begin + lengths[segment]}, static_cast<std::uint32_t>(input_bytes)};
-        const auto decoded = decode_reference_block(encoded);
         const auto source_bytes = input.subspan(segment * kSegmentBytes, input_bytes);
-        if (!std::equal(decoded.begin(), decoded.end(), source_bytes.begin())) {
+        bool agrees = false;
+        try {
+            const auto decoded = decode_reference_block(encoded);
+            agrees = std::equal(decoded.begin(), decoded.end(), source_bytes.begin(), source_bytes.end());
+        } catch (const std::exception&) {
+            // The failure report below retains malformed bytes and the live device boundaries as well.
+        }
+        if (!agrees) {
             throw std::runtime_error("dictionary encoder differs with CPU links at segment " + std::to_string(segment) +
-                                     " level " + std::to_string(level) + " " +
-                                     describe_first_dictionary_sequence(encoded));
+                                     " level " + std::to_string(level) + " device_input " +
+                                     describe_dictionary_device_difference(source.get(), input) + " device_links " +
+                                     describe_dictionary_device_difference(previous.get(), oracle) + " " +
+                                     describe_dictionary_payload_failure(encoded, source_bytes));
         }
         REQUIRE_TRUE(std::all_of(begin + lengths[segment], begin + kEncodedSegmentCapacity, guarded));
     }
@@ -1437,58 +1489,71 @@ TEST_CASE(dictionary_concurrent_equal_input_encoding) {
     }
 }
 
-// Purpose: Isolate dictionary batch state from native chunk classification under sustained concurrent HIP calls.
-// Inputs: Four callers by default, or thirty-two opt-in callers, encode the same 4 MiB source repeatedly.
-// Outputs: Independently decoded reference bytes and every concurrent segment match the immutable source.
-TEST_CASE(dictionary_concurrent_repeated_batch_encoding) {
-    if (!flitzzip::query_gpu_info().available) {
-        return;
-    }
+// Purpose: Keep the original corruption fixture reproducible while distinguishing concurrent callers' data.
+// Inputs: A caller identity; zero reproduces the original 16 KiB-periodic 4 MiB fixture exactly.
+// Outputs: Returns immutable deterministic bytes; different identities have separately seeded records.
+std::vector<std::byte> dictionary_concurrent_input(std::size_t identity) {
     std::vector<std::byte> input(4U * 1024U * 1024U);
     for (std::size_t index = 0; index < input.size(); ++index) {
         std::uint64_t value = index % 16384U;
-        value += 0x9E3779B97F4A7C15ULL;
+        value += 0x9E3779B97F4A7C15ULL * (identity + 1U);
         value = (value ^ (value >> 30U)) * 0xBF58476D1CE4E5B9ULL;
         value = (value ^ (value >> 27U)) * 0x94D049BB133111EBULL;
         value ^= value >> 31U;
         input[index] = static_cast<std::byte>(value >> 56U);
     }
-    const auto reference = encode_segments(input, 5);
-    for (std::size_t segment = 0; segment < reference.segments.size(); ++segment) {
-        const auto decoded = decode_reference_block(reference.segments[segment]);
-        REQUIRE_TRUE(std::equal(decoded.begin(), decoded.end(), input.begin() + segment * kSegmentBytes));
+    return input;
+}
+
+// Purpose: Exercise both naturally staggered and gated HIP callers without assuming one schedule covers another.
+// Inputs: Fixed bounded caller/repetition counts and explicit start/input policies; every caller owns its work.
+// Outputs: Validates serial sources independently and requires exact concurrent results, retaining failed bytes.
+void require_concurrent_dictionary_batches(std::size_t workers, std::size_t repetitions, bool synchronized,
+                                           bool distinct_inputs) {
+    std::vector<std::vector<std::byte>> inputs;
+    std::vector<EncodedBatch> references;
+    const auto sources = distinct_inputs ? workers : 1U;
+    for (std::size_t identity = 0; identity < sources; ++identity) {
+        inputs.push_back(dictionary_concurrent_input(identity));
+        const auto& input = inputs.back();
+        references.push_back(encode_segments(input, 5));
+        const auto& reference = references.back();
+        REQUIRE_TRUE(reference.gpu_used);
+        REQUIRE_EQ(reference.segments.size(), input.size() / kSegmentBytes);
+        for (std::size_t segment = 0; segment < reference.segments.size(); ++segment) {
+            const auto decoded = decode_reference_block(reference.segments[segment]);
+            const auto source = std::span<const std::byte>(input).subspan(segment * kSegmentBytes, kSegmentBytes);
+            REQUIRE_TRUE(std::equal(decoded.begin(), decoded.end(), source.begin(), source.end()));
+        }
     }
-    wchar_t enabled[2]{};
-    const bool stress = GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_STRESS", enabled, 2U) == 1U && enabled[0] == L'1';
-    const std::size_t workers = stress ? 32U : 4U;
-    const std::size_t repetitions = stress ? 32U : 16U;
     std::vector<std::future<void>> pending;
     pending.reserve(workers);
+    // Destroying this promise first also unblocks admitted workers if a later async launch throws.
     std::promise<void> start;
     const auto ready = start.get_future().share();
     for (std::size_t worker = 0; worker < workers; ++worker) {
-        pending.push_back(std::async(std::launch::async, [&input, &reference, worker, repetitions, ready] {
-            ready.get();
+        pending.push_back(std::async(std::launch::async, [&, worker, ready] {
+            if (synchronized) {
+                ready.get();
+            }
+            const auto identity = distinct_inputs ? worker : 0U;
+            const auto& input = inputs[identity];
+            const auto& reference = references[identity];
             for (std::size_t iteration = 0; iteration < repetitions; ++iteration) {
                 const auto candidate = encode_segments(input, 5);
+                REQUIRE_TRUE(candidate.gpu_used);
+                REQUIRE_EQ(candidate.segments.size(), reference.segments.size());
                 for (std::size_t segment = 0; segment < reference.segments.size(); ++segment) {
-                    if (candidate.segments[segment].payload != reference.segments[segment].payload) {
-                        const auto decoded = decode_reference_block(candidate.segments[segment]);
-                        const auto source = std::span<const std::byte>(input).subspan(
-                            segment * kSegmentBytes, candidate.segments[segment].input_bytes);
-                        const auto first_bad = std::mismatch(decoded.begin(), decoded.end(), source.begin());
-                        const auto payload_bad = std::mismatch(
-                            reference.segments[segment].payload.begin(), reference.segments[segment].payload.end(),
-                            candidate.segments[segment].payload.begin(), candidate.segments[segment].payload.end());
+                    if (candidate.segments[segment].payload != reference.segments[segment].payload ||
+                        candidate.segments[segment].input_bytes != reference.segments[segment].input_bytes) {
+                        const auto source =
+                            std::span<const std::byte>(input).subspan(segment * kSegmentBytes, kSegmentBytes);
                         throw std::runtime_error(
                             "dictionary batch differs at worker " + std::to_string(worker) + " iteration " +
-                            std::to_string(iteration) + " segment " + std::to_string(segment) + " reference_bytes " +
-                            std::to_string(reference.segments[segment].payload.size()) + " candidate_bytes " +
-                            std::to_string(candidate.segments[segment].payload.size()) + " reference_sequence " +
-                            describe_first_dictionary_sequence(reference.segments[segment]) + " candidate_sequence " +
-                            describe_first_dictionary_sequence(candidate.segments[segment]) + " first_bad " +
-                            std::to_string(first_bad.first - decoded.begin()) + " payload_first_bad " +
-                            std::to_string(payload_bad.first - reference.segments[segment].payload.begin()));
+                            std::to_string(iteration) + " segment " + std::to_string(segment) + " identity " +
+                            std::to_string(identity) + " synchronized " + std::to_string(synchronized) +
+                            " reference_sequence " + describe_first_dictionary_sequence(reference.segments[segment]) +
+                            " candidate " + describe_dictionary_payload_failure(candidate.segments[segment], source));
                     }
                 }
             }
@@ -1497,6 +1562,32 @@ TEST_CASE(dictionary_concurrent_repeated_batch_encoding) {
     start.set_value();
     for (auto& task : pending) {
         task.get();
+    }
+}
+
+// Purpose: Isolate dictionary batch state under both original staggered and synchronized HIP start schedules.
+// Inputs: Four callers by default, or thirty-two opt-in callers, encode the original equal 4 MiB source repeatedly.
+// Outputs: Independently decoded reference bytes and every concurrent segment match the immutable source.
+TEST_CASE(dictionary_concurrent_repeated_batch_encoding) {
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    wchar_t enabled[2]{};
+    const bool stress = GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_STRESS", enabled, 2U) == 1U && enabled[0] == L'1';
+    for (const bool synchronized : {false, true}) {
+        require_concurrent_dictionary_batches(stress ? 32U : 4U, stress ? 32U : 16U, synchronized, false);
+    }
+}
+
+// Purpose: Expose cross-call input contamination that equal-input concurrency can conceal.
+// Inputs: Four separately seeded 4 MiB sources, four repetitions, and both start schedules at normal effort five.
+// Outputs: Every required-HIP result matches its own independently decoded reference without filesystem work.
+TEST_CASE(dictionary_concurrent_distinct_input_encoding) {
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    for (const bool synchronized : {false, true}) {
+        require_concurrent_dictionary_batches(4U, 4U, synchronized, true);
     }
 }
 
