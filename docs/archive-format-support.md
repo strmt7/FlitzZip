@@ -1106,8 +1106,11 @@ The ISO path is a native, read-only parser for basic ISO 9660 directory records:
 2. Directory records are scanned and validated before any output is written.
 3. Every extracted path goes through the same FlitzZip path-safety and
    archive-wide collision checks as ZIP, TAR, CPIO, and AR.
-4. Interleaved and multi-extent records are rejected until an explicit policy
-   and tests exist for them.
+4. The supported profile uses 2,048-byte logical blocks. Both endian copies of
+   block and volume sizes must agree; every extent must fit within the declared
+   volume and the physical image. Extended-attribute, interleaved and multi-extent
+   records are rejected before publication. Their offsets and record semantics
+   are not implemented by this reader.
 5. Rock Ridge, Joliet, UDF, boot catalog metadata, and filesystem attributes
    are not exposed as implemented features by this adapter.
 

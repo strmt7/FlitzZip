@@ -19,6 +19,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace flitzzip {
@@ -42,6 +43,11 @@ struct IsoDirectoryRecord {
     bool directory = false;
     std::uint32_t extent_sector = 0;
     std::uint32_t data_length = 0;
+};
+
+struct IsoVolume {
+    IsoDirectoryRecord root;
+    std::uint64_t bytes = 0;
 };
 
 struct IsoEntryMetadata {
@@ -125,6 +131,19 @@ std::uint32_t parse_iso_both_endian_u32(const unsigned char* bytes, const char* 
     return little;
 }
 
+// Purpose: Decode a both-endian ISO 16-bit field without accepting inconsistent copies.
+// Inputs: At least four descriptor bytes and an operation label. Outputs: Agreed field value or ArchiveError.
+std::uint16_t parse_iso_both_endian_u16(const unsigned char* bytes, const char* name) {
+    const auto little =
+        static_cast<std::uint16_t>(static_cast<unsigned>(bytes[0]) | (static_cast<unsigned>(bytes[1]) << 8U));
+    const auto big =
+        static_cast<std::uint16_t>((static_cast<unsigned>(bytes[2]) << 8U) | static_cast<unsigned>(bytes[3]));
+    if (little != big) {
+        throw ArchiveError(std::string("ISO both-endian field mismatch: ") + name);
+    }
+    return little;
+}
+
 // Purpose: Return whether an ISO identifier byte is a decimal digit.
 // Inputs: `ch` is one byte from an ISO file identifier.
 // Outputs: Returns true only for ASCII digits.
@@ -176,6 +195,9 @@ std::pair<std::string, bool> normalize_iso_identifier(std::span<const unsigned c
 IsoDirectoryRecord parse_iso_directory_record(std::span<const unsigned char> record, const char* label) {
     if (record.size() < kIsoMinimumDirectoryRecordBytes) {
         throw ArchiveError(std::string(label) + " record is too short");
+    }
+    if (record[1] != 0U) {
+        throw ArchiveError("ISO extended attribute records are not supported");
     }
     if (record[26] != 0U || record[27] != 0U) {
         throw ArchiveError("ISO interleaved files are not supported");
@@ -273,10 +295,10 @@ void insert_iso_directory_extent(std::map<std::uint64_t, std::uint64_t>& extents
     extents.emplace(start, end);
 }
 
-// Purpose: Locate and parse the ISO Primary Volume Descriptor root directory.
+// Purpose: Admit the basic ISO volume geometry and its Primary Volume Descriptor root directory.
 // Inputs: `input` is the ISO stream and `archive_size` is the image length.
-// Outputs: Returns the decoded root directory record or throws if no valid PVD exists.
-IsoDirectoryRecord read_iso_root_record(std::ifstream& input, std::uint64_t archive_size) {
+// Outputs: Returns the declared volume bound and root, or rejects unsupported geometry and malformed fields.
+IsoVolume read_iso_volume(std::ifstream& input, std::uint64_t archive_size) {
     std::array<unsigned char, kIsoSectorBytes> descriptor{};
     for (std::uint64_t ordinal = 0; ordinal < kIsoMaxVolumeDescriptors; ++ordinal) {
         const auto sector =
@@ -293,6 +315,15 @@ IsoDirectoryRecord read_iso_root_record(std::ifstream& input, std::uint64_t arch
             continue;
         }
         if (descriptor[0] == kIsoVolumeDescriptorPrimary) {
+            const auto block_size = parse_iso_both_endian_u16(descriptor.data() + 128U, "logical block size");
+            if (block_size != kIsoSectorBytes) {
+                throw ArchiveError("ISO logical block sizes other than 2048 bytes are not supported");
+            }
+            const auto volume_blocks = parse_iso_both_endian_u32(descriptor.data() + 80U, "volume space size");
+            const auto volume_bytes = checked_mul_iso_bytes(volume_blocks, block_size, "ISO volume size overflow");
+            if (volume_bytes == 0U || volume_bytes > archive_size) {
+                throw ArchiveError("ISO declared volume size is empty or extends past the image");
+            }
             const auto record_length = static_cast<std::size_t>(descriptor[kIsoDirectoryRecordRootOffset]);
             if (record_length == 0U) {
                 throw ArchiveError("ISO root directory record length is invalid");
@@ -303,7 +334,7 @@ IsoDirectoryRecord read_iso_root_record(std::ifstream& input, std::uint64_t arch
             if (!root.directory) {
                 throw ArchiveError("ISO root directory record is not a directory");
             }
-            return root;
+            return IsoVolume{.root = std::move(root), .bytes = volume_bytes};
         }
         if (descriptor[0] == kIsoVolumeDescriptorTerminator) {
             break;
@@ -323,13 +354,14 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
         throw ArchiveError("cannot open ISO image: " + archive_path.string());
     }
 
-    const auto root = read_iso_root_record(input, archive_size);
-    validate_iso_extent(root.extent_sector, root.data_length, archive_size);
+    const auto volume = read_iso_volume(input, archive_size);
+    const auto& root = volume.root;
+    validate_iso_extent(root.extent_sector, root.data_length, volume.bytes);
 
     IsoScanResult result;
     std::vector<ArchivePathValidationEntry> validation_entries;
     std::map<std::uint64_t, std::uint64_t> directory_extents;
-    insert_iso_directory_extent(directory_extents, root.extent_sector, root.data_length, archive_size);
+    insert_iso_directory_extent(directory_extents, root.extent_sector, root.data_length, volume.bytes);
     std::vector<IsoPendingDirectory> pending{IsoPendingDirectory{
         .path = {},
         .extent_sector = root.extent_sector,
@@ -348,7 +380,7 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
             throw ArchiveError("ISO directory metadata work exceeds FlitzZip limits");
         }
         const auto bytes =
-            read_iso_directory_extent(input, directory.extent_sector, directory.data_length, archive_size);
+            read_iso_directory_extent(input, directory.extent_sector, directory.data_length, volume.bytes);
         std::size_t offset = 0;
         while (offset < bytes.size()) {
             const auto record_length = static_cast<std::size_t>(bytes[offset]);
@@ -374,7 +406,7 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
             if (result.entries.size() >= kMaxArchiveEntries) {
                 throw ArchiveError("ISO image contains too many entries");
             }
-            const auto payload_offset = validate_iso_extent(record.extent_sector, record.data_length, archive_size);
+            const auto payload_offset = validate_iso_extent(record.extent_sector, record.data_length, volume.bytes);
             if (directory.depth >= kMaxArchivePathComponents) {
                 throw ArchiveError("ISO directory depth exceeds FlitzZip limits");
             }
@@ -394,7 +426,7 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
                 .size = record.data_length,
             });
             if (record.directory) {
-                insert_iso_directory_extent(directory_extents, record.extent_sector, record.data_length, archive_size);
+                insert_iso_directory_extent(directory_extents, record.extent_sector, record.data_length, volume.bytes);
                 pending.push_back(IsoPendingDirectory{
                     .path = path,
                     .extent_sector = record.extent_sector,
