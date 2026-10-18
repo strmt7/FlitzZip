@@ -1029,10 +1029,16 @@ TEST_CASE(flzip_cpu_short_tail_after_raw_block) {
 TEST_CASE(flzip_unicode_paths_roundtrip) {
     const auto root = test_temp_dir("flzip-unicode");
     const auto source = root / std::filesystem::path(u8"\u65e5\u672c");
-    const auto relative = std::filesystem::path(u8"caf\u00e9/\U0001f4c1.txt");
+    const auto relative = std::filesystem::path(u8"caf\u00e9") / std::filesystem::path(u8"\U0001f4c1.txt");
     std::filesystem::create_directories((source / relative).parent_path());
     const std::string payload(8192U, 'U');
-    std::ofstream(source / relative, std::ios::binary) << payload;
+    {
+        std::ofstream input(source / relative, std::ios::binary);
+        REQUIRE_TRUE(input.is_open());
+        input << payload;
+        input.close();
+        REQUIRE_TRUE(!input.fail());
+    }
     const bool hip_available = flitzzip::query_gpu_info().available;
     for (const bool hip : {false, true}) {
         if (hip && !hip_available) {

@@ -502,7 +502,7 @@ TEST_CASE(tar_numeric_headers_are_bounded_and_checksummed) {
     const auto stats = flitzzip::extract_tar(archive, root / "valid", false);
     REQUIRE_EQ(stats.output_bytes, 1U);
     {
-        std::ifstream input(root / "valid/payload");
+        std::ifstream input(root / "valid" / "payload");
         REQUIRE_EQ(input.get(), 'z');
         REQUIRE_EQ(input.get(), EOF);
     }

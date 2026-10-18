@@ -164,7 +164,7 @@ TEST_CASE(bzip2_resumable_error_never_publishes) {
     write_text_file(source, "verified payload");
     (void)flitzzip::compress_bzip2_file(source, archive);
     (void)flitzzip::extract_bzip2_file(archive, root / "control", false);
-    REQUIRE_EQ(read_text_file(root / "control/payload.txt"), "verified payload");
+    REQUIRE_EQ(read_text_file(root / "control" / "payload.txt"), "verified payload");
     auto encoded = read_text_file(archive);
     REQUIRE_TRUE(encoded.size() > 4U);
     encoded.insert(4U, 1U, '\0');

@@ -159,8 +159,8 @@ def match_current_metadata_alerts(root: Path, alerts: list[dict], commit: str, p
         seen.add(number)
         instance, tool = alert.get("most_recent_instance", {}), alert.get("tool", {})
         if (
-            alert.get("state") != "dismissed"
-            or instance.get("state") != "dismissed"
+            alert.get("state") not in ("open", "dismissed")
+            or instance.get("state") != alert.get("state")
             or instance.get("commit_sha") != commit
             or instance.get("category") != "devskim"
             or tool.get("name") != "devskim"

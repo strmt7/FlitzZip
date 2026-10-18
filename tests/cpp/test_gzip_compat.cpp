@@ -91,7 +91,7 @@ TEST_CASE(gzip_standalone_and_stream_readers_preserve_payload_progress) {
     });
     REQUIRE_EQ(last.processed_bytes, expected_total);
     REQUIRE_EQ(last.completed_entries, std::uint64_t{1});
-    REQUIRE_EQ(read_text_file(root / "out/payload.bin"), payload);
+    REQUIRE_EQ(read_text_file(root / "out" / "payload.bin"), payload);
     flitzzip::GzipInputStream input(archive);
     const std::string streamed(std::istreambuf_iterator<char>(input), {});
     input.finish();

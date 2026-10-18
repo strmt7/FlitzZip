@@ -473,7 +473,7 @@ TEST_CASE(cab_reserved_regions_are_bounded_and_extractable) {
     REQUIRE_EQ(metadata.entries.size(), 1U);
     const auto stats = flitzzip::extract_cab(archive, root / "out", false);
     REQUIRE_EQ(stats.output_bytes, 11U);
-    REQUIRE_EQ(read_text_file(root / "out/file.txt"), "cab payload");
+    REQUIRE_EQ(read_text_file(root / "out" / "file.txt"), "cab payload");
 
     set_cab_field(bytes, 36, 2, 0xFFFFU);
     write_binary_file(archive, bytes);
@@ -511,7 +511,7 @@ TEST_CASE(cab_source_remains_pinned_through_extraction) {
     REQUIRE_EQ(admission_error, static_cast<DWORD>(ERROR_SHARING_VIOLATION));
     REQUIRE_EQ(stats.output_bytes, 11U);
     REQUIRE_EQ(read_binary_file(archive), original);
-    REQUIRE_EQ(read_text_file(root / "out/file.txt"), "cab payload");
+    REQUIRE_EQ(read_text_file(root / "out" / "file.txt"), "cab payload");
     const HANDLE released =
         CreateFileW(archive.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);

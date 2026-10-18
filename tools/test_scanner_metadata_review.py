@@ -526,11 +526,14 @@ class CurrentHostedMetadataTests(unittest.TestCase):
         self.commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()
 
     # Purpose: Preserve the original hosted report and match only its committed metadata value.
-    # Inputs: One current dismissed public checksum. Outputs: Its ID without mutating any alert or source.
+    # Inputs: The same current public checksum in each active hosted state. Outputs: Its ID without mutation.
     def test_current_exact_committed_metadata(self):
-        before = copy.deepcopy(self.alert)
-        self.assertEqual(review.match_current_metadata_alerts(self.root, [self.alert], self.commit, self.policy), [42])
-        self.assertEqual(self.alert, before)
+        for state in ("open", "dismissed"):
+            alert = copy.deepcopy(self.alert)
+            alert["state"] = alert["most_recent_instance"]["state"] = state
+            before = copy.deepcopy(alert)
+            self.assertEqual(review.match_current_metadata_alerts(self.root, [alert], self.commit, self.policy), [42])
+            self.assertEqual(alert, before)
         self.path.write_text("uncommitted local content", encoding="utf-8")
         self.assertEqual(review.match_current_metadata_alerts(self.root, [self.alert], self.commit, self.policy), [42])
 
@@ -542,6 +545,8 @@ class CurrentHostedMetadataTests(unittest.TestCase):
             (("tool", "name"), "CodeQL"),
             (("rule", "id"), "DS121708"),
             (("state",), "open"),
+            (("state",), "fixed"),
+            (("most_recent_instance", "state"), "open"),
             (("most_recent_instance", "state"), "fixed"),
             (("most_recent_instance", "commit_sha"), "b" * 40),
             (("most_recent_instance", "category"), "other"),

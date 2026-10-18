@@ -36,6 +36,72 @@ BY_HANDLE_FILE_INFORMATION publication_file_identity(const std::filesystem::path
 
 }  // namespace
 
+// Purpose: Keep test filesystem I/O independent of the temporary root's length, Unicode text and prefix form.
+// Inputs: A nested Unicode parent beyond MAX_PATH in ordinary and extended Windows representations.
+// Outputs: Creates, writes, reads and recreates the same owned directory without changing host configuration.
+TEST_CASE(test_temporary_directories_support_long_unicode_roots) {
+    const auto root = test_temp_dir("temporary-path-contract");
+    auto parent = flitzzip::windows_regular_path(root) / L"temporary \u65e5\u672c \U0001f680";
+    while (parent.native().size() < 320U)
+        parent /= std::wstring(60U, L'p');
+    for (const auto& candidate : {parent, std::filesystem::path(flitzzip::windows_api_path(parent))}) {
+        const auto directory = test_temp_dir("nested", candidate);
+        REQUIRE_TRUE(directory.native().starts_with(L"\\\\?\\"));
+        const auto file = directory / L"payload \u03a9.txt";
+        {
+            std::ofstream output(file, std::ios::binary);
+            REQUIRE_TRUE(output.is_open());
+            output << "exact payload";
+            output.close();
+            REQUIRE_TRUE(!output.fail());
+        }
+        {
+            std::ifstream input(file, std::ios::binary);
+            REQUIRE_TRUE(input.is_open());
+            const std::string bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+            REQUIRE_EQ(bytes, "exact payload");
+        }
+        REQUIRE_EQ(test_temp_dir("nested", candidate), directory);
+        REQUIRE_TRUE(std::filesystem::is_empty(directory));
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Resolve long extraction-root aliases identically without relaxing archive-entry containment.
+// Inputs: One real Unicode destination in ordinary, extended, trailing-separator and dot-component forms.
+// Outputs: Every alias reaches the same payload; traversal and absolute archive entries remain rejected.
+TEST_CASE(path_safety_long_destination_aliases_preserve_containment) {
+    const auto root = test_temp_dir("destination-aliases");
+    auto parent = flitzzip::windows_regular_path(root) / L"destination \u65e5\u672c";
+    while (parent.native().size() < 320U)
+        parent /= std::wstring(60U, L'p');
+    const auto io_parent = std::filesystem::path(flitzzip::windows_api_path(parent));
+    std::filesystem::create_directories(io_parent / "inside");
+    {
+        std::ofstream payload(io_parent / "inside" / "file.txt", std::ios::binary);
+        REQUIRE_TRUE(payload.is_open());
+        payload << "unchanged";
+        payload.close();
+        REQUIRE_TRUE(!payload.fail());
+    }
+    for (const auto& alias : {parent, parent / ".", std::filesystem::path(parent.native() + L"\\"), io_parent,
+                              io_parent / ".", std::filesystem::path(io_parent.native() + L"\\")}) {
+        const auto target = flitzzip::safe_join_archive_path(alias, "inside/file.txt");
+        REQUIRE_TRUE(std::filesystem::equivalent(std::filesystem::path(flitzzip::windows_api_path(target)),
+                                                 io_parent / "inside" / "file.txt"));
+        for (const auto* name : {"../outside.txt", "inside/../../outside.txt", "/absolute.txt", "C:/absolute.txt"}) {
+            bool rejected = false;
+            try {
+                (void)flitzzip::safe_join_archive_path(alias, name);
+            } catch (const flitzzip::SecurityError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Keep Win32 path conversion independent of long-path registry settings and locale.
 // Inputs: Normal drive, UNC, already-extended, relative-component, and device-namespace paths.
 // Outputs: Preserves filesystem meaning with extended syntax and rejects non-filesystem namespaces.
@@ -240,7 +306,7 @@ TEST_CASE(directory_publish_read_only_alias_keeps_attributes) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(std::filesystem::hard_link_count(outside), 1U);
-    REQUIRE_TRUE(!std::filesystem::exists(root / "output/alias.txt"));
+    REQUIRE_TRUE(!std::filesystem::exists(root / "output" / "alias.txt"));
 }
 
 // Purpose: Keep quarantine ownership exclusive when publication stops copying the payload.

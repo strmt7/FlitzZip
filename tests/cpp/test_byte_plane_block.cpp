@@ -248,7 +248,7 @@ TEST_CASE(flzip_byte_plane_context_malformed_and_version_admission) {
     REQUIRE_EQ(flitzzip::extract_flzip(archive, root / "restored", {.gpu_required = false, .force_cpu = true}).entries,
                1U);
     {
-        std::ifstream file(root / "restored/context.bin", std::ios::binary);
+        std::ifstream file(root / "restored" / "context.bin", std::ios::binary);
         const std::string actual(std::istreambuf_iterator<char>(file), {});
         REQUIRE_EQ(actual, std::string(reinterpret_cast<const char*>(expected.data()), expected.size()));
     }
@@ -439,7 +439,7 @@ TEST_CASE(flzip_byte_plane_container_and_version_boundary) {
     REQUIRE_EQ(flitzzip::verify_flzip(archive, cpu).entries, 1U);
     REQUIRE_EQ(flitzzip::extract_flzip(archive, root / "restored", cpu).entries, 1U);
     {
-        std::ifstream file(root / "restored/data.bin", std::ios::binary);
+        std::ifstream file(root / "restored" / "data.bin", std::ios::binary);
         const std::string actual(std::istreambuf_iterator<char>(file), {});
         REQUIRE_EQ(actual, std::string(reinterpret_cast<const char*>(expected.data()), expected.size()));
     }
