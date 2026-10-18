@@ -35,7 +35,8 @@ $entropy = Get-FlitzZipNativeTestSelection -Paths $entropyPaths
 $entropyExpected = @(
     'flzip_gpu_efforts_preserve_dictionary_candidates_after_entropy_gain',
     'flzip_gpu_entropy_efforts_preserve_per_block_winners',
-    'flzip_gpu_huffman_corruption_is_rejected', 'flzip_gpu_huffman_replaces_static_prefix_when_smaller',
+    'flzip_gpu_huffman_corruption_is_rejected', 'flzip_gpu_huffman_lookup_requires_exact_extent',
+    'flzip_gpu_huffman_replaces_static_prefix_when_smaller',
     'flzip_gpu_huffman_sparse_lookup_validation', 'flzip_gpu_prefix_candidate_selection_is_per_block',
     'flzip_gpu_prefix_levels_compact_shifted_alphabet', 'flzip_gpu_prefix_malformed_codewords_are_rejected',
     'flzip_gpu_prefix_packing_matches_reference', 'flzip_gpu_prefix_segment_boundaries_roundtrip',

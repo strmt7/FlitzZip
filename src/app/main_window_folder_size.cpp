@@ -1,6 +1,6 @@
 #include "app/main_window_impl.hpp"
 
-#include <limits>
+#include "app/folder_size.hpp"
 
 namespace flitzzip::app {
 
@@ -71,7 +71,13 @@ void MainWindow::start_folder_size_worker() {
                 task = folder_size_cache_.take_next();
             }
 
-            const auto size = calculate_folder_size(*task);
+            std::optional<std::uintmax_t> size;
+            try {
+                size = measure_folder_size(task->path, folder_size_stop_, task->cancelled);
+            } catch (const std::exception&) {
+                // Optional display metadata must not terminate the process if traversal allocation fails.
+                size = std::nullopt;
+            }
             {
                 std::lock_guard lock(folder_size_mutex_);
                 if (folder_size_stop_.load() || !folder_size_cache_.complete(task, size)) {
@@ -93,68 +99,6 @@ void MainWindow::stop_folder_size_worker() {
     if (folder_size_worker_.joinable()) {
         folder_size_worker_.join();
     }
-}
-
-// Purpose: Calculate one folder's byte size from filesystem metadata only.
-// Inputs: `task` owns a directory path and cancellation flag; window shutdown also cancels traversal.
-// Outputs: Returns total bytes, or empty when traversal is cancelled or inaccessible.
-std::optional<std::uintmax_t> MainWindow::calculate_folder_size(const FolderSizeTask& task) const {
-    if (folder_size_stop_.load() || task.cancelled.load()) {
-        return std::nullopt;
-    }
-    const auto& path = task.path;
-    if (!is_supported_local_drop_path(path)) {
-        return std::nullopt;
-    }
-    const DWORD root_attributes = GetFileAttributesW(path.c_str());
-    if (root_attributes == INVALID_FILE_ATTRIBUTES || (root_attributes & FILE_ATTRIBUTE_DIRECTORY) == 0U ||
-        (root_attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U) {
-        return std::nullopt;
-    }
-    std::error_code ec;
-    std::uintmax_t total = 0;
-    std::size_t entry_count = 0U;
-    const auto deadline = std::chrono::steady_clock::now() + kMaxFolderSizeDuration;
-    std::filesystem::recursive_directory_iterator iterator(
-        path, std::filesystem::directory_options::skip_permission_denied, ec);
-    const std::filesystem::recursive_directory_iterator end;
-    if (ec) {
-        return std::nullopt;
-    }
-    std::uint32_t entries_since_yield = 0;
-    while (iterator != end) {
-        if (folder_size_stop_.load() || task.cancelled.load() || std::chrono::steady_clock::now() >= deadline ||
-            entry_count >= kMaxFolderSizeEntries || static_cast<std::size_t>(iterator.depth()) >= kMaxFolderSizeDepth) {
-            return std::nullopt;
-        }
-        ++entry_count;
-        const DWORD attributes = GetFileAttributesW(iterator->path().c_str());
-        if (attributes == INVALID_FILE_ATTRIBUTES) {
-            return std::nullopt;
-        }
-        if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U) {
-            if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U) {
-                iterator.disable_recursion_pending();
-            }
-        } else if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0U) {
-            const auto size = iterator->file_size(ec);
-            if (ec || size > std::numeric_limits<std::uintmax_t>::max() - total) {
-                return std::nullopt;
-            }
-            total += size;
-        }
-        ec.clear();
-        iterator.increment(ec);
-        if (ec) {
-            return std::nullopt;
-        }
-        ++entries_since_yield;
-        if (entries_since_yield >= 512U) {
-            entries_since_yield = 0;
-            Sleep(1);
-        }
-    }
-    return total;
 }
 
 }  // namespace flitzzip::app

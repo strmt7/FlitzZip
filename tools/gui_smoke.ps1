@@ -176,7 +176,8 @@ function Assert-GuiSystemQueueContract {
         'THREAD_PRIORITY_LOWEST',
         'THREAD_MODE_BACKGROUND_BEGIN',
         'recursive_directory_iterator',
-        'directory_options::skip_permission_denied'
+        'measure_folder_size',
+        'directory_options::none'
     )) {
         if (-not $SourceText.Contains($requiredFolderSizeSource)) {
             throw "Queue folder sizes must be resolved by a bounded low-priority background metadata scan; missing $requiredFolderSizeSource."

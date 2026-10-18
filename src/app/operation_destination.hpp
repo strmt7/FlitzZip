@@ -7,6 +7,24 @@
 
 namespace flitzzip::app {
 
+// Purpose: Preserve Ask-before-overwriting when an extraction destination cannot be proven empty.
+// Inputs: The captured extraction root; filesystem errors do not authorize unattended continuation.
+// Outputs: False only for an absent root or a successfully enumerated empty directory.
+inline bool extraction_destination_needs_confirmation(const std::filesystem::path& destination) {
+    std::error_code error;
+    if (!std::filesystem::exists(destination, error) && !error) {
+        return false;
+    }
+    if (!error && std::filesystem::is_directory(destination, error) && !error) {
+        const std::filesystem::directory_iterator iterator(destination, std::filesystem::directory_options::none,
+                                                           error);
+        if (!error && iterator == std::filesystem::directory_iterator{}) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Purpose: Resolve the folder requested by the job's captured presentation preferences.
 // Inputs: operation, output path, applied global preference, and per-extraction preference.
 // Outputs: Returns one destination folder, or an empty path for disabled or non-output operations.

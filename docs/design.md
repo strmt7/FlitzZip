@@ -136,6 +136,12 @@ blocked reads, deduplication, removal/re-addition, failures and retry, real
 file resize/delete/recreation, and candidate ordering/ticks/type filtering.
 These are responsiveness and lifecycle checks, not codec speed benchmarks.
 
+Folder totals include ordinary files and exclude reparse targets. An inaccessible
+child invalidates the total instead of silently displaying a smaller partial size.
+Cancellation, entry/depth/time limits and metadata-query failures also display `--`.
+The traversal is shared with direct tests using real access-denied directories and
+junctions; the owning background worker contains exceptions from optional metadata work.
+
 ## Performance Monitor Contract
 
 References checked on 2026-06-18:
