@@ -45,6 +45,10 @@ explicit:
   incomplete or conflicting tables and out-of-range offsets before HIP decode.
   Earlier versions remain readable; readers predating each new version reject
   its new block kind.
+- Every Deflate block contains exactly one complete zlib stream. The decoder
+  must consume its declared encoded length and produce its declared decoded
+  length. Truncation, concatenated streams and trailing bytes are rejected
+  before extracted files are published, including in legacy readable versions.
 - Version 9 adds GPU compound blocks as kind 11, created only by Neutron star
   mode. A fixed eight-byte header contains the secondary kind, original kind,
   secondary fill value, a zero reserved byte, and a little-endian 32-bit

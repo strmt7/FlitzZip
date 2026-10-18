@@ -1,6 +1,7 @@
 #include "test_util.hpp"
 
 #include "core/archive.hpp"
+#include "core/archive_blocks.hpp"
 #include "core/archive_index.hpp"
 #include "core/result.hpp"
 #include "test_flzip_helpers.hpp"
@@ -9,6 +10,7 @@
 #include "gpu/hip_codec_support.hpp"
 #endif
 
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <iterator>
@@ -19,6 +21,10 @@ namespace {
 
 using Path = std::filesystem::path;
 using Kind = flitzzip::BlockKind;
+
+// Independent Python zlib output for 1024 zero bytes, with CRC-32 4021661486.
+constexpr std::array<unsigned char, 17> kDeflateZeroFrame{120, 156, 99, 96, 24, 5, 163, 96, 20,
+                                                          140, 84,  0,  0,  4,  0, 0,   1};
 
 // Purpose: Emit small hostile wire records without asking the production writer to admit invalid descriptors.
 // Inputs: One entry, actual bounded payload and declared version. Outputs: A closed archive with independent framing.
@@ -61,7 +67,7 @@ flitzzip::ArchiveEntry raw_control() {
             .blocks = {{.kind = Kind::Raw, .uncompressed_len = 3, .encoded_len = 3}}};
 }
 
-// Purpose: Require a particular validation boundary to reject before any decoder or output publication.
+// Purpose: Require a particular validation boundary to reject before output publication.
 // Inputs: Small fixture and expected diagnostic fragment. Outputs: Both verify and extract reject, preserving bytes.
 void require_metadata_rejection(const Path& archive, const Path& destination, std::string_view diagnostic) {
     const flitzzip::ExtractOptions options{.gpu_required = false, .force_cpu = true, .overwrite = true};
@@ -122,6 +128,93 @@ TEST_CASE(flzip_metadata_positive_controls_cover_readable_versions) {
         REQUIRE_EQ(flitzzip::extract_flzip(fixture.archive, fixture.destination, options).output_bytes, 3U);
         std::ifstream restored(fixture.destination / "payload.bin", std::ios::binary);
         REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), {}), "foo");
+    }
+}
+
+// Purpose: Reject incomplete or overlong Deflate streams without replacing existing destination bytes.
+// Inputs: An independent zlib frame, every byte truncation, suffixes, and wrong decoded lengths in all readable
+// versions. Outputs: Both public readers reject each malformed frame and subsequently verify/extract the intact frame
+// exactly.
+TEST_CASE(flzip_deflate_frames_require_exact_consumption) {
+    const std::string frame(kDeflateZeroFrame.begin(), kDeflateZeroFrame.end());
+    const flitzzip::ExtractOptions options{.gpu_required = false, .force_cpu = true, .overwrite = true};
+    for (std::uint32_t version = 1; version <= 11; ++version) {
+        MetadataFixture fixture("native-deflate-frame");
+        auto entry = raw_control();
+        entry.uncompressed_size = 1024;
+        entry.payload_size = frame.size();
+        entry.crc32 = 4021661486U;
+        entry.blocks[0] = {
+            .kind = Kind::Deflate, .uncompressed_len = 1024, .encoded_len = static_cast<std::uint32_t>(frame.size())};
+        write_metadata_fixture(fixture.archive, entry, frame, version);
+        REQUIRE_EQ(flitzzip::verify_flzip(fixture.archive, options).entries, 1U);
+
+        std::vector<std::string> malformed{frame + '\0', frame + frame};
+        for (std::size_t length = 1; length < frame.size(); ++length) {
+            malformed.push_back(frame.substr(0, length));
+        }
+        for (const auto& payload : malformed) {
+            auto invalid = entry;
+            invalid.payload_size = payload.size();
+            invalid.blocks[0].encoded_len = static_cast<std::uint32_t>(payload.size());
+            write_metadata_fixture(fixture.archive, invalid, payload, version);
+            require_metadata_rejection(fixture.archive, fixture.destination, "deflate block failed to decompress");
+        }
+        for (const auto length : {1023U, 1025U}) {
+            auto invalid = entry;
+            invalid.uncompressed_size = length;
+            invalid.blocks[0].uncompressed_len = length;
+            write_metadata_fixture(fixture.archive, invalid, frame, version);
+            require_metadata_rejection(fixture.archive, fixture.destination, "deflate block failed to decompress");
+        }
+        write_metadata_fixture(fixture.archive, entry, frame, version);
+        REQUIRE_EQ(flitzzip::verify_flzip(fixture.archive, options).entries, 1U);
+        REQUIRE_EQ(flitzzip::extract_flzip(fixture.archive, fixture.destination, options).output_bytes, 1024U);
+        std::ifstream restored(fixture.destination / "payload.bin", std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), {}), std::string(1024, '\0'));
+        REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(fixture.destination),
+                                 std::filesystem::directory_iterator{}),
+                   1);
+    }
+}
+
+// Purpose: Enforce Deflate input consumption in both whole-chunk and mixed CPU/GPU decode orchestration.
+// Inputs: A frame between two raw blocks, an overlong declared frame, and serial/parallel worker budgets.
+// Outputs: Consumers reject excess bytes, recover, and modify only the block ranges each consumer owns.
+TEST_CASE(flzip_deflate_consumers_preserve_block_boundaries_and_recover) {
+    std::vector<std::byte> payload{std::byte{0x11}};
+    const auto frame = std::as_bytes(std::span(kDeflateZeroFrame));
+    payload.insert(payload.end(), frame.begin(), frame.end());
+    payload.push_back(std::byte{0x22});
+    for (const auto workers : {1U, 3U}) {
+        for (const auto decode : {&flitzzip::decode_chunk_cpu, &flitzzip::decode_cpu_only_blocks_cpu}) {
+            const flitzzip::ArchiveCodecOptions options{.worker_count = workers};
+            std::array blocks{
+                flitzzip::BlockDescriptor{.kind = Kind::Raw, .uncompressed_len = 1, .encoded_len = 1},
+                flitzzip::BlockDescriptor{
+                    .kind = Kind::Deflate, .uncompressed_len = 1024, .encoded_offset = 1, .encoded_len = 17},
+                flitzzip::BlockDescriptor{
+                    .kind = Kind::Raw, .uncompressed_len = 1, .encoded_offset = 18, .encoded_len = 1}};
+            std::array<std::byte, 1026> output{};
+            for (const bool invalid : {false, true, false}) {
+                std::ranges::fill(output, std::byte{0x7D});
+                blocks[1].encoded_len = invalid ? 18U : 17U;
+                bool rejected = false;
+                try {
+                    decode(payload, blocks, output, options);
+                } catch (const flitzzip::ArchiveError& error) {
+                    REQUIRE_EQ(std::string(error.what()), "deflate block failed to decompress");
+                    rejected = true;
+                }
+                REQUIRE_EQ(rejected, invalid);
+                if (!invalid) {
+                    REQUIRE_EQ(std::ranges::count(std::span(output).subspan(1, 1024), std::byte{0}), 1024);
+                    const bool whole_chunk = decode == &flitzzip::decode_chunk_cpu;
+                    REQUIRE_EQ(output.front(), whole_chunk ? std::byte{0x11} : std::byte{0x7D});
+                    REQUIRE_EQ(output.back(), whole_chunk ? std::byte{0x22} : std::byte{0x7D});
+                }
+            }
+        }
     }
 }
 

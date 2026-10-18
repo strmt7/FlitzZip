@@ -125,17 +125,17 @@ std::vector<std::byte> try_zstd_block(std::span<const std::byte> block, int comp
     return best;
 }
 
-// Purpose: Inflate one miniz deflate payload into the caller-owned output span.
+// Purpose: Inflate exactly one complete miniz deflate payload into the caller-owned output span.
 // Inputs: `payload`, `encoded_offset`, `encoded_len`, and `output` describe one block.
-// Outputs: Writes exactly `output.size()` bytes or throws `ArchiveError`.
+// Outputs: Consumes exactly `encoded_len` bytes and writes exactly `output.size()` bytes or throws `ArchiveError`.
 void inflate_deflate_block(std::span<const std::byte> payload, std::uint64_t encoded_offset, std::uint32_t encoded_len,
                            std::span<std::byte> output) {
     mz_ulong output_len = static_cast<mz_ulong>(output.size());
-    const auto status =
-        uncompress(reinterpret_cast<unsigned char*>(output.data()), &output_len,
-                   reinterpret_cast<const unsigned char*>(payload.data() + static_cast<std::size_t>(encoded_offset)),
-                   static_cast<mz_ulong>(encoded_len));
-    if (status != MZ_OK || output_len != output.size()) {
+    mz_ulong input_len = static_cast<mz_ulong>(encoded_len);
+    const auto status = uncompress2(
+        reinterpret_cast<unsigned char*>(output.data()), &output_len,
+        reinterpret_cast<const unsigned char*>(payload.data() + static_cast<std::size_t>(encoded_offset)), &input_len);
+    if (status != MZ_OK || output_len != output.size() || input_len != encoded_len) {
         throw ArchiveError("deflate block failed to decompress");
     }
 }
