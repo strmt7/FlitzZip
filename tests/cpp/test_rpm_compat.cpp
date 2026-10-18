@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -434,4 +435,235 @@ TEST_CASE(rpm_scanner_rejects_header_reserved_bytes) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
+}
+
+namespace {
+
+// Independent fixtures: CPython 3.13 gzip/bz2/lzma encoders over handcrafted newc records.
+// The Zstandard fixture is a directly framed single-segment raw block (RFC 8878).
+// Every payload contains only alpha.txt with bytes "rpm", followed by the newc trailer.
+constexpr std::array<unsigned char, 84> kIndependentRpmGzip{
+    0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x33, 0x30, 0x37, 0x30, 0x37, 0x30, 0x34,
+    0x80, 0x00, 0x30, 0x6d, 0x61, 0xe8, 0x68, 0x62, 0x80, 0x1d, 0x18, 0xa2, 0xf1, 0x8d, 0x0d, 0x88, 0x03,
+    0x8e, 0x30, 0x46, 0x62, 0x4e, 0x41, 0x46, 0xa2, 0x5e, 0x49, 0x45, 0x09, 0x43, 0x51, 0x41, 0x2e, 0x83,
+    0x01, 0x86, 0xdd, 0x78, 0x80, 0xa1, 0x01, 0x79, 0xc0, 0x09, 0xc6, 0x08, 0x09, 0x72, 0xf4, 0xf4, 0x71,
+    0x0d, 0x52, 0x54, 0x54, 0x64, 0x00, 0x02, 0x00, 0x5b, 0x12, 0x10, 0x54, 0xf8, 0x00, 0x00, 0x00,
+};
+
+constexpr std::array<unsigned char, 106> kIndependentRpmBzip2{
+    0x42, 0x5a, 0x68, 0x39, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0x4b, 0x96, 0x5d, 0x69, 0x00, 0x00, 0x20, 0x7f,
+    0x80, 0x4c, 0x08, 0x08, 0x08, 0x28, 0x01, 0x6c, 0xc0, 0x32, 0x24, 0x14, 0x00, 0x20, 0x46, 0x54, 0x40, 0x20,
+    0x00, 0x54, 0x53, 0x53, 0x23, 0x26, 0x4d, 0x3d, 0x04, 0xcd, 0x0d, 0x10, 0x62, 0x51, 0xa0, 0x1a, 0x0f, 0x53,
+    0xd4, 0x00, 0x54, 0x80, 0xea, 0xef, 0x51, 0x34, 0x8d, 0xdb, 0x94, 0x48, 0x38, 0x98, 0x86, 0x74, 0xea, 0x43,
+    0x50, 0x90, 0xc0, 0x4e, 0x81, 0x9b, 0x69, 0x0f, 0x2b, 0xd0, 0x43, 0x28, 0xe1, 0xf0, 0x98, 0x45, 0x72, 0xc0,
+    0x1d, 0x80, 0xf4, 0x3b, 0xde, 0xbf, 0x17, 0x72, 0x45, 0x38, 0x50, 0x90, 0x4b, 0x96, 0x5d, 0x69,
+};
+
+constexpr std::array<unsigned char, 128> kIndependentRpmXz{
+    0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x00, 0x04, 0xe6, 0xd6, 0xb4, 0x46, 0x02, 0x00, 0x21, 0x01, 0x16, 0x00, 0x00,
+    0x00, 0x74, 0x2f, 0xe5, 0xa3, 0xe0, 0x00, 0xf7, 0x00, 0x3e, 0x5d, 0x00, 0x18, 0x0d, 0xdd, 0x04, 0x63, 0x9c, 0x72,
+    0x1b, 0x76, 0xa1, 0xba, 0xc0, 0x1d, 0x75, 0x2e, 0xab, 0xee, 0xc0, 0x18, 0x46, 0x76, 0xdc, 0x48, 0x79, 0xe5, 0x47,
+    0xf2, 0xc0, 0xa6, 0xf3, 0x1d, 0x32, 0x66, 0x77, 0xa0, 0x3e, 0x7c, 0x0e, 0x06, 0x1f, 0x06, 0xe9, 0x13, 0xb2, 0xcd,
+    0x44, 0x98, 0xaf, 0x73, 0xb8, 0x93, 0xee, 0x39, 0xe6, 0xac, 0xdf, 0x67, 0xbf, 0x9a, 0xde, 0xe0, 0x00, 0x00, 0x00,
+    0x00, 0x09, 0xf3, 0x02, 0x4f, 0x14, 0xa6, 0xde, 0x7a, 0x00, 0x01, 0x5a, 0xf8, 0x01, 0x00, 0x00, 0x00, 0xb5, 0x83,
+    0xb8, 0xae, 0xb1, 0xc4, 0x67, 0xfb, 0x02, 0x00, 0x00, 0x00, 0x00, 0x04, 0x59, 0x5a,
+};
+
+constexpr std::array<unsigned char, 257> kIndependentRpmZstd{
+    0x28, 0xb5, 0x2f, 0xfd, 0x20, 0xf8, 0xc1, 0x07, 0x00, 0x30, 0x37, 0x30, 0x37, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x38, 0x31, 0x41, 0x34, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x31, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x33, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x41, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x61, 0x6c, 0x70, 0x68, 0x61, 0x2e, 0x74, 0x78, 0x74, 0x00, 0x72, 0x70, 0x6d, 0x00,
+    0x30, 0x37, 0x30, 0x37, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x42, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x54, 0x52, 0x41, 0x49,
+    0x4c, 0x45, 0x52, 0x21, 0x21, 0x21, 0x00, 0x00, 0x00, 0x00,
+};
+
+struct IndependentRpmPayload {
+    std::string_view name;
+    std::string_view alias;
+    std::span<const unsigned char> bytes;
+    flitzzip::RpmPayloadCompression compression;
+};
+const std::array kIndependentRpmPayloads{
+    IndependentRpmPayload{"gzip", "gz", kIndependentRpmGzip, flitzzip::RpmPayloadCompression::Gzip},
+    IndependentRpmPayload{"bzip2", "bz2", kIndependentRpmBzip2, flitzzip::RpmPayloadCompression::Bzip2},
+    IndependentRpmPayload{"xz", "xz", kIndependentRpmXz, flitzzip::RpmPayloadCompression::Xz},
+    IndependentRpmPayload{"zstd", "zst", kIndependentRpmZstd, flitzzip::RpmPayloadCompression::Zstd},
+};
+
+// Purpose: Persist a bounded independent RPM fixture or a single controlled mutation.
+// Inputs: Owned output path and at most one MiB of literal fixture bytes.
+// Outputs: Complete fixture file; any write failure fails the test.
+void write_rpm_bytes(const std::filesystem::path& path, std::span<const unsigned char> bytes) {
+    REQUIRE_TRUE(bytes.size() <= 1024U * 1024U);
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    output.close();
+    REQUIRE_TRUE(output.good());
+}
+
+// Purpose: Require an RPM error to preserve caller data and leave no temporary payloads behind.
+// Inputs: Invalid archive, owned output directory and expected error category.
+// Outputs: Requires rejection, the original sentinel bytes and exactly one destination entry.
+void require_rpm_rejected_without_publication(const std::filesystem::path& archive,
+                                              const std::filesystem::path& destination, std::string_view category) {
+    std::filesystem::create_directory(destination);
+    std::ofstream(destination / "sentinel.txt", std::ios::binary) << "keep caller data";
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_rpm(archive, destination, true);
+    } catch (const flitzzip::Error& error) {
+        REQUIRE_TRUE(std::string_view(error.what()).find(category) != std::string_view::npos);
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(read_text_file(destination / "sentinel.txt"), "keep caller data");
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+               1);
+}
+}  // namespace
+
+// Purpose: Exercise every supported compressed RPM payload with independently encoded content.
+// Inputs: Small literal streams, explicit compressor names, aliases and absent compressor values.
+// Outputs: Exact metadata, one byte-exact file and no retained temporary files for every decoder.
+TEST_CASE(rpm_independent_compressed_payloads_and_aliases_round_trip) {
+    const auto root = test_temp_dir("rpm-independent-methods");
+    unsigned trial = 0;
+    for (const auto& fixture : kIndependentRpmPayloads) {
+        const auto payload = root / (std::string(fixture.name) + ".payload");
+        write_rpm_bytes(payload, fixture.bytes);
+        for (const auto compressor : {fixture.name, fixture.alias, std::string_view{}}) {
+            const auto archive = root / ("package-" + std::to_string(trial) + ".rpm");
+            const auto destination = root / ("out-" + std::to_string(trial++));
+            write_rpm_fixture(archive, payload, compressor);
+            const auto metadata = flitzzip::scan_rpm_payload(archive);
+            REQUIRE_EQ(metadata.compression, fixture.compression);
+            REQUIRE_EQ(metadata.size, fixture.bytes.size());
+            REQUIRE_EQ(metadata.offset + metadata.size, std::filesystem::file_size(archive));
+            const auto stats = flitzzip::extract_rpm(archive, destination, false);
+            REQUIRE_EQ(stats.entries, 1U);
+            REQUIRE_EQ(stats.output_bytes, 3U);
+            REQUIRE_EQ(stats.input_bytes, std::filesystem::file_size(archive));
+            REQUIRE_TRUE(!stats.gpu_used);
+            REQUIRE_EQ(read_text_file(destination / "alpha.txt"), "rpm");
+            REQUIRE_EQ(
+                std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+                1);
+        }
+    }
+}
+
+// Purpose: Reject truncated compressed RPM tails before publication and permit a valid subsequent decode.
+// Inputs: Each independent payload with its final byte removed, then the intact stream.
+// Outputs: Failure leaves sentinel data and no staging debris; valid reuse recovers the exact member.
+TEST_CASE(rpm_compressed_tail_failure_cleans_staging_and_allows_reuse) {
+    const auto root = test_temp_dir("rpm-truncated-methods");
+    for (const auto& fixture : kIndependentRpmPayloads) {
+        const auto payload = root / (std::string(fixture.name) + ".payload");
+        const auto archive = root / (std::string(fixture.name) + ".rpm");
+        const auto destination = root / std::string(fixture.name);
+        write_rpm_bytes(payload, fixture.bytes.first(fixture.bytes.size() - 1U));
+        write_rpm_fixture(archive, payload, fixture.name);
+        require_rpm_rejected_without_publication(archive, destination, "");
+        write_rpm_bytes(payload, fixture.bytes);
+        write_rpm_fixture(archive, payload, fixture.name);
+        REQUIRE_EQ(flitzzip::extract_rpm(archive, destination, false).entries, 1U);
+        REQUIRE_EQ(read_text_file(destination / "alpha.txt"), "rpm");
+        REQUIRE_EQ(read_text_file(destination / "sentinel.txt"), "keep caller data");
+        REQUIRE_EQ(
+            std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}), 2);
+    }
+}
+
+// Purpose: Check RPM temporary-payload cleanup when the caller cancels before first publication.
+// Inputs: Each valid compressed method and an independently throwing progress callback.
+// Outputs: Original error propagation and unchanged destination, followed by successful reuse.
+TEST_CASE(rpm_cancellation_cleans_each_compressed_payload) {
+    const auto root = test_temp_dir("rpm-cancel-methods");
+    for (const auto& fixture : kIndependentRpmPayloads) {
+        const auto payload = root / (std::string(fixture.name) + ".payload");
+        const auto archive = root / (std::string(fixture.name) + ".rpm");
+        const auto destination = root / std::string(fixture.name);
+        write_rpm_bytes(payload, fixture.bytes);
+        write_rpm_fixture(archive, payload, fixture.name);
+        std::filesystem::create_directory(destination);
+        std::ofstream(destination / "alpha.txt", std::ios::binary) << "original";
+        unsigned callbacks = 0;
+        bool cancelled = false;
+        try {
+            (void)flitzzip::extract_rpm(archive, destination, true, [&](const flitzzip::ProgressSnapshot&) {
+                ++callbacks;
+                throw std::runtime_error("independent RPM cancellation");
+            });
+        } catch (const std::runtime_error& error) {
+            REQUIRE_EQ(std::string(error.what()), "independent RPM cancellation");
+            cancelled = true;
+        }
+        REQUIRE_TRUE(cancelled);
+        REQUIRE_EQ(callbacks, 1U);
+        REQUIRE_EQ(read_text_file(destination / "alpha.txt"), "original");
+        REQUIRE_EQ(
+            std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}), 1);
+        REQUIRE_EQ(flitzzip::extract_rpm(archive, destination, true).entries, 1U);
+        REQUIRE_EQ(read_text_file(destination / "alpha.txt"), "rpm");
+    }
+}
+
+// Purpose: Exercise RPM structural bounds and ambiguous payload metadata without large allocations.
+// Inputs: Single-field mutations of a valid independently compressed package.
+// Outputs: Specific errors before destination publication for every malformed field.
+TEST_CASE(rpm_header_boundary_mutations_preserve_destination) {
+    const auto root = test_temp_dir("rpm-header-boundaries");
+    const auto payload = root / "payload.gz";
+    const auto archive = root / "package.rpm";
+    write_rpm_bytes(payload, kIndependentRpmGzip);
+    write_rpm_fixture(archive, payload, "gzip");
+    const auto original = read_binary_file(archive);
+    // Empty signature ends at 112; the package has two 16-byte indexes and a 10-byte string store.
+    REQUIRE_TRUE(original.size() == 170U + kIndependentRpmGzip.size());
+    struct Mutation {
+        std::size_t offset;
+        unsigned char value;
+        std::string_view category;
+    };
+    constexpr std::array mutations{
+        Mutation{0U, 0U, "lead magic"},
+        Mutation{96U, 0U, "signature header magic"},
+        Mutation{112U, 0U, "package header magic"},
+        Mutation{116U, 1U, "package header reserved bytes"},
+        Mutation{121U, 1U, "package header contains too many entries"},
+        Mutation{124U, 5U, "header store exceeds"},
+        Mutation{127U, 255U, "header extends past end"},
+        Mutation{139U, 11U, "entry offset is outside"},
+        Mutation{139U, 10U, "unterminated or too long"},
+        Mutation{143U, 0U, "invalid cardinality"},
+        Mutation{143U, 2U, "invalid cardinality"},
+        Mutation{147U, 100U, "duplicate payload string tag"},
+        Mutation{169U, 1U, "unterminated or too long"},
+        Mutation{160U, 't', "unsupported RPM payload format"},
+    };
+    unsigned trial = 0;
+    for (const auto& mutation : mutations) {
+        auto bytes = original;
+        bytes.at(mutation.offset) = mutation.value;
+        write_rpm_bytes(archive, bytes);
+        require_rpm_rejected_without_publication(archive, root / std::to_string(trial++), mutation.category);
+    }
+    for (const std::size_t size : {0U, 95U, 96U, 111U, 112U, 127U, 159U, 169U, 170U}) {
+        write_rpm_bytes(archive, std::span(original).first(size));
+        require_rpm_rejected_without_publication(archive, root / std::to_string(trial++), "");
+    }
+    write_rpm_fixture(archive, payload, "none");
+    require_rpm_rejected_without_publication(archive, root / "mismatch", "does not match payload magic");
+    write_rpm_bytes(payload, std::array<unsigned char, 1>{1U});
+    write_rpm_fixture(archive, payload, "");
+    require_rpm_rejected_without_publication(archive, root / "unknown", "unrecognized RPM payload compression");
 }
