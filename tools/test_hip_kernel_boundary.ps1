@@ -62,7 +62,7 @@ try {
     $bin = Join-Path $fixture 'bin'
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
     foreach ($name in $names) { Copy-Item -LiteralPath (Join-Path $buildBin $name) -Destination $bin }
-    Copy-Item -LiteralPath (Join-Path $repo 'build/flitzzip-runtime-dependencies.json') -Destination $fixture
+    Copy-Item -LiteralPath (Join-Path $buildBin 'flitzzip-runtime-dependencies.json') -Destination $fixture
     $cli = Join-Path $bin 'flitzzip_cli.exe'
     Assert-FlitzZipPackagedRuntime -PackageRoot $fixture -HipEnabled $true
     $valid = Invoke-KernelBoundaryProbe $cli 'dependency-check'

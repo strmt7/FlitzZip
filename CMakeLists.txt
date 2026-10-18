@@ -648,7 +648,8 @@ if(WIN32)
   include(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ConfigureRuntimeDependencies.cmake")
   set(FLITZZIP_RUNTIME_MANIFEST
-      "${CMAKE_CURRENT_BINARY_DIR}/flitzzip-runtime-dependencies.json")
+      "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/flitzzip-runtime-dependencies.json"
+  )
   set(FLITZZIP_RUNTIME_BASE_MANIFEST
       "${CMAKE_CURRENT_BINARY_DIR}/runtime-base.json")
   set(FLITZZIP_HIP_GENERATED_DIR

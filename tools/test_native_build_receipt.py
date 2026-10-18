@@ -64,10 +64,20 @@ class NativeBuildReceiptTests(unittest.TestCase):
             output = self.build / configuration
             output.mkdir(exist_ok=True)
             for name in ("flitzzip_cli.exe", "FlitzZip.exe", "fixture.dll"):
-                (output / name).write_bytes(name.encode("ascii"))
-        (self.build / "flitzzip-runtime-dependencies.json").write_text(
-            json.dumps({"packaged_runtime_files": [{"name": "fixture.dll"}]}), encoding="utf-8"
-        )
+                (output / name).write_bytes(f"{configuration}:{name}".encode("ascii"))
+            (output / "flitzzip-runtime-dependencies.json").write_text(
+                json.dumps(
+                    {
+                        "packaged_runtime_files": [
+                            {
+                                "name": "fixture.dll",
+                                "sha256": hashlib.sha256((output / "fixture.dll").read_bytes()).hexdigest(),
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
 
     # Purpose: Write the private configured cache. Inputs: Fixture values. Outputs: CMake-compatible regular file.
     def write_cache(self):
@@ -114,6 +124,40 @@ class NativeBuildReceiptTests(unittest.TestCase):
             self.assertEqual(
                 configuration, receipt.validate_current(self.root, configuration, False)["recipe"]["configuration"]
             )
+
+    # Purpose: Keep another configuration's metadata from qualifying the selected product.
+    # Inputs: Completed configurations followed by a copied Debug manifest over the Release manifest.
+    # Outputs: Release requires a clean build; the unchanged Debug qualification remains valid.
+    def test_configuration_manifest_mismatch_is_not_reused(self):
+        self.successful("Release")
+        self.successful("Debug")
+        release = self.build / "Release/flitzzip-runtime-dependencies.json"
+        debug = self.build / "Debug/flitzzip-runtime-dependencies.json"
+        self.assertNotEqual(release.read_bytes(), debug.read_bytes())
+        release.write_bytes(debug.read_bytes())
+        receipt.validate_current(self.root, "Debug", False)
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        self.assertTrue(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+        receipt.end_incomplete(self.root, token, "failed")
+
+    # Purpose: Retain historical shared-manifest evidence without admitting it as current qualification.
+    # Inputs: A real fixture receipt with only its output key moved to the old shared location.
+    # Outputs: Exact historical digest survives explicit historical validation; strict admission rejects it.
+    def test_shared_manifest_is_historical_evidence_only(self):
+        self.successful("Release")
+        value = receipt.read_metadata(self.root, f"build/{receipt.RECEIPT}")
+        outputs = value["outputs_sha256"]
+        outputs["build/flitzzip-runtime-dependencies.json"] = outputs.pop(
+            "build/Release/flitzzip-runtime-dependencies.json"
+        )
+        original = canonical(value)
+        self.assertEqual(
+            hashlib.sha256(original).hexdigest(),
+            receipt.validate_receipt(value, allow_historical_toolchain=True),
+        )
+        with self.assertRaisesRegex(ValueError, "required outputs"):
+            receipt.validate_receipt(value)
+        self.assertEqual(canonical(value), original)
 
     # Purpose: Keep altered target outputs and compiler bytes from receiving incremental reuse after a switch.
     # Inputs: Completed configurations followed by independent output and toolchain mutations.

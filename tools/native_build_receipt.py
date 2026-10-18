@@ -155,10 +155,14 @@ def validate_receipt(value: dict, *, allow_historical_toolchain: bool = False) -
         value["toolchain"], recipe["FLITZZIP_ENABLE_HIP"] == "ON", allow_historical=allow_historical_toolchain
     )
     outputs = validate_hash_map(value["outputs_sha256"], 256, "build/")
+    manifest = f"build/{recipe['configuration']}/{product.lower()}-runtime-dependencies.json"
+    historical_manifest = f"build/{product.lower()}-runtime-dependencies.json"
+    if allow_historical_toolchain and historical_manifest in outputs:
+        manifest = historical_manifest
     required = {
         f"build/{recipe['configuration']}/{product.lower()}_cli.exe",
         f"build/{recipe['configuration']}/{product}.exe",
-        f"build/{product.lower()}-runtime-dependencies.json",
+        manifest,
     }
     if not required <= outputs.keys():
         raise ValueError("native receipt lacks required outputs")
@@ -513,8 +517,9 @@ def capture_outputs(root: Path, configuration: str) -> dict:
     if configuration not in CONFIGURATIONS:
         raise ValueError("unsupported native output configuration")
     prefix = f"build/{configuration}"
-    names = {f"{prefix}/flitzzip_cli.exe", f"{prefix}/FlitzZip.exe", "build/flitzzip-runtime-dependencies.json"}
-    runtime = read_metadata(root, "build/flitzzip-runtime-dependencies.json")
+    manifest = f"{prefix}/flitzzip-runtime-dependencies.json"
+    names = {f"{prefix}/flitzzip_cli.exe", f"{prefix}/FlitzZip.exe", manifest}
+    runtime = read_metadata(root, manifest)
     dependencies = runtime.get("packaged_runtime_files")
     if not isinstance(dependencies, list) or not dependencies:
         raise ValueError("native runtime manifest lacks packaged dependencies")
