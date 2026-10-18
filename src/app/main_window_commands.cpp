@@ -247,7 +247,7 @@ void MainWindow::set_page(Page page) {
         if (blocked_by_operation) {
             state_.active_dropdown = DropdownId::None;
             dropdown_keyboard_index_ = -1;
-            keyboard_focus_index_ = 0;
+            keyboard_focus_ = KeyboardFocus{};
             text_tooltip_cell_active_ = false;
             text_tooltip_visible_ = false;
             text_tooltip_text_.clear();
@@ -256,7 +256,7 @@ void MainWindow::set_page(Page page) {
             state_.page = page;
             state_.active_dropdown = DropdownId::None;
             dropdown_keyboard_index_ = -1;
-            keyboard_focus_index_ = 0;
+            keyboard_focus_ = KeyboardFocus{};
             text_tooltip_cell_active_ = false;
             text_tooltip_visible_ = false;
             text_tooltip_text_.clear();
@@ -329,6 +329,7 @@ void MainWindow::clear_queue() {
     {
         std::lock_guard lock(mutex_);
         state_.queued_paths.clear();
+        keyboard_focus_ = KeyboardFocus{};
         state_.queued_enabled.clear();
         reset_security_review_locked();
         state_.selected_queue_index = -1;
@@ -348,6 +349,7 @@ void MainWindow::clear_history() {
     {
         std::lock_guard lock(mutex_);
         state_.history.clear();
+        keyboard_focus_ = KeyboardFocus{};
         operation_summary_.begin(0);
         state_.selected_history_index = -1;
         history_scroll_first_row_ = 0;

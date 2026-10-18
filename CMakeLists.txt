@@ -938,6 +938,7 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_gdi_back_buffer.cpp
     tests/cpp/test_system_layout.cpp
     tests/cpp/test_form_layout.cpp
+    tests/cpp/test_keyboard_focus.cpp
     tests/cpp/test_window_layout.cpp
     tests/cpp/test_operation_summary.cpp
     tests/cpp/test_operation_destination.cpp

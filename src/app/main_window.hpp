@@ -3,6 +3,7 @@
 #include "app/dropdown_layout.hpp"
 #include "app/folder_size_cache.hpp"
 #include "app/gdi_back_buffer.hpp"
+#include "app/keyboard_focus.hpp"
 #include "app/operation_summary.hpp"
 #include "app/operation_destination.hpp"
 #include "app/queue_metadata.hpp"
@@ -758,14 +759,9 @@ class MainWindow {
     // Outputs: Adds Settings buttons, toggles, and dropdowns in tab order.
     void add_settings_focus_targets(std::vector<FocusTarget>& targets, const RECT& content) const;
 
-    // Purpose: Normalize the current keyboard focus to a valid target index.
-    // Inputs: `targets` is the current page's focus target list.
-    // Outputs: Updates focus index and returns false if no target exists.
-    bool normalize_focus_index(const std::vector<FocusTarget>& targets);
-
     // Purpose: Move keyboard focus by a signed delta through the current page's focus list.
-    // Inputs: `delta` is normally +1 or -1.
-    // Outputs: Mutates focus index and queues a repaint.
+    // Inputs: `delta` is +1 for forward traversal or -1 for reverse traversal.
+    // Outputs: Selects the adjacent control by identity and queues a repaint.
     bool move_keyboard_focus(int delta);
 
     // Purpose: Activate a focused control with Enter or Space.
@@ -1477,7 +1473,7 @@ class MainWindow {
     bool text_tooltip_visible_ = false;
     std::wstring text_tooltip_text_;
     std::array<std::wstring, 2> cached_license_notices_text_;
-    int keyboard_focus_index_ = 0;
+    KeyboardFocus keyboard_focus_;
     int dropdown_keyboard_index_ = -1;
     int dropdown_scroll_first_row_ = 0;
     int dropdown_wheel_delta_remainder_ = 0;
