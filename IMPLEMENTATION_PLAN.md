@@ -54,15 +54,14 @@ request; this does not authorize publication of a replacement.
    and two exact governance observations remain bound to their reviewed identities.
    Repeat the affected detectors and exact-commit audit after further production
    changes; an earlier checkpoint does not approve later source bytes.
-2. **Complete the GPU incident investigation.** Trace bounded kernel progress,
-   asynchronous ownership, failure cleanup and runtime admission against the
-   retained incident evidence. The original watchdog dumps are unavailable, and
-   retained event logs no longer cover the incident. Do not label the freeze
-   resolved from successful later GPU tests.
-   A separate intermittent concurrent dictionary-encoding regression has also
-   produced bytes that disagree with the independent decoder's source oracle.
-   Isolate and repair that failure before release; subsequent passing isolated
-   runs do not close the original failure.
+2. **Qualify current GPU execution.** Validate required-HIP behavior, bounded kernel
+   progress, asynchronous ownership and failure cleanup on the candidate binaries.
+   Preserve the historical incident evidence and its limitations in
+   [beta readiness](docs/beta-readiness.md#outstanding-acceptance-limits).
+   The maintainer has closed the unreproduced dictionary-corruption investigation
+   as nonblocking after focused qualification; neither a driver cause nor a
+   production repair has been established. Keep the distinct-input and start-schedule
+   regressions active. Any new byte mismatch or hang reopens the affected release gate.
 3. **Finish source and release qualification.** Complete the remaining parser,
    extraction, codec, driver and kernel review, plus the required current
    source and dependency scanner audit. Qualify the final pushed SHA's
