@@ -142,14 +142,21 @@ bool is_archive_path_descendant(const ArchiveCollisionKey& child, const ArchiveC
 }  // namespace
 
 // Purpose: Resolve one untrusted archive path below a destination root without following escaping parent reparses.
-// Inputs: `destination_root` is the extraction root; `archive_path` uses the explicitly selected metadata encoding.
+// Inputs: `destination_root` is the extraction root, including ordinary Windows path aliases;
+// `archive_path` uses the explicitly selected metadata encoding.
 // Outputs: Returns the validated target path or throws `SecurityError`/`ArchiveError` when containment cannot be
 // proven.
 std::filesystem::path safe_join_archive_path(const std::filesystem::path& destination_root,
                                              const std::string& archive_path, ArchivePathEncoding encoding) {
     const auto normalized_archive_path = normalize_archive_path_key(archive_path);
     std::error_code ec;
+#ifdef _WIN32
+    // Normalize the Win32 representation before filesystem resolution. A long extended path ending in "."
+    // otherwise takes the library's partial-resolution path and retains an empty trailing component.
+    const auto root = std::filesystem::weakly_canonical(std::filesystem::path(windows_api_path(destination_root)), ec);
+#else
     const auto root = std::filesystem::weakly_canonical(destination_root, ec);
+#endif
     if (ec) {
         throw SecurityError("destination root cannot be canonicalized: " + ec.message());
     }

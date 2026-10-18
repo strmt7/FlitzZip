@@ -166,7 +166,7 @@ TEST_CASE(xz_resumable_error_never_publishes) {
     };
     write_binary_file(archive, bytes);
     (void)flitzzip::extract_xz_file(archive, root / "control", false);
-    REQUIRE_EQ(read_text_file(root / "control/payload.txt"), "verified payload");
+    REQUIRE_EQ(read_text_file(root / "control" / "payload.txt"), "verified payload");
     bytes[8] ^= 1U;
     write_binary_file(archive, bytes);
     for (const bool overwrite : {false, true}) {

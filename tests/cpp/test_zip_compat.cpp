@@ -253,18 +253,24 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
 TEST_CASE(zip_unicode_paths_roundtrip_all_efforts) {
     const auto root = test_temp_dir("zip-unicode");
     const auto source = root / std::filesystem::path(u8"\u65e5\u672c");
-    const auto relative = std::filesystem::path(u8"caf\u00e9/\U0001f4c1.txt");
+    const auto relative = std::filesystem::path(u8"caf\u00e9") / std::filesystem::path(u8"\U0001f4c1.txt");
     std::filesystem::create_directories((source / relative).parent_path());
     std::filesystem::create_directories(source / std::filesystem::path(u8"\u03a9"));
     const std::string payload(4097U, 'Z');
-    std::ofstream(source / relative, std::ios::binary) << payload;
+    {
+        std::ofstream input(source / relative, std::ios::binary);
+        REQUIRE_TRUE(input.is_open());
+        input << payload;
+        input.close();
+        REQUIRE_TRUE(!input.fail());
+    }
     std::ofstream(source / std::filesystem::path(u8"\u00e9.txt"), std::ios::binary);
     for (int effort = 1; effort <= 9; ++effort) {
         const auto archive = root / std::filesystem::path(u8"\u03a9.zip");
         const auto compressed = flitzzip::compress_zip({source}, archive, effort);
         REQUIRE_EQ(compressed.input_bytes, payload.size());
         mz_zip_archive reader{};
-        const auto encoded = archive.generic_u8string();
+        const auto encoded = archive.u8string();
         REQUIRE_TRUE(mz_zip_reader_init_file(&reader, reinterpret_cast<const char*>(encoded.c_str()), 0));
         for (mz_uint index = 0; index < mz_zip_reader_get_num_files(&reader); ++index) {
             mz_zip_archive_file_stat entry{};

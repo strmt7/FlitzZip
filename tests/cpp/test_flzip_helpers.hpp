@@ -94,14 +94,16 @@ inline std::uint64_t count_regular_files(const std::filesystem::path& root) {
 }
 
 // Purpose: Compare two regular files byte-for-byte for roundtrip tests.
-// Inputs: `lhs` and `rhs` are readable file paths.
+// Inputs: `lhs` and `rhs` are readable file paths, possibly composed from archive separators.
 // Outputs: Returns true when size and full byte content match.
 inline bool files_are_equal(const std::filesystem::path& lhs, const std::filesystem::path& rhs) {
-    if (std::filesystem::file_size(lhs) != std::filesystem::file_size(rhs)) {
+    const auto left_path = std::filesystem::path(flitzzip::windows_api_path(lhs));
+    const auto right_path = std::filesystem::path(flitzzip::windows_api_path(rhs));
+    if (std::filesystem::file_size(left_path) != std::filesystem::file_size(right_path)) {
         return false;
     }
-    std::ifstream left(lhs, std::ios::binary);
-    std::ifstream right(rhs, std::ios::binary);
+    std::ifstream left(left_path, std::ios::binary);
+    std::ifstream right(right_path, std::ios::binary);
     std::array<char, 8192> left_buffer{};
     std::array<char, 8192> right_buffer{};
     while (left && right) {

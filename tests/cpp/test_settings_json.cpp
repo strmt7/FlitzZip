@@ -129,8 +129,9 @@ TEST_CASE(settings_json_requires_exact_scalar_types) {
         REQUIRE_TRUE(!settings.boolean(L"flag", false));
         REQUIRE_TRUE(settings.boolean(L"flag", true));
     }
-    for (const auto value :
-         {"null", "true", "false", "\"7\"", "[]", "{}", "1.5", "2147483648", "-2147483649", "1e100"}) {
+    for (const auto value : {"null", "true", "false", "\"7\"", "[]", "{}", "1.5", "2147483648", "-2147483649", "1e100",
+                             "0.9999999999999999", "1.0000000000000002", "-0.0000000000000001", "1e-300",
+                             "2147483646.9999998", "-2147483647.9999998"}) {
         const flitzzip::app::SettingsJson settings(std::string("{\"level\":") + value + "}");
         REQUIRE_EQ(settings.integer(L"level", 3, 1, 9), 3);
     }

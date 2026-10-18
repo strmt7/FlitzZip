@@ -414,10 +414,11 @@ TEST_CASE(cpio_unicode_destination_preserves_overwrite_diagnostic) {
     (void)flitzzip::compress_gzip_file(plain, compressed);
     for (const bool gzip : {false, true}) {
         const auto output = root / (gzip ? "gzip" : "plain") / L"\u65e5\u672c-\U0001f680" / ".";
-        const auto target = output / "file.txt";
-        std::filesystem::create_directories(output);
+        const auto fixture_output = std::filesystem::path(flitzzip::windows_api_path(output));
+        const auto target = fixture_output / "file.txt";
+        std::filesystem::create_directories(fixture_output);
         std::ofstream(target, std::ios::binary) << "old";
-        const auto expected_path = (std::filesystem::weakly_canonical(output) / target.filename()).u8string();
+        const auto expected_path = (std::filesystem::weakly_canonical(fixture_output) / target.filename()).u8string();
         const std::string expected(reinterpret_cast<const char*>(expected_path.data()), expected_path.size());
         const auto extract = [&](bool overwrite) {
             return gzip ? flitzzip::extract_cpio_gzip(compressed, output, overwrite)
@@ -437,10 +438,10 @@ TEST_CASE(cpio_unicode_destination_preserves_overwrite_diagnostic) {
         }
         REQUIRE_TRUE(rejected);
         REQUIRE_EQ(read_text_file(target), "old");
-        REQUIRE_EQ(count_regular_files(output), 1U);
+        REQUIRE_EQ(count_regular_files(fixture_output), 1U);
         REQUIRE_EQ(extract(true).output_bytes, 3U);
         REQUIRE_EQ(read_text_file(target), "new");
-        REQUIRE_EQ(count_regular_files(output), 1U);
+        REQUIRE_EQ(count_regular_files(fixture_output), 1U);
     }
 }
 

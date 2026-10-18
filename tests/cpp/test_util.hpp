@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../src/core/path_text.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -42,11 +44,12 @@ void register_test(std::string name, TestFunction fn);
     } while (false)
 
 // Purpose: Create a clean per-process temporary directory for one test.
-// Inputs: `name` is a stable test-specific label.
-// Outputs: Removes any prior generated directory, recreates it, and returns the path.
-inline std::filesystem::path test_temp_dir(const std::string& name) {
-    auto dir = std::filesystem::temp_directory_path() /
-               ("flitzzip-test-" + name + "-" + std::to_string(GetCurrentProcessId()));
+// Inputs: `name` is a stable test-specific label; `parent` defaults to the operating system's temporary root.
+// Outputs: Recreates the generated directory and returns an extended path usable beyond legacy Win32 limits.
+inline std::filesystem::path
+test_temp_dir(const std::string& name, const std::filesystem::path& parent = std::filesystem::temp_directory_path()) {
+    const auto dir = std::filesystem::path(
+        flitzzip::windows_api_path(parent / ("flitzzip-test-" + name + "-" + std::to_string(GetCurrentProcessId()))));
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
     return dir;
@@ -73,8 +76,11 @@ inline bool try_create_test_directory_junction(const std::filesystem::path& junc
         return false;
     }
 
-    const std::wstring substitute_name = L"\\??\\" + absolute_target.wstring();
-    const std::wstring print_name = absolute_target.wstring();
+    const std::wstring substitute_name = L"\\??\\" + flitzzip::windows_api_path(absolute_target).substr(4);
+    const std::wstring print_name = flitzzip::windows_regular_path(absolute_target).wstring();
+    if ((substitute_name.size() + print_name.size() + 2U) * sizeof(wchar_t) > MAXIMUM_REPARSE_DATA_BUFFER_SIZE - 16U) {
+        return false;
+    }
     const auto substitute_bytes = static_cast<std::uint16_t>(substitute_name.size() * sizeof(wchar_t));
     const auto print_bytes = static_cast<std::uint16_t>(print_name.size() * sizeof(wchar_t));
     const auto print_offset = static_cast<std::uint16_t>(substitute_bytes + sizeof(wchar_t));

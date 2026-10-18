@@ -636,7 +636,7 @@ TEST_CASE(xar_all_truncation_boundaries_preserve_destination) {
     write_xar_bytes(archive, valid);
     const auto stats = flitzzip::extract_xar(archive, root / "out", true);
     REQUIRE_EQ(stats.output_bytes, 11U);
-    REQUIRE_EQ(read_text_file(root / "out/subdir/hello.txt"), "xar payload");
+    REQUIRE_EQ(read_text_file(root / "out" / "subdir" / "hello.txt"), "xar payload");
 }
 
 // Purpose: Distinguish complete zlib streams from truncated, trailing and incorrect decoded-size payloads.
