@@ -1,4 +1,5 @@
 #include "app/queue_drop_target.hpp"
+#include "app/shell_selection.hpp"
 #include "test_util.hpp"
 
 #include <array>
@@ -508,4 +509,254 @@ TEST_CASE(queue_drop_target_com_identity_and_lifetime) {
     REQUIRE_TRUE(!observer.expired());
     REQUIRE_EQ(target->Release(), 0U);
     REQUIRE_TRUE(observer.expired());
+}
+
+namespace {
+
+// A controlled external COM provider; its owner remains the fixture, while calls track borrowed references.
+class ShellItem final : public IShellItem {
+  public:
+    std::wstring path = L"C:\\fixture\\selected.txt";
+    HRESULT display_status = S_OK;
+    bool null_text = false;
+    ULONG references = 1;
+    unsigned releases = 0;
+
+    // Purpose: Expose supported COM identities. Inputs: ID and writable slot. Outputs: Retained interface or error.
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** value) override {
+        if (!value)
+            return E_POINTER;
+        *value = nullptr;
+        if (iid != IID_IUnknown && iid != IID_IShellItem)
+            return E_NOINTERFACE;
+        *value = static_cast<IShellItem*>(this);
+        AddRef();
+        return S_OK;
+    }
+    // Purpose: Observe acquired ownership. Inputs: None. Outputs: Incremented count.
+    ULONG STDMETHODCALLTYPE AddRef() override {
+        return ++references;
+    }
+    // Purpose: Observe released ownership. Inputs: None. Outputs: Decremented count; fixture lifetime stays external.
+    ULONG STDMETHODCALLTYPE Release() override {
+        ++releases;
+        return --references;
+    }
+    // Purpose: Refuse unneeded binding. Inputs: Unused. Outputs: Explicit unsupported status.
+    HRESULT STDMETHODCALLTYPE BindToHandler(IBindCtx*, REFGUID, REFIID, void**) override {
+        return E_NOTIMPL;
+    }
+    // Purpose: Refuse unneeded parent lookup. Inputs: Unused. Outputs: Explicit unsupported status.
+    HRESULT STDMETHODCALLTYPE GetParent(IShellItem**) override {
+        return E_NOTIMPL;
+    }
+    // Purpose: Return a real COM-allocated path, even when testing a failed API with an owned output.
+    // Inputs: Required filesystem-path selector and output slot. Outputs: Configured string and HRESULT.
+    HRESULT STDMETHODCALLTYPE GetDisplayName(SIGDN kind, PWSTR* value) override {
+        if (kind != SIGDN_FILESYSPATH || value == nullptr)
+            return E_INVALIDARG;
+        *value = nullptr;
+        if (!null_text) {
+            auto* text = static_cast<PWSTR>(CoTaskMemAlloc((path.size() + 1U) * sizeof(wchar_t)));
+            if (text == nullptr)
+                return E_OUTOFMEMORY;
+            std::copy(path.begin(), path.end(), text);
+            text[path.size()] = L'\0';
+            *value = text;
+        }
+        return display_status;
+    }
+    // Purpose: Refuse unneeded attributes. Inputs: Unused. Outputs: Explicit unsupported status.
+    HRESULT STDMETHODCALLTYPE GetAttributes(SFGAOF, SFGAOF*) override {
+        return E_NOTIMPL;
+    }
+    // Purpose: Refuse unneeded comparison. Inputs: Unused. Outputs: Explicit unsupported status.
+    HRESULT STDMETHODCALLTYPE Compare(IShellItem*, SICHINTF, int*) override {
+        return E_NOTIMPL;
+    }
+};
+
+class ShellItems final : public IShellItemArray {
+  public:
+    ShellItem item;
+    DWORD count = 1;
+    DWORD failed_index = MAXDWORD;
+    HRESULT count_status = S_OK;
+    bool null_item = false;
+    bool failed_lookup = false;
+    std::wstring last_path;
+    unsigned reads = 0;
+    ULONG references = 1;
+
+    // Purpose: Expose supported array identities. Inputs: ID and output slot. Outputs: Retained interface or error.
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** value) override {
+        if (!value)
+            return E_POINTER;
+        *value = nullptr;
+        if (iid != IID_IUnknown && iid != IID_IShellItemArray)
+            return E_NOINTERFACE;
+        *value = static_cast<IShellItemArray*>(this);
+        AddRef();
+        return S_OK;
+    }
+    // Purpose: Observe external ownership. Inputs: None. Outputs: Incremented reference count.
+    ULONG STDMETHODCALLTYPE AddRef() override {
+        return ++references;
+    }
+    // Purpose: Observe external cleanup. Inputs: None. Outputs: Decremented reference count.
+    ULONG STDMETHODCALLTYPE Release() override {
+        return --references;
+    }
+    // Purpose: Refuse unneeded binding. Inputs: Unused. Outputs: Explicit unsupported status.
+    HRESULT STDMETHODCALLTYPE BindToHandler(IBindCtx*, REFGUID, REFIID, void**) override {
+        return E_NOTIMPL;
+    }
+    // Purpose: Refuse unneeded property storage. Inputs: Unused. Outputs: Explicit unsupported status.
+    HRESULT STDMETHODCALLTYPE GetPropertyStore(GETPROPERTYSTOREFLAGS, REFIID, void**) override {
+        return E_NOTIMPL;
+    }
+    // Purpose: Refuse unneeded property descriptions. Inputs: Unused. Outputs: Explicit unsupported status.
+    HRESULT STDMETHODCALLTYPE GetPropertyDescriptionList(REFPROPERTYKEY, REFIID, void**) override {
+        return E_NOTIMPL;
+    }
+    // Purpose: Refuse unneeded attributes. Inputs: Unused. Outputs: Explicit unsupported status.
+    HRESULT STDMETHODCALLTYPE GetAttributes(SIATTRIBFLAGS, SFGAOF, SFGAOF*) override {
+        return E_NOTIMPL;
+    }
+    // Purpose: Supply independent count metadata. Inputs: Output slot. Outputs: Configured count and status.
+    HRESULT STDMETHODCALLTYPE GetCount(DWORD* value) override {
+        *value = count;
+        return count_status;
+    }
+    // Purpose: Transfer one controlled item reference, including a failed lookup with a nonnull output.
+    // Inputs: Requested index and output slot. Outputs: Borrowed fixture with one owned reference or null.
+    HRESULT STDMETHODCALLTYPE GetItemAt(DWORD index, IShellItem** value) override {
+        ++reads;
+        *value = nullptr;
+        if (index >= count)
+            return E_INVALIDARG;
+        if (index == failed_index && null_item)
+            return S_OK;
+        if (index == count - 1U && !last_path.empty())
+            item.path = last_path;
+        *value = &item;
+        item.AddRef();
+        return index == failed_index && failed_lookup ? E_FAIL : S_OK;
+    }
+    // Purpose: Refuse unneeded enumeration. Inputs: Unused. Outputs: Explicit unsupported status.
+    HRESULT STDMETHODCALLTYPE EnumItems(IEnumShellItems**) override {
+        return E_NOTIMPL;
+    }
+};
+
+// Purpose: Verify atomic caller publication and ownership after rejection, then successful provider reuse.
+// Inputs: One configured failing array. Outputs: Requires unchanged caller paths, balanced item references and reuse.
+void require_rejected_selection(ShellItems& items) {
+    const std::vector<std::filesystem::path> before{L"retained.txt"};
+    auto output = before;
+    bool rejected = false;
+    try {
+        output = flitzzip::app::shell_selection_paths(&items);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(output, before);
+    REQUIRE_EQ(items.item.references, 1UL);
+    items.count = 1;
+    items.count_status = S_OK;
+    items.failed_index = MAXDWORD;
+    items.item.display_status = S_OK;
+    items.item.null_text = false;
+    items.item.path = L"C:\\fixture\\recovered.txt";
+    items.last_path.clear();
+    const auto recovered = flitzzip::app::shell_selection_paths(&items);
+    REQUIRE_EQ(recovered, std::vector<std::filesystem::path>{L"C:\\fixture\\recovered.txt"});
+    REQUIRE_EQ(items.item.references, 1UL);
+}
+}  // namespace
+
+// Purpose: Preserve complete selections at both count boundaries. Inputs: Real COM adapter with controlled metadata.
+// Outputs: Empty stays empty; maximum selection retains every item and releases every acquired reference.
+TEST_CASE(shell_selection_preserves_empty_and_maximum_count) {
+    ShellItems items;
+    items.count = 0;
+    REQUIRE_TRUE(flitzzip::app::shell_selection_paths(&items).empty());
+    REQUIRE_EQ(items.reads, 0U);
+    items.count = static_cast<DWORD>(flitzzip::app::kMaxQueueItems);
+    items.item.path = L"C:\\selected\\\u03a9 file.txt";
+    const auto paths = flitzzip::app::shell_selection_paths(&items);
+    REQUIRE_EQ(paths.size(), flitzzip::app::kMaxQueueItems);
+    for (const auto& path : paths)
+        REQUIRE_EQ(path.native(), items.item.path);
+    REQUIRE_EQ(items.item.releases, items.count);
+    REQUIRE_EQ(items.item.references, 1UL);
+}
+
+// Purpose: Reject oversized metadata before requesting any item, rather than silently truncating the selection.
+// Inputs: One beyond the queue limit and maximum DWORD. Outputs: Error, no partial publication and no item reads.
+TEST_CASE(shell_selection_rejects_oversized_count_before_enumeration) {
+    for (DWORD count : {static_cast<DWORD>(flitzzip::app::kMaxQueueItems + 1U), static_cast<DWORD>(MAXDWORD)}) {
+        ShellItems items;
+        items.count = count;
+        require_rejected_selection(items);
+        REQUIRE_EQ(items.reads, 1U);  // Only the independently checked recovery call reads an item.
+    }
+}
+
+// Purpose: Keep failed and malformed COM responses from becoming successful partial selections.
+// Inputs: Failed count, failed item lookup and null item after a valid first item.
+// Outputs: Caller state stays unchanged and acquired references are released before reuse.
+TEST_CASE(shell_selection_rejects_failed_and_incomplete_arrays) {
+    ShellItems items;
+    items.count_status = E_FAIL;
+    require_rejected_selection(items);
+    items.count = 2;
+    items.failed_index = 1;
+    items.failed_lookup = true;
+    require_rejected_selection(items);
+    items.count = 2;
+    items.failed_index = 1;
+    items.null_item = true;
+    require_rejected_selection(items);
+    bool rejected = false;
+    try {
+        (void)flitzzip::app::shell_selection_paths(nullptr);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+}
+
+// Purpose: Validate each string result before converting or publishing it.
+// Inputs: Failed API with allocated output, null and empty strings, and a path above the Windows length bound.
+// Outputs: All invalid results reject and permit valid reuse without retained item ownership.
+TEST_CASE(shell_selection_rejects_invalid_paths_and_recovers) {
+    ShellItems items;
+    items.item.display_status = E_FAIL;
+    require_rejected_selection(items);
+    items.item.null_text = true;
+    require_rejected_selection(items);
+    items.item.path.clear();
+    require_rejected_selection(items);
+    items.item.path.assign(flitzzip::app::kMaxShellPathCharacters + 1U, L'x');
+    require_rejected_selection(items);
+}
+
+// Purpose: Admit the full text budget exactly and reject one further complete path.
+// Inputs: 128 independently sized 32,767-unit paths followed by a final 128-unit or 129-unit path.
+// Outputs: Individual length and aggregate bounds remain distinct; oversized aggregate cannot publish a prefix.
+TEST_CASE(shell_selection_bounds_aggregate_path_storage) {
+    ShellItems items;
+    items.count = 129;
+    items.item.path.assign(flitzzip::app::kMaxShellPathCharacters, L'x');
+    items.last_path.assign(128, L'y');
+    const auto accepted = flitzzip::app::shell_selection_paths(&items);
+    REQUIRE_EQ(accepted.size(), 129U);
+    REQUIRE_EQ(items.item.references, 1UL);
+    REQUIRE_EQ(accepted.front().native().size(), flitzzip::app::kMaxShellPathCharacters);
+    REQUIRE_EQ(accepted.back().native(), std::wstring(128, L'y'));
+    items.item.path.assign(flitzzip::app::kMaxShellPathCharacters, L'x');
+    items.last_path.assign(129, L'y');
+    require_rejected_selection(items);
 }

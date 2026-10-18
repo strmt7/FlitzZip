@@ -1,94 +1,13 @@
 #include "app/main_window_impl.hpp"
 
-#include "core/com_task_string.hpp"
+#include "app/shell_selection.hpp"
 #include "core/path_text.hpp"
 
-#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
-#endif
-#ifndef DWMWA_CAPTION_COLOR
-#define DWMWA_CAPTION_COLOR 35
-#endif
-#ifndef DWMWA_TEXT_COLOR
-#define DWMWA_TEXT_COLOR 36
-#endif
-#ifndef DWMWA_BORDER_COLOR
-#define DWMWA_BORDER_COLOR 34
-#endif
 namespace flitzzip::app {
 
 namespace {
 
-template <typename Interface> class ComPtr final {
-  public:
-    // Purpose: Create an empty COM pointer wrapper.
-    // Inputs: None.
-    // Outputs: Stores a null interface pointer.
-    ComPtr() = default;
-
-    ComPtr(const ComPtr&) = delete;
-    ComPtr& operator=(const ComPtr&) = delete;
-
-    // Purpose: Release the owned COM interface pointer.
-    // Inputs: None.
-    // Outputs: Calls `Release` on the stored pointer when present.
-    ~ComPtr() {
-        reset();
-    }
-
-    // Purpose: Prepare this wrapper as an output parameter for COM APIs.
-    // Inputs: None.
-    // Outputs: Releases any existing pointer and returns storage for a new pointer.
-    Interface** put() noexcept {
-        reset();
-        return &value_;
-    }
-
-    // Purpose: Access the owned COM interface pointer.
-    // Inputs: None.
-    // Outputs: Returns the raw interface pointer without transferring ownership.
-    [[nodiscard]] Interface* get() const noexcept {
-        return value_;
-    }
-
-    // Purpose: Access COM interface members.
-    // Inputs: None.
-    // Outputs: Returns the raw interface pointer for member calls.
-    [[nodiscard]] Interface* operator->() const noexcept {
-        return value_;
-    }
-
-  private:
-    // Purpose: Release the currently stored COM pointer.
-    // Inputs: None.
-    // Outputs: Clears the wrapper after calling `Release` when needed.
-    void reset() noexcept {
-        if (value_ != nullptr) {
-            value_->Release();
-            value_ = nullptr;
-        }
-    }
-
-    Interface* value_ = nullptr;
-};
-
-// Purpose: Format an HRESULT for concise diagnostics.
-// Inputs: `result` is the HRESULT returned by a Win32 or COM API.
-// Outputs: Returns a lowercase hexadecimal HRESULT string.
-std::string hresult_text(HRESULT result) {
-    std::ostringstream text;
-    text << "0x" << std::hex << static_cast<unsigned long>(result);
-    return text.str();
-}
-
-// Purpose: Convert a failed HRESULT into an exception with operation context.
-// Inputs: `result` is an HRESULT and `operation` names the failed operation.
-// Outputs: Throws `std::runtime_error` only when `result` is a failure code.
-void require_succeeded(HRESULT result, const char* operation) {
-    if (FAILED(result)) {
-        throw std::runtime_error(std::string(operation) + " failed (" + hresult_text(result) + ")");
-    }
-}
+using Microsoft::WRL::ComPtr;
 
 // Purpose: Parse GUI smoke file-selection paths from an environment override.
 // Inputs: None; reads `FLITZZIP_GUI_SMOKE_FILE_SELECTION` from the current process.
@@ -154,53 +73,29 @@ bool suppress_smoke_shell_open() {
     return length == 1 && value[0] == L'1';
 }
 
-// Purpose: Return the filesystem path represented by one shell item.
-// Inputs: `item` is a filesystem shell item returned by `IFileOpenDialog`.
-// Outputs: Returns the absolute filesystem path or throws when the shell cannot provide one.
-std::filesystem::path shell_item_filesystem_path(IShellItem* item) {
-    if (item == nullptr) {
-        return {};
-    }
-    CoTaskMemWideString path;
-    require_succeeded(item->GetDisplayName(SIGDN_FILESYSPATH, path.put()), "Shell item path lookup");
-    return path.get() == nullptr ? std::filesystem::path{} : std::filesystem::path(path.get());
-}
-
 // Purpose: Open the modern Windows shell picker for multi-file selection.
 // Inputs: `owner` is the FlitzZip window owner for modality.
 // Outputs: Returns every selected filesystem file path, or an empty vector on user cancel.
 std::vector<std::filesystem::path> selected_files_from_dialog(HWND owner) {
     ComPtr<IFileOpenDialog> dialog;
-    require_succeeded(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(dialog.put())),
-                      "File picker creation");
+    require_shell_succeeded(
+        CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(dialog.GetAddressOf())),
+        "File picker creation");
     DWORD options = 0;
-    require_succeeded(dialog->GetOptions(&options), "File picker option query");
-    require_succeeded(dialog->SetOptions(options | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST |
-                                         FOS_PATHMUSTEXIST),
-                      "File picker option update");
+    require_shell_succeeded(dialog->GetOptions(&options), "File picker option query");
+    require_shell_succeeded(dialog->SetOptions(options | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM |
+                                               FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST),
+                            "File picker option update");
     dialog->SetTitle(L"Add files to FlitzZip");
     const HRESULT shown = dialog->Show(owner);
     if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
         return {};
     }
-    require_succeeded(shown, "File picker display");
+    require_shell_succeeded(shown, "File picker display");
 
     ComPtr<IShellItemArray> items;
-    require_succeeded(dialog->GetResults(items.put()), "File picker result query");
-    DWORD count = 0;
-    require_succeeded(items->GetCount(&count), "File picker result count");
-    const DWORD bounded_count = std::min(count, static_cast<DWORD>(kMaxQueueItems));
-    std::vector<std::filesystem::path> paths;
-    paths.reserve(bounded_count);
-    for (DWORD index = 0; index < bounded_count; ++index) {
-        ComPtr<IShellItem> item;
-        require_succeeded(items->GetItemAt(index, item.put()), "File picker item lookup");
-        auto path = shell_item_filesystem_path(item.get());
-        if (!path.empty()) {
-            paths.emplace_back(std::move(path));
-        }
-    }
-    return paths;
+    require_shell_succeeded(dialog->GetResults(items.GetAddressOf()), "File picker result query");
+    return shell_selection_paths(items.Get());
 }
 
 // Purpose: Open the modern Windows shell picker for folder selection.
@@ -208,22 +103,23 @@ std::vector<std::filesystem::path> selected_files_from_dialog(HWND owner) {
 // Outputs: Returns the selected filesystem folder path, or an empty path on user cancel.
 std::filesystem::path selected_folder_from_dialog(HWND owner, PCWSTR title) {
     ComPtr<IFileOpenDialog> dialog;
-    require_succeeded(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(dialog.put())),
-                      "Folder picker creation");
+    require_shell_succeeded(
+        CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(dialog.GetAddressOf())),
+        "Folder picker creation");
     DWORD options = 0;
-    require_succeeded(dialog->GetOptions(&options), "Folder picker option query");
-    require_succeeded(dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST),
-                      "Folder picker option update");
+    require_shell_succeeded(dialog->GetOptions(&options), "Folder picker option query");
+    require_shell_succeeded(dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST),
+                            "Folder picker option update");
     dialog->SetTitle(title);
     const HRESULT shown = dialog->Show(owner);
     if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
         return {};
     }
-    require_succeeded(shown, "Folder picker display");
+    require_shell_succeeded(shown, "Folder picker display");
 
     ComPtr<IShellItem> item;
-    require_succeeded(dialog->GetResult(item.put()), "Folder picker result query");
-    return shell_item_filesystem_path(item.get());
+    require_shell_succeeded(dialog->GetResult(item.GetAddressOf()), "Folder picker result query");
+    return shell_item_filesystem_path(item.Get());
 }
 
 }  // namespace
@@ -548,9 +444,5 @@ void MainWindow::start_compress() {
         },
         "Compressing", OperationKind::Compress, destination_to_open);
 }
-
-// Purpose: Detect whether Ask-before-overwriting needs user confirmation.
-// Inputs: `destination` is the extraction root.
-// Outputs: Returns true when the destination exists and is non-empty or cannot be proven empty.
 
 }  // namespace flitzzip::app
