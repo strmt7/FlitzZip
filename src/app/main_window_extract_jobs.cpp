@@ -1,5 +1,6 @@
 #include "app/main_window_impl.hpp"
 
+#include "app/extraction_destinations.hpp"
 #include "app/log_policy.hpp"
 #include "core/path_text.hpp"
 
@@ -22,93 +23,6 @@
 #endif
 
 namespace flitzzip::app {
-namespace {
-
-// Purpose: Replace filesystem-hostile characters in a derived folder name.
-// Inputs: `value` is a filename stem chosen from a user-selected archive path.
-// Outputs: Returns a valid local folder component, never empty.
-std::wstring sanitize_extract_folder_component(std::wstring value) {
-    for (wchar_t& ch : value) {
-        if (ch < 32 || ch == L'<' || ch == L'>' || ch == L':' || ch == L'"' || ch == L'/' || ch == L'\\' ||
-            ch == L'|' || ch == L'?' || ch == L'*') {
-            ch = L'_';
-        }
-    }
-    while (!value.empty() && (value.back() == L'.' || value.back() == L' ')) {
-        value.pop_back();
-    }
-    if (value.empty()) {
-        return L"archive";
-    }
-    return value;
-}
-
-// Purpose: Return a lowercase ASCII-only copy for registered extension suffix matching.
-// Inputs: `value` is a Windows filename or registered extension string.
-// Outputs: Returns `value` with only ASCII `A-Z` folded to lowercase.
-std::wstring ascii_lower_wide(std::wstring value) {
-    for (wchar_t& ch : value) {
-        if (ch >= L'A' && ch <= L'Z') {
-            ch = static_cast<wchar_t>(ch - L'A' + L'a');
-        }
-    }
-    return value;
-}
-
-// Purpose: Derive a display-safe output folder base from an archive filename.
-// Inputs: `archive` is a selected archive path with a registered extension.
-// Outputs: Returns the filename with the full registered extension removed, sanitized for a local folder component.
-std::wstring extract_folder_base_name(const std::filesystem::path& archive) {
-    auto filename = archive.filename().wstring();
-    const auto format = detect_archive_format_by_extension(archive);
-    const auto extension = widen(archive_format_extension_info_for_path(format, archive).extension);
-    const auto lowered_filename = ascii_lower_wide(filename);
-    const auto lowered_extension = ascii_lower_wide(extension);
-    if (!extension.empty() && lowered_filename.size() > lowered_extension.size() &&
-        lowered_filename.compare(lowered_filename.size() - lowered_extension.size(), lowered_extension.size(),
-                                 lowered_extension) == 0) {
-        filename.resize(filename.size() - extension.size());
-    } else {
-        filename = archive.stem().wstring();
-    }
-    return sanitize_extract_folder_component(std::move(filename));
-}
-
-// Purpose: Derive the per-archive output folder for multi-archive extraction.
-// Inputs: `archive` is the selected archive path and `existing` contains names already assigned in this job.
-// Outputs: Returns a unique folder name under the common extraction root and records the chosen name.
-std::filesystem::path unique_extract_folder_name(const std::filesystem::path& archive,
-                                                 std::vector<std::wstring>& existing) {
-    const auto base = extract_folder_base_name(archive);
-    std::wstring candidate = base;
-    int suffix = 2;
-    while (std::ranges::find(existing, candidate) != existing.end()) {
-        candidate = base + L" (" + std::to_wstring(suffix) + L")";
-        ++suffix;
-    }
-    existing.push_back(candidate);
-    return std::filesystem::path(candidate);
-}
-
-// Purpose: Build extraction destinations for one or many selected archives.
-// Inputs: `archives` is non-empty and `root` is the selected extraction destination.
-// Outputs: Returns one destination per archive; single-archive behavior preserves `root` exactly.
-std::vector<std::filesystem::path> extraction_outputs_for_archives(const std::vector<std::filesystem::path>& archives,
-                                                                   const std::filesystem::path& root) {
-    if (archives.size() <= 1U) {
-        return {root};
-    }
-    std::vector<std::filesystem::path> outputs;
-    std::vector<std::wstring> names;
-    outputs.reserve(archives.size());
-    names.reserve(archives.size());
-    for (const auto& archive : archives) {
-        outputs.push_back(root / unique_extract_folder_name(archive, names));
-    }
-    return outputs;
-}
-
-}  // namespace
 
 // Purpose: Open the FlitzZip-owned overwrite confirmation modal for a pending extract job.
 // Inputs: `request` is the fully captured job request to run if the user continues.
