@@ -186,6 +186,81 @@ class CoverageTests(unittest.TestCase):
                     collector.run_checked(["owned-test-command"], 2, self.root / "process.json")
                 self.assertEqual(json.loads((self.root / "process.json").read_text()), failure)
 
+    # Purpose: Prevent a failed, truncated or successful CLI process from satisfying an expected rejection.
+    # Inputs: Independent process outcomes. Outputs: Raw evidence is retained and every invalid outcome fails.
+    def test_cli_admission_requires_complete_expected_failure(self):
+        valid = {
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "error: expected rejection\r\n",
+            "timed_out": False,
+            "output_truncated": False,
+            "output_limit_exceeded": False,
+        }
+        changes = [
+            {"exit_code": 0},
+            {"exit_code": 2},
+            {"stderr": "different failure"},
+            {"stdout": "entries=1\n"},
+            {"timed_out": True},
+            {"output_truncated": True},
+            {"output_limit_exceeded": True},
+        ]
+        log = self.root / "cli-case.json"
+        case = (["invalid-input"], 1, "expected rejection")
+        with patch.object(collector, "process_owner") as owner:
+            for change in changes:
+                outcome = {**valid, **change}
+                owner.return_value.run_bounded_command.return_value = outcome
+                with self.subTest(change=change), self.assertRaises(RuntimeError):
+                    collector.run_cli_admission_case(self.root / "cli.exe", case, log)
+                self.assertEqual(json.loads(log.read_text())["result"], outcome)
+            owner.return_value.run_bounded_command.return_value = valid
+            collector.run_cli_admission_case(self.root / "cli.exe", case, log)
+            usage = {**valid, "exit_code": 2, "stderr": "", "stdout": "FlitzZip CLI\r\nUsage:\r\n"}
+            owner.return_value.run_bounded_command.return_value = usage
+            collector.run_cli_admission_case(self.root / "cli.exe", ([], 2, None), log)
+            for field, value in (("stdout", ""), ("stderr", "unexpected error")):
+                owner.return_value.run_bounded_command.return_value = {**usage, field: value}
+                with self.assertRaises(RuntimeError):
+                    collector.run_cli_admission_case(self.root / "cli.exe", ([], 2, None), log)
+
+    # Purpose: Detect rejection paths that modify caller bytes or leave publication debris despite correct errors.
+    # Inputs: Controlled mutation after one case. Outputs: Immediate refusal; clean repeated cases remain admissible.
+    def test_cli_rejection_checks_files_and_publication_debris(self):
+        for mutation in (None, "input with spaces.txt", "preserved.zip", "unexpected.tmp"):
+            # Purpose: Model a CLI side effect independently from its exit status.
+            # Inputs: Owned case paths. Outputs: A report and the selected unwanted write.
+            def execute_case(binary, case, log, selected_mutation=mutation):
+                log.write_text("{}\n")
+                if selected_mutation:
+                    (log.parent / selected_mutation).write_bytes(b"changed")
+
+            with (
+                self.subTest(mutation=mutation),
+                patch.object(collector, "ROOT", self.root),
+                patch.object(collector, "cli_admission_cases", return_value=[([], 2, None)] * 2),
+                patch.object(collector, "run_cli_admission_case", side_effect=execute_case) as run,
+            ):
+                if mutation:
+                    with self.assertRaisesRegex(RuntimeError, "changed caller files"):
+                        collector.run_cli_admission(self.root / "cli.exe", self.root)
+                    self.assertEqual(run.call_count, 1)
+                else:
+                    collector.run_cli_admission(self.root / "cli.exe", self.root)
+                    self.assertEqual(run.call_count, 2)
+
+    # Purpose: Keep CLI admission a required consumer of the actual measured executable.
+    # Inputs: Passing earlier scenarios and a failed CLI contract. Outputs: Collection fails with the original cause.
+    def test_cli_admission_failure_prevents_coverage_acceptance(self):
+        with (
+            patch.object(collector, "coverage_build"),
+            patch.object(collector, "run_checked"),
+            patch.object(collector, "run_cli_admission", side_effect=RuntimeError("CLI defect")),
+            self.assertRaisesRegex(RuntimeError, "CLI defect"),
+        ):
+            collector.run_scenarios(self.root)
+
     # Purpose: Reject executable substitution even when its PDB and application receipt remain unchanged.
     # Inputs: A frozen test binary, matching symbols and a controlled mutation during the collector invocation.
     # Outputs: No accepted summary is published for the changed test executable.
@@ -250,6 +325,7 @@ class CoverageTests(unittest.TestCase):
             patch.object(collector, "ROOT", self.root),
             patch.object(collector, "coverage_build"),
             patch.object(collector, "require_hip_device"),
+            patch.object(collector, "run_cli_admission"),
         ):
             for hip_host in (False, True):
                 with self.subTest(hip_host=hip_host), patch.object(collector, "run_checked") as run:
@@ -324,16 +400,19 @@ class CoverageTests(unittest.TestCase):
                     patch.object(collector, "validate_current", return_value=before) as validate,
                     patch.object(collector, "require_hip_device") as require,
                     patch.object(collector, "run_checked") as run,
+                    patch.object(collector, "run_cli_admission") as admission,
                 ):
                     if hip_host != (configured == "ON"):
                         with self.assertRaisesRegex(ValueError, "selected measurement mode"):
                             collector.run_scenarios(self.root, hip_host)
                         run.assert_not_called()
                         require.assert_not_called()
+                        admission.assert_not_called()
                     else:
                         collector.run_scenarios(self.root, hip_host)
                         self.assertEqual(run.call_count, 6)
                         self.assertEqual(require.call_count, int(hip_host))
+                        admission.assert_called_once_with(collector.ROOT / "build/Debug/flitzzip_cli.exe", self.root)
                     validate.assert_called_once_with(collector.ROOT, "Debug", hip_host)
 
     # Purpose: Prevent unavailable, truncated or ambiguous device output from qualifying a HIP host run.

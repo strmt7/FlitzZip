@@ -37,15 +37,15 @@ struct ArchiveIndex {
     std::uint64_t index_size = 0;
 };
 
-// Purpose: Serialize the archive index and footer to an output stream.
-// Inputs: `output` must be an open binary stream positioned after payload data; `index` contains validated entry
-// metadata and block descriptors. Outputs: Writes bytes to `output`; throws `ArchiveError` when stream writes fail.
+// Purpose: Serialize only the native index records, leaving footer framing to the archive writer.
+// Inputs: Caller-owned output positioned at the index start and bounded entry/block metadata.
+// Outputs: Appends the index; rejects unsupported versions, block kinds, pattern bounds and failed writes.
 void write_archive_index(std::ostream& output, const ArchiveIndex& index);
 
-// Purpose: Read and validate the FlitzZip archive index and footer from an input stream.
-// Inputs: `input` must be an open binary stream positioned anywhere in the archive.
-// Outputs: Returns a validated `ArchiveIndex`; throws `ArchiveError` on bad magic, version, truncation, or inconsistent
-// metadata.
+// Purpose: Parse bounded native index records from their exact starting position.
+// Inputs: Caller-owned input positioned at the index magic; seeking is optional.
+// Outputs: Parsed records or ArchiveError on malformed metadata. The archive reader separately validates the footer,
+// exact index consumption, payload extents, entry aggregates and paths before decoding or publication.
 ArchiveIndex read_archive_index(std::istream& input);
 
 // Purpose: Write a little-endian unsigned 16-bit integer to a binary stream.

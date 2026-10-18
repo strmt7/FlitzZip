@@ -16,11 +16,280 @@
 #include <iterator>
 #include <limits>
 #include <sstream>
+#include <streambuf>
+#include <utility>
 
 namespace {
 
 using Path = std::filesystem::path;
 using Kind = flitzzip::BlockKind;
+
+// Independently packed little-endian index: one raw "bin" entry containing "foo".
+constexpr std::array<unsigned char, 68> kIndexWire{83, 85, 90, 80, 1, 0, 0, 0, 1,  0,   0,   0,   3, 0, 98, 105, 110,
+                                                   0,  3,  0,  0,  0, 0, 0, 0, 0,  0,   0,   0,   0, 0, 0,  0,   0,
+                                                   3,  0,  0,  0,  0, 0, 0, 0, 33, 101, 115, 140, 1, 0, 0,  0,   0,
+                                                   0,  3,  0,  0,  0, 0, 0, 0, 0,  0,   0,   0,   0, 3, 0,  0,   0};
+
+// Purpose: Model a bounded, forward-only metadata source without weakening production stream checks.
+// Inputs: Owned wire bytes. Outputs: Standard reads through EOF; inherited seek operations remain unsupported.
+class ForwardOnlyIndexBuffer final : public std::streambuf {
+    std::string bytes_;
+
+  public:
+    // Purpose: Own the complete test input. Inputs: Bounded wire bytes. Outputs: A stable read area until destruction.
+    explicit ForwardOnlyIndexBuffer(std::string bytes) : bytes_(std::move(bytes)) {
+        setg(bytes_.data(), bytes_.data(), bytes_.data() + bytes_.size());
+    }
+};
+
+enum class IndexSeekBehavior { TellOnly, FailedEndAfterMove, RefusedRestore };
+
+// Purpose: Model independent stream capabilities and partial failures in optional metadata-size probes.
+// Inputs: Owned fixture bytes and one seek behavior. Outputs: Ordinary reads plus the selected seek contract.
+class PartialSeekIndexBuffer final : public std::stringbuf {
+    IndexSeekBehavior behavior_;
+
+    // Purpose: Allow position queries while independently controlling end-seek support.
+    // Inputs: Standard stream buffer seek arguments. Outputs: Position or failure, optionally after moving to end.
+    pos_type seekoff(off_type offset, std::ios::seekdir direction, std::ios::openmode mode) override {
+        if (direction != std::ios::end) {
+            return std::stringbuf::seekoff(offset, direction, mode);
+        }
+        if (behavior_ == IndexSeekBehavior::TellOnly) {
+            return pos_type(off_type(-1));
+        }
+        const auto position = std::stringbuf::seekoff(offset, direction, mode);
+        return behavior_ == IndexSeekBehavior::FailedEndAfterMove ? pos_type(off_type(-1)) : position;
+    }
+
+    // Purpose: Distinguish a recoverable failed probe from an input that cannot restore its previous position.
+    // Inputs: Requested position and open mode. Outputs: Restored position or explicit unsupported-operation result.
+    pos_type seekpos(pos_type position, std::ios::openmode mode) override {
+        return behavior_ == IndexSeekBehavior::FailedEndAfterMove ? std::stringbuf::seekpos(position, mode)
+                                                                  : pos_type(off_type(-1));
+    }
+
+  public:
+    // Purpose: Own a bounded input with explicit seek capabilities. Inputs: Bytes and behavior. Outputs: Readable
+    // buffer.
+    PartialSeekIndexBuffer(const std::string& bytes, IndexSeekBehavior behavior)
+        : std::stringbuf(bytes, std::ios::in), behavior_(behavior) {}
+};
+
+// Purpose: Model an output that fails exactly at a selected byte without filling a disk or changing host state.
+// Inputs: Byte limit. Outputs: Retained successful prefix; subsequent writes return EOF.
+class LimitedIndexOutput final : public std::streambuf {
+    std::size_t limit_;
+    std::string bytes_;
+
+    // Purpose: Admit one output byte within the limit. Inputs: Character or EOF. Outputs: Written character or EOF.
+    int_type overflow(int_type value) override {
+        if (traits_type::eq_int_type(value, traits_type::eof())) {
+            return traits_type::not_eof(value);
+        }
+        if (bytes_.size() == limit_) {
+            return traits_type::eof();
+        }
+        bytes_.push_back(traits_type::to_char_type(value));
+        return value;
+    }
+
+  public:
+    // Purpose: Set a deterministic output bound. Inputs: Maximum accepted bytes. Outputs: Empty owned output.
+    explicit LimitedIndexOutput(std::size_t limit) : limit_(limit) {}
+    // Purpose: Inspect accepted bytes. Inputs: None. Outputs: Borrowed view valid until the next write/destruction.
+    std::string_view bytes() const {
+        return bytes_;
+    }
+};
+
+// Purpose: Select the version in an independently packed raw index without invoking the production writer.
+// Inputs: One readable version. Outputs: Exact small wire fixture with only the version byte changed.
+std::string index_wire_fixture(std::uint32_t version) {
+    REQUIRE_TRUE(version >= 1U && version <= 11U);
+    std::string bytes(kIndexWire.begin(), kIndexWire.end());
+    bytes[4] = static_cast<char>(version);
+    return bytes;
+}
+
+// Purpose: Check every field against the independent raw-index fixture.
+// Inputs: Parsed index and expected version. Outputs: Assertions fail on lost or incorrectly decoded metadata.
+void require_wire_index(const flitzzip::ArchiveIndex& index, std::uint32_t version) {
+    REQUIRE_EQ(index.version, version);
+    REQUIRE_EQ(index.entries.size(), 1U);
+    const auto& entry = index.entries.front();
+    REQUIRE_EQ(entry.path, "bin");
+    REQUIRE_TRUE(!entry.directory);
+    REQUIRE_EQ(entry.uncompressed_size, 3U);
+    REQUIRE_EQ(entry.payload_offset, 0U);
+    REQUIRE_EQ(entry.payload_size, 3U);
+    REQUIRE_EQ(entry.crc32, 0x8C736521U);
+    REQUIRE_EQ(entry.blocks.size(), 1U);
+    const auto& block = entry.blocks.front();
+    REQUIRE_EQ(block.kind, Kind::Raw);
+    REQUIRE_EQ(block.fill_value, 0U);
+    REQUIRE_EQ(block.uncompressed_len, 3U);
+    REQUIRE_EQ(block.encoded_offset, 0U);
+    REQUIRE_EQ(block.encoded_len, 3U);
+}
+
+// Purpose: Prove optional seeking cannot hide truncated fields or consume the caller's following record.
+// Inputs: Independent index bytes, all readable versions and every shorter prefix on a forward-only source.
+// Outputs: Exact valid metadata and untouched sentinel; every truncated prefix throws ArchiveError.
+TEST_CASE(flzip_index_forward_only_reads_preserve_framing_and_reject_every_truncation) {
+    for (std::uint32_t version = 1U; version <= flitzzip::kFlitzZipMaxReadableVersion; ++version) {
+        const auto bytes = index_wire_fixture(version);
+        for (std::size_t length = 0; length < bytes.size(); ++length) {
+            ForwardOnlyIndexBuffer buffer(bytes.substr(0, length));
+            std::istream input(&buffer);
+            bool rejected = false;
+            try {
+                static_cast<void>(flitzzip::read_archive_index(input));
+            } catch (const flitzzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+        }
+        ForwardOnlyIndexBuffer buffer(bytes + '\x7F');
+        std::istream input(&buffer);
+        require_wire_index(flitzzip::read_archive_index(input), version);
+        REQUIRE_TRUE(input.good());
+        REQUIRE_EQ(input.get(), 127);
+        REQUIRE_EQ(input.get(), std::char_traits<char>::eof());
+    }
+}
+
+// Purpose: Prevent optional stream-size probing from changing parsing results or caller exception policy.
+// Inputs: Valid independent bytes, partially seekable inputs, every readable version and both exception modes.
+// Outputs: Exact metadata and sentinel readback after unsupported or position-changing failed end seeks.
+TEST_CASE(flzip_index_optional_seeking_preserves_input_position_and_exception_mask) {
+    for (std::uint32_t version = 1U; version <= flitzzip::kFlitzZipMaxReadableVersion; ++version) {
+        for (const auto behavior : {IndexSeekBehavior::TellOnly, IndexSeekBehavior::FailedEndAfterMove}) {
+            for (const bool exceptions : {false, true}) {
+                PartialSeekIndexBuffer buffer(index_wire_fixture(version) + '\x7F', behavior);
+                std::istream input(&buffer);
+                const auto mask = exceptions ? std::ios::badbit | std::ios::failbit : std::ios::goodbit;
+                input.exceptions(mask);
+                require_wire_index(flitzzip::read_archive_index(input), version);
+                REQUIRE_EQ(input.exceptions(), mask);
+                REQUIRE_TRUE(input.good());
+                REQUIRE_EQ(input.get(), 127);
+            }
+        }
+    }
+}
+
+// Purpose: Reject an irreversible size-probe seek before reading records from the wrong input position.
+// Inputs: A stream that can seek to end but refuses restoration and both exception policies.
+// Outputs: A specific restoration failure; no successful parse and no mutation of the caller's exception mask.
+TEST_CASE(flzip_index_failed_position_restore_rejects_before_record_reads) {
+    for (const bool exceptions : {false, true}) {
+        PartialSeekIndexBuffer buffer(index_wire_fixture(1U), IndexSeekBehavior::RefusedRestore);
+        std::istream input(&buffer);
+        const auto mask = exceptions ? std::ios::badbit | std::ios::failbit : std::ios::goodbit;
+        input.exceptions(mask);
+        bool rejected = false;
+        try {
+            static_cast<void>(flitzzip::read_archive_index(input));
+        } catch (const flitzzip::ArchiveError& error) {
+            REQUIRE_EQ(std::string_view(error.what()), "failed to restore archive metadata stream position");
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(input.exceptions(), mask);
+    }
+}
+
+// Purpose: Detect short output at every encoded position, including metadata paths and descriptor tails.
+// Inputs: Independently decoded control, all readable versions, bounded outputs and both stream exception modes.
+// Outputs: Failed writes cannot report success; complete writes exactly match the independent wire bytes.
+TEST_CASE(flzip_index_writer_propagates_every_short_write) {
+    for (std::uint32_t version = 1U; version <= flitzzip::kFlitzZipMaxReadableVersion; ++version) {
+        const auto bytes = index_wire_fixture(version);
+        std::istringstream input(bytes, std::ios::binary);
+        const auto index = flitzzip::read_archive_index(input);
+        require_wire_index(index, version);
+        for (const bool exceptions : {false, true}) {
+            for (std::size_t limit = 0; limit <= bytes.size(); ++limit) {
+                LimitedIndexOutput buffer(limit);
+                std::ostream output(&buffer);
+                if (exceptions) {
+                    output.exceptions(std::ios::badbit | std::ios::failbit);
+                }
+                bool rejected = false;
+                try {
+                    flitzzip::write_archive_index(output, index);
+                } catch (const flitzzip::ArchiveError&) {
+                    rejected = true;
+                } catch (const std::ios_base::failure&) {
+                    REQUIRE_TRUE(exceptions);
+                    rejected = true;
+                }
+                REQUIRE_EQ(rejected, limit < bytes.size());
+                REQUIRE_EQ(buffer.bytes(), std::string_view(bytes).substr(0, limit));
+                REQUIRE_EQ(output.good(), limit == bytes.size());
+            }
+        }
+    }
+}
+
+// Purpose: Reject hostile header identities and allocation counts even when stream size cannot be queried.
+// Inputs: Independently encoded control with one invalid little-endian header/count field per case.
+// Outputs: Specific ArchiveError diagnostics, followed by successful reuse of the unmodified fixture.
+TEST_CASE(flzip_index_forward_only_rejects_invalid_headers_and_resource_counts) {
+    struct InvalidField {
+        std::size_t offset;
+        std::uint32_t value;
+        const char* diagnostic;
+    };
+    const std::array cases{
+        InvalidField{0U, 0U, "not a FlitzZip archive"},
+        InvalidField{4U, 0U, "unsupported FlitzZip archive version"},
+        InvalidField{4U, 12U, "unsupported FlitzZip archive version"},
+        InvalidField{4U, std::numeric_limits<std::uint32_t>::max(), "unsupported FlitzZip archive version"},
+        InvalidField{8U, flitzzip::kMaxArchiveEntries + 1U, "archive entry count is unreasonable"},
+        InvalidField{46U, flitzzip::kMaxBlocksPerEntry + 1U, "archive block count is unreasonable"},
+    };
+    for (const auto& invalid : cases) {
+        auto bytes = index_wire_fixture(1U);
+        for (std::size_t i = 0; i < 4U; ++i) {
+            bytes[invalid.offset + i] = static_cast<char>((invalid.value >> (8U * i)) & 255U);
+        }
+        ForwardOnlyIndexBuffer buffer(std::move(bytes));
+        std::istream input(&buffer);
+        bool rejected = false;
+        try {
+            static_cast<void>(flitzzip::read_archive_index(input));
+        } catch (const flitzzip::ArchiveError& error) {
+            REQUIRE_EQ(std::string_view(error.what()), invalid.diagnostic);
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+    ForwardOnlyIndexBuffer buffer(index_wire_fixture(1U));
+    std::istream input(&buffer);
+    require_wire_index(flitzzip::read_archive_index(input), 1U);
+}
+
+// Purpose: Keep unsupported format versions from modifying a caller's output stream.
+// Inputs: Caller-owned prefix and empty indexes with invalid versions. Outputs: Exact prefix preservation on error.
+TEST_CASE(flzip_index_writer_rejects_versions_before_output) {
+    for (const auto version : std::array{0U, 12U, std::numeric_limits<std::uint32_t>::max()}) {
+        flitzzip::ArchiveIndex index;
+        index.version = version;
+        std::ostringstream output(std::ios::binary);
+        output << "preserve caller prefix";
+        bool rejected = false;
+        try {
+            flitzzip::write_archive_index(output, index);
+        } catch (const flitzzip::ArchiveError& error) {
+            REQUIRE_EQ(std::string_view(error.what()), "unsupported FlitzZip archive version");
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(output.str(), "preserve caller prefix");
+    }
+}
 
 // Independent Python zlib output for 1024 zero bytes, with CRC-32 4021661486.
 constexpr std::array<unsigned char, 17> kDeflateZeroFrame{120, 156, 99, 96, 24, 5, 163, 96, 20,

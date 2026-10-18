@@ -99,6 +99,88 @@ def run_checked(arguments: list[str], timeout: int, log: Path) -> dict:
     return result
 
 
+# Purpose: Describe independent CLI admission failures without starting a workload or relying on a GPU.
+# Inputs: Two private fixture paths. Outputs: Arguments, required exit status and diagnostic for each contract.
+def cli_admission_cases(source: Path, destination: Path) -> list[tuple[list[str], int, str | None]]:
+    create = ["compress", "--format", "zip", "--output", str(destination), str(source)]
+    cases = [
+        ([], 2, None),
+        (["unknown-command"], 2, None),
+        (["\ud800"], 1, "command-line argument contains invalid Unicode"),
+        (["compress", "--output"], 1, "missing value for --output"),
+        ([*create, "--unknown"], 1, "unknown compress argument"),
+        ([*create, "--workers", "4294967296"], 1, "invalid value for --workers"),
+        ([*create, "--inflight", "-1"], 1, "invalid value for --inflight"),
+        ([*create, "--require-gpu", "--force-cpu"], 1, "mutually exclusive"),
+        ([*create, "--neutron-star", "--force-cpu"], 1, "excludes --force-cpu"),
+        ([*create, "--neutron-star", "--compression-level", "8"], 1, "requires compression level 9"),
+        ([*create, "--neutron-star"], 1, "available only for native FLZIP creation"),
+        ([*create, "--format", "tar", "--verify-after-write"], 1, "supported only for FLZIP and ZIP"),
+        (["extract", "--unknown"], 1, "unknown extract argument"),
+        (["verify", "--unknown"], 1, "unknown verify argument"),
+        (["gpu-diagnostic", "--unknown"], 1, "unknown gpu-diagnostic argument"),
+        (["gpu-diagnostic", "--seconds", "0"], 1, "invalid value for --seconds: 0"),
+    ]
+    for arguments in (
+        ["--force-cpu"],
+        ["--require-gpu"],
+        ["--workers", "1"],
+        ["--inflight", "1"],
+        ["--block-size-kib", "256"],
+    ):
+        cases.append(([*create, *arguments], 1, "does not support FLZIP GPU, worker, or block-size flags"))
+    for command in ("gpu-info", "dependency-check", "formats"):
+        cases.append(([command, "unexpected"], 2, None))
+    return cases
+
+
+# Purpose: Require complete process evidence and the expected failure before admitting a CLI rejection test.
+# Inputs: Native executable, case tuple and owned output directory. Outputs: Retained raw result or failure.
+def run_cli_admission_case(binary: Path, case: tuple[list[str], int, str | None], log: Path) -> None:
+    arguments, expected_exit, diagnostic = case
+    result = process_owner().run_bounded_command(
+        [str(binary), *arguments],
+        timeout_seconds=20,
+        max_output_bytes=65536,
+        response_tail_bytes=65536,
+        working_directory=log.parent,
+    )
+    log.write_text(json.dumps({"arguments": arguments, "result": result}, indent=2) + "\n", encoding="utf-8")
+    if any(result[name] for name in ("timed_out", "output_truncated", "output_limit_exceeded")):
+        raise RuntimeError(f"Incomplete CLI admission evidence: {log}")
+    if result["exit_code"] != expected_exit or (diagnostic and diagnostic not in result["stderr"]):
+        raise RuntimeError(f"CLI admission contract failed: {log}")
+    if (expected_exit == 1 and result["stdout"]) or (
+        expected_exit == 2 and (result["stderr"] or result["stdout"].splitlines()[:2] != ["FlitzZip CLI", "Usage:"])
+    ):
+        raise RuntimeError(f"CLI rejection emitted unexpected output: {log}")
+
+
+# Purpose: Exercise real CLI rejection and destination-preservation boundaries under the native collector.
+# Inputs: Existing executable and owned evidence directory. Outputs: Bounded fixture/report files; no build or GPU work.
+def run_cli_admission(binary: Path, output: Path) -> None:
+    directory = owned_path(ROOT, output / ("cli-admission-" + uuid.uuid4().hex))
+    directory.mkdir()
+    source = directory / "input with spaces.txt"
+    destination = directory / "preserved.zip"
+    fixtures = {
+        source: b"Independent CLI admission input\n",
+        destination: b"Existing destination must survive failed admission.\n",
+    }
+    for path, expected in fixtures.items():
+        with path.open("xb") as stream:
+            stream.write(expected)
+    expected_files = {path.name for path in fixtures}
+    for number, case in enumerate(cli_admission_cases(source, destination)):
+        log = directory / f"case-{number:02}.json"
+        run_cli_admission_case(binary, case, log)
+        expected_files.add(log.name)
+        if any(path.read_bytes() != expected for path, expected in fixtures.items()) or (
+            {path.name for path in directory.iterdir()} != expected_files
+        ):
+            raise RuntimeError(f"Rejected CLI request changed caller files: {log}")
+
+
 # Purpose: Keep installer acquisition on authenticated official release transports, including every redirect.
 # Inputs: URL supplied by the reviewed manifest or release server. Outputs: Refusal before foreign access.
 def validate_release_url(url: str) -> None:
@@ -267,6 +349,7 @@ def run_scenarios(output: Path, hip_host: bool = False, include_gui: bool = Fals
         # overall deadline and each matrix command's independent timeout.
         timeout = 900 if name in {"registry", "cli-formats", "gui"} else 300
         run_checked(arguments, timeout, output / f"{name}-process.json")
+    run_cli_admission(binary / "flitzzip_cli.exe", output)
 
 
 # Purpose: Measure native host instructions in an existing symbols-enabled build without inferring device hits.

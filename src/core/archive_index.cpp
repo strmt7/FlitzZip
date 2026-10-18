@@ -9,6 +9,7 @@
 #include <optional>
 #include <ostream>
 #include <sstream>
+#include <streambuf>
 
 namespace flitzzip {
 namespace {
@@ -43,27 +44,26 @@ template <typename T> T read_le(std::istream& input) {
     return static_cast<T>(value);
 }
 
-// Purpose: Query the number of bytes left in a seekable metadata stream.
+// Purpose: Query remaining metadata bytes without changing the caller's stream state or exception mask.
 // Inputs: `input` is the archive-index stream after a successful read.
-// Outputs: Returns remaining bytes when the stream is seekable; returns empty without changing caller-visible stream
-// state otherwise.
+// Outputs: Remaining bytes or an empty optional when end seeking is unsupported; failed position restoration throws.
 std::optional<std::uint64_t> stream_bytes_remaining(std::istream& input) {
-    const auto original_state = input.rdstate();
-    const auto current = input.tellg();
+    auto* buffer = input.rdbuf();
+    if (buffer == nullptr) {
+        throw ArchiveError("archive metadata stream has no input buffer");
+    }
+    const auto current = buffer->pubseekoff(0, std::ios::cur, std::ios::in);
     if (current == std::istream::pos_type(-1)) {
-        input.clear(original_state);
         return std::nullopt;
     }
-
-    input.seekg(0, std::ios::end);
-    const auto end = input.tellg();
-    input.seekg(current, std::ios::beg);
-    if (end == std::istream::pos_type(-1) || !input) {
-        input.clear(original_state);
-        return std::nullopt;
+    // Probe the buffer directly: unsupported seeking must not trip the caller's failbit exception policy.
+    const auto end = buffer->pubseekoff(0, std::ios::end, std::ios::in);
+    // A failed end query may still move a custom buffer. Never resume parsing at an unverified position.
+    if (buffer->pubseekoff(0, std::ios::cur, std::ios::in) != current &&
+        buffer->pubseekpos(current, std::ios::in) != current) {
+        throw ArchiveError("failed to restore archive metadata stream position");
     }
-    input.clear(original_state);
-    if (end < current) {
+    if (end == std::istream::pos_type(-1) || end < current) {
         return std::nullopt;
     }
     return static_cast<std::uint64_t>(end - current);
