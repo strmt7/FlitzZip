@@ -48,7 +48,8 @@ The smoke asserts interaction results, settings persistence, publication failure
 and Neutron admission; inspect every generated capture as well. The added mode
 uses the canonical bounded process runner, including its Windows PowerShell
 environment handling. It requires measured GUI entry points and records the
-GUI executable, PDB and scenario identities. A smoke failure fails collection.
+GUI executable, PDB, scenario and imported UI helper identities. A smoke failure
+or a changed helper invalidates collection.
 Evidence goes to `out/coverage-hip-host-gui` (or `out/coverage-gui` without HIP),
 with `gui_host_coverage=true`. These local measurements do not replace the CI
 badge or establish device-instruction coverage. The default collector does not

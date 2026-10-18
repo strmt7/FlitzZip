@@ -33,7 +33,11 @@ SCENARIO_INPUTS = (
     "tools/benchmark_corpus.ps1",
     "tools/format_matrix_smoke.ps1",
 )
-GUI_SCENARIO_INPUTS = ("tools/gui_smoke.ps1", "tools/process_environment.ps1")
+GUI_SCENARIO_INPUTS = (
+    "tools/gui_smoke.ps1",
+    "tools/FlitzZip.GuiSmoke.Ui.psm1",
+    "tools/process_environment.ps1",
+)
 
 
 # Purpose: Hash complete regular files without allocating their full contents.
