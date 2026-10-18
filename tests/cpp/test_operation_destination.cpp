@@ -1,6 +1,25 @@
 #include "app/operation_destination.hpp"
 #include "test_util.hpp"
 
+TEST_CASE(extraction_confirmation_requires_proven_empty_destination) {
+    using flitzzip::app::extraction_destination_needs_confirmation;
+    const auto root = test_temp_dir("extraction-confirmation");
+    REQUIRE_TRUE(!extraction_destination_needs_confirmation(root / "absent"));
+    REQUIRE_TRUE(!extraction_destination_needs_confirmation(root));
+    const auto child = root / "child";
+    std::filesystem::create_directory(child);
+    REQUIRE_TRUE(extraction_destination_needs_confirmation(root));
+    REQUIRE_TRUE(!extraction_destination_needs_confirmation(child));
+    const auto file = child / "data";
+    const HANDLE fixture =
+        CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE_TRUE(fixture != INVALID_HANDLE_VALUE);
+    REQUIRE_TRUE(CloseHandle(fixture) != FALSE);
+    REQUIRE_TRUE(extraction_destination_needs_confirmation(file));
+    REQUIRE_TRUE(extraction_destination_needs_confirmation(child));
+    std::filesystem::remove_all(root);
+}
+
 TEST_CASE(operation_destination_uses_output_and_captured_preference_for_each_job_kind) {
     using flitzzip::OperationKind;
     using flitzzip::app::operation_destination_path;

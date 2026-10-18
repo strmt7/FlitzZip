@@ -794,6 +794,7 @@ if(FLITZZIP_BUILD_GUI AND WIN32)
     src/app/main_window_extract_jobs.cpp
     src/app/main_window_focus.cpp
     src/app/main_window_folder_size.cpp
+    src/app/folder_size.cpp
     src/app/main_window_queue_metadata.cpp
     src/app/queue_metadata.cpp
     src/app/main_window_input.cpp
@@ -933,6 +934,8 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_settings_json.cpp
     src/app/settings_json.cpp
     tests/cpp/test_folder_size_cache.cpp
+    tests/cpp/test_folder_size.cpp
+    src/app/folder_size.cpp
     tests/cpp/test_queue_metadata.cpp
     src/app/queue_metadata.cpp
     tests/cpp/test_gdi_back_buffer.cpp

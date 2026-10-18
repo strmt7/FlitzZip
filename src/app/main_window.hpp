@@ -863,11 +863,6 @@ class MainWindow {
     // Outputs: Requests cooperative stop and joins the thread.
     void stop_folder_size_worker();
 
-    // Purpose: Calculate one folder's byte size from filesystem metadata only.
-    // Inputs: `task` owns a directory path and cancellation flag; window shutdown also cancels traversal.
-    // Outputs: Returns total bytes, or empty when traversal is cancelled or inaccessible.
-    [[nodiscard]] std::optional<std::uintmax_t> calculate_folder_size(const FolderSizeTask& task) const;
-
     // Purpose: Draw the Queue overflow scrollbar when rows exceed visible capacity.
     // Inputs: `dc` is the paint target, `table` is the full table rectangle, `row_count` is the queue size, and
     // `max_scroll` is the largest valid first visible row.
@@ -1185,11 +1180,6 @@ class MainWindow {
     // Inputs: None; reads queued paths from UI state.
     // Outputs: Launches a worker thread or no-ops when the queue is empty or another worker is running.
     void start_extract();
-
-    // Purpose: Detect whether Ask-before-overwriting needs user confirmation.
-    // Inputs: `destination` is the extraction root.
-    // Outputs: Returns true when the destination exists and is non-empty or cannot be proven empty.
-    [[nodiscard]] bool extract_overwrite_prompt_needed(const std::filesystem::path& destination) const;
 
     // Purpose: Open the FlitzZip-owned overwrite confirmation modal for a pending extract job.
     // Inputs: `request` is the fully captured job request to run if the user continues.

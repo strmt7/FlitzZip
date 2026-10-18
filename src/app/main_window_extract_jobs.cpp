@@ -110,24 +110,6 @@ std::vector<std::filesystem::path> extraction_outputs_for_archives(const std::ve
 
 }  // namespace
 
-// Purpose: Detect whether Ask-before-overwriting needs user confirmation.
-// Inputs: `destination` is the extraction root.
-// Outputs: Returns true when the destination exists and is non-empty or cannot be proven empty.
-bool MainWindow::extract_overwrite_prompt_needed(const std::filesystem::path& destination) const {
-    std::error_code error;
-    if (!std::filesystem::exists(destination, error) && !error) {
-        return false;
-    }
-    if (!error && std::filesystem::is_directory(destination, error) && !error) {
-        std::filesystem::directory_iterator iterator(destination,
-                                                     std::filesystem::directory_options::skip_permission_denied, error);
-        if (!error && iterator == std::filesystem::directory_iterator{}) {
-            return false;
-        }
-    }
-    return true;
-}
-
 // Purpose: Open the FlitzZip-owned overwrite confirmation modal for a pending extract job.
 // Inputs: `request` is the fully captured job request to run if the user continues.
 // Outputs: Stores the pending job, updates modal UI state, clears progress, and queues repaint.
@@ -289,7 +271,7 @@ void MainWindow::start_extract() {
         request_repaint();
         return;
     }
-    if (!request.overwrite && extract_overwrite_prompt_needed(request.output)) {
+    if (!request.overwrite && extraction_destination_needs_confirmation(request.output)) {
         show_extract_overwrite_prompt(std::move(request));
         return;
     }
