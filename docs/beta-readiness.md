@@ -64,9 +64,10 @@ Broad size superiority and comparative GPU speed remain research targets.
 - Exact candidate ZIP/MSI, checksums and installer install/repair/uninstall
   qualification must pass on the candidate's pushed SHA before release approval.
 - The requested complete meaningful coverage remains unfinished. The
-  [coverage report](code-coverage.md) measures native CPU lines; unmeasured GUI,
-  tooling and device code require separate qualification. Passing tests or a
-  percentage from one scope cannot establish whole-repository coverage.
+  [coverage report](code-coverage.md) distinguishes the hosted CPU measurement
+  from the qualified local GUI/HIP-host measurement. Uncovered host lines,
+  tooling and device instructions still require further work. Passing tests or
+  a percentage from one scope cannot establish whole-repository coverage.
 - The complete version-eleven Govdocs1 size/readback study is retained, but
   controlled paired timings remain outside the completed evidence.
 
