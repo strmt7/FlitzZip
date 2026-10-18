@@ -7,6 +7,10 @@
 #include "test_util.hpp"
 #include "lz4.h"
 
+#if FLITZZIP_ENABLE_HIP
+#include "gpu/hip_kernel_api.hpp"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -25,6 +29,7 @@
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <unordered_map>
 
 namespace {
 
@@ -681,6 +686,167 @@ std::vector<std::byte> encode_reference_matches(std::span<const std::byte> input
         extend(code);
         cursor = next + length;
     }
+}
+
+#if FLITZZIP_ENABLE_HIP
+// Purpose: Build exact-prefix predecessor links independently of the GPU sort and link kernels.
+// Inputs: A bounded source split into the production segment extent.
+// Outputs: The nearest earlier equal four-byte prefix, or a sentinel including each segment's final three bytes.
+std::vector<std::uint32_t> dictionary_predecessor_oracle(std::span<const std::byte> input) {
+    std::vector<std::uint32_t> result(input.size(), std::numeric_limits<std::uint32_t>::max());
+    for (std::size_t start = 0; start < input.size(); start += kSegmentBytes) {
+        std::unordered_map<std::uint32_t, std::uint32_t> latest;
+        const auto end = std::min(input.size(), start + kSegmentBytes);
+        for (auto position = start; end - position >= kMinMatchBytes; ++position) {
+            std::uint32_t key = 0U;
+            for (unsigned byte = 0; byte < kMinMatchBytes; ++byte) {
+                key |= std::to_integer<std::uint32_t>(input[position + byte]) << (8U * byte);
+            }
+            const auto [entry, inserted] = latest.try_emplace(key, static_cast<std::uint32_t>(position));
+            if (!inserted) {
+                result[position] = entry->second;
+                entry->second = static_cast<std::uint32_t>(position);
+            }
+        }
+    }
+    return result;
+}
+
+// Purpose: Isolate production GPU indexing from the encoder with exact independent links and output guards.
+// Inputs: Immutable source and independently computed predecessor records; each call owns its stream's buffers.
+// Outputs: Requires every initialized link to match and every omitted final-byte record and guard to stay untouched.
+void require_dictionary_device_index(std::span<const std::byte> input, std::span<const std::uint32_t> oracle) {
+    using namespace flitzzip::hip_detail;
+    const auto& api = flitzzip::hip_kernel_api();
+    const auto size = static_cast<std::uint32_t>(input.size());
+    const auto grid = (size + kDictionaryKernelThreads - 1U) / kDictionaryKernelThreads;
+    const auto keys_bytes = input.size() * sizeof(std::uint64_t);
+    const auto previous_bytes = (input.size() + 32U) * sizeof(std::uint32_t);
+    std::size_t scratch_bytes = 0;
+    check_hip(api.sort_dictionary_keys(nullptr, &scratch_bytes, nullptr, nullptr, size, hipStreamPerThread),
+              "query index oracle workspace");
+    HipDeviceMemoryReservation reservation(input.size() + 2U * keys_bytes + previous_bytes + scratch_bytes,
+                                           "dictionary index oracle");
+    HipDeviceBuffer<std::byte> source(input.size(), "allocate index oracle source");
+    HipDeviceBuffer<std::uint64_t> keys(keys_bytes, "allocate index oracle keys");
+    HipDeviceBuffer<std::uint64_t> sorted(keys_bytes, "allocate index oracle sorted keys");
+    HipDeviceBuffer<std::uint32_t> previous(previous_bytes, "allocate index oracle links");
+    HipDeviceBuffer<std::byte> scratch(std::max<std::size_t>(scratch_bytes, 1U), "allocate index oracle workspace");
+    check_hip(copy_on_codec_stream(source.get(), input.data(), input.size(), hipMemcpyHostToDevice),
+              "upload index oracle source");
+    check_hip(hipMemsetAsync(previous.get(), 0xA5, previous_bytes, hipStreamPerThread), "guard index oracle links");
+    auto events = make_hip_event_pair("create index oracle events");
+    launch_kernel_with_timing(api.build_dictionary_keys, grid, kDictionaryKernelThreads, 0U, hipStreamPerThread,
+                              events.start, nullptr, "build index oracle keys", source.get(), size, keys.get());
+    check_hip(
+        api.sort_dictionary_keys(scratch.get(), &scratch_bytes, keys.get(), sorted.get(), size, hipStreamPerThread),
+        "sort index oracle keys");
+    launch_kernel_with_timing(api.link_dictionary_predecessors, grid, kDictionaryKernelThreads, 0U, hipStreamPerThread,
+                              nullptr, events.stop, "link index oracle keys", sorted.get(), size, previous.get());
+    check_hip(hipEventSynchronize(events.stop), "complete index oracle kernels");
+    std::vector<std::uint32_t> actual(input.size() + 32U);
+    check_hip(copy_on_codec_stream(actual.data(), previous.get(), previous_bytes, hipMemcpyDeviceToHost),
+              "download index oracle links");
+    for (std::size_t position = 0; position < actual.size(); ++position) {
+        const auto end = std::min(input.size(), (position / kSegmentBytes + 1U) * kSegmentBytes);
+        const auto expected = position < end && end - position >= kMinMatchBytes ? oracle[position] : 0xA5A5A5A5U;
+        if (actual[position] != expected) {
+            throw std::runtime_error("dictionary index differs at " + std::to_string(position) + " expected " +
+                                     std::to_string(expected) + " actual " + std::to_string(actual[position]));
+        }
+    }
+}
+
+// Purpose: Isolate the production dictionary encoder from GPU indexing with a CPU-built exact prefix table.
+// Inputs: Immutable source, independent predecessor records and an ordinary effort; each call owns its allocations.
+// Outputs: Independent decoding must reproduce every byte and writes must remain inside each declared payload.
+void require_dictionary_encoder_from_oracle(std::span<const std::byte> input, std::span<const std::uint32_t> oracle,
+                                            int level) {
+    using namespace flitzzip::hip_detail;
+    const auto& api = flitzzip::hip_kernel_api();
+    const auto count = (input.size() + kSegmentBytes - 1U) / kSegmentBytes;
+    const auto output_bytes = count * kEncodedSegmentCapacity + 128U;
+    const auto sizes_bytes = (count + 1U) * sizeof(std::uint32_t);
+    HipDeviceMemoryReservation reservation(input.size() + oracle.size_bytes() + output_bytes + sizes_bytes,
+                                           "dictionary encoder oracle");
+    HipDeviceBuffer<std::byte> source(input.size(), "allocate encoder oracle source");
+    HipDeviceBuffer<std::uint32_t> previous(oracle.size_bytes(), "allocate encoder oracle links");
+    HipDeviceBuffer<std::byte> output(output_bytes, "allocate encoder oracle output");
+    HipDeviceBuffer<std::uint32_t> sizes(sizes_bytes, "allocate encoder oracle sizes");
+    check_hip(copy_on_codec_stream(source.get(), input.data(), input.size(), hipMemcpyHostToDevice),
+              "upload encoder oracle source");
+    check_hip(copy_on_codec_stream(previous.get(), oracle.data(), oracle.size_bytes(), hipMemcpyHostToDevice),
+              "upload encoder oracle links");
+    check_hip(hipMemsetAsync(output.get(), 0xA5, output_bytes, hipStreamPerThread), "guard encoder oracle output");
+    check_hip(hipMemsetAsync(sizes.get(), 0xA5, sizes_bytes, hipStreamPerThread), "guard encoder oracle sizes");
+    auto events = make_hip_event_pair("create encoder oracle events");
+    const auto kernel = level <= 3 ? api.encode_dictionary_cached : api.encode_dictionary_deferred;
+    launch_measured_kernel(kernel, static_cast<unsigned>(count), kDictionaryKernelThreads, 0U, hipStreamPerThread,
+                           events, "encode from oracle links", source.get(), static_cast<std::uint32_t>(input.size()),
+                           previous.get(), nullptr, effort_for_level(level), output.get(), sizes.get());
+    check_hip(hipEventSynchronize(events.stop), "complete encoder oracle kernel");
+    std::vector<std::byte> payload(output_bytes);
+    std::vector<std::uint32_t> lengths(count + 1U);
+    check_hip(copy_on_codec_stream(payload.data(), output.get(), payload.size(), hipMemcpyDeviceToHost),
+              "download encoder oracle payload");
+    check_hip(copy_on_codec_stream(lengths.data(), sizes.get(), sizes_bytes, hipMemcpyDeviceToHost),
+              "download encoder oracle sizes");
+    REQUIRE_EQ(lengths.back(), 0xA5A5A5A5U);
+    const auto guarded = [](std::byte value) { return value == std::byte{0xA5}; };
+    for (std::size_t segment = 0; segment < count; ++segment) {
+        REQUIRE_TRUE(lengths[segment] > 0U && lengths[segment] <= kEncodedSegmentCapacity);
+        const auto begin = payload.begin() + segment * kEncodedSegmentCapacity;
+        const auto input_bytes = std::min(input.size() - segment * kSegmentBytes, std::size_t{kSegmentBytes});
+        EncodedSegment encoded{{begin, begin + lengths[segment]}, static_cast<std::uint32_t>(input_bytes)};
+        const auto decoded = decode_reference_block(encoded);
+        const auto source_bytes = input.subspan(segment * kSegmentBytes, input_bytes);
+        if (!std::equal(decoded.begin(), decoded.end(), source_bytes.begin())) {
+            throw std::runtime_error("dictionary encoder differs with CPU links at segment " + std::to_string(segment) +
+                                     " level " + std::to_string(level) + " " +
+                                     describe_first_dictionary_sequence(encoded));
+        }
+        REQUIRE_TRUE(std::all_of(begin + lengths[segment], begin + kEncodedSegmentCapacity, guarded));
+    }
+    REQUIRE_TRUE(std::all_of(payload.end() - 128U, payload.end(), guarded));
+}
+#endif
+
+// Purpose: Separate exact-prefix indexing and LZ4 encoding failures under overlapping production HIP streams.
+// Inputs: Four callers share immutable 4 MiB source/oracle bytes while owning their device work and small output
+// guards. Outputs: Every GPU link and independently decoded cached/deferred payload agrees with the CPU oracle.
+TEST_CASE(dictionary_index_and_encoder_independent_concurrent_oracles) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> input(kMaxBatchBytes);
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        std::uint64_t value = index % 16384U + 0x9E3779B97F4A7C15ULL;
+        value = (value ^ (value >> 30U)) * 0xBF58476D1CE4E5B9ULL;
+        value = (value ^ (value >> 27U)) * 0x94D049BB133111EBULL;
+        input[index] = static_cast<std::byte>((value ^ (value >> 31U)) >> 56U);
+    }
+    const auto oracle = dictionary_predecessor_oracle(input);
+    std::vector<std::future<void>> pending;
+    pending.reserve(4U);
+    std::promise<void> start;
+    const auto ready = start.get_future().share();
+    for (unsigned worker = 0; worker < 4U; ++worker) {
+        pending.push_back(std::async(std::launch::async, [&input, &oracle, ready] {
+            ready.get();
+            for (unsigned iteration = 0; iteration < 4U; ++iteration) {
+                require_dictionary_device_index(input, oracle);
+                for (const int level : {1, 5, 9}) {
+                    require_dictionary_encoder_from_oracle(input, oracle, level);
+                }
+            }
+        }));
+    }
+    start.set_value();
+    for (auto& task : pending) {
+        task.get();
+    }
+#endif
 }
 
 }  // namespace
