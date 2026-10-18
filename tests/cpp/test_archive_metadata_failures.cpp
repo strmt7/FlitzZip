@@ -114,6 +114,131 @@ struct MetadataFixture {
     }
 };
 
+// Purpose: Write independently modified index bytes while retaining a bounded payload and explicit footer.
+// Inputs: Owned fixture path, complete prefix bytes and declared index offset/size/version.
+// Outputs: Closes a small test archive without validating or normalizing the hostile records.
+void write_index_framing_fixture(const Path& path, std::string_view prefix, std::uint64_t index_offset,
+                                 std::uint64_t index_size, std::uint32_t version) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.exceptions(std::ios::badbit | std::ios::failbit);
+    output.write(prefix.data(), static_cast<std::streamsize>(prefix.size()));
+    flitzzip_test::write_test_footer(output, index_offset, index_size, version);
+    output.close();
+}
+
+// Purpose: Reject ambiguous index extents before decoding or publishing any destination.
+// Inputs: Every readable version with independently changed index size, gaps, footer overlap and trailing data.
+// Outputs: Malformed framing is rejected, existing bytes survive and a restored valid archive verifies.
+TEST_CASE(flzip_index_framing_rejects_unconsumed_and_overlapping_bytes) {
+    using namespace flitzzip;
+    MetadataFixture fixture("index-framing");
+    const ExtractOptions options{.gpu_required = false, .force_cpu = true};
+    for (std::uint32_t version = 1; version <= kFlitzZipMaxReadableVersion; ++version) {
+        write_metadata_fixture(fixture.archive, raw_control(), "foo", version);
+        std::string prefix;
+        {
+            std::ifstream input(fixture.archive, std::ios::binary);
+            prefix.assign(std::istreambuf_iterator<char>(input), {});
+        }
+        prefix.resize(prefix.size() - kFlitzZipFooterBytes);
+        const auto index_size = prefix.size() - 3U;
+        for (const auto extra : std::array<std::uint64_t, 2>{1U, kFlitzZipFooterBytes}) {
+            write_index_framing_fixture(fixture.archive, prefix, 3U, index_size + extra, version);
+            require_metadata_rejection(fixture.archive, fixture.destination, "index does not end at footer");
+        }
+        write_index_framing_fixture(fixture.archive, prefix, 3U, index_size - 1U, version);
+        require_metadata_rejection(fixture.archive, fixture.destination, "index does not end at footer");
+        write_index_framing_fixture(fixture.archive, prefix + '\0', 3U, index_size, version);
+        require_metadata_rejection(fixture.archive, fixture.destination, "index does not end at footer");
+        write_index_framing_fixture(fixture.archive, prefix + '\0', 3U, index_size + 1U, version);
+        require_metadata_rejection(fixture.archive, fixture.destination, "index contains trailing bytes");
+        write_index_framing_fixture(fixture.archive, prefix, prefix.size() + 1U, 0U, version);
+        require_metadata_rejection(fixture.archive, fixture.destination, "index does not end at footer");
+        write_metadata_fixture(fixture.archive, raw_control(), "foo", version);
+        REQUIRE_EQ(verify_flzip(fixture.archive, options).output_bytes, 3U);
+    }
+}
+
+// Purpose: Prevent entries from interpreting index/footer bytes as their compressed or raw payload.
+// Inputs: Valid raw metadata with payload windows crossing or starting beyond the payload region.
+// Outputs: Verification and extraction reject before destination writes, including overflowing offsets.
+TEST_CASE(flzip_index_framing_rejects_payload_metadata_aliases) {
+    using namespace flitzzip;
+    MetadataFixture fixture("payload-metadata-alias");
+    for (std::uint32_t version = 1; version <= kFlitzZipMaxReadableVersion; ++version) {
+        auto alias = raw_control();
+        alias.uncompressed_size = 4;
+        alias.payload_size = 4;
+        alias.crc32 = 0xB9B47721U;  // Independently computed CRC-32 of the index magic SUZP.
+        alias.blocks.front().uncompressed_len = 4;
+        alias.blocks.front().encoded_len = 4;
+        write_metadata_fixture(fixture.archive, alias, "", version);
+        require_metadata_rejection(fixture.archive, fixture.destination, "payload overlaps index or footer");
+        for (const auto offset : {1ULL, 3ULL, 4ULL, std::numeric_limits<std::uint64_t>::max()}) {
+            auto entry = raw_control();
+            entry.payload_offset = offset;
+            write_metadata_fixture(fixture.archive, entry, "foo", version);
+            require_metadata_rejection(fixture.archive, fixture.destination, "payload overlaps index or footer");
+        }
+        auto empty = raw_control();
+        empty.uncompressed_size = 0;
+        empty.payload_size = 0;
+        empty.crc32 = 0;
+        empty.blocks.clear();
+        for (const bool directory : {false, true}) {
+            empty.directory = directory;
+            empty.payload_offset = 4;
+            write_metadata_fixture(fixture.archive, empty, "foo", version);
+            require_metadata_rejection(fixture.archive, fixture.destination, "payload overlaps index or footer");
+            empty.payload_offset = 3;
+            write_metadata_fixture(fixture.archive, empty, "foo", version);
+            REQUIRE_EQ(verify_flzip(fixture.archive, {.gpu_required = false, .force_cpu = true}).entries, 1U);
+        }
+    }
+}
+
+// Purpose: Keep the wire directory flag boolean instead of accepting unknown values as directories.
+// Inputs: Independent empty-entry bytes covering every flag value and readable version.
+// Outputs: Only zero and one parse; hostile flags also fail public verify/extract without destination changes.
+TEST_CASE(flzip_index_framing_requires_boolean_directory_flags) {
+    using namespace flitzzip;
+    MetadataFixture fixture("directory-flag");
+    for (std::uint32_t version = 1; version <= kFlitzZipMaxReadableVersion; ++version) {
+        std::ostringstream wire(std::ios::binary);
+        write_u32(wire, kFlitzZipMagic);
+        write_u32(wire, version);
+        write_u32(wire, 1U);
+        write_u16(wire, 11U);
+        wire.write("payload.bin", 11);
+        wire.put('\0');
+        write_u64(wire, 0U);
+        write_u64(wire, 0U);
+        write_u64(wire, 0U);
+        write_u32(wire, 0U);
+        write_u32(wire, 0U);
+        auto index_bytes = wire.str();
+        for (unsigned flag = 0; flag <= 255; ++flag) {
+            index_bytes[25] = static_cast<char>(flag);
+            std::istringstream input(index_bytes, std::ios::binary);
+            bool rejected = false;
+            try {
+                const auto index = read_archive_index(input);
+                REQUIRE_EQ(index.entries.size(), 1U);
+                REQUIRE_EQ(index.entries.front().directory, flag == 1U);
+            } catch (const ArchiveError& error) {
+                REQUIRE_TRUE(std::string_view(error.what()).find("directory flag is invalid") !=
+                             std::string_view::npos);
+                rejected = true;
+            }
+            REQUIRE_EQ(rejected, flag > 1U);
+            if (flag == 2U || flag == 255U) {
+                write_index_framing_fixture(fixture.archive, index_bytes, 0U, index_bytes.size(), version);
+                require_metadata_rejection(fixture.archive, fixture.destination, "directory flag is invalid");
+            }
+        }
+    }
+}
+
 }  // namespace
 
 // Purpose: Validate a positive raw fixture through every readable native format version.
@@ -317,7 +442,7 @@ TEST_CASE(flzip_metadata_rejects_entry_aggregate_inconsistencies) {
     entry = raw_control();
     entry.payload_offset = 0xFFFFFFFFFFFFFFFFULL;
     write_metadata_fixture(fixture.archive, entry);
-    require_metadata_rejection(fixture.archive, fixture.destination, "payload points");
+    require_metadata_rejection(fixture.archive, fixture.destination, "payload overlaps index or footer");
 }
 
 // Purpose: Prove invalid resource options are rejected by create, extract and verify before filesystem work.
@@ -372,6 +497,99 @@ TEST_CASE(flzip_public_operations_reject_invalid_resource_options_first) {
             REQUIRE_TRUE(rejected);
             REQUIRE_TRUE(!std::filesystem::exists(fixture.archive));
         }
+    }
+}
+
+// Purpose: Reject a zero-length descriptor even when an internal CPU caller supplies an empty output span.
+// Inputs: Both CPU decode entry points, one empty fill descriptor, and a genuinely empty chunk as the positive control.
+// Outputs: The malformed block is rejected while the empty chunk remains usable.
+TEST_CASE(flzip_cpu_decode_rejects_zero_length_blocks) {
+    const flitzzip::BlockDescriptor empty_fill{.kind = Kind::Fill};
+    for (const auto decode : {&flitzzip::decode_chunk_cpu, &flitzzip::decode_cpu_only_blocks_cpu}) {
+        decode({}, {}, {}, {});
+        bool rejected = false;
+        try {
+            decode({}, std::span(&empty_fill, 1), {}, {});
+        } catch (const flitzzip::ArchiveError& error) {
+            REQUIRE_EQ(std::string(error.what()), "decode block length is outside FlitzZip resource limits");
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        decode({}, {}, {}, {});
+    }
+}
+
+// Purpose: Enforce the wire block-size limit at CPU decode admission, independently of the enclosing buffer capacity.
+// Inputs: A bounded RAM-only fill block exactly at the limit and another one byte beyond it.
+// Outputs: Both CPU consumers reject the oversized block before modifying output, then accept the boundary control.
+TEST_CASE(flzip_cpu_decode_rejects_oversized_blocks_before_output) {
+    std::vector<std::byte> output(flitzzip::kMaxArchiveBlockBytes + 1U, std::byte{0x7D});
+    for (const auto decode : {&flitzzip::decode_chunk_cpu, &flitzzip::decode_cpu_only_blocks_cpu}) {
+        flitzzip::BlockDescriptor fill{
+            .kind = Kind::Fill, .fill_value = 37U, .uncompressed_len = flitzzip::kMaxArchiveBlockBytes + 1U};
+        std::ranges::fill(output, std::byte{0x7D});
+        bool rejected = false;
+        try {
+            decode({}, std::span(&fill, 1), output, {});
+        } catch (const flitzzip::ArchiveError& error) {
+            REQUIRE_EQ(std::string(error.what()), "decode block length is outside FlitzZip resource limits");
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(std::ranges::count(output, std::byte{0x7D}), static_cast<std::ptrdiff_t>(output.size()));
+        fill.uncompressed_len = flitzzip::kMaxArchiveBlockBytes;
+        decode({}, std::span(&fill, 1), std::span(output).first(flitzzip::kMaxArchiveBlockBytes), {});
+        const auto expected = decode == &flitzzip::decode_chunk_cpu ? std::byte{37} : std::byte{0x7D};
+        REQUIRE_EQ(std::ranges::count(std::span(output).first(flitzzip::kMaxArchiveBlockBytes), expected),
+                   static_cast<std::ptrdiff_t>(flitzzip::kMaxArchiveBlockBytes));
+        REQUIRE_EQ(output.back(), std::byte{0x7D});
+    }
+}
+
+// Purpose: Reject malformed block extents before either CPU consumer writes any block in the chunk.
+// Inputs: A valid raw block followed by independently invalid length/kind descriptors and a raw/fill positive control.
+// Outputs: Rejection leaves the entire destination unchanged, and valid decoding still respects each consumer's
+// ownership.
+TEST_CASE(flzip_cpu_layout_admission_preserves_output) {
+    constexpr std::array cases{
+        std::pair{Kind::Raw, 1U},
+        std::pair{Kind::Fill, 1U},
+        std::pair{Kind::Deflate, 4096U},
+        std::pair{Kind::CpuZstd, 4096U},
+        std::pair{Kind::Pattern, 1U},
+        std::pair{Kind::GpuPrefix, 1U},
+        std::pair{Kind::GpuAdaptivePrefix, 1U},
+        std::pair{Kind::GpuDictionary, 1U},
+        std::pair{Kind::GpuHuffman, 1U},
+        std::pair{static_cast<Kind>(255U), 0U},
+    };
+    std::array<std::byte, 4096> payload{};
+    std::array<std::byte, 8192> output{};
+    for (const auto decode : {&flitzzip::decode_chunk_cpu, &flitzzip::decode_cpu_only_blocks_cpu}) {
+        const flitzzip::ArchiveCodecOptions options{.worker_count = 2};
+        for (const auto& [kind, encoded] : cases) {
+            const std::array blocks{
+                flitzzip::BlockDescriptor{.kind = Kind::Raw, .uncompressed_len = 4096, .encoded_len = 4096},
+                flitzzip::BlockDescriptor{.kind = kind, .uncompressed_len = 4096, .encoded_len = encoded}};
+            std::ranges::fill(output, std::byte{0x7D});
+            bool rejected = false;
+            try {
+                decode(payload, blocks, output, options);
+            } catch (const flitzzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+            REQUIRE_EQ(std::ranges::count(output, std::byte{0x7D}), static_cast<std::ptrdiff_t>(output.size()));
+        }
+        const std::array valid{
+            flitzzip::BlockDescriptor{.kind = Kind::Raw, .uncompressed_len = 4096, .encoded_len = 4096},
+            flitzzip::BlockDescriptor{.kind = Kind::Fill, .fill_value = 37, .uncompressed_len = 4096}};
+        decode(payload, valid, output, options);
+        const bool whole_chunk = decode == &flitzzip::decode_chunk_cpu;
+        REQUIRE_EQ(std::ranges::count(std::span(output).first(4096), whole_chunk ? std::byte{0} : std::byte{0x7D}),
+                   4096);
+        REQUIRE_EQ(std::ranges::count(std::span(output).last(4096), whole_chunk ? std::byte{37} : std::byte{0x7D}),
+                   4096);
     }
 }
 
