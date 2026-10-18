@@ -113,6 +113,8 @@ if(_hip_enabled)
 elseif(DEFINED INPUT OR DEFINED HEADER)
   message(FATAL_ERROR "CPU validation manifest must not admit a HIP module")
 endif()
+get_filename_component(_manifest_directory "${MANIFEST}" DIRECTORY)
+file(MAKE_DIRECTORY "${_manifest_directory}")
 file(WRITE "${MANIFEST}.pending" "${_manifest}\n")
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${MANIFEST}.pending"

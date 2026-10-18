@@ -41,6 +41,10 @@ execution path. Switching configurations still runs the selected build and
 publishes a new qualification receipt. Matching per-configuration rebuild
 evidence permits incremental compilation when source, toolchain, configuration
 and outputs allow it; changed or unproven outputs still require a clean build.
+Each configuration owns its runtime manifest alongside its binaries, so a Debug
+collection cannot replace Release dependency identities. Packaging reads the
+manifest for its selected configuration. Historical shared-manifest receipts
+remain evidence only and cannot qualify a current build.
 Use a separate checkout when simultaneous independent builds are necessary.
 
 On an interactive Windows desktop, add `--gui` to run the existing all-page

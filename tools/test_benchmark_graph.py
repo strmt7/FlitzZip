@@ -208,7 +208,7 @@ def receipt_fixture() -> dict:
             "build/Release/flitzzip_cli.exe": "b" * 64,
             "build/Release/FlitzZip.exe": "a" * 64,
             "build/Release/fixture.dll": "c" * 64,
-            "build/flitzzip-runtime-dependencies.json": "a" * 64,
+            "build/Release/flitzzip-runtime-dependencies.json": "a" * 64,
         },
     }
     record.update(
