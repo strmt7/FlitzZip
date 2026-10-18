@@ -434,8 +434,9 @@ def observe_toolchain(root: Path, cache: dict, cmake: Path) -> dict:
 
 
 # Purpose: Detect source replacements that timestamp-based incremental compilers can silently miss.
-# Inputs: Previous successful receipt and current frozen input manifest. Outputs: True when a clean build is required.
-def changed_inputs_need_clean(root: Path, previous: dict, current: dict) -> bool:
+# Inputs: Previous successful receipt, its owned filename and current frozen input manifest.
+# Outputs: True when a clean build is required for that configuration's completed consumers.
+def changed_inputs_need_clean(root: Path, previous: dict, current: dict, receipt_name: str = RECEIPT) -> bool:
     old_files = previous["inputs"]["files"]
     new_files = current["files"]
     if old_files.keys() - new_files.keys():
@@ -445,7 +446,7 @@ def changed_inputs_need_clean(root: Path, previous: dict, current: dict) -> bool
         return False
     # A successful receipt is published after every consumer finishes, including
     # test/library targets that may rebuild without relinking the application.
-    completed = input_path(root, f"build/{RECEIPT}").stat().st_mtime_ns
+    completed = input_path(root, f"build/{receipt_name}").stat().st_mtime_ns
     # Exclude generated manifests: configuration can rewrite them before compilation.
     newest_output = max(
         input_path(root, name).stat().st_mtime_ns
@@ -454,6 +455,14 @@ def changed_inputs_need_clean(root: Path, previous: dict, current: dict) -> bool
     )
     boundary = max(completed, newest_output)
     return any(input_path(root, name).stat().st_mtime_ns <= boundary for name in changed)
+
+
+# Purpose: Name rebuild evidence without accepting it as current product qualification.
+# Inputs: One supported CMake configuration. Outputs: A fixed build-relative metadata filename.
+def rebuild_receipt_name(configuration: str) -> str:
+    if configuration not in CONFIGURATIONS:
+        raise ValueError("unsupported native rebuild configuration")
+    return f"native-build-{configuration}-rebuild.json"
 
 
 # Purpose: Freeze configured tool bytes and decide whether existing objects need a fresh build.
@@ -466,12 +475,21 @@ def prepare(root: Path, token: str, cmake: Path) -> dict:
     recipe, cache = configured_recipe(root, state["configuration"])
     toolchain = observe_toolchain(root, cache, cmake)
     fresh = True
-    previous_path = root / "build" / RECEIPT
+    previous_name = RECEIPT
+    previous = None
+    previous_path = root / "build" / previous_name
     if previous_path.exists():
-        previous = read_metadata(root, f"build/{RECEIPT}")
+        previous = read_metadata(root, f"build/{previous_name}")
         # Exact historical schemas may inform rebuild decisions, never current
         # acceptance. Their narrower toolchain always requires clean-first.
         validate_receipt(previous, allow_historical_toolchain=True)
+    if previous is None or previous["recipe"]["configuration"] != state["configuration"]:
+        previous_name = rebuild_receipt_name(state["configuration"])
+        previous_path = root / "build" / previous_name
+        previous = read_metadata(root, f"build/{previous_name}") if previous_path.exists() else None
+        if previous is not None:
+            validate_receipt(previous, allow_historical_toolchain=True)
+    if previous is not None:
         try:
             current_outputs = capture_outputs(root, state["configuration"])
         except FileNotFoundError:
@@ -482,7 +500,7 @@ def prepare(root: Path, token: str, cmake: Path) -> dict:
             or previous.get("recipe") != recipe
             or previous.get("toolchain") != toolchain
             or previous.get("outputs_sha256") != current_outputs
-            or changed_inputs_need_clean(root, previous, state["inputs"])
+            or changed_inputs_need_clean(root, previous, state["inputs"], previous_name)
         )
     state.update(recipe=recipe, toolchain=toolchain, clean_first_required=fresh)
     publish(root, TRANSACTION, state)
@@ -536,6 +554,7 @@ def finish(root: Path, token: str, cmake: Path, clean_first: bool) -> dict:
         "outputs_sha256": outputs,
     }
     validate_receipt(receipt)
+    publish(root, rebuild_receipt_name(state["configuration"]), receipt)
     publish(root, RECEIPT, receipt)
     state.update(status="successful", receipt_sha256=hashlib.sha256(canonical(receipt)).hexdigest())
     publish(root, TRANSACTION, state)

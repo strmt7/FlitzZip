@@ -422,11 +422,7 @@ std::vector<std::wstring> fixed_io_drive_options() {
 // Outputs: Returns a valid row index or zero when no fixed drives are available.
 int normalize_io_drive_index(int index) {
     const auto drives = fixed_io_drive_options();
-    if (drives.empty()) {
-        return 0;
-    }
-    const int count = static_cast<int>(drives.size());
-    return (index % count + count) % count;
+    return static_cast<int>(fixed_drive_index(drives, index).value_or(0));
 }
 
 // Purpose: Return the user-facing fixed-drive selector label.
@@ -434,10 +430,8 @@ int normalize_io_drive_index(int index) {
 // Outputs: Returns a drive label such as `C:` or `-` when no fixed drive is available.
 std::wstring io_drive_option_text(int index) {
     const auto drives = fixed_io_drive_options();
-    if (drives.empty()) {
-        return L"-";
-    }
-    return drives[static_cast<std::size_t>(normalize_io_drive_index(index))];
+    const auto selected = fixed_drive_index(drives, index);
+    return selected ? drives[*selected] : L"-";
 }
 
 // Purpose: Map the visible compression-level selection to product effort.

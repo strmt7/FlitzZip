@@ -294,10 +294,11 @@ void MainWindow::reset_disk_performance_monitor() {
 MainWindow::ProcessIoRates MainWindow::sample_selected_drive_io(int selected_drive_index) {
     ProcessIoRates rates;
     const auto drives = fixed_io_drive_options();
-    if (drives.empty()) {
+    const auto selected = fixed_drive_index(drives, selected_drive_index);
+    if (!selected) {
         return rates;
     }
-    const std::wstring instance = drives[static_cast<std::size_t>(normalize_io_drive_index(selected_drive_index))];
+    const std::wstring instance = drives[*selected];
     if (disk_query_ == nullptr || disk_counter_instance_ != instance) {
         reset_disk_performance_monitor();
         disk_counter_instance_ = instance;

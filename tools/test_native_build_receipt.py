@@ -60,10 +60,11 @@ class NativeBuildReceiptTests(unittest.TestCase):
             'set(CMAKE_CXX_COMPILER_ID "MSVC")\nset(CMAKE_CXX_COMPILER_VERSION "19.51.36260.0")\n',
             encoding="utf-8",
         )
-        output = self.build / "Release"
-        output.mkdir(exist_ok=True)
-        for name in ("flitzzip_cli.exe", "FlitzZip.exe", "fixture.dll"):
-            (output / name).write_bytes(name.encode("ascii"))
+        for configuration in receipt.CONFIGURATIONS:
+            output = self.build / configuration
+            output.mkdir(exist_ok=True)
+            for name in ("flitzzip_cli.exe", "FlitzZip.exe", "fixture.dll"):
+                (output / name).write_bytes(name.encode("ascii"))
         (self.build / "flitzzip-runtime-dependencies.json").write_text(
             json.dumps({"packaged_runtime_files": [{"name": "fixture.dll"}]}), encoding="utf-8"
         )
@@ -89,12 +90,85 @@ class NativeBuildReceiptTests(unittest.TestCase):
         self.assertTrue(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
 
     # Purpose: Exercise the production start/prepare/finish path with explicit fresh-build acknowledgement.
-    # Inputs: Private nonexecutable fixtures. Outputs: Completed successful receipt summary and transaction ID.
-    def successful(self):
-        token = receipt.begin(self.root, "Release")["transaction_id"]
+    # Inputs: Private nonexecutable fixtures and configuration. Outputs: Successful receipt and transaction ID.
+    def successful(self, configuration="Release"):
+        token = receipt.begin(self.root, configuration)["transaction_id"]
         prepared = receipt.prepare(self.root, token, self.cmake)
         result = receipt.finish(self.root, token, self.cmake, prepared["clean_first_required"])
         return token, result
+
+    # Purpose: Avoid unnecessary clean builds when returning to an unchanged configuration.
+    # Inputs: Completed Release and Debug builds with distinct output paths and the same frozen source.
+    # Outputs: Reuses only rebuild evidence; current acceptance still requires the newly completed invocation.
+    def test_configuration_switch_reuses_matching_outputs_without_accepting_stale_qualification(self):
+        self.successful("Release")
+        self.successful("Debug")
+        with self.assertRaisesRegex(ValueError, "configuration is stale"):
+            receipt.validate_current(self.root, "Release", False)
+        for configuration in ("Release", "Debug", "Release"):
+            token = receipt.begin(self.root, configuration)["transaction_id"]
+            self.assertFalse(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+            with self.assertRaisesRegex(ValueError, "active, failed or incomplete"):
+                receipt.validate_current(self.root, configuration, False)
+            receipt.finish(self.root, token, self.cmake, False)
+            self.assertEqual(
+                configuration, receipt.validate_current(self.root, configuration, False)["recipe"]["configuration"]
+            )
+
+    # Purpose: Keep altered target outputs and compiler bytes from receiving incremental reuse after a switch.
+    # Inputs: Completed configurations followed by independent output and toolchain mutations.
+    # Outputs: Each mutation requires a clean build in the original configuration.
+    def test_configuration_switch_detects_output_and_toolchain_mutations(self):
+        self.successful("Release")
+        self.successful("Debug")
+        for path in (self.build / "Release/flitzzip_cli.exe", self.compiler / "cl.exe"):
+            original = path.read_bytes()
+            with self.subTest(path=path.name):
+                path.write_bytes(original + b"changed")
+                token = receipt.begin(self.root, "Release")["transaction_id"]
+                self.assertTrue(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+                receipt.end_incomplete(self.root, token, "failed")
+            path.write_bytes(original)
+
+    # Purpose: Compare changed-source timestamps to the target configuration, not a later unrelated build.
+    # Inputs: A source changed between Release and Debug, then copied back with an older timestamp.
+    # Outputs: Newer source allows incremental Release compilation; preserved older timestamps require clean-first.
+    def test_configuration_switch_uses_its_own_completion_boundary(self):
+        self.successful("Release")
+        completed = self.build / receipt.rebuild_receipt_name("Release")
+        boundary = completed.stat().st_mtime_ns + 2_000_000_000
+        os.utime(completed, ns=(boundary, boundary))
+        source = self.root / "src/main.cpp"
+        source.write_text("source updated after Release and before Debug", encoding="utf-8")
+        newer = boundary + 1_000_000_000
+        os.utime(source, ns=(newer, newer))
+        self.successful("Debug")
+        later = newer + 1_000_000_000
+        os.utime(self.build / receipt.RECEIPT, ns=(later, later))
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        self.assertFalse(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+        receipt.end_incomplete(self.root, token, "failed")
+        os.utime(source, ns=(boundary - 1, boundary - 1))
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        self.assertTrue(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+
+    # Purpose: Preserve fail-closed behavior for absent or malformed per-configuration rebuild evidence.
+    # Inputs: A switched build with missing metadata, then duplicate JSON fields and an unsupported configuration.
+    # Outputs: Missing evidence requires clean-first; malformed metadata and unsafe names are rejected.
+    def test_configuration_rebuild_metadata_is_bounded_and_never_inferred(self):
+        self.successful("Release")
+        self.successful("Debug")
+        cached = self.build / receipt.rebuild_receipt_name("Release")
+        cached.unlink()
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        self.assertTrue(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+        receipt.end_incomplete(self.root, token, "failed")
+        cached.write_text('{"status":1,"status":2}', encoding="utf-8")
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            receipt.prepare(self.root, token, self.cmake)
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            receipt.rebuild_receipt_name("../Release")
 
     # Purpose: Bind real source/output bytes without exposing compiler or checkout locations.
     # Inputs: Completed fixture invocation. Outputs: Requires independent hashes and current-source acceptance.
