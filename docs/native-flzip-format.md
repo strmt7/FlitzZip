@@ -25,6 +25,10 @@ explicit:
   and index size.
 - Each entry records a normalized archive path, directory flag, decoded size,
   payload window, CRC-32, and block descriptors.
+- The complete index ends immediately before the footer and contains exactly
+  its declared records, without trailing bytes. Entry payload windows remain
+  entirely before the index. The directory flag is exactly zero or one.
+  Readers reject inconsistent framing before creating extraction outputs.
 - Archive path bytes are UTF-8. Extraction converts them explicitly to native
   Windows paths, independent of the host ANSI code page. This preserves the
   existing index encoding and does not require a format-version change.

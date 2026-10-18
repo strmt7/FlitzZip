@@ -262,6 +262,10 @@ ArchiveIndex read_index_from_file(std::ifstream& input) {
     if (index_offset > size || index_size > size - index_offset) {
         throw ArchiveError("archive index points outside file");
     }
+    const auto footer_offset = size - kFlitzZipFooterBytes;
+    if (index_offset > footer_offset || index_size != footer_offset - index_offset) {
+        throw ArchiveError("archive index does not end at footer");
+    }
     if (index_size > kMaxArchiveIndexBytes) {
         throw ArchiveError("archive index exceeds FlitzZip resource limit");
     }
@@ -273,8 +277,16 @@ ArchiveIndex read_index_from_file(std::ifstream& input) {
     }
     std::istringstream index_stream(index_bytes, std::ios::binary);
     auto index = read_archive_index(index_stream);
+    if (stream_position(index_stream) != index_size) {
+        throw ArchiveError("archive index contains trailing bytes");
+    }
     if (index.version != version) {
         throw ArchiveError("archive footer and index versions differ");
+    }
+    for (const auto& entry : index.entries) {
+        if (entry.payload_offset > index_offset || entry.payload_size > index_offset - entry.payload_offset) {
+            throw ArchiveError("archive entry payload overlaps index or footer");
+        }
     }
     index.index_offset = index_offset;
     index.index_size = index_size;

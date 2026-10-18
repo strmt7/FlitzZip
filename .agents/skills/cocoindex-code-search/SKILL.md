@@ -34,8 +34,10 @@ part of scanner runtime or training data.
    empty results for wildcard filters on the reference Windows host;
    this wrapper rejects them. Use unscoped semantic routing followed by
    `rg` for path narrowing.
-5. If install/index fails twice, inspect the exact error and use bounded `rg`
-   so a development tool does not block a correctness fix.
+5. If installation, indexing or search fails, retain and disclose the exact
+   error, then restore the tool before continuing broad conceptual navigation.
+   Do not substitute `rg` for the required semantic search. Continue independent
+   work and exact reads of already known files or symbols while restoring it.
 
 Use `tools/agent_context.py startup` at a new context boundary to load both
 mandatory skills. The bounded document reader supplements code navigation;

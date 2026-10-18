@@ -305,10 +305,14 @@ ArchiveIndex read_archive_index(std::istream& input) {
         }
         ArchiveEntry entry;
         entry.path = std::move(path);
-        entry.directory = input.get() != 0;
-        if (!input) {
+        const auto directory_flag = input.get();
+        if (directory_flag == EOF) {
             throw ArchiveError("archive entry flags are truncated");
         }
+        if (directory_flag != 0 && directory_flag != 1) {
+            throw ArchiveError("archive directory flag is invalid");
+        }
+        entry.directory = directory_flag == 1;
         entry.uncompressed_size = read_u64(input);
         entry.payload_offset = read_u64(input);
         entry.payload_size = read_u64(input);

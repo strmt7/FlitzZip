@@ -429,9 +429,66 @@ void materialize_sparse_pattern_cpu(std::span<const std::byte> payload, std::spa
     }
 }
 
+// Purpose: Validate codec-specific metadata before any parallel decoder writes output.
+// Inputs: `encoded` is the admitted payload span; `block` has a bounded, nonzero decoded length.
+// Outputs: Throws `ArchiveError` for invalid codec metadata; does not modify either buffer.
+void validate_payload_block_metadata(std::span<const std::byte> encoded, const BlockDescriptor& block) {
+    const auto len = static_cast<std::size_t>(block.uncompressed_len);
+    const auto encoded_len = encoded.size();
+    if (block.kind == BlockKind::Raw && encoded_len != len) {
+        throw ArchiveError("raw block length does not match decoded length");
+    }
+    if ((block.kind == BlockKind::Deflate || block.kind == BlockKind::CpuZstd) && encoded_len >= len) {
+        throw ArchiveError("CPU-compressed block length is invalid");
+    }
+    if (block.kind == BlockKind::Pattern &&
+        (encoded_len < 2 || encoded_len > kMaxGpuPatternBytes || encoded_len >= len)) {
+        throw ArchiveError("GPU pattern block metadata is invalid");
+    }
+    if (block.kind == BlockKind::GpuPrefix) {
+        const auto segment_count = (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+        const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
+        if (encoded_len <= table_bytes || encoded_len >= len) {
+            throw ArchiveError("GPU prefix block metadata is invalid");
+        }
+    }
+    if (block.kind == BlockKind::GpuAdaptivePrefix) {
+        const auto segment_count = (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+        const auto header_bytes = kGpuAdaptivePrefixCodebookBytes + ((segment_count + 1U) * sizeof(std::uint32_t));
+        if (encoded_len <= header_bytes || encoded_len >= len) {
+            throw ArchiveError("GPU adaptive prefix block metadata is invalid");
+        }
+    }
+    if (block.kind == BlockKind::GpuHuffman) {
+        const auto segment_count = (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+        const auto header_bytes = kGpuHuffmanLookupBytes + ((segment_count + 1U) * sizeof(std::uint32_t));
+        if (encoded_len <= header_bytes || encoded_len >= len) {
+            throw ArchiveError("GPU Huffman block metadata is invalid");
+        }
+    }
+    if (block.kind == BlockKind::GpuDictionary) {
+        const auto segment_count = (len + kGpuDictionarySegmentBytes - 1U) / kGpuDictionarySegmentBytes;
+        const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
+        if (segment_count == 0U || encoded_len <= table_bytes || encoded_len >= len) {
+            throw ArchiveError("GPU dictionary block metadata is invalid");
+        }
+    }
+    if (block.kind == BlockKind::GpuCompound) {
+        (void)parse_gpu_compound_block(encoded, block);
+    }
+    if (is_gpu_byte_plane_kind(block.kind)) {
+        (void)parse_gpu_byte_plane_stages(encoded, block);
+    }
+    if (is_gpu_sparse_pattern_kind(block.kind)) {
+        (void)parse_sparse_pattern_block(encoded, static_cast<std::uint32_t>(len),
+                                         block.kind == BlockKind::GpuLongSparsePattern ? kMaxGpuLongSparsePatternBytes
+                                                                                       : kMaxGpuPatternBytes);
+    }
+}
+
 // Purpose: Compute output offsets and validate block spans before parallel decode.
 // Inputs: `blocks`, `payload`, and `output` are caller-provided decode buffers.
-// Outputs: Returns one output offset per block; throws on invalid bounds.
+// Outputs: Returns one output offset per block; throws on invalid bounds or codec metadata.
 std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> payload,
                                                 std::span<const BlockDescriptor> blocks, std::span<std::byte> output) {
     std::vector<std::size_t> offsets(blocks.size());
@@ -440,6 +497,10 @@ std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> paylo
         offsets[i] = out_pos;
         const auto& block = blocks[i];
         const auto len = static_cast<std::size_t>(block.uncompressed_len);
+        // Internal callers must obey the same wire limits as the archive parser and HIP admission.
+        if (len == 0U || len > kMaxArchiveBlockBytes) {
+            throw ArchiveError("decode block length is outside FlitzZip resource limits");
+        }
         if (out_pos > output.size() || len > output.size() - out_pos) {
             throw ArchiveError("decoded block exceeds output buffer");
         }
@@ -449,59 +510,7 @@ std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> paylo
             if (encoded_len == 0 || offset > payload.size() || encoded_len > payload.size() - offset) {
                 throw ArchiveError("encoded block exceeds payload buffer");
             }
-            if (block.kind == BlockKind::Raw && encoded_len != len) {
-                throw ArchiveError("raw block length does not match decoded length");
-            }
-            if ((block.kind == BlockKind::Deflate || block.kind == BlockKind::CpuZstd) && encoded_len >= len) {
-                throw ArchiveError("CPU-compressed block length is invalid");
-            }
-            if (block.kind == BlockKind::Pattern &&
-                (encoded_len < 2 || encoded_len > kMaxGpuPatternBytes || encoded_len >= len)) {
-                throw ArchiveError("GPU pattern block metadata is invalid");
-            }
-            if (block.kind == BlockKind::GpuPrefix) {
-                const auto segment_count = (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
-                const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
-                if (encoded_len <= table_bytes || encoded_len >= len) {
-                    throw ArchiveError("GPU prefix block metadata is invalid");
-                }
-            }
-            if (block.kind == BlockKind::GpuAdaptivePrefix) {
-                const auto segment_count = (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
-                const auto header_bytes =
-                    kGpuAdaptivePrefixCodebookBytes + ((segment_count + 1U) * sizeof(std::uint32_t));
-                if (encoded_len <= header_bytes || encoded_len >= len) {
-                    throw ArchiveError("GPU adaptive prefix block metadata is invalid");
-                }
-            }
-            if (block.kind == BlockKind::GpuHuffman) {
-                const auto segment_count = (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
-                const auto header_bytes = kGpuHuffmanLookupBytes + ((segment_count + 1U) * sizeof(std::uint32_t));
-                if (encoded_len <= header_bytes || encoded_len >= len) {
-                    throw ArchiveError("GPU Huffman block metadata is invalid");
-                }
-            }
-            if (block.kind == BlockKind::GpuDictionary) {
-                const auto segment_count = (len + kGpuDictionarySegmentBytes - 1U) / kGpuDictionarySegmentBytes;
-                const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
-                if (segment_count == 0U || encoded_len <= table_bytes || encoded_len >= len) {
-                    throw ArchiveError("GPU dictionary block metadata is invalid");
-                }
-            }
-            if (block.kind == BlockKind::GpuCompound) {
-                (void)parse_gpu_compound_block(payload.subspan(offset, encoded_len), block);
-            }
-            if (is_gpu_byte_plane_kind(block.kind)) {
-                (void)parse_gpu_byte_plane_stages(payload.subspan(offset, encoded_len), block);
-            }
-            if (is_gpu_sparse_pattern_kind(block.kind)) {
-                (void)parse_sparse_pattern_block(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
-                                                                 static_cast<std::size_t>(block.encoded_len)),
-                                                 static_cast<std::uint32_t>(len),
-                                                 block.kind == BlockKind::GpuLongSparsePattern
-                                                     ? kMaxGpuLongSparsePatternBytes
-                                                     : kMaxGpuPatternBytes);
-            }
+            validate_payload_block_metadata(payload.subspan(offset, encoded_len), block);
         } else if (block.kind == BlockKind::Fill) {
             if (block.encoded_len != 0) {
                 throw ArchiveError("fill block contains encoded payload bytes");

@@ -32,8 +32,9 @@ The strategy was built from public documentation reviewed on 2026-06-18:
 - Trace the complete path from input event to product outcome. For GUI defects,
   that means hit test, focus state, UI state mutation, worker launch, backend
   call, progress publication, status/history update, and repaint.
-- Use targeted checks for ordinary edits and escalate automatically when the
-  failure class is broad, stateful, security-sensitive, or repeats after a fix.
+- Use the verification planner for the complete change scope. Diagnose a failed
+  focused check before widening coverage; select broader checks when evidence
+  shows cross-component impact. Preserve all checks required by that scope.
 - Prefer evidence over intuition. Record the command, input data, expected
   behavior, actual behavior, and artifact path for every confirmed defect.
 - Fix root causes. Do not hide findings behind broad exclusions, skipped tests,
