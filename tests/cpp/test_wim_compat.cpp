@@ -57,9 +57,10 @@ template <typename Function> Function require_wim_export(HMODULE module, const c
 }
 
 // Purpose: Create a bounded Unicode WIM fixture using the pinned library's independent writer API.
-// Inputs: `source` is a tiny test tree, `archive` is its output path, and `images` is one or two.
+// Inputs: `source` is a tiny test tree, `archive` is its output path, and `images` is within 1..65.
 // Outputs: Writes an integrity-checked WIM without capturing ACLs; requires prior product runtime initialization.
 void write_unicode_wim_fixture(const std::filesystem::path& source, const std::filesystem::path& archive, int images) {
+    REQUIRE_TRUE(images >= 1 && images <= 65);
     const auto module = GetModuleHandleW(L"libwim-15.dll");
     REQUIRE_TRUE(module != nullptr);
     const auto create = require_wim_export<decltype(&wimlib_create_new_wim)>(module, "wimlib_create_new_wim");
@@ -265,4 +266,144 @@ TEST_CASE(wim_extraction_rejects_split_wim_extension_until_multipart_support_exi
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_TRUE(!std::filesystem::exists(root / "out" / "root.txt"));
+}
+
+namespace {
+
+// Purpose: Prepare a tiny independent WIM source and admit the same pinned runtime used by production.
+// Inputs: Owned fixture root. Outputs: Source directory containing one known payload; no unrelated files change.
+std::filesystem::path wim_failure_source(const std::filesystem::path& root) {
+    (void)flitzzip::extract_wim(wim_fixture_path("basic.wim"), root / "initialize", false);
+    const auto source = root / "source";
+    std::filesystem::create_directory(source);
+    std::ofstream payload(source / "payload.txt", std::ios::binary);
+    payload << "Independent WIM boundary payload.";
+    payload.close();
+    REQUIRE_TRUE(payload.good());
+    return source;
+}
+
+// Purpose: Require metadata rejection before publication while preserving existing caller data.
+// Inputs: Independent WIM, owned destination and the expected production error category text.
+// Outputs: Requires the exact rejection, unchanged sentinel and no additional destination entries or staging debris.
+void require_wim_metadata_rejected(const std::filesystem::path& archive, const std::filesystem::path& destination,
+                                   std::string_view expected) {
+    std::filesystem::create_directory(destination);
+    {
+        std::ofstream sentinel(destination / "sentinel.txt", std::ios::binary);
+        sentinel << "preserve caller data";
+    }
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_wim(archive, destination, true);
+    } catch (const flitzzip::Error& error) {
+        REQUIRE_TRUE(std::string_view(error.what()).find(expected) != std::string_view::npos);
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(read_text(destination / "sentinel.txt"), std::string("preserve caller data"));
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+               1);
+}
+}  // namespace
+
+// Purpose: Exercise the maximum supported image count and reject one further valid independent image.
+// Inputs: Library-written uncompressed WIMs with one small file in each image.
+// Outputs: All 64 images recover exactly; 65 images reject before changing destination contents.
+TEST_CASE(wim_image_count_boundary_preserves_each_image) {
+    const auto root = test_temp_dir("wim-image-boundary");
+    const auto source = wim_failure_source(root);
+    const auto accepted = root / "accepted.wim";
+    write_unicode_wim_fixture(source, accepted, 64);
+    const auto destination = root / "accepted";
+    const auto stats = flitzzip::extract_wim(accepted, destination, false);
+    REQUIRE_EQ(stats.entries, 64U);
+    for (unsigned image = 1; image <= 64; ++image) {
+        REQUIRE_EQ(read_text(destination / ("image-" + std::to_string(image)) / "payload.txt"),
+                   std::string("Independent WIM boundary payload."));
+    }
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+               64);
+    const auto rejected = root / "rejected.wim";
+    write_unicode_wim_fixture(source, rejected, 65);
+    require_wim_metadata_rejected(rejected, root / "rejected", "image count exceeds");
+    REQUIRE_TRUE(std::filesystem::file_size(accepted) + std::filesystem::file_size(rejected) < 4U * 1024U * 1024U);
+}
+
+// Purpose: Reject a valid image that has no publishable entries.
+// Inputs: A library-written WIM containing only the root directory.
+// Outputs: Explicit empty-image error without staging or replacing existing destination data.
+TEST_CASE(wim_empty_image_rejects_without_publication) {
+    const auto root = test_temp_dir("wim-empty-image");
+    const auto source = wim_failure_source(root);
+    REQUIRE_TRUE(std::filesystem::remove(source / "payload.txt"));
+    const auto archive = root / "empty.wim";
+    write_unicode_wim_fixture(source, archive, 1);
+    require_wim_metadata_rejected(archive, root / "out", "no extractable entries");
+}
+
+// Purpose: Keep captured hard links outside the standalone WIM extraction contract.
+// Inputs: Two real same-volume names for one file, captured by the independent WIM writer.
+// Outputs: Explicit hard-link rejection before destination publication.
+TEST_CASE(wim_hard_link_metadata_rejects_without_publication) {
+    const auto root = test_temp_dir("wim-hard-links");
+    const auto source = wim_failure_source(root);
+    std::filesystem::create_hard_link(source / "payload.txt", source / "linked.txt");
+    REQUIRE_TRUE(std::filesystem::equivalent(source / "payload.txt", source / "linked.txt"));
+    const auto archive = root / "links.wim";
+    write_unicode_wim_fixture(source, archive, 1);
+    require_wim_metadata_rejected(archive, root / "out", "hard links are not supported");
+}
+
+// Purpose: Reject named NTFS streams instead of silently dropping or publishing them.
+// Inputs: A real owned file with an independent alternate stream, captured by the WIM writer.
+// Outputs: Explicit stream rejection and unchanged destination data.
+TEST_CASE(wim_named_stream_metadata_rejects_without_publication) {
+    const auto root = test_temp_dir("wim-named-stream");
+    const auto source = wim_failure_source(root);
+    const auto stream = source / "payload.txt:hidden";
+    {
+        std::ofstream output(stream, std::ios::binary);
+        output << "named stream payload";
+        output.close();
+        REQUIRE_TRUE(output.good());
+    }
+    REQUIRE_EQ(read_text(stream), std::string("named stream payload"));
+    const auto archive = root / "stream.wim";
+    write_unicode_wim_fixture(source, archive, 1);
+    require_wim_metadata_rejected(archive, root / "out", "alternate data streams are not supported");
+}
+
+// Purpose: Preserve callback cancellation through staged extraction and permit a clean subsequent attempt.
+// Inputs: Valid WIM and a callback throwing before the first entry is published.
+// Outputs: Exact callback error, unchanged old payload, no staging debris, then successful byte-exact reuse.
+TEST_CASE(wim_cancellation_cleans_staging_and_preserves_destination) {
+    const auto root = test_temp_dir("wim-cancel");
+    const auto source = wim_failure_source(root);
+    const auto archive = root / "input.wim";
+    write_unicode_wim_fixture(source, archive, 1);
+    const auto destination = root / "out";
+    std::filesystem::create_directory(destination);
+    std::ofstream(destination / "payload.txt", std::ios::binary) << "original payload";
+    unsigned callbacks = 0;
+    bool cancelled = false;
+    try {
+        (void)flitzzip::extract_wim(archive, destination, true, [&](const flitzzip::ProgressSnapshot&) {
+            ++callbacks;
+            throw std::runtime_error("independent WIM cancellation");
+        });
+    } catch (const std::runtime_error& error) {
+        REQUIRE_EQ(std::string(error.what()), std::string("independent WIM cancellation"));
+        cancelled = true;
+    }
+    REQUIRE_TRUE(cancelled);
+    REQUIRE_EQ(callbacks, 1U);
+    REQUIRE_EQ(read_text(destination / "payload.txt"), std::string("original payload"));
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+               1);
+    const auto stats = flitzzip::extract_wim(archive, destination, true);
+    REQUIRE_EQ(stats.entries, 1U);
+    REQUIRE_EQ(read_text(destination / "payload.txt"), std::string("Independent WIM boundary payload."));
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+               1);
 }
