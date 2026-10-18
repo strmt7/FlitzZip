@@ -61,6 +61,55 @@ function Assert-GuiBlockedText {
     }
 }
 
+# Purpose: Exercise row and header selection without allowing dynamic buttons to steal keyboard focus.
+# Inputs: `Handle`/`Dpi` identify the owned window, `InputPath` is a fixture, and `BasePath`/`Extension` locate captures.
+# Outputs: Returns selection and navigation captures; fails if keyboard input loses or activates the wrong control.
+function Assert-KeyboardQueueSelection {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$InputPath, [string]$BasePath, [string]$Extension)
+
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
+    Invoke-FileDrop -Handle $Handle -Paths @($InputPath)
+    $offset = Get-ClientCaptureOffset -Handle $Handle
+    $initial = "${BasePath}-Keyboard-Initial$Extension"
+    Save-FlitzZipScreenshot -Handle $Handle -Path $initial
+    Assert-DesignRectHasColor -Path $initial -Dpi $Dpi -Left 130 -Top 174 -Right 146 -Bottom 190 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 28 -ExpectedBlue 52 -Tolerance 20 -MinPixels 20
+    foreach ($target in @('Row', 'Header')) {
+        if ($target -eq 'Row') {
+            Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
+        } else {
+            Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+            # Eight navigation items, then Remove/Add files/Add folder/Clear, then select-all.
+            for ($tab = 0; $tab -lt 12; ++$tab) { Invoke-ClientKey -Handle $Handle -VirtualKey 0x09 }
+        }
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x20
+        $unchecked = "${BasePath}-Keyboard-$target-Unchecked$Extension"
+        Save-FlitzZipScreenshot -Handle $Handle -Path $unchecked
+        $focusRect = if ($target -eq 'Row') {
+            @{ Left = 130; Top = 165; Right = 300; Bottom = 169 }
+        } else {
+            @{ Left = 125; Top = 133; Right = 150; Bottom = 158 }
+        }
+        Assert-DesignRectHasColor -Path $unchecked -Dpi $Dpi @focusRect -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 99 -ExpectedGreen 130 -ExpectedBlue 140 -Tolerance 2 -MinPixels 12
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x20
+        $checked = "${BasePath}-Keyboard-$target-Rechecked$Extension"
+        Save-FlitzZipScreenshot -Handle $Handle -Path $checked
+        Assert-DesignRectHasColor -Path $checked -Dpi $Dpi -Left 130 -Top 174 -Right 146 -Bottom 190 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 28 -ExpectedBlue 52 -Tolerance 20 -MinPixels 20
+    }
+    foreach ($page in @(1, 4, 5)) {
+        # Nonempty Queue and History lists must not swallow arrows while a navigation item has focus.
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+        for ($step = 0; $step -lt $page; ++$step) { Invoke-ClientKey -Handle $Handle -VirtualKey 0x28 }
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+        $navigation = "${BasePath}-Keyboard-Page-$page$Extension"
+        Save-FlitzZipScreenshot -Handle $Handle -Path $navigation
+        Assert-DesignRectHasColor -Path $navigation -Dpi $Dpi -Left 0 -Top (70 + 63 * $page) -Right 4 -Bottom (110 + 63 * $page) -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 28 -ExpectedBlue 52 -Tolerance 20 -MinPixels 20
+    }
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
+}
+
 # Purpose: Verify System, Queue, and History behavior contracts from GUI source.
 # Inputs: `SourceText` is the joined GUI source text.
 # Outputs: Throws when a visual or behavior regression boundary is missing.
@@ -1259,6 +1308,8 @@ try {
 
     $captures += Assert-OperationSummary -Handle $windowHandle -Dpi $windowDpi -InputPath $smokeInput -Destination $smokeDestination -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
     if ($OperationSummaryOnly) { $captures | Format-Table -AutoSize; return }
+
+    $captures += Assert-KeyboardQueueSelection -Handle $windowHandle -Dpi $windowDpi -InputPath $smokeInput -BasePath $basePath -Extension $extension
 
     # Queue header actions: exercise Add files, Add folder, and Clear without modal dialogs.
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 918 -DesignY 91

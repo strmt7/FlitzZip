@@ -202,21 +202,17 @@ void MainWindow::draw_extract_overwrite_prompt(HDC dc, const RECT& rect, const U
 
 // Purpose: Draw the keyboard focus affordance for the current target.
 // Inputs: `dc` is the target, `content` is the content area, and `state` is the copied UI state.
-// Outputs: Renders a minimal non-hover focus indicator without mutating state.
+// Outputs: Renders a minimal non-hover indicator only while the identified control is visible.
 void MainWindow::draw_keyboard_focus(HDC dc, const RECT& content, const UiState& state) {
     if (state.extract_overwrite_prompt_visible || state.license_notices_dialog_visible) {
         return;
     }
     const auto targets = focus_targets_for(content, state);
-    if (targets.empty()) {
+    const auto focused = keyboard_focus_.position(targets);
+    if (!focused || targets[*focused].kind == FocusTargetKind::Navigation) {
         return;
     }
-    const int index = (keyboard_focus_index_ % static_cast<int>(targets.size()) + static_cast<int>(targets.size())) %
-                      static_cast<int>(targets.size());
-    if (targets[static_cast<std::size_t>(index)].kind == FocusTargetKind::Navigation) {
-        return;
-    }
-    RECT focus = targets[static_cast<std::size_t>(index)].rect;
+    RECT focus = targets[*focused].rect;
     focus = inset_rect(focus, scale(2), scale(2));
     HPEN pen = CreatePen(PS_SOLID, std::max(1, scale(1)), RGB(99, 130, 140));
     HGDIOBJ previous_pen = SelectObject(dc, pen);

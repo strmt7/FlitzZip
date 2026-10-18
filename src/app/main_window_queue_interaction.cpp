@@ -283,6 +283,7 @@ bool MainWindow::remove_selected_queue_items() {
             return true;
         }
         state_.queued_paths = std::move(remaining_paths);
+        keyboard_focus_ = KeyboardFocus{};
         state_.queued_enabled = std::move(remaining_enabled);
         queue_metadata_.synchronize(state_.queued_paths);
         {
