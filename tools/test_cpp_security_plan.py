@@ -16,6 +16,30 @@ from tools import cpp_security_plan as cpp
 # Inputs: Actual native receipt projection, workflow and isolated real Git histories.
 # Outputs: Admission, rejection, output and rename/delete controls pass without compilation or scanning.
 class CppSecurityContracts(unittest.TestCase):
+    def test_metadata_timeout_kills_the_owned_process_and_fails_closed(self):
+        """Purpose: Preserve cleanup. Inputs: Closed pipes with a live child. Outputs: Kill plus bounded ValueError."""
+        process = mock.MagicMock()
+        process.__enter__.return_value = process
+        process.stdout = io.BytesIO(b"metadata")
+        process.stderr = io.BytesIO()
+        process.poll.return_value = None
+        process.wait.side_effect = [subprocess.TimeoutExpired(["fixture"], 5), 0]
+        with (
+            mock.patch.object(cpp.subprocess, "Popen", return_value=process),
+            self.assertRaisesRegex(ValueError, "metadata fixture timed out"),
+        ):
+            cpp.capture_metadata(["fixture"], "metadata fixture")
+        process.kill.assert_called_once_with()
+        self.assertEqual(process.wait.call_count, 2)
+
+    def test_unterminated_git_inventory_is_rejected(self):
+        """Purpose: Reject partial framing. Inputs: Git metadata without its final NUL. Outputs: No path is admitted."""
+        with (
+            mock.patch.object(cpp, "capture_metadata", return_value=b"src/example.cpp"),
+            self.assertRaisesRegex(ValueError, "inventory is not terminated"),
+        ):
+            cpp.changed_paths(cpp.ROOT, "a" * 40)
+
     def test_latest_analysis_is_paginated_and_does_not_replace_newer_attempts(self):
         """Purpose: Preserve latest roles. Inputs: Two API pages. Outputs: Newest CPU and HIP identities win."""
 
@@ -304,10 +328,54 @@ class CppSecurityContracts(unittest.TestCase):
         self.assertNotIn("continue-on-error", workflow)
         self.assertIn("bootstrap_rocm_sdk.py --parent $sdkParent", workflow)
 
+    def test_push_entry_point_routes_complete_hosted_reuse_identity(self):
+        """Purpose: Exercise hosted routing.
+
+        Inputs: Complete repository/ref identity. Outputs: Reuse qualifier owns the plan.
+        """
+        initial = cpp.select_cpp([])
+        qualified = {**initial, "analysis_commits": {category: "a" * 40 for category in cpp.CPP_CATEGORIES}}
+        arguments = [
+            "cpp-plan",
+            "--event",
+            "push",
+            "--push-base",
+            "a" * 40,
+            "--repository",
+            "fixture/repository",
+            "--ref",
+            "refs/heads/main",
+        ]
+        with (
+            mock.patch.object(sys, "argv", arguments),
+            mock.patch.object(cpp, "validate_workflow"),
+            mock.patch.object(cpp, "event_plan", return_value=initial),
+            mock.patch.object(cpp, "qualify_analysis_reuse", return_value=qualified) as qualify,
+            mock.patch("builtins.print") as output,
+        ):
+            cpp.main()
+        qualify.assert_called_once_with(initial, "fixture/repository", "refs/heads/main")
+        self.assertEqual(json.loads(output.call_args.args[0]), qualified)
+
+    def test_real_module_entry_point_emits_scheduled_full_plan(self):
+        """Purpose: Exercise executable wiring. Inputs: Scheduled CLI invocation. Outputs: Clean full-plan JSON."""
+        completed = subprocess.run(
+            [sys.executable, "-m", "tools.cpp_security_plan", "--event", "schedule"],
+            cwd=cpp.ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertTrue(json.loads(completed.stdout)["codeql_cpp"])
+        self.assertNotIn("Traceback", completed.stderr)
+
     def test_actual_workflow_rejects_database_merging_and_configuration_loss(self):
         """Purpose: Prevent recurrence. Inputs: Actual workflow and scope mutations. Outputs: Fail-closed admission."""
         workflow = (cpp.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
         cpp.validate_workflow(workflow)
+        with self.assertRaisesRegex(ValueError, "workflow job boundaries changed"):
+            cpp.validate_workflow(workflow.replace("\n  codeql-cpp-cpu:\n", "\n  renamed-cpp-job:\n"))
         for original, replacement in (
             ("    name: CodeQL C++ (CPU)\n", ""),
             ("name: CodeQL C++ (CPU)", "name: CodeQL C++ (${{ matrix.configuration }})"),
