@@ -296,6 +296,7 @@ function Get-FlitzZipVerificationScope {
         '^tools/(zstd_rewrite_policy|test_zstd_rewrite_policy)\.ps1$',
         '^tools/test_zstd_sanitizers\.ps1$',
         '^tools/(release_workflow_policy|test_release_workflow_policy)\.ps1$',
+        '^tools/(release_metadata|test_release_metadata)\.py$',
         '^tools/(flitzzip_verification\.psm1|test_verification_selector\.ps1|test_verification_runner\.ps1|ci_tool_contracts\.ps1|test_ci_tool_contracts\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
         '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
         '^tools/test_gitleaks_policy\.py$',
@@ -343,6 +344,7 @@ function Get-FlitzZipVerificationScope {
         '^src/core/(defender_scan|integrity|path_safety|file_publish)\.',
         '^tools/(security_scan|github_post_push_audit|verify_change_hygiene|wait_relevant_workflows|release_workflow_policy|test_release_workflow_policy)\.ps1$',
         '^tools/native_component_tests\.ps1$',
+        '^tools/(release_metadata|test_release_metadata)\.py$',
         '^tools/(test_semgrep_installation|test_semgrep_runtime|semgrep_distribution|test_semgrep_distribution|semgrep_coverage|test_semgrep_coverage|devskim_provenance|test_devskim_provenance|devskim_report|test_devskim_report|devskim_scope|test_devskim_scope)\.py$',
         '^tools/test_gitleaks_policy\.py$',
         '^tools/(scanner_preflight|test_scanner_preflight)\.py$',
@@ -353,7 +355,7 @@ function Get-FlitzZipVerificationScope {
     ))
     $touchesGui = Test-FlitzZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/FlitzZip\.GuiSmoke\.[^/]+\.psm1$')
     $touchesBrand = Test-FlitzZipAnyPath -Path $paths -Pattern @('^resources/brand/', '^resources/app/', '^tools/(generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^src/app/flitzzip_brand_logo')
-    $touchesPackaging = Test-FlitzZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version|release_metadata)\.(ps1|py)$')
+    $touchesPackaging = Test-FlitzZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version)\.(ps1|py)$')
     $touchesLintSurface = Test-FlitzZipAnyPath -Path $paths -Pattern $patterns.lint
     $touchesBenchmarkCliDiff = (Test-FlitzZipAnyPath -Path $paths -Pattern @('^src/cli/main\.cpp$')) -and (Test-FlitzZipDiffLine -Path @("src/cli/main.cpp") -Pattern @('benchmark', 'throughput', 'compression.?level', 'block.?size', 'workers', 'inflight', 'gpu'))
     $touchesPerformance = $touchesBenchmarkCliDiff -or (Test-FlitzZipAnyPath -Path $paths -Pattern @('^src/gpu/', '^src/core/(archive|archive_blocks|archive_block_types|resource_limits)\.', '^tools/(bench|gpu_|storage_smoke)'))

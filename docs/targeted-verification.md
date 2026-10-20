@@ -5,6 +5,13 @@ the changed path set and its direct consumers. Batch related changes. Tooling
 edits, path count and failed checks do not automatically justify unrelated
 suites. Unknown paths must be classified before a plan can execute.
 
+The release metadata resolver is consumed by release orchestration; its version,
+collision and Actions-export contracts run with security policy checks. It does
+not itself select native compilation or package staging. The native version
+helper and actual package/build inputs retain those checks. Host coverage uses
+its frozen scenario dependency closure to select the real Debug CI measurement
+when any producer input changes, without repeating unrelated Release work.
+
 [Native code coverage](code-coverage.md) reuses the Windows CI build and records
 measured CPU line hits. Its offline contracts run locally; collector changes
 also require the real hosted measurement and upload consumer.

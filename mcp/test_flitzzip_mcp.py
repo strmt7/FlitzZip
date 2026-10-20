@@ -11,13 +11,187 @@ import tempfile
 import threading
 import time
 import unittest
+import venv
+from ctypes import wintypes
 from pathlib import Path
 from unittest import mock
 
 import flitzzip_mcp
 
 
+class FailedReadPipe:
+    def __init__(self, stream: io.BufferedReader) -> None:
+        """Purpose: Inject a transport read failure while retaining the real owned pipe.
+        Inputs: The newly spawned child's stream. Outputs: A cleanup-compatible proxy.
+        """
+        self.stream = stream
+
+    def read(self, _size: int) -> bytes:
+        """Purpose: Model failed output acquisition. Inputs: Requested extent. Outputs: Controlled I/O error."""
+        raise OSError("controlled pipe read failure")
+
+    def close(self) -> None:
+        """Purpose: Preserve production cleanup. Inputs: None. Outputs: Closes the original pipe."""
+        self.stream.close()
+
+    @property
+    def closed(self) -> bool:
+        """Purpose: Observe actual cleanup. Inputs: None. Outputs: Original pipe closure state."""
+        return self.stream.closed
+
+
 class ProtocolTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows suspended-thread admission contract")
+    def test_primary_thread_admission_failures_close_only_owned_handles(self) -> None:
+        """Purpose: Reject unavailable, ambiguous or changed primary threads without leaking enumeration handles.
+        Inputs: Independent Windows API failures, ownership changes and suspend counts, plus a valid control.
+        Outputs: Exact guard errors and ordered cleanup; no thread resumes before identity validation.
+        """
+        stages = {
+            "snapshot": (OSError, "snapshot failed"),
+            "enumeration": (OSError, "enumeration failed"),
+            "empty": (RuntimeError, "exactly one"),
+            "multiple": (RuntimeError, "exactly one"),
+            "foreign": (RuntimeError, "exactly one"),
+            "exited": (RuntimeError, "exactly one"),
+            "open": (OSError, "thread open failed"),
+            "owner": (RuntimeError, "ownership changed"),
+            "resume-zero": (RuntimeError, "initial suspend count"),
+            "resume-two": (RuntimeError, "initial suspend count"),
+            "resume-error": (RuntimeError, "initial suspend count"),
+            "valid": None,
+        }
+        for stage, expected_error in stages.items():
+            with self.subTest(stage=stage):
+                library = mock.Mock()
+                process = mock.Mock(pid=1001)
+                process.poll.return_value = 0 if stage == "exited" else None
+                library.CreateToolhelp32Snapshot.return_value = ctypes.c_void_p(-1).value if stage == "snapshot" else 17
+                entries = [] if stage == "empty" else [(1002 if stage == "foreign" else 1001, 271)]
+                if stage == "multiple":
+                    entries.append((1001, 272))
+                records = iter(entries)
+
+                def enumerate_thread(_snapshot, pointer, *, records=records):
+                    """Purpose: Supply independently framed read-only thread records.
+                    Inputs: Native entry buffer and frozen records. Outputs: One record or end of enumeration.
+                    """
+                    try:
+                        owner, thread = next(records)
+                    except StopIteration:
+                        return False
+                    entry = ctypes.cast(pointer, ctypes.POINTER(flitzzip_mcp._ThreadEntry)).contents
+                    entry.process_id, entry.thread_id = owner, thread
+                    return True
+
+                library.Thread32First.side_effect = enumerate_thread
+                library.Thread32Next.side_effect = enumerate_thread
+                last_error = {"value": 5 if stage in ("snapshot", "enumeration") else 18}
+
+                def open_thread(_access, _inherit, _thread, *, stage=stage, last_error=last_error):
+                    """Purpose: Model stable thread-local error state rather than a consumable error sequence.
+                    Inputs: Native open arguments and frozen failure stage. Outputs: Owned handle or access denial.
+                    """
+                    if stage == "open":
+                        last_error["value"] = 5
+                        return 0
+                    return 19
+
+                library.OpenThread.side_effect = open_thread
+                library.GetProcessIdOfThread.return_value = 1002 if stage == "owner" else 1001
+                library.ResumeThread.return_value = {
+                    "resume-zero": 0,
+                    "resume-two": 2,
+                    "resume-error": 0xFFFFFFFF,
+                }.get(stage, 1)
+                with (
+                    mock.patch.object(flitzzip_mcp.ctypes, "WinDLL", return_value=library),
+                    mock.patch.object(
+                        flitzzip_mcp.ctypes, "get_last_error", side_effect=lambda state=last_error: state["value"]
+                    ),
+                ):
+                    if expected_error:
+                        with self.assertRaisesRegex(*expected_error):
+                            flitzzip_mcp.resume_owned_child(process)
+                    else:
+                        self.assertIsNone(flitzzip_mcp.resume_owned_child(process))
+                thread_opened = stage in ("owner", "resume-zero", "resume-two", "resume-error", "valid")
+                expected_closed = [] if stage == "snapshot" else ([19, 17] if thread_opened else [17])
+                self.assertEqual(library.CloseHandle.call_args_list, [mock.call(handle) for handle in expected_closed])
+                if stage.startswith("resume-") or stage == "valid":
+                    library.ResumeThread.assert_called_once_with(19)
+                else:
+                    library.ResumeThread.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "Windows job-object creation contract")
+    def test_job_admission_failure_preserves_explicit_limits_and_closes_handles(self) -> None:
+        """Purpose: Refuse unverified native memory containment rather than launching without an enforced cap.
+        Inputs: Create/configure/query/verification/assignment failures and an independently framed valid job.
+        Outputs: Every failure closes its created handle; successful creation retains the exact requested limits.
+        """
+        for stage in ("create", "configure", "query", "flags", "memory", "assign", "valid"):
+            with self.subTest(stage=stage):
+                library = mock.Mock()
+                library.CreateJobObjectW.return_value = 0 if stage == "create" else 23
+                library.SetInformationJobObject.return_value = stage != "configure"
+                library.AssignProcessToJobObject.return_value = stage != "assign"
+                library.TerminateJobObject.return_value = True
+
+                def query(_handle, kind, pointer, _size, _returned, *, stage=stage):
+                    """Purpose: Return independent job limits or zero active-process accounting.
+                    Inputs: Native query buffer and frozen failure stage. Outputs: Controlled OS-query result.
+                    """
+                    if kind == 1:
+                        info = ctypes.cast(
+                            pointer, ctypes.POINTER(flitzzip_mcp._JobObjectBasicAccountingInformation)
+                        ).contents
+                        info.active_processes = 0
+                        return True
+                    info = ctypes.cast(
+                        pointer, ctypes.POINTER(flitzzip_mcp._JobObjectExtendedLimitInformation)
+                    ).contents
+                    info.basic_limit_information.limit_flags = 0x2000 if stage == "flags" else 0x2200
+                    info.job_memory_limit = 127 * flitzzip_mcp.MIB if stage == "memory" else 128 * flitzzip_mcp.MIB
+                    return stage != "query"
+
+                library.QueryInformationJobObject.side_effect = query
+                process = mock.Mock(_handle=29)
+                with (
+                    mock.patch.object(flitzzip_mcp.ctypes, "WinDLL", return_value=library),
+                    mock.patch.object(flitzzip_mcp.ctypes, "get_last_error", return_value=5),
+                ):
+                    if stage != "valid":
+                        with self.assertRaisesRegex(RuntimeError, "child process containment failed"):
+                            flitzzip_mcp.ChildContainment(process, 128 * flitzzip_mcp.MIB)
+                    else:
+                        owner = flitzzip_mcp.ChildContainment(process, 128 * flitzzip_mcp.MIB)
+                        assigned = library.AssignProcessToJobObject.call_args.args
+                        self.assertEqual((assigned[0], assigned[1].value), (23, 29))
+                        configured = library.SetInformationJobObject.call_args.args[2]._obj
+                        self.assertEqual(configured.job_memory_limit, 128 * flitzzip_mcp.MIB)
+                        self.assertEqual(configured.basic_limit_information.limit_flags, 0x2200)
+                        owner.close()
+                self.assertEqual(library.CloseHandle.call_args_list, [] if stage == "create" else [mock.call(23)])
+
+    def test_read_failure_retains_first_cause_and_refuses_partial_output(self) -> None:
+        """Purpose: Prevent a secondary pipe shutdown from obscuring the original transport error.
+        Inputs: Bounded captured bytes followed by opposite-channel I/O failures.
+        Outputs: Both renderers reject incomplete evidence with the original exception as their cause.
+        """
+        for first, second in (("stdout", "stderr"), ("stderr", "stdout")):
+            with self.subTest(first=first):
+                output = flitzzip_mcp.BoundedOutput(100, 50)
+                output.append("stdout", b"bounded prefix")
+                original = OSError("independent first failure")
+                output.record_read_failure(first, original)
+                output.record_read_failure(second, OSError("secondary shutdown"))
+                self.assertTrue(output.read_failure.is_set())
+                self.assertEqual(output.tails["stdout"], b"bounded prefix")
+                for rendered in ("stdout", "stderr"):
+                    with self.assertRaisesRegex(RuntimeError, "child " + first + " pipe read failed") as failure:
+                        output.render(rendered)
+                    self.assertIs(failure.exception.__cause__, original)
+
     def test_job_close_confirms_zero_and_is_idempotent(self) -> None:
         """Purpose: Verify drain ordering. Inputs: Job accounting moving from one to zero. Outputs: Termination
         then one close.
@@ -46,15 +220,16 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(library.QueryInformationJobObject.call_count, 2)
 
     def test_job_close_rejects_query_failure_and_timeout(self) -> None:
-        """Purpose: Preserve shutdown failures. Inputs: Invalid accounting or no progress. Outputs: Failure plus
+        """Purpose: Preserve shutdown failures. Inputs: Failed termination, invalid accounting or no progress.
+        Outputs: Failure plus
         released owner.
         """
-        for failed_query in (True, False):
-            with self.subTest(failed_query=failed_query):
+        for failure in ("query", "timeout", "termination"):
+            with self.subTest(failure=failure):
                 library = mock.Mock()
-                library.TerminateJobObject.return_value = True
+                library.TerminateJobObject.return_value = failure != "termination"
 
-                def query(handle, kind, result, size, returned, *, fail=failed_query):
+                def query(handle, kind, result, size, returned, *, fail=failure == "query"):
                     """Purpose: Model a shutdown failure. Inputs: Query buffer. Outputs: Failure or a persistently
                     active job.
                     """
@@ -66,8 +241,12 @@ class ProtocolTests(unittest.TestCase):
                 library.QueryInformationJobObject.side_effect = query
                 owner = flitzzip_mcp.ChildContainment.__new__(flitzzip_mcp.ChildContainment)
                 owner._handle, owner._kernel32 = 123, library
-                expected = RuntimeError if failed_query else TimeoutError
-                with mock.patch.object(flitzzip_mcp.time, "monotonic", side_effect=(0, 6)), self.assertRaises(expected):
+                expected = TimeoutError if failure == "timeout" else RuntimeError
+                with (
+                    mock.patch.object(flitzzip_mcp.time, "monotonic", side_effect=(0, 6)),
+                    mock.patch.object(flitzzip_mcp.ctypes, "get_last_error", return_value=5),
+                    self.assertRaises(expected),
+                ):
                     owner.close()
                 library.CloseHandle.assert_called_once_with(123)
                 self.assertIsNone(owner._handle)
@@ -254,6 +433,130 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(json.loads(result["content"][0]["text"]), output)
             self.assertEqual(result["isError"], exit_code != 0)
 
+    def test_metadata_shape_rejection_preserves_stateless_discovery(self) -> None:
+        """Purpose: Reject malformed per-request negotiation without initializing or executing commands.
+        Inputs: Invalid metadata containers and missing/wrongly typed modern negotiation fields.
+        Outputs: Exact invalid-params errors, followed by successful independent modern discovery.
+        """
+        prefix = flitzzip_mcp.META_PREFIX
+        invalid = (
+            None,
+            [],
+            "metadata",
+            1,
+            {prefix + "protocolVersion": flitzzip_mcp.PROTOCOL_VERSION},
+            {prefix + "protocolVersion": 1, prefix + "clientCapabilities": {}},
+            {prefix + "protocolVersion": flitzzip_mcp.PROTOCOL_VERSION, prefix + "clientCapabilities": []},
+        )
+        with mock.patch.object(flitzzip_mcp, "run_bounded_command") as command:
+            for request_id, metadata in enumerate(invalid):
+                self.request("tools/list", {"_meta": metadata}, request_id)
+                response = self.messages()[-1]
+                self.assertEqual(response["id"], request_id)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertNotIn("result", response)
+            self.assertFalse(self.server.initialized)
+            self.request("server/discover", request_id="recovered")
+            self.assertEqual(self.messages()[-1]["id"], "recovered")
+            self.assertIn("capabilities", self.messages()[-1]["result"])
+            command.assert_not_called()
+
+    def test_invalid_and_duplicate_legacy_initialization_preserves_session(self) -> None:
+        """Purpose: Keep failed negotiation from poisoning a valid legacy session or silently renegotiating it.
+        Inputs: Independently malformed initialization fields, a valid handshake and a duplicate handshake.
+        Outputs: Invalid-params/invalid-request errors; a subsequent bare ping retains the original session.
+        """
+        valid = {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}
+        for key, value in (
+            ("protocolVersion", 1),
+            ("capabilities", []),
+            ("clientInfo", []),
+            ("clientInfo", {"name": 1, "version": "1"}),
+            ("clientInfo", {"name": "test"}),
+        ):
+            self.server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {**valid, key: value}})
+            self.assertEqual(self.messages()[-1]["error"]["code"], -32602)
+            self.assertFalse(self.server.initialized)
+        self.server.handle({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": valid})
+        self.server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        self.server.handle({"jsonrpc": "2.0", "id": 3, "method": "initialize", "params": valid})
+        self.assertEqual(self.messages()[-1]["error"]["code"], -32600)
+        self.assertEqual(self.server.legacy_version, "2025-11-25")
+        self.server.handle({"jsonrpc": "2.0", "id": 4, "method": "ping"})
+        self.assertEqual(self.messages()[-1], {"jsonrpc": "2.0", "id": 4, "result": {}})
+
+    def test_unknown_methods_and_cursors_reject_without_command_execution(self) -> None:
+        """Purpose: Reject unsupported routing and pagination without changing discovery or running a tool.
+        Inputs: An unknown method and every representative non-null cursor type.
+        Outputs: Specified errors and successful cursor-free listing after rejection.
+        """
+        with mock.patch.object(flitzzip_mcp, "run_bounded_command") as command:
+            self.request("unknown/method")
+            self.assertEqual(self.messages()[-1]["error"]["code"], -32601)
+            for cursor in ("next", 0, False, [], {}):
+                self.request("tools/list", {"cursor": cursor})
+                self.assertEqual(self.messages()[-1]["error"]["code"], -32602)
+            self.request("tools/list", {"cursor": None})
+            self.assertTrue(self.messages()[-1]["result"]["tools"])
+            command.assert_not_called()
+
+    def test_runner_exception_is_a_tool_error_and_does_not_stall_reader(self) -> None:
+        """Purpose: Preserve protocol responsiveness after a command transport failure.
+        Inputs: An independently raised runner exception followed by a ping.
+        Outputs: A tool error with the actual cause, no structured success and an idle, responsive session.
+        """
+        with mock.patch.object(
+            flitzzip_mcp, "run_bounded_command", side_effect=RuntimeError("independent I/O failure")
+        ):
+            self.request("tools/call", {"name": "test", "arguments": {}}, "failed")
+            self.server.worker.join(timeout=2)
+        self.assertFalse(self.server.worker.is_alive())
+        result = self.messages()[-1]["result"]
+        self.assertTrue(result["isError"])
+        self.assertNotIn("structuredContent", result)
+        self.assertIn("independent I/O failure", result["content"][0]["text"])
+        self.assertIsNone(self.server.active_id)
+        self.request("ping", request_id="after-error")
+        self.assertEqual(self.messages()[-1]["id"], "after-error")
+        self.assertNotIn("error", self.messages()[-1])
+
+    def test_stdio_drains_oversized_frames_and_recovers_after_blank_lines(self) -> None:
+        """Purpose: Bound malformed input independently from JSON parsing and keep framing synchronized.
+        Inputs: Blank lines, an oversized line with a valid next request, and an oversized unterminated EOF.
+        Outputs: Exactly one oversize error per frame, successful next discovery and clean process shutdown.
+        """
+        request = {
+            "jsonrpc": "2.0",
+            "id": "after-oversize",
+            "method": "server/discover",
+            "params": {
+                "_meta": {
+                    flitzzip_mcp.META_PREFIX + "protocolVersion": flitzzip_mcp.PROTOCOL_VERSION,
+                    flitzzip_mcp.META_PREFIX + "clientCapabilities": {},
+                }
+            },
+        }
+        oversized = "x" * (flitzzip_mcp.MAX_REQUEST_CHARACTERS + 17)
+        for recover in (False, True):
+            payload = "\n \t\n" + oversized + ("\n" + json.dumps(request) + "\n" if recover else "")
+            result = subprocess.run(
+                [sys.executable, str(Path(flitzzip_mcp.__file__))],
+                input=payload,
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+                timeout=10,
+                check=True,
+            )
+            messages = [json.loads(line) for line in result.stdout.splitlines()]
+            self.assertEqual(result.stderr, "")
+            self.assertEqual(messages[0]["error"]["code"], -32600)
+            self.assertEqual(messages[0]["error"]["message"], "request exceeds input limit")
+            self.assertEqual(len(messages), 2 if recover else 1)
+            if recover:
+                self.assertEqual(messages[1]["id"], "after-oversize")
+                self.assertIn("capabilities", messages[1]["result"])
+
     def test_cancellation_keeps_reader_live_and_drops_cancelled_result(self) -> None:
         """Purpose: Cancel addressed work; inputs: active tool and busy request; outputs: no stale result."""
         started = threading.Event()
@@ -404,6 +707,101 @@ class MemoryAdmissionTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "nt", "Windows-native command execution and aggregate job memory")
 class BoundedChildTests(unittest.TestCase):
+    def test_delayed_termination_retries_wait_and_preserves_cancellation_status(self) -> None:
+        """Purpose: Finish owned process cleanup when asynchronous termination outlasts the first wait.
+        Inputs: Cancellation after verified admission and one controlled wait timeout.
+        Outputs: Repeated owned termination, joined readers, closed pipes and a failure distinct from deadline expiry.
+        """
+        cancellation = threading.Event()
+        process = mock.Mock(returncode=None)
+        process.stdout, process.stderr = io.BytesIO(b"captured prefix"), io.BytesIO()
+        process.poll.side_effect = lambda: process.returncode
+        waits = []
+
+        def wait(*, timeout):
+            """Purpose: Model delayed process rundown without spending wall time or starting an unowned process.
+            Inputs: Production wait deadline. Outputs: One timeout followed by a reaped failed process.
+            """
+            waits.append(timeout)
+            if len(waits) == 1:
+                raise subprocess.TimeoutExpired(["owned-unit-command"], timeout)
+            process.returncode = 1
+            return 1
+
+        def resume(_process):
+            """Purpose: Deliver cancellation after admission. Inputs: Owned suspended child. Outputs: Set event."""
+            cancellation.set()
+
+        process.wait.side_effect = wait
+        owner = mock.Mock()
+        with (
+            mock.patch.object(flitzzip_mcp.subprocess, "Popen", return_value=process),
+            mock.patch.object(flitzzip_mcp, "ChildContainment", return_value=owner) as containment,
+            mock.patch.object(flitzzip_mcp, "resume_owned_child", side_effect=resume),
+        ):
+            result = flitzzip_mcp.run_bounded_command(
+                ["owned-unit-command"],
+                cancellation=cancellation,
+                timeout_seconds=5,
+                memory_limit_bytes=128 * flitzzip_mcp.MIB,
+            )
+        containment.assert_called_once_with(process, 128 * flitzzip_mcp.MIB)
+        self.assertEqual(owner.terminate.call_args_list, [mock.call(process), mock.call(process)])
+        owner.close.assert_called_once_with()
+        self.assertEqual(waits, [5, 5, 5])
+        self.assertTrue(process.stdout.closed)
+        self.assertTrue(process.stderr.closed)
+        self.assertEqual(result["exit_code"], 1)
+        self.assertEqual(result["stdout"], "captured prefix")
+        self.assertFalse(result["timed_out"])
+        self.assertFalse(result["output_limit_exceeded"])
+
+    def test_pipe_read_failure_terminates_owned_child_and_fails(self) -> None:
+        """Purpose: Prevent failed output acquisition from masquerading as complete command evidence.
+        Inputs: Real contained children with independently failed stdout or stderr reads.
+        Outputs: A transport error after child termination and complete pipe cleanup, without waiting for timeout.
+        """
+        original_popen = subprocess.Popen
+        cases = [
+            (channel, script)
+            for channel in ("stdout", "stderr")
+            for script in ("print('unobserved output')", "import time; time.sleep(10)")
+        ]
+        for channel, script in cases:
+            children = []
+
+            def launch(*args, channel=channel, children=children, **kwargs):
+                """Purpose: Inject only the stream fault after real suspended creation.
+                Inputs: Unchanged production creation arguments. Outputs: Actual child with an owned pipe proxy.
+                """
+                process = original_popen(*args, **kwargs)
+                setattr(process, channel, FailedReadPipe(getattr(process, channel)))
+                children.append(process)
+                return process
+
+            try:
+                with (
+                    self.subTest(channel=channel, script=script),
+                    mock.patch.object(flitzzip_mcp.subprocess, "Popen", side_effect=launch),
+                    self.assertRaisesRegex(RuntimeError, "child " + channel + " pipe read failed"),
+                ):
+                    flitzzip_mcp.run_bounded_command(
+                        [sys.executable, "-c", script],
+                        timeout_seconds=2,
+                        memory_limit_bytes=128 * flitzzip_mcp.MIB,
+                    )
+                self.assertEqual(len(children), 1)
+                self.assertIsNotNone(children[0].poll())
+                self.assertTrue(children[0].stdout.closed)
+                self.assertTrue(children[0].stderr.closed)
+            finally:
+                for child in children:
+                    if child.poll() is None:
+                        child.kill()
+                    child.wait(timeout=5)
+                    child.stdout.close()
+                    child.stderr.close()
+
     def test_reader_start_failure_reaps_child_and_closes_pipes(self) -> None:
         """Purpose: Regress partial reader startup leaks using an actual contained child.
         Inputs: A controlled first or second reader-start failure. Outputs: Reaped child and closed pipes before return.
@@ -470,32 +868,79 @@ class BoundedChildTests(unittest.TestCase):
                 child.stdout.close()
                 child.stderr.close()
 
-    def test_memory_limit_is_applied_before_child_can_spawn(self) -> None:
-        """Purpose: Verify startup containment; inputs: child querying its job; outputs: exact shared ceiling."""
-        script = (
-            "import ctypes,sys; from ctypes import wintypes; sys.path.insert(0,'mcp'); "
-            "from flitzzip_mcp import _JobObjectExtendedLimitInformation; "
-            "k=ctypes.WinDLL('kernel32',use_last_error=True); "
-            "k.QueryInformationJobObject.argtypes=[wintypes.HANDLE,ctypes.c_int,"
-            "ctypes.c_void_p,wintypes.DWORD,ctypes.c_void_p]; "
-            "v=_JobObjectExtendedLimitInformation(); "
-            "assert k.QueryInformationJobObject(None,9,ctypes.byref(v),ctypes.sizeof(v),None); "
-            "print(v.job_memory_limit); print(v.basic_limit_information.limit_flags)"
-        )
-        result = flitzzip_mcp.run_bounded_command(
-            [sys.executable, "-c", script], timeout_seconds=10, memory_limit_bytes=128 * flitzzip_mcp.MIB
-        )
+    def _assert_owned_memory_job(self, interpreter: str) -> None:
+        """Purpose: Verify the actual owned job before resuming its child, independent of launcher-added jobs.
+        Inputs: A real Python interpreter. Outputs: Exact OS-enforced limits, verified membership and child success.
+        """
+        original_containment = flitzzip_mcp.ChildContainment
+        observed = []
+
+        def inspect_assignment(process, memory_limit_bytes):
+            """Purpose: Observe real assignment before the production runner resumes the suspended child.
+            Inputs: Owned process and admitted memory. Outputs: Actual containment owner, or complete cleanup on error.
+            """
+            owner = original_containment(process, memory_limit_bytes)
+            try:
+                kernel32 = owner._kernel32
+                information = flitzzip_mcp._JobObjectExtendedLimitInformation()
+                self.assertTrue(
+                    kernel32.QueryInformationJobObject(
+                        owner._handle,
+                        9,
+                        ctypes.byref(information),
+                        ctypes.sizeof(information),
+                        None,
+                    )
+                )
+                kernel32.IsProcessInJob.argtypes = [
+                    wintypes.HANDLE,
+                    wintypes.HANDLE,
+                    ctypes.POINTER(wintypes.BOOL),
+                ]
+                kernel32.IsProcessInJob.restype = wintypes.BOOL
+                member = wintypes.BOOL()
+                self.assertTrue(
+                    kernel32.IsProcessInJob(
+                        wintypes.HANDLE(process._handle),
+                        owner._handle,
+                        ctypes.byref(member),
+                    )
+                )
+                self.assertTrue(member.value)
+                observed.append((information.job_memory_limit, information.basic_limit_information.limit_flags))
+                return owner
+            except BaseException:
+                owner.close()
+                raise
+
+        with mock.patch.object(flitzzip_mcp, "ChildContainment", side_effect=inspect_assignment):
+            result = flitzzip_mcp.run_bounded_command(
+                [interpreter, "-c", "print('started')"],
+                timeout_seconds=10,
+                memory_limit_bytes=128 * flitzzip_mcp.MIB,
+            )
         self.assertEqual(result["exit_code"], 0, result["stderr"])
         self.assertEqual(result["job_memory_limit_bytes"], 128 * flitzzip_mcp.MIB)
-        self.assertEqual(result["stdout"].splitlines(), [str(128 * flitzzip_mcp.MIB), str(0x2200)])
+        self.assertEqual(result["stdout"].splitlines(), ["started"])
+        self.assertEqual(observed, [(128 * flitzzip_mcp.MIB, 0x2200)])
+
+    def test_memory_limit_is_applied_before_child_can_spawn(self) -> None:
+        """Purpose: Verify startup containment. Inputs: Current Python. Outputs: Exact owned-job limits/membership."""
+        self._assert_owned_memory_job(sys.executable)
 
     def test_aggregate_memory_denies_descendant_allocation(self) -> None:
+        """Purpose: Verify real tree-wide denial. Inputs: Current Python.
+        Outputs: Independent and aggregate allocation controls.
+        """
+        self._assert_aggregate_memory_denial(sys.executable)
+
+    def _assert_aggregate_memory_denial(self, interpreter: str) -> None:
         """Purpose: Prove the cap covers parent and descendant together; inputs: two 48 MiB buffers under 96 MiB.
         Outputs: Each buffer fits alone; a nested buffer is denied while the first remains held, without host stress.
         """
         allocation = "import sys; b=bytearray(48*1024*1024); print('allocated',flush=True)"
         standalone = flitzzip_mcp.run_bounded_command(
-            [sys.executable, "-c", allocation], timeout_seconds=10, memory_limit_bytes=96 * flitzzip_mcp.MIB
+            [interpreter, "-c", allocation], timeout_seconds=10, memory_limit_bytes=96 * flitzzip_mcp.MIB
         )
         self.assertEqual(standalone["exit_code"], 0, standalone["stderr"])
         descendant = (
@@ -509,11 +954,21 @@ class BoundedChildTests(unittest.TestCase):
             "p=subprocess.run([sys.executable,'-c',sys.argv[1]]); sys.exit(p.returncode)"
         )
         aggregate = flitzzip_mcp.run_bounded_command(
-            [sys.executable, "-c", parent, descendant], timeout_seconds=10, memory_limit_bytes=96 * flitzzip_mcp.MIB
+            [interpreter, "-c", parent, descendant], timeout_seconds=10, memory_limit_bytes=96 * flitzzip_mcp.MIB
         )
         self.assertEqual(aggregate["exit_code"], 42, aggregate)
         self.assertIn("memory denied", aggregate["stdout"])
         self.assertFalse(aggregate["timed_out"])
+
+    def test_virtual_environment_launcher_retains_aggregate_memory_boundary(self) -> None:
+        """Purpose: Cover a launcher that adds another Windows job without assuming that job's identity.
+        Inputs: A fresh standard-library virtual environment without pip. Outputs: Exact ownership and real denial.
+        """
+        with tempfile.TemporaryDirectory(prefix="flitzzip-mcp-venv-") as temporary:
+            venv.EnvBuilder(with_pip=False).create(temporary)
+            interpreter = str(Path(temporary) / "Scripts/python.exe")
+            self._assert_owned_memory_job(interpreter)
+            self._assert_aggregate_memory_denial(interpreter)
 
     def test_failed_containment_never_executes_child(self) -> None:
         """Purpose: Prove fail-closed launch; inputs: injected assignment failure; outputs: no child marker or leak."""

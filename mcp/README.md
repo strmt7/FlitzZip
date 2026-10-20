@@ -58,8 +58,18 @@ No CPU quota, affinity, breakaway permission or working-set throttling is set.
 Normal exit, cancellation, timeout and output-limit handling retain the existing
 tree cleanup. Failure to start either output-reader thread also terminates and
 reaps the owned child and closes its pipes before returning the error.
+An output-pipe read error also terminates the owned tree. The collector retains
+the first read failure and refuses to render partial output as complete command
+evidence, even when the child itself exited successfully.
 Results include `job_memory_limit_bytes`; allocation denial remains
 a command failure, never a passed or deferred check.
+
+Containment tests query the exact owned job and verify child membership before
+resume. Python virtual-environment launchers can add a nested job;
+[querying a null job handle](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-queryinformationjobobject)
+then describes the immediate job rather than the runner's aggregate limit.
+Keep real allocation-denial controls for both ordinary and fresh virtual-environment
+interpreters; a reported limit alone does not prove enforcement.
 
 Command execution requires Windows; discovery, framing and pure protocol tests
 do not. Other platforms fail before spawning instead of advertising an

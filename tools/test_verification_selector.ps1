@@ -495,10 +495,11 @@ Assert-Selector (-not (Test-RequiredCommand -Plan $sanitizerToolPlan -Id 'releas
 foreach ($metadataPath in @('tools/release_metadata.py', 'tools/test_release_metadata.py')) {
     $metadataPlan = Get-FlitzZipVerificationPlan -ChangedPath @($metadataPath)
     Assert-Selector (Test-RequiredCommand -Plan $metadataPlan -Id 'release-metadata-contracts') "release metadata must run its real behavior contracts: $metadataPath"
-}
-$metadataTestsPlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/test_release_metadata.py')
-foreach ($id in @('release-build', 'unit-tests', 'package-smoke')) {
-    Assert-Selector (-not (Test-RequiredCommand -Plan $metadataTestsPlan -Id $id)) "metadata tests alone must not execute unchanged product work: $id"
+    Assert-Selector (Test-RequiredCommand -Plan $metadataPlan -Id 'security-scan') "release metadata retains security policy checks: $metadataPath"
+    Assert-Selector (-not (Test-Workflow -Plan $metadataPlan -Name 'windows-ci')) "release metadata has no native compilation consumer: $metadataPath"
+    foreach ($id in @('release-build', 'unit-tests', 'package-smoke', 'msi-identity-smoke')) {
+        Assert-Selector (-not (Test-RequiredCommand -Plan $metadataPlan -Id $id)) "release metadata orchestration must not execute unchanged product work: $metadataPath/$id"
+    }
 }
 foreach ($releasePath in @('.github/workflows/release.yml', 'tools/release_workflow_policy.ps1',
         'tools/test_release_workflow_policy.ps1')) {

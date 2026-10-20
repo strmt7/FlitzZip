@@ -415,7 +415,7 @@ class BoundedOutput:
     def __init__(self, output_limit: int, tail_limit: int) -> None:
         """Purpose: Initialize fixed child-output accounting.
         Inputs: output_limit caps aggregate bytes and tail_limit caps retained bytes per stream.
-        Outputs: Creates empty synchronized tails and a limit event.
+        Outputs: Creates synchronized tails and independent limit/read-failure signals.
         """
         self.output_limit = output_limit
         self.tail_limit = tail_limit
@@ -423,7 +423,19 @@ class BoundedOutput:
         self.stream_bytes = {"stdout": 0, "stderr": 0}
         self.tails = {"stdout": bytearray(), "stderr": bytearray()}
         self.limit_exceeded = threading.Event()
+        self.read_failure = threading.Event()
+        self.read_failure_cause: tuple[str, OSError] | None = None
         self.lock = threading.Lock()
+
+    def record_read_failure(self, channel: str, error: OSError) -> None:
+        """Purpose: Preserve the first output acquisition failure and stop its owned command tree.
+        Inputs: Failing stdout/stderr channel and its I/O exception.
+        Outputs: Records the root cause under the output lock and signals the command controller.
+        """
+        with self.lock:
+            if self.read_failure_cause is None:
+                self.read_failure_cause = channel, error
+            self.read_failure.set()
 
     def append(self, channel: str, chunk: bytes) -> None:
         """Purpose: Account for one child-output chunk and retain only its bounded stream tail.
@@ -443,9 +455,12 @@ class BoundedOutput:
     def render(self, channel: str) -> tuple[str, bool]:
         """Purpose: Decode one retained binary tail into a response-sized UTF-8 replacement string.
         Inputs: channel selects stdout or stderr.
-        Outputs: Returns bounded text and whether bytes or decoded characters were omitted.
+        Outputs: Returns bounded text and whether bytes or decoded characters were omitted; read failures raise.
         """
         with self.lock:
+            if self.read_failure_cause is not None:
+                failed_channel, error = self.read_failure_cause
+                raise RuntimeError(f"child {failed_channel} pipe read failed") from error
             raw = bytes(self.tails[channel])
             byte_count = self.stream_bytes[channel]
         decoded = raw.decode("utf-8", errors="replace")
@@ -456,13 +471,13 @@ class BoundedOutput:
 def _drain_stream(stream: BinaryIO, channel: str, output: BoundedOutput) -> None:
     """Purpose: Drain one child pipe concurrently without retaining unbounded bytes.
     Inputs: stream is a binary pipe, channel identifies it, and output owns bounded accounting.
-    Outputs: Reads until EOF or pipe closure and updates output for each fixed-size chunk.
+    Outputs: Reads through EOF, retains bounded chunks and signals any I/O failure to the command controller.
     """
     try:
         while chunk := stream.read(READ_CHUNK_BYTES):
             output.append(channel, chunk)
-    except OSError:
-        pass
+    except OSError as error:
+        output.record_read_failure(channel, error)
 
 
 def child_environment(command: Sequence[str]) -> dict[str, str]:
@@ -518,7 +533,8 @@ def run_bounded_command(
 ) -> dict[str, object]:
     """Purpose: Run one allowlisted command with aggregate memory, process-tree, time, and streaming-output limits.
     Inputs: Fixed argv, positive limits and checkout-contained directory; cancellation stops only this tree.
-    Outputs: Returns bounded outcome and admitted job-memory bytes; no child runs before verified containment.
+    Outputs: Returns bounded outcome and admitted job-memory bytes; output read failures raise after cleanup.
+    No child runs before verified containment.
     """
     if (
         type(timeout_seconds) not in (int, float)
@@ -580,7 +596,7 @@ def run_bounded_command(
             if cancellation is not None and cancellation.is_set():
                 containment.terminate(process)
                 break
-            if output.limit_exceeded.is_set():
+            if output.limit_exceeded.is_set() or output.read_failure.is_set():
                 containment.terminate(process)
                 break
             if time.monotonic() >= deadline:
