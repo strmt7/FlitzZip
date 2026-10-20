@@ -10,7 +10,9 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 import zipfile
+from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import urlsplit
 from urllib.request import Request
@@ -245,6 +247,12 @@ class CoverageTests(unittest.TestCase):
         hashes = {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}
         for name, data in files.items():
             (directory / name).write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "no executable"):
+            collector.verify_collector(directory, {"runtime.dll": hashes["runtime.dll"]})
+        invalid_hash = dict(hashes)
+        invalid_hash["runtime.dll"] = "invalid"
+        with self.assertRaisesRegex(ValueError, "Invalid collector runtime identity"):
+            collector.verify_collector(directory, invalid_hash)
         self.assertEqual(collector.verify_collector(directory, hashes), directory / "OpenCppCoverage.exe")
         (directory / "runtime.dll").write_bytes(b"changed")
         with self.assertRaises(ValueError):
@@ -255,6 +263,92 @@ class CoverageTests(unittest.TestCase):
             collector.verify_collector(directory, hashes)
         with self.assertRaises(ValueError):
             collector.owned_path(self.root, self.root / "../outside")
+
+    # Purpose: Reject redirected output ancestry and retain the canonical process owner and successful diagnostics.
+    # Inputs: Owned symlink, actual MCP loader, a missing import spec and one bounded successful result.
+    # Outputs: Redirects/load failures stop; successful results are returned and written byte-for-byte as JSON.
+    def test_path_and_process_ownership_boundaries(self):
+        target = self.root / "target"
+        target.mkdir()
+        redirected = self.root / "redirected"
+        try:
+            redirected.symlink_to(target, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f"Host cannot create an owned directory symlink: {error}")
+        with self.assertRaisesRegex(ValueError, "symbolic links or reparse points"):
+            collector.owned_path(self.root, redirected / "report.json")
+        self.assertTrue(callable(collector.process_owner().run_bounded_command))
+        with (
+            patch.object(collector.importlib.util, "spec_from_file_location", return_value=None),
+            self.assertRaisesRegex(ValueError, "process containment contract"),
+        ):
+            collector.process_owner()
+        result = {"exit_code": 0, "timed_out": False, "output_limit_exceeded": False, "stdout": "ok"}
+        with patch.object(collector, "process_owner") as owner:
+            owner.return_value.run_bounded_command.return_value = result
+            self.assertEqual(collector.run_checked(["owned-command"], 2, self.root / "success.json"), result)
+        self.assertEqual(json.loads((self.root / "success.json").read_text()), result)
+
+    # Purpose: Fail closed across collector-lock, cache-reuse and every bounded transport failure.
+    # Inputs: Inert reviewed-size bytes, controlled responses/clocks and independent lock mutations.
+    # Outputs: Ambiguous locks and incomplete, late, excess or changed installers never execute.
+    def test_collector_provision_admission_matrix(self):
+        version = "0.9.9.0"
+        payload = b"inert reviewed collector fixture"
+        lock = {
+            "version": version,
+            "url": f"https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-{version}/"
+            f"OpenCppCoverageSetup-x64-{version}.exe",
+            "installer_bytes": len(payload),
+            "installer_sha256": hashlib.sha256(payload).hexdigest(),
+            "files": {"OpenCppCoverage.exe": "a" * 64},
+        }
+        output = self.root / "out/acquisition-matrix"
+        output.mkdir(parents=True)
+        for field, value, message in (
+            ("version", "release", "Invalid collector version"),
+            ("url", "https://github.com/OpenCppCoverage/wrong.exe", "URL differs"),
+        ):
+            invalid = dict(lock)
+            invalid[field] = value
+            with (
+                self.subTest(field=field),
+                patch.object(collector, "ROOT", self.root),
+                self.assertRaisesRegex(ValueError, message),
+            ):
+                collector.provision(invalid, output)
+        cached = self.root / f"out/tools/opencppcoverage-{version}"
+        cached.mkdir(parents=True)
+        expected = cached / "OpenCppCoverage.exe"
+        with (
+            patch.object(collector, "ROOT", self.root),
+            patch.object(collector, "verify_collector", return_value=expected) as verify,
+            patch.object(collector, "build_opener") as opener,
+        ):
+            self.assertEqual(collector.provision(lock, output), expected)
+        verify.assert_called_once_with(cached, lock["files"])
+        opener.assert_not_called()
+        cached.rmdir()
+
+        cases = (
+            ("deadline", payload, [0, 121], lock, TimeoutError, "deadline"),
+            ("incomplete", b"", [0, 1], lock, ValueError, "incomplete"),
+            ("excess", payload + b"x", [0, 1], lock, ValueError, "exceeded"),
+            ("digest", payload, [0, 1, 2], {**lock, "installer_sha256": "0" * 64}, ValueError, "SHA-256"),
+        )
+        for label, body, clock, selected_lock, exception, message in cases:
+            response = io.BytesIO(body)
+            opener = SimpleNamespace(open=lambda url, timeout, response=response: response)
+            with (
+                self.subTest(case=label),
+                patch.object(collector, "ROOT", self.root),
+                patch.object(collector, "build_opener", return_value=opener),
+                patch.object(collector.time, "monotonic", side_effect=clock),
+                patch.object(collector, "run_checked") as install,
+                self.assertRaisesRegex(exception, message),
+            ):
+                collector.provision(selected_lock, output)
+            install.assert_not_called()
 
     # Purpose: Preserve collector failures, deadlines and excess output as failed qualification.
     # Inputs: Controlled outcomes from the real shared process boundary. Outputs: Retained diagnostics and exception.
@@ -793,6 +887,98 @@ class CoverageTests(unittest.TestCase):
             self.assertEqual(summary["lines_valid"], 12)
             self.assertEqual(summary["uncovered_lines"], report["uncovered_lines"])
             self.assertEqual(summary["unmeasured_source_files"], ["src/app/unmeasured.cpp"])
+
+    # Purpose: Detect output debris created by capability probes after all CLI rejection fixtures remain intact.
+    # Inputs: Owned admission directory with zero rejection cases and one simulated unexpected capability artifact.
+    # Outputs: Final inventory validation rejects the extra file instead of accepting contaminated evidence.
+    def test_cli_capability_debris_is_rejected(self):
+        def leave_debris(_binary, directory, _hip_host):
+            (directory / "unexpected.tmp").write_bytes(b"unexpected capability output")
+            return set()
+
+        with (
+            patch.object(collector, "ROOT", self.root),
+            patch.object(collector.uuid, "uuid4", return_value=SimpleNamespace(hex="owned")),
+            patch.object(collector, "cli_admission_cases", return_value=[]),
+            patch.object(collector, "run_cli_capability_contracts", side_effect=leave_debris),
+            self.assertRaisesRegex(RuntimeError, "unexpected output files"),
+        ):
+            collector.run_cli_admission(self.root / "cli.exe", self.root)
+
+    # Purpose: Require parser, filesystem, ZIP and memory-benchmark sources in every accepted native report.
+    # Inputs: Stable build and identity evidence with a normalized report that omits all mandatory consumers.
+    # Outputs: Collection fails before summary publication even though the collector command itself succeeded.
+    def test_collection_requires_all_native_consumer_sources(self):
+        output = self.root / "missing-native-consumers"
+        output.mkdir()
+        before = {
+            "inputs_sha256": "a" * 64,
+            "receipt_sha256": "b" * 64,
+            "receipt": {"inputs": {"files": {"src/core/archive_format.cpp": "fixture"}}},
+        }
+        identities = {
+            "build/Debug/flitzzip_tests.pdb": "c" * 64,
+            "build/Debug/flitzzip_tests.exe": "d" * 64,
+        }
+        report = {"files": [], "lines_valid": 0, "lines_covered": 0, "uncovered_lines": {}}
+        with (
+            patch.object(collector, "coverage_build", return_value=before),
+            patch.object(collector, "measurement_identity", return_value=identities),
+            patch.object(collector, "run_checked"),
+            patch.object(collector, "verify_collector"),
+            patch.object(collector, "normalize_report", return_value=report),
+            self.assertRaisesRegex(ValueError, "missed required native"),
+        ):
+            collector.collect(self.root / "collector.exe", {"files": {}}, output)
+        self.assertFalse((output / "summary.json").exists())
+
+    # Purpose: Keep public CLI modes explicit and prevent provisioning from silently ignoring measurement flags.
+    # Inputs: Each parser route, an owned lock and controlled provision/scenario/collection boundaries.
+    # Outputs: Exact mode propagation succeeds; irrelevant flags and unsupported hosts fail before side effects.
+    def test_main_routes_modes_and_rejects_ambiguous_flags(self):
+        lock = {"version": "fixture"}
+        lock_path = self.root / "collector-lock.json"
+        lock_path.write_text(json.dumps(lock), encoding="utf-8")
+        with (
+            patch.object(collector, "ROOT", self.root),
+            patch("sys.argv", ["native_coverage", "--provision-only", "--gui"]),
+            self.assertRaisesRegex(ValueError, "require coverage collection"),
+        ):
+            collector.main()
+        self.assertFalse((self.root / "out/coverage-gui").exists())
+        with (
+            patch.object(collector.os, "name", "posix"),
+            patch("sys.argv", ["native_coverage"]),
+            self.assertRaisesRegex(ValueError, "Windows MSVC/PDB"),
+        ):
+            collector.main()
+        with (
+            patch.object(collector, "ROOT", self.root),
+            patch("sys.argv", ["native_coverage", "--run-scenarios", "--hip-host", "--gui"]),
+            patch.object(collector, "run_scenarios") as scenarios,
+        ):
+            collector.main()
+        scenarios.assert_called_once_with(self.root / "out/coverage-hip-host-gui", True, True)
+        executable = self.root / "collector.exe"
+        with (
+            patch.object(collector, "ROOT", self.root),
+            patch.object(collector, "LOCK", lock_path),
+            patch("sys.argv", ["native_coverage", "--provision-only"]),
+            patch.object(collector, "provision", return_value=executable) as provision,
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            collector.main()
+        provision.assert_called_once_with(lock, self.root / "out/coverage")
+        self.assertIn("Verified OpenCppCoverage fixture", output.getvalue())
+        with (
+            patch.object(collector, "ROOT", self.root),
+            patch.object(collector, "LOCK", lock_path),
+            patch("sys.argv", ["native_coverage", "--gui"]),
+            patch.object(collector, "provision", return_value=executable),
+            patch.object(collector, "collect") as collect,
+        ):
+            collector.main()
+        collect.assert_called_once_with(executable, lock, self.root / "out/coverage-gui", False, True)
 
 
 if __name__ == "__main__":
