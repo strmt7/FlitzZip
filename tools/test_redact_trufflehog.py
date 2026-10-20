@@ -2,6 +2,7 @@
 
 import ast
 import copy
+import gzip
 import hashlib
 import io
 import json
@@ -22,6 +23,7 @@ from tools.redact_trufflehog import (
     MAX_RECORD_BYTES,
     REVIEW_EVIDENCE_PATHS,
     PublicFixtureReview,
+    read_complete_member,
     redact_finding,
     redact_stream,
     review_bytes,
@@ -662,6 +664,23 @@ class PublicFixtureReviewTests(unittest.TestCase):
 
 
 class ReviewedTarMemberTests(unittest.TestCase):
+    # Purpose: Enforce cumulative TAR extents and exact decoded reads without allocating declared oversized payloads.
+    # Inputs: Header-only oversized TAR metadata plus complete and short in-memory member streams.
+    # Outputs: Both malformed extents fail closed while an exact stream remains byte-identical.
+    def test_declared_tar_extents_and_complete_member_reads(self):
+        info = tarfile.TarInfo("public.py")
+        info.size = 1025
+        data = gzip.compress(info.tobuf())
+        review = {"archive_format": "tar.gz", "member": "public.py"}
+        with (
+            patch("tools.redact_trufflehog.MAX_REVIEW_EXPANDED_BYTES", 1024),
+            self.assertRaisesRegex(ValueError, "expanded byte limit"),
+        ):
+            reviewed_member(data, review)
+        self.assertEqual(read_complete_member(io.BytesIO(b"exact"), 5), b"exact")
+        with self.assertRaisesRegex(ValueError, "member is incomplete"):
+            read_complete_member(io.BytesIO(b"short"), 6)
+
     # Purpose: Require unambiguous ZIP member identity and enforce decoded member bounds without extraction.
     # Inputs: In-memory duplicate-name ZIPs and complete members at and beyond the existing one-MiB limit.
     # Outputs: Exact boundary bytes are readable; duplicates and oversized decoded members fail admission.
