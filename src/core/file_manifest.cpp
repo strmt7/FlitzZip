@@ -4,6 +4,7 @@
 #include "core/path_safety.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
+#include "core/windows_handle.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -25,16 +26,7 @@ namespace flitzzip {
 class ManifestSourceLockState {
   public:
 #ifdef _WIN32
-    std::vector<HANDLE> handles;
-
-    // Purpose: Release every source-file and parent-chain handle held by this lock.
-    // Inputs: None.
-    // Outputs: Closes handles from leaf to root without throwing.
-    ~ManifestSourceLockState() {
-        for (auto it = handles.rbegin(); it != handles.rend(); ++it) {
-            CloseHandle(*it);
-        }
-    }
+    std::vector<windows_detail::HandleOwner> handles;
 #endif
 };
 
@@ -107,28 +99,22 @@ HANDLE open_source_directory(const std::filesystem::path& directory) {
 // Purpose: Open and pin every existing source-parent component from root to leaf.
 // Inputs: `parent` is the normalized absolute parent directory.
 // Outputs: Returns ordered owned handles or closes partial state and throws.
-std::vector<HANDLE> pin_source_parent_chain(const std::filesystem::path& parent) {
-    std::vector<HANDLE> handles;
-    try {
-        const auto regular = windows_regular_path(parent);
-        auto current = regular.root_path();
-        if (current.empty())
-            throw SecurityError("source path has no absolute root");
-        handles.push_back(open_source_directory(current));
-        for (const auto& component : regular.relative_path()) {
-            if (component.empty() || component == L".")
-                continue;
-            if (component == L"..")
-                throw SecurityError("source path contains parent traversal");
-            current /= component;
-            handles.push_back(open_source_directory(current));
-        }
-        return handles;
-    } catch (...) {
-        for (auto it = handles.rbegin(); it != handles.rend(); ++it)
-            CloseHandle(*it);
-        throw;
+std::vector<windows_detail::HandleOwner> pin_source_parent_chain(const std::filesystem::path& parent) {
+    std::vector<windows_detail::HandleOwner> handles;
+    const auto regular = windows_regular_path(parent);
+    auto current = regular.root_path();
+    if (current.empty())
+        throw SecurityError("source path has no absolute root");
+    handles.push_back(windows_detail::HandleOwner(open_source_directory(current)));
+    for (const auto& component : regular.relative_path()) {
+        if (component.empty() || component == L".")
+            continue;
+        if (component == L"..")
+            throw SecurityError("source path contains parent traversal");
+        current /= component;
+        handles.push_back(windows_detail::HandleOwner(open_source_directory(current)));
     }
+    return handles;
 }
 
 // Purpose: Query stable identity, size, and write-time metadata from an open regular source file.
@@ -162,15 +148,17 @@ SourceFileIdentity source_identity_from_handle(HANDLE handle) {
 SourceFileIdentity open_locked_source(const std::filesystem::path& path, ManifestSourceLockState& state) {
     state.handles = pin_source_parent_chain(path.parent_path());
     const auto text = windows_api_path(path);
-    const auto handle = CreateFileW(text.c_str(), GENERIC_READ | FILE_READ_ATTRIBUTES, FILE_SHARE_READ, nullptr,
-                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) {
+    windows_detail::HandleOwner handle(CreateFileW(text.c_str(), GENERIC_READ | FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
+                                                   nullptr, OPEN_EXISTING,
+                                                   FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    if (handle.get() == INVALID_HANDLE_VALUE) {
         const auto error = GetLastError();
         throw SecurityError("cannot lock source file: " + path_diagnostic_utf8(path) + " (Windows error " +
                             std::to_string(error) + ")");
     }
-    state.handles.push_back(handle);
-    return source_identity_from_handle(handle);
+    const auto identity = source_identity_from_handle(handle.get());
+    state.handles.push_back(std::move(handle));
+    return identity;
 }
 
 // Purpose: Compare two source identity snapshots without pathname assumptions.

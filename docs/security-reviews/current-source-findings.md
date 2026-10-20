@@ -108,9 +108,13 @@ The virtual reader first bounds the requested range against the virtual archive.
 
 ### Alert 825
 
-**Fixed Windows file identity.** `DS121708` at `src/core/file_manifest.cpp:152`.
+**Fixed Windows file identity.** `DS121708` in `src/core/file_manifest.cpp`;
+the ledger records the exact current coordinates.
 
 After `GetFileInformationByHandleEx` succeeds, the copy transfers the 16-byte `FILE_ID_128.Identifier` into the 16-byte `SourceFileIdentity::file_id` array. Both complete objects are live and disjoint. File identity, reparse-point and publication tests retain the surrounding contract.
+The separate source-handle ownership repair adopts handles before vector growth;
+allocation-failure and lock-lifetime tests cover that boundary. It does not change
+this copy, its extents, or its source identity fields.
 
 ### Alert 838
 
