@@ -1,4 +1,5 @@
 #include "cli/memory_benchmark.hpp"
+#include "cli/benchmark_suite_policy.hpp"
 #include "cli/memory_benchmark_source.hpp"
 
 #include "core/checksum.hpp"
@@ -496,32 +497,17 @@ void print_benchmark_suite_case(const BenchmarkSuiteCase& candidate) {
 }
 
 // Purpose: Select the best autotune candidate without silently degrading compression below the balanced baseline.
-// Inputs: `candidates` is a non-empty set of measured benchmark-suite cases and `tune_levels` controls ratio guarding.
-// Outputs: Returns a reference to the recommended candidate.
+// Inputs: `candidates` contains measured standard-mode cases and `tune_levels` controls ratio guarding.
+// Outputs: Returns a reference to the recommended case; the shared policy rejects invalid observations.
 const BenchmarkSuiteCase& choose_benchmark_suite_recommendation(const std::vector<BenchmarkSuiteCase>& candidates,
                                                                 bool tune_levels) {
-    const BenchmarkSuiteCase* baseline = nullptr;
+    std::vector<BenchmarkSuiteObservation> observations;
+    observations.reserve(candidates.size());
     for (const auto& candidate : candidates) {
-        if (candidate.compression_level == flitzzip::kDefaultCompressionLevel &&
-            candidate.block_size == flitzzip::kDefaultArchiveBlockBytes) {
-            baseline = &candidate;
-            break;
-        }
+        observations.push_back(
+            {candidate.compression_level, candidate.block_size, candidate.gpu_score, candidate.compression_ratio});
     }
-    if (baseline == nullptr) {
-        baseline = &candidates.front();
-    }
-    const auto max_ratio = tune_levels ? baseline->compression_ratio * 1.02 : std::numeric_limits<double>::infinity();
-    const BenchmarkSuiteCase* best = nullptr;
-    for (const auto& candidate : candidates) {
-        if (candidate.compression_ratio > max_ratio) {
-            continue;
-        }
-        if (best == nullptr || candidate.gpu_score > best->gpu_score) {
-            best = &candidate;
-        }
-    }
-    return *(best == nullptr ? baseline : best);
+    return candidates[select_benchmark_suite_recommendation(observations, tune_levels)];
 }
 
 // Purpose: Validate RAM benchmark arguments before host admission and any codec allocation.

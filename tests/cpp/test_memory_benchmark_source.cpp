@@ -1,5 +1,6 @@
 #include "test_util.hpp"
 
+#include "cli/benchmark_suite_policy.hpp"
 #include "cli/memory_benchmark_source.hpp"
 #include "core/checksum.hpp"
 #include "core/decoded_chunk.hpp"
@@ -7,6 +8,7 @@
 #include "gpu/gpu_codec.hpp"
 
 #include <array>
+#include <cmath>
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -46,6 +48,106 @@ std::string parallel_validation_error(std::span<const std::byte> bytes, std::uin
     return {};
 }
 }  // namespace
+
+// Purpose: Keep a fixed nondefault block-size sweep anchored to balanced compression, not its first weak level.
+// Inputs: Unit observations with fast level-one output twice as large as level five; no timing claim is made.
+// Outputs: Requires the fastest size-eligible case even when level one precedes the balanced observation.
+TEST_CASE(memory_benchmark_suite_nondefault_block_preserves_balanced_size) {
+    constexpr std::uint32_t block = 256U * 1024U;
+    const std::array<flitzzip::cli::BenchmarkSuiteObservation, 3> observations{
+        {{1, block, 1000.0, 0.8}, {5, block, 500.0, 0.4}, {9, block, 200.0, 0.3}}};
+    REQUIRE_EQ(flitzzip::cli::select_benchmark_suite_recommendation(observations, true), 1U);
+}
+
+// Purpose: Preserve the documented default geometry and include exactly the two-percent size boundary.
+// Inputs: Unit observations on both sides of the guard, a stronger alternate baseline and equal-score candidates.
+// Outputs: Requires the first fastest eligible case, default-baseline preference and a stricter alternate baseline.
+TEST_CASE(memory_benchmark_suite_ratio_boundary_and_baseline_preference) {
+    using Observation = flitzzip::cli::BenchmarkSuiteObservation;
+    const auto block = flitzzip::kDefaultArchiveBlockBytes;
+    const double limit = 0.5 * 1.02;
+    std::array<Observation, 5> observations{{{1, block, 3000.0, std::nextafter(limit, 1.0)},
+                                             {3, block, 2000.0, limit},
+                                             {5, block, 1000.0, 0.5},
+                                             {5, 256U * 1024U, 500.0, 0.4},
+                                             {9, block, 2000.0, 0.3}}};
+    REQUIRE_EQ(flitzzip::cli::select_benchmark_suite_recommendation(observations, true), 1U);
+    REQUIRE_EQ(flitzzip::cli::select_benchmark_suite_recommendation(observations, false), 0U);
+    std::swap(observations[2], observations[3]);
+    REQUIRE_EQ(flitzzip::cli::select_benchmark_suite_recommendation(observations, true), 1U);
+    observations[3].block_size = 512U * 1024U;
+    REQUIRE_EQ(flitzzip::cli::select_benchmark_suite_recommendation(observations, true), 4U);
+}
+
+// Purpose: Keep recommendation independent of enumeration order when a unique fastest eligible case exists.
+// Inputs: Every permutation of a fixed nondefault sweep, including weaker first candidates and slower smaller output.
+// Outputs: Requires the balanced case by its data identity, not by an assumed candidate index.
+TEST_CASE(memory_benchmark_suite_permutations_preserve_size_guard) {
+    constexpr std::uint32_t block = 512U * 1024U;
+    const std::array<flitzzip::cli::BenchmarkSuiteObservation, 4> original{
+        {{1, block, 1000.0, 0.8}, {3, block, 700.0, 0.42}, {5, block, 500.0, 0.4}, {9, block, 200.0, 0.3}}};
+    std::array<std::size_t, 4> order{0U, 1U, 2U, 3U};
+    do {
+        auto observations = original;
+        for (std::size_t index = 0U; index < order.size(); ++index) {
+            observations[index] = original[order[index]];
+        }
+        const auto selected = flitzzip::cli::select_benchmark_suite_recommendation(observations, true);
+        REQUIRE_EQ(observations[selected].compression_level, 5);
+    } while (std::next_permutation(order.begin(), order.end()));
+}
+
+// Purpose: Reject missing or malformed evidence rather than selecting a case from invalid comparisons.
+// Inputs: Empty input, absent balanced level and each nonfinite/negative score or size ratio in either tuning mode.
+// Outputs: Requires ArchiveError for every invalid observation, including values after the default baseline.
+TEST_CASE(memory_benchmark_suite_rejects_invalid_observations) {
+    using Observation = flitzzip::cli::BenchmarkSuiteObservation;
+    for (const bool tune : {false, true}) {
+        bool empty_rejected = false;
+        try {
+            (void)flitzzip::cli::select_benchmark_suite_recommendation({}, tune);
+        } catch (const flitzzip::ArchiveError&) {
+            empty_rejected = true;
+        }
+        REQUIRE_TRUE(empty_rejected);
+        for (const double bad : {-1.0, std::numeric_limits<double>::infinity(),
+                                 -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()}) {
+            for (const bool bad_ratio : {false, true}) {
+                const std::array<Observation, 2> observations{
+                    {{5, flitzzip::kDefaultArchiveBlockBytes, 1.0, 0.5},
+                     {9, flitzzip::kDefaultArchiveBlockBytes, bad_ratio ? 1.0 : bad, bad_ratio ? bad : 0.4}}};
+                bool rejected = false;
+                try {
+                    (void)flitzzip::cli::select_benchmark_suite_recommendation(observations, tune);
+                } catch (const flitzzip::ArchiveError&) {
+                    rejected = true;
+                }
+                REQUIRE_TRUE(rejected);
+            }
+        }
+    }
+    const std::array<Observation, 1> missing{{{1, flitzzip::kDefaultArchiveBlockBytes, 1.0, 0.5}}};
+    bool rejected = false;
+    try {
+        (void)flitzzip::cli::select_benchmark_suite_recommendation(missing, true);
+    } catch (const flitzzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(flitzzip::cli::select_benchmark_suite_recommendation(missing, false), 0U);
+}
+
+// Purpose: Admit legitimate zero-byte compressed payloads and zero rounded scores without weakening the size guard.
+// Inputs: Zero-ratio balanced output, a positive-ratio fast case and a tied zero-score case.
+// Outputs: Requires the first zero-ratio case with tuning and the fastest case without tuning.
+TEST_CASE(memory_benchmark_suite_zero_metrics_remain_valid) {
+    const std::array<flitzzip::cli::BenchmarkSuiteObservation, 3> observations{
+        {{1, flitzzip::kDefaultArchiveBlockBytes, 100.0, 0.1},
+         {5, flitzzip::kDefaultArchiveBlockBytes, 0.0, 0.0},
+         {9, flitzzip::kDefaultArchiveBlockBytes, 0.0, 0.0}}};
+    REQUIRE_EQ(flitzzip::cli::select_benchmark_suite_recommendation(observations, true), 1U);
+    REQUIRE_EQ(flitzzip::cli::select_benchmark_suite_recommendation(observations, false), 0U);
+}
 
 // Purpose: Preserve all binary stream bytes instead of applying text or EOF-marker translation.
 // Inputs: Every byte value, including NUL, CRLF and Ctrl-Z, through an exact nonempty source stream.
