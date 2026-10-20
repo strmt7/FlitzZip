@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from tools.benchmark_comparators import parse_metadata
-from tools.render_svg_graph import SVG, append_range_whisker, new_document
+from tools.render_svg_graph import SVG, append_range_whisker, format_seconds, new_document
 from tools.run_archive_comparison import CASES, EXPECTED, command_templates
 
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
@@ -409,7 +409,7 @@ def render(commit: str, rows: list[dict]) -> bytes:
                     minimum,
                     maximum_run,
                     maximum,
-                    f"{median:.3f} s [{minimum:.3f}-{maximum_run:.3f}]",
+                    f"{format_seconds(median)} s [{format_seconds(minimum)}-{format_seconds(maximum_run)}]",
                     color,
                 )
     label(
