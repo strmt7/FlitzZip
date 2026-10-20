@@ -1060,8 +1060,9 @@ vendored LZMA SDK 26.03 decoder:
    dictionary size between 4 KiB and 512 MiB.
 4. Each member must reach the LZMA EOS marker and match the trailer CRC32,
    uncompressed data size, and member size before bytes are trusted.
-5. Concatenated members are supported; trailing non-member data and empty
-   members before another member are rejected.
+5. Concatenated nonempty members are supported. A single empty member is valid;
+   an empty member anywhere in a multi-member stream and trailing non-member
+   data are rejected.
 6. SDK allocations are routed through a bounded allocator, and decoded output is
    capped by the FlitzZip pipeline limit.
 

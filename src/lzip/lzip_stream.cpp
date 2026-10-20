@@ -311,7 +311,7 @@ class LzipInputStream::Buffer final : public std::streambuf {
 
     // Purpose: Validate the current lzip trailer against decoded member state.
     // Inputs: None; reads the 20-byte trailer from buffered source bytes.
-    // Outputs: Ends the active member or throws on CRC, data-size, or member-size mismatch.
+    // Outputs: Ends a valid member or rejects trailer mismatches and empty members in a multi-member stream.
     void validate_current_member_trailer() {
         std::array<unsigned char, kLzipTrailerBytes> trailer{};
         read_member_bytes(trailer, "trailer");
@@ -330,6 +330,9 @@ class LzipInputStream::Buffer final : public std::streambuf {
         }
         if (expected_crc32 != current_crc32_) {
             throw ArchiveError("lzip CRC32 verification failed");
+        }
+        if (current_output_size_ == 0U && member_index_ != 0U) {
+            throw ArchiveError("lzip empty member is not allowed after another member");
         }
         last_member_was_empty_ = current_output_size_ == 0U;
         decoder_.reset();

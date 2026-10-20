@@ -23,6 +23,14 @@ namespace {
 
 constexpr char kSingleFileLzipPayload[] = "Example lzip fixture payload.\nSecond line.\n";
 
+// Independent empty member: unmodified public-domain LZMA SDK 26.03 raw encoder,
+// framed with the LZIP v1 header, empty CRC32, zero output size and exact member size.
+constexpr std::array<unsigned char, 36> kEmptyLzipFixture{{
+    0x4CU, 0x5AU, 0x49U, 0x50U, 0x01U, 0x0CU, 0x00U, 0x83U, 0xFFU, 0xFBU, 0xFFU, 0xFFU,
+    0xC0U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+    0x00U, 0x00U, 0x00U, 0x00U, 0x24U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+}};
+
 // Independent fixture: Python 3.13 liblzma raw LZMA1 with a size/CRC-verified LZIP v1 container.
 constexpr std::array<unsigned char, 78> kSingleFileLzipFixture{{
     0x4CU, 0x5AU, 0x49U, 0x50U, 0x01U, 0x14U, 0x00U, 0x22U, 0x9EU, 0x08U, 0x26U, 0xFFU, 0x96U, 0x34U, 0x91U, 0xE7U,
@@ -238,6 +246,86 @@ TEST_CASE(lzip_extracts_concatenated_members) {
     const auto stats = flitzzip::extract_lzip_file(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "payload.txt"), std::string(kSingleFileLzipPayload) + kSingleFileLzipPayload);
+}
+
+// Purpose: Preserve the legal single empty lzip stream while enforcing the multi-member empty-file rule.
+// Inputs: Independent empty and nonempty members in first, middle, last and all-empty arrangements.
+// Outputs: Invalid concatenations reject persistently without changing existing files; valid streams remain reusable.
+TEST_CASE(lzip_empty_member_position_is_validated_before_publication) {
+    const auto root = test_temp_dir("lzip-empty-member-position");
+    const auto archive = root / "payload.txt.lz";
+    const auto output = root / "out";
+    write_fixture(archive, kEmptyLzipFixture);
+    const auto empty_stats = flitzzip::extract_lzip_file(archive, output, false);
+    REQUIRE_EQ(empty_stats.entries, 1U);
+    REQUIRE_EQ(empty_stats.output_bytes, 0U);
+    REQUIRE_TRUE(std::filesystem::is_regular_file(output / "payload.txt"));
+    REQUIRE_EQ(std::filesystem::file_size(output / "payload.txt"), 0U);
+
+    const std::vector<std::vector<bool>> arrangements{{true, false}, {false, true}, {false, true, false}, {true, true}};
+    for (const auto& arrangement : arrangements) {
+        std::vector<unsigned char> bytes;
+        for (const bool empty : arrangement) {
+            if (empty) {
+                bytes.insert(bytes.end(), kEmptyLzipFixture.begin(), kEmptyLzipFixture.end());
+            } else {
+                bytes.insert(bytes.end(), kSingleFileLzipFixture.begin(), kSingleFileLzipFixture.end());
+            }
+        }
+        write_binary_file(archive, bytes);
+        {
+            std::ofstream target(output / "payload.txt", std::ios::binary | std::ios::trunc);
+            target.exceptions(std::ios::badbit | std::ios::failbit);
+            target << "preserve existing bytes";
+        }
+        bool rejected = false;
+        try {
+            (void)flitzzip::extract_lzip_file(archive, output, true);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(read_text_file(output / "payload.txt"), "preserve existing bytes");
+        REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator()),
+                   1);
+        require_sticky_decoder_failure<flitzzip::LzipInputStream>(archive);
+
+        write_fixture(archive, kSingleFileLzipFixture);
+        (void)flitzzip::extract_lzip_file(archive, output, true);
+        REQUIRE_EQ(read_text_file(output / "payload.txt"), kSingleFileLzipPayload);
+    }
+}
+
+// Purpose: Validate the entire compressed container before publishing any TAR member.
+// Inputs: A valid independent TAR.LZ member followed by a forbidden empty lzip member.
+// Outputs: Rejects the trailing member, preserves an existing TAR target and leaves no partial extraction.
+TEST_CASE(tar_lzip_rejects_empty_final_member_before_output) {
+    const auto root = test_temp_dir("tar-lzip-empty-final-member");
+    const auto archive = root / "sample.tar.lz";
+    std::vector<unsigned char> bytes(kTarLzipFixture.begin(), kTarLzipFixture.end());
+    bytes.insert(bytes.end(), kEmptyLzipFixture.begin(), kEmptyLzipFixture.end());
+    write_binary_file(archive, bytes);
+    const auto output = root / "out";
+    std::filesystem::create_directories(output);
+    {
+        std::ofstream target(output / "root.txt", std::ios::binary);
+        target.exceptions(std::ios::badbit | std::ios::failbit);
+        target << "preserve TAR target";
+    }
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_tar_lzip(archive, output, true);
+    } catch (const flitzzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(read_text_file(output / "root.txt"), "preserve TAR target");
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator()), 1);
+
+    write_fixture(archive, kTarLzipFixture);
+    (void)flitzzip::extract_tar_lzip(archive, output, true);
+    REQUIRE_EQ(read_text_file(output / "root.txt"), "root tar lzip payload");
+    REQUIRE_EQ(read_text_file(output / "dir" / "hello.txt"), "hello from tar.lz\n");
 }
 
 // Purpose: Verify `.lz` extraction refuses overwriting existing files unless explicitly allowed.
