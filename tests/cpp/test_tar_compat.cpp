@@ -1,6 +1,7 @@
 #include "test_util.hpp"
 
 #include "core/result.hpp"
+#include "core/resource_limits.hpp"
 #include "gzip/gzip_adapter.hpp"
 #include "tar/tar_adapter.hpp"
 
@@ -542,6 +543,47 @@ TEST_CASE(tar_special_entries_and_empty_long_names_fail_closed) {
             append_tar_fixture_record(output, make_test_tar_header("payload", type, 0U));
         }
         require_tar_fixture_rejected(archive, root / "output");
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject oversized and incomplete extension payloads before allocating or publishing ordinary entries.
+// Inputs: PAX/local/global/GNU metadata with a size above one MiB, or a declared payload longer than supplied bytes.
+// Outputs: Plain and filtered TAR reject while preserving an existing destination and publishing no earlier file.
+TEST_CASE(tar_metadata_payload_limits_and_truncation_prevent_publication) {
+    const auto root = test_temp_dir("tar-metadata-limits");
+    const auto archive = root / "input.tar";
+    for (const char type : {'x', 'g', 'L'}) {
+        for (const bool oversized : {false, true}) {
+            {
+                std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+                append_tar_fixture_record(output, make_test_tar_header("earlier.txt", '0', 5U), "first");
+                const auto header = make_test_tar_header("metadata", type, oversized ? 1024U * 1024U + 1U : 20U);
+                output.write(header.data(), static_cast<std::streamsize>(header.size()));
+                output << "short";
+            }
+            require_tar_fixture_rejected_by_both(archive, root);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Enforce retained path bounds for both extension syntaxes without constructing excessive file trees.
+// Inputs: Independently framed local/global PAX paths and a GNU name one byte beyond the archive path limit.
+// Outputs: Both TAR readers reject before publishing a preceding valid entry or changing an existing file.
+TEST_CASE(tar_extension_paths_above_resource_limit_prevent_publication) {
+    const auto root = test_temp_dir("tar-extension-path-limits");
+    const auto archive = root / "input.tar";
+    const std::string long_path(flitzzip::kMaxArchivePathBytes + 1U, 'a');
+    for (const char type : {'x', 'g', 'L'}) {
+        const auto metadata = type == 'L' ? long_path + '\0' : test_pax_record("path", long_path);
+        {
+            std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+            append_tar_fixture_record(output, make_test_tar_header("earlier.txt", '0', 5U), "first");
+            append_tar_fixture_record(output, make_test_tar_header("metadata", type, metadata.size()), metadata);
+            append_tar_fixture_record(output, make_test_tar_header("payload", '0', 1U), "z");
+        }
+        require_tar_fixture_rejected_by_both(archive, root);
     }
     std::filesystem::remove_all(root);
 }
