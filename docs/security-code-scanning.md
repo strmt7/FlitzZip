@@ -111,12 +111,14 @@ metadata dispositions remain visible in GitHub's audit history.
 
 ## Automatic Workflows
 
-The C++ CodeQL job uses a CPU/HIP-host matrix. When the selector proves that
-both complete analyses remain applicable, GitHub skips that job before expanding
-the matrix. Its checks list can therefore display the literal
-`CodeQL C++ (${{ matrix.configuration }})` name. Inspect the successful
-`Select whole-database C++ analysis` job for its reason and analysis commit
-identities; the skipped label alone does not establish coverage or closure.
+The C++ CodeQL jobs have stable names: `CodeQL C++ (CPU)` and
+`CodeQL C++ (HIP host)`. They share one step definition through a
+[YAML alias](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#yaml-anchors-and-aliases),
+with separate complete builds and analysis categories. Their names stay
+readable when skipped, without an unevaluated matrix expression. Inspect the
+successful `Select whole-database C++ analysis` job for its reason and analysis
+commit identities. Reuse requires both complete, successful analysis jobs;
+the skipped labels alone do not establish coverage or closure.
 
 - `.github/workflows/security-code-scanning.yml` runs source and dependency
   security scans on push, weekly schedule, and manual dispatch.
