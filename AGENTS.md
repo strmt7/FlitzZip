@@ -59,10 +59,12 @@ the underlying format or product lineage.
   not an installed-tool assumption; [development context](docs/development-context.md)
   explains bounded startup, actual-use evidence and freshness checks.
 - Use the self-hosted [Crawl4AI research tool](docs/crawl4ai.md) for web-page
-  reading and crawling. Its portable launcher installs automatically when absent;
+  reading and crawling first. Its portable launcher installs automatically when absent;
   use documented upstream APIs and configuration, and retain access failures.
-  Search tools remain available for discovery. The operating guide defines
-  evidence reuse, permissions and headless-operation limits.
+  For a confirmed site restriction or unsupported content, use a permitted
+  alternative under the operating guide's research rules; mandatory use does
+  not require endless retries or conceal tool defects. Search remains available
+  for discovery. The guide defines evidence, diagnosis and access boundaries.
 
 ## Required Reading
 

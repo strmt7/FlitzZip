@@ -1,10 +1,11 @@
-"""Exercise the installed source repair and real HTTP download consumer without public network access."""
+"""Exercise installed download and research-result consumers without public network access."""
 
 from __future__ import annotations
 
 import asyncio
 import importlib.metadata
 import ipaddress
+import json
 import os
 import subprocess
 import sys
@@ -28,6 +29,44 @@ class DownloadContracts(unittest.TestCase):
 
         cls.opener = staticmethod(_nofollow_opener)
         cls.destination = staticmethod(_safe_download_filepath)
+
+    def test_research_capture_handles_native_failure_and_redirected_content(self):
+        """Purpose: Preserve provider results. Inputs: Error and redirected CrawlResult. Outputs: Exact evidence."""
+        from crawl4ai.models import CrawlResult, MarkdownGenerationResult
+
+        from tools.crawl4ai_research import inspect_result, retain_capture
+
+        text = "Public documentation with substantive source text. " * 10
+        results = (
+            CrawlResult(url="https://example.invalid/error", html="", success=False, error_message="Connection reset"),
+            CrawlResult(
+                url="https://example.invalid/start",
+                html="<p>Public documentation</p>",
+                success=True,
+                status_code=307,
+                redirected_url="https://example.invalid/document",
+                redirected_status_code=200,
+                markdown=MarkdownGenerationResult(
+                    raw_markdown=text, markdown_with_citations=text, references_markdown=""
+                ),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as owned:
+            for index, result in enumerate(results):
+                row = inspect_result(result, "documentation")
+                path = Path(owned) / f"{index}.json"
+                retain_capture(path, result.url, result, row)
+                native = json.loads(path.read_text(encoding="utf-8"))["native_result"]
+                self.assertEqual(native["error_message"], result.error_message)
+                self.assertEqual(native["success"], result.success)
+                self.assertNotIn("fit_html", native)
+                if result.success:
+                    self.assertTrue(row["success"])
+                    self.assertEqual(native["markdown"]["raw_markdown"], text)
+                    self.assertEqual(native["redirected_status_code"], 200)
+                else:
+                    self.assertFalse(row["success"])
+                    self.assertEqual(row["failure_category"], "native_failure")
 
     def test_real_creation_overwrite_and_descriptor_ownership(self):
         """Purpose: Preserve normal downloads. Inputs: Owned binary file. Outputs: Exact bytes and closed handle."""

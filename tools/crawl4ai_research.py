@@ -19,6 +19,21 @@ from urllib.parse import urlsplit
 from tools.crawl4ai_tool import ATTRIBUTION, ROOT, VERSION, text_identity
 
 MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
+MAX_CAPTURE_BYTES = 8 * 1024 * 1024
+CAPTURE_FIELDS = frozenset(
+    {
+        "url",
+        "html",
+        "success",
+        "status_code",
+        "redirected_url",
+        "redirected_status_code",
+        "response_headers",
+        "error_message",
+        "metadata",
+        "crawl_stats",
+    }
+)
 SITES = ROOT / "tools/crawl4ai_sites.json"
 
 
@@ -32,43 +47,81 @@ def crawler():
 
 
 def inspect_result(result, marker: str = "") -> dict:
-    """Purpose: Reject empty/error/challenge extraction. Inputs: Native result and marker. Outputs: Metadata."""
+    """Purpose: Classify native access/content evidence. Inputs: Result and marker. Outputs: Honest acceptance/cause."""
     markdown = str(result.markdown.raw_markdown) if result.markdown else ""
-    lowered = markdown.casefold()
+    content = markdown.encode("utf-8")
     status = int(result.status_code or 0)
-    valid = (
-        bool(result.success)
-        and 200 <= status < 300
-        and 200 <= len(markdown.encode("utf-8")) <= MAX_MARKDOWN_BYTES
-        and (not marker or marker.casefold() in lowered)
-        and not any(
-            text in lowered[:2000] for text in ("verify you are human", "checking your browser", "just a moment...")
-        )
+    final_status = int(getattr(result, "redirected_status_code", None) or status)
+    headers = {key.casefold(): str(value) for key, value in (result.response_headers or {}).items()}
+    error = str(result.error_message or "")
+    expected = not marker or marker.casefold() in markdown.casefold()
+    # Use the provider's access diagnosis and documented response headers, not
+    # words in an article that might itself explain anti-bot mechanisms.
+    outcomes = (
+        (headers.get("x-robots-status") == "Blocked by robots.txt", "robots_denied"),
+        (error == "Access denied by robots.txt", "robots_denied"),
+        (error.startswith("Blocked by anti-bot protection:"), "access_challenge"),
+        (headers.get("cf-mitigated", "").casefold() == "challenge", "access_challenge"),
+        (final_status in (401, 403), "access_denied"),
+        (final_status == 429, "rate_limited"),
+        (bool(final_status) and not 200 <= final_status < 300, "http_error"),
+        (not result.success, "native_failure"),
+        (not 200 <= final_status < 300, "http_error"),
+        (len(content) > MAX_MARKDOWN_BYTES, "content_too_large"),
+        (len(content) < 200, "insufficient_content"),
+        (not expected, "unexpected_content"),
     )
+    category = next((name for failed, name in outcomes if failed), "")
     return {
-        "success": valid,
+        "success": not category,
         "native_success": bool(result.success),
         "http_status": status,
-        "markdown_bytes": len(markdown.encode("utf-8")),
-        "markdown_sha256": hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
-        "expected_content": not marker or marker.casefold() in lowered,
-        "error": str(result.error_message or "")[:500] if not valid else "",
+        "final_http_status": final_status,
+        "markdown_bytes": len(content),
+        "markdown_sha256": hashlib.sha256(content).hexdigest(),
+        "expected_content": expected,
+        "failure_category": category,
+        "error": error[:500],
     }
 
 
-async def fetch(owner, url: str, marker: str = "") -> dict:
-    """Purpose: Crawl one page with finite lifetime. Inputs: Owner/URL/marker. Outputs: Honest result metadata."""
+def retain_capture(path: Path, url: str, result, row: dict) -> dict:
+    """Purpose: Retain inspectable native evidence. Inputs: New file/result/diagnosis. Outputs: File identity."""
+    capture = {
+        "schema": 1,
+        "requested_url": url,
+        "provider_version": importlib.metadata.version("crawl4ai"),
+        "diagnosis": row,
+        # The public serializer adds Markdown. Limit other fields to the
+        # research contract, excluding deprecated properties and binary artifacts.
+        "native_result": result.model_dump(mode="json", include=CAPTURE_FIELDS) if result is not None else None,
+    }
+    content = (json.dumps(capture, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    if len(content) > MAX_CAPTURE_BYTES:
+        raise ValueError("Native research capture exceeds the evidence byte budget")
+    with path.open("xb") as output:
+        output.write(content)
+    return {"capture": path.name, "capture_sha256": hashlib.sha256(content).hexdigest()}
+
+
+async def fetch(owner, url: str, marker: str = "", capture: Path | None = None) -> dict:
+    """Purpose: Crawl with finite lifetime. Inputs: Owner/URL/marker/new capture. Outputs: Diagnosis and evidence."""
     from crawl4ai import CacheMode, CrawlerRunConfig
 
     started = time.monotonic()
     row = {"url": url, "success": False}
+    result = None
     try:
         config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS, check_robots_txt=True)
         result = await asyncio.wait_for(owner.arun(url=url, config=config), timeout=45)
         row.update(inspect_result(result, marker))
-    except (ValueError, OSError, TimeoutError) as error:
-        row["error"] = str(error)[:500]
+    except TimeoutError as error:
+        row.update(failure_category="timeout", error=str(error)[:500] or "Page exceeded the 45-second deadline")
+    except (ValueError, OSError) as error:
+        row.update(failure_category="request_error", error=f"{type(error).__name__}: {error}"[:500])
     row["seconds"] = round(time.monotonic() - started, 3)
+    if capture is not None:
+        row.update(retain_capture(capture, url, result, row))
     return row
 
 
@@ -118,23 +171,28 @@ async def execute(args) -> int:
         )
         return 0 if passed else 1
     sites = json.loads(SITES.read_text(encoding="utf-8"))["sites"]
+    if args.receipt.exists():
+        raise FileExistsError("Research receipt already exists; select a new evidence destination")
+    captures = args.receipt.with_suffix(args.receipt.suffix + ".captures")
+    captures.mkdir(parents=True, exist_ok=False)
     rows = []
     before = source_identity()
     async with crawler() as owner:
-        for site in sites:
-            row = await fetch(owner, site["url"], site["marker"])
+        for index, site in enumerate(sites):
+            row = await fetch(owner, site["url"], site["marker"], captures / f"{index:04d}.json")
             rows.append(row)
             print(json.dumps(row), flush=True)
     successful_domains = {urlsplit(row["url"]).hostname for row in rows if row["success"]}
     qualified = len(successful_domains) >= 20 and before == source_identity()
     receipt = {
-        "schema": 1,
+        "schema": 2,
         "completed_utc": datetime.now(UTC).isoformat(),
         "version": VERSION,
         "browser_configuration": "upstream-default",
         "robots_checked": True,
         "custom_browser_overrides": False,
         "source_identity": before,
+        "capture_directory": captures.name,
         "attempted": len(rows),
         "successful_domains": len(successful_domains),
         "qualified": qualified,

@@ -163,42 +163,49 @@ py -3 tools/crawl4ai_tool.py qualify --receipt out/crawl4ai-qualification.json
 
 The qualification manifest selects one page from each of 32 independent public
 websites. Each result records native success, HTTP status, extracted UTF-8
-length, expected content, content fingerprint and duration. Challenge pages,
+length, expected content, content fingerprint and duration. Original and final
+redirect status are retained separately. Challenge pages,
 empty responses and error statuses do not count as success. Receipts bind the
 exact integration, dependency lock and website manifest; they are local evidence
 and never permission to redistribute the retrieved pages. Existing files are
 not overwritten. A successful installation is not a successful crawl.
 
-The first upstream-default run on 5 October 2026 passed **31 of 32 websites**.
-W3C's WCAG page returned a Cloudflare JavaScript challenge, recorded as blocked;
-it was not bypassed or counted as a successful extraction. Python, SQLite,
-GNU, Apache, Rust, Go, PostgreSQL, Linux, NumPy, pandas, SciPy, MDN, GitHub,
-Microsoft, AMD and the other selected public documentation sites passed.
-This demonstrates the tested research workload, not universal site access.
-The later run passed **30 of 32 websites**: GNU timed out and the same W3C page
-remained blocked. A separate JavaScript-rendered page also produced extracted
-content successfully. Keep both runs' failures; do not turn intermittent site
-availability into an installation success claim.
-The earlier run using custom adapters is historical and does not qualify the
-upstream-default integration.
+Schema 2 qualification writes a sibling `.captures` directory containing each
+native result's research fields: URL, original/final status, success, headers,
+errors, metadata, crawl statistics, HTML and substantive Markdown, together with
+provider version and diagnosis. Binary and deprecated provider fields are outside
+this evidence contract.
+The receipt binds every capture by SHA-256. Partial captures survive an interrupted
+run; use a new destination when retrying. Captures are bounded and remain local.
+The provider's `model_dump(mode="json", include=...)` includes its private Markdown field;
+its inherited `model_dump_json()` does not in the pinned version.
 
-After the NLTK source repair, the source-bound Windows run again passed **30 of
-32 websites**, retaining the GNU timeout and W3C challenge. The installed model
-boundary and crawler consumer regressions passed before that crawl. Original
-NLTK source, build configuration and wheel admission are included in the new
-qualification identity.
+## Access Failures And Alternatives
+
+Follow the [operating guide's research rules](agent-operating-guide.md#agent-workflow).
+Crawl4AI is mandatory as the first provider; a verified website restriction or
+unsupported content permits a justified alternative. Retain both the failed
+attempt and the alternative's actual source evidence. Do not change a working
+installation merely because one website refuses automated access.
+
+Diagnosis uses native Crawl4AI errors, HTTP statuses and response headers.
+The [upstream result contract](https://docs.crawl4ai.com/api/crawl-result/)
+separates original and redirected status, and Cloudflare documents
+[`cf-mitigated: challenge`](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/challenge-pages/detect-response/)
+as a challenge response signal. Words such as “verify you are human” in a
+technical article do not by themselves establish a challenge.
+
+Robots denials, challenges, access refusals and rate limits are distinct from
+timeouts and other request failures. Retain uncertain causes as uncertain.
+Use an independently accessible official source, documented API or permitted
+reader when appropriate; do not evade the blocked site's access restriction.
+The tools never silently switch providers or label an alternative as Crawl4AI.
 
 Reuse unchanged source-bound qualification evidence. On another host, automatic
 setup and the intended target page are the ordinary first-use validation; use
 `doctor` when diagnosing installation failures. Rerun broad website
 qualification when the crawler, lock or browser configuration changes. Normal
 research must not repeatedly crawl the entire manifest or rebuild the app.
-
-The final portable download source build passed five installed API/security
-regressions and another source-bound **30 of 32** upstream-default public-site
-run. GNU again timed out and W3C remained challenged. The exact raw JSON URL
-that failed in the HTTP strategy now returns HTTP 200 through that same API;
-the repair preserves its native no-follow destination checks.
 
 ## License And Attribution
 
