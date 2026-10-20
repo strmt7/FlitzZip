@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -149,6 +154,169 @@ class BenchmarkCacheTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "permission denied"):
                 cache.main()
             lookup.assert_not_called()
+
+    # Purpose: Reject structurally ambiguous cache metadata even when one interpretation has a valid result hash.
+    # Inputs: Duplicate properties at either depth and a boolean in place of the integer schema version.
+    # Outputs: Each malformed record is refused rather than silently selecting its final interpretation.
+    def test_duplicate_metadata_and_boolean_schema_cannot_qualify_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.object(cache, "ROOT", Path(temporary)):
+            directory = Path(temporary) / "out/benchmarks/cache"
+            path = cache.store_result(directory, self.identity, self.result)
+            original = path.read_bytes()
+            entry = json.loads(original)
+            entry["schema_version"] = True
+            path.write_text(json.dumps(entry))
+            with self.subTest(case="boolean schema"), self.assertRaisesRegex(ValueError, "schema"):
+                cache.lookup(directory, self.identity)
+            for payload in (b'{"version":1,"version":2}', b'{"nested":{"tool":"first","tool":"second"}}'):
+                path.write_bytes(payload)
+                with self.subTest(payload=payload), self.assertRaisesRegex(ValueError, "duplicate"):
+                    cache.read_json(path)
+
+    # Purpose: Keep malformed identity, correctness and sample data from entering evidence storage.
+    # Inputs: Independent one-field type/scope mutations; no benchmark or external comparator runs.
+    # Outputs: Admission rejects each record without creating a cache entry.
+    def test_identity_and_result_type_boundaries(self) -> None:
+        identities = (
+            {"binary_sha256": False},
+            {"tool": " "},
+            {"tool_version": 1},
+            {"corpus_subject": ""},
+            {"settings": []},
+            {"host": {}},
+            {"binary_dependencies_sha256": []},
+            {"binary_dependencies_sha256": {"decoder.dll": "uppercase-not-a-hash"}},
+        )
+        for changes in identities:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                cache.measurement_id({**self.identity, **changes})
+        for result in (
+            None,
+            {**self.result, "tool": "different"},
+            {**self.result, "measured_at_utc": ""},
+            {**self.result, "measured_at_utc": False},
+        ):
+            with self.subTest(result=result), self.assertRaises(ValueError):
+                cache.validate_result(self.identity, result)
+        for field in ("compress_seconds", "extract_seconds"):
+            for value in (None, [], [0] * 5, [-1] * 5, [float("inf")] * 5, [float("nan")] * 5):
+                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                    cache.validate_result(self.identity, {**self.result, field: value})
+
+    # Purpose: Enforce complete metadata and byte bounds while preserving existing evidence on a failed store.
+    # Inputs: Missing/directory/oversized JSON, oversized result and mismatched cache envelope.
+    # Outputs: Explicit failures, no replacement and no cache output on rejected data.
+    def test_json_and_record_bounds_preserve_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.object(cache, "ROOT", Path(temporary)):
+            root = Path(temporary)
+            for path in (root, root / "missing.json"):
+                with self.subTest(path=path.name), self.assertRaisesRegex(ValueError, "regular file"):
+                    cache.read_json(path)
+            path = root / "oversized.json"
+            path.write_bytes(b" " * (cache.MAX_RECORD_BYTES + 1))
+            with self.assertRaisesRegex(ValueError, "exceeds one MiB"):
+                cache.read_json(path)
+            directory = root / "out/benchmarks/cache"
+            result = {**self.result, "resource_context": {"large": "x" * cache.MAX_RECORD_BYTES}}
+            with self.assertRaisesRegex(ValueError, "exceeds one MiB"):
+                cache.store_result(directory, self.identity, result)
+            self.assertFalse(directory.exists())
+            path = cache.store_result(directory, self.identity, self.result)
+            entry = json.loads(path.read_text())
+            entry["identity"]["tool_version"] = "different"
+            path.write_text(json.dumps(entry))
+            with self.assertRaisesRegex(ValueError, "schema or identity differs"):
+                cache.lookup(directory, self.identity)
+
+    # Purpose: Stop cache publication through a redirected directory before creating or replacing caller data.
+    # Inputs: A real private Windows junction from the allowed output tree to an outside directory.
+    # Outputs: Link traversal is refused and the target remains empty; cleanup removes only the junction itself.
+    @unittest.skipUnless(os.name == "nt", "Windows junction semantics")
+    def test_junction_cache_ancestry_is_rejected_before_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.object(cache, "ROOT", Path(temporary)):
+            root = Path(temporary)
+            target = root / "outside"
+            target.mkdir()
+            directory = root / "out/benchmarks"
+            directory.mkdir(parents=True)
+            link = directory / "redirected"
+            script = root / "junction.ps1"
+            script.write_text(
+                "param([string]$Link,[string]$Target)\n"
+                "New-Item -ItemType Junction -Path $Link -Target $Target -ErrorAction Stop | Out-Null\n"
+            )
+            subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script),
+                    str(link),
+                    str(target),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
+            try:
+                with self.assertRaisesRegex(ValueError, "must not traverse links or junctions"):
+                    cache.store_result(link / "nested", self.identity, self.result)
+                self.assertEqual(list(target.iterdir()), [])
+            finally:
+                os.rmdir(link)
+
+    # Purpose: Exercise cache miss, store and read through the command handler with actual temporary evidence files.
+    # Inputs: Metadata-only discovery and reviewed permission boundary observations.
+    # Outputs: Exact original result, original collection date and permission checks for every operation.
+    def test_command_line_store_lookup_and_miss(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.object(cache, "ROOT", Path(temporary)):
+            root = Path(temporary)
+            identity = root / "identity.json"
+            result = root / "result.json"
+            identity.write_text(json.dumps(self.identity))
+            result.write_text(json.dumps(self.result))
+            arguments = ["cache", "--identity", str(identity), "--cache-root", str(root / "out/benchmarks/cache")]
+            with (
+                patch.object(cache, "fetch_release_source", return_value="owned fixture"),
+                patch.object(cache, "parse_release", return_value="1.5.7"),
+                patch.object(cache, "require_permission") as permission,
+            ):
+                for options, expected in (([], 2), (["--result", str(result)], 0), ([], 0)):
+                    stdout, stderr = io.StringIO(), io.StringIO()
+                    with (
+                        patch.object(cache.sys, "argv", [*arguments, *options]),
+                        contextlib.redirect_stdout(stdout),
+                        contextlib.redirect_stderr(stderr),
+                    ):
+                        self.assertEqual(cache.main(), expected)
+                    if expected == 2:
+                        self.assertEqual(stderr.getvalue(), "measurement cache miss\n")
+                    elif not options:
+                        self.assertEqual(json.loads(stdout.getvalue()), self.result)
+                    else:
+                        self.assertTrue(Path(stdout.getvalue().strip()).is_file())
+                    self.assertEqual(permission.call_args_list[-2].args, ("HIGGS", "publish_results"))
+                    self.assertEqual(permission.call_args.kwargs, {"version": "1.5.7", "edition": None, "modules": ()})
+                self.assertEqual(permission.call_count, 6)
+
+    # Purpose: Verify the process-level failure contract without network access or installed comparator tools.
+    # Inputs: Malformed identity file rejected before discovery. Outputs: Nonzero status and actionable stderr only.
+    def test_cli_invalid_identity_fails_before_external_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            identity = Path(temporary) / "bad.json"
+            identity.write_text("{}")
+            process = subprocess.run(
+                [sys.executable, "-B", "-m", "tools.benchmark_cache", "--identity", str(identity)],
+                cwd=Path(cache.__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        self.assertEqual(process.returncode, 1)
+        self.assertEqual(process.stdout, "")
+        self.assertIn("measurement identity fields are missing or unknown", process.stderr)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from tools.benchmark_comparators import fetch_release_source, parse_release, require_permission
+from tools.benchmark_comparators import fetch_release_source, parse_metadata, parse_release, require_permission
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_RECORD_BYTES = 1024 * 1024
@@ -121,7 +121,7 @@ def validate_result(identity: dict, result: dict) -> None:
 
 # Purpose: Read bounded cache/configuration JSON without following a file link.
 # Inputs: Existing regular JSON file, at most one MiB.
-# Outputs: Parsed JSON; oversized, linked or invalid files raise an error.
+# Outputs: One finite object; oversized, linked, duplicate-property or invalid files raise an error.
 def read_json(path: Path) -> dict:
     if path.is_symlink() or not path.is_file():
         raise ValueError("measurement JSON is missing, linked or not a regular file")
@@ -129,7 +129,7 @@ def read_json(path: Path) -> dict:
         payload = stream.read(MAX_RECORD_BYTES + 1)
     if len(payload) > MAX_RECORD_BYTES:
         raise ValueError("measurement JSON exceeds one MiB")
-    return json.loads(payload)
+    return parse_metadata(payload)
 
 
 # Purpose: Locate a cache entry beneath the repository's ignored benchmark output only.
@@ -153,7 +153,12 @@ def lookup(directory: Path, identity: dict) -> dict | None:
     if not path.exists():
         return None
     entry = read_json(path)
-    if not isinstance(entry, dict) or entry.get("schema_version") != 1 or entry.get("identity") != identity:
+    if (
+        not isinstance(entry, dict)
+        or type(entry.get("schema_version")) is not int
+        or entry["schema_version"] != 1
+        or entry.get("identity") != identity
+    ):
         raise ValueError("cached measurement schema or identity differs")
     result = entry.get("result")
     actual = hashlib.sha256(canonical(result)).hexdigest()
