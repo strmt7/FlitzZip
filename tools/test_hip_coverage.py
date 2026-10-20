@@ -21,7 +21,7 @@ class HipCoverageTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.source = self.root / "control.hip.cpp"
-        self.source.write_text("// control\nif (selector != 0) {\n}\n", encoding="utf-8")
+        self.source.write_text("// control\nif (selector != 0) {\n}\nif (selector == 0) {\n}\n", encoding="utf-8")
         self.reports = []
         for counts, invocations in (((0, 192), 192), ((192, 0), 192), ((192, 192), 384)):
             self.reports.append(
@@ -36,7 +36,13 @@ class HipCoverageTests(unittest.TestCase):
                                     "count": invocations,
                                     "filenames": [str(self.source)],
                                     "branches": [[2, 5, 2, 18, *counts, 0, 0, 4]],
-                                }
+                                },
+                                {
+                                    "name": "_Z21coverage_helper_probei",
+                                    "count": invocations,
+                                    "filenames": [str(self.source)],
+                                    "branches": [[4, 5, 4, 18, *reversed(counts), 0, 0, 4]],
+                                },
                             ]
                         }
                     ],
@@ -52,6 +58,9 @@ class HipCoverageTests(unittest.TestCase):
                 "false_counts": [0, 192],
                 "true_counts": [192, 0],
                 "merged_counts": [192, 192],
+                "helper_false_counts": [192, 0],
+                "helper_true_counts": [0, 192],
+                "helper_merged_counts": [192, 192],
             },
         )
 
@@ -94,6 +103,64 @@ class HipCoverageTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 coverage.architecture(value)
 
+    # Purpose: Reject a profiler that sees kernels but loses executed device helper counters.
+    # Inputs: Missing helper records, zero counts, copied kernel branches and mismatched helper mappings.
+    # Outputs: Each independently invalid measurement fails qualification without inferred hits.
+    def test_helper_measurement_must_be_independently_complete(self):
+        for mutation in ("missing", "zero", "copied", "wrong_source_branch", "duplicate"):
+            with self.subTest(mutation=mutation):
+                reports = copy.deepcopy(self.reports)
+                functions = reports[0]["data"][0]["functions"]
+                helper = functions[1]
+                if mutation == "missing":
+                    functions.pop()
+                elif mutation == "zero":
+                    helper["count"] = 0
+                    helper["branches"][0][4:6] = [0, 0]
+                elif mutation == "copied":
+                    helper["branches"][0][4:6] = functions[0]["branches"][0][4:6]
+                elif mutation == "wrong_source_branch":
+                    helper["branches"][0][0] = 2
+                else:
+                    helper["name"] = functions[0]["name"]
+                with self.assertRaises(ValueError):
+                    coverage.validate_controls(reports, self.source)
+
+    # Purpose: Require independently known helper-and-kernel output before using a device profile.
+    # Inputs: Simulated external process results with correct output or the preceding kernel-only output.
+    # Outputs: Retains both profiles only for exact readback and rejects the incorrect result before admission.
+    def test_control_readback_requires_executed_helper(self):
+        for invalid in (False, True):
+            with self.subTest(invalid=invalid):
+                output = self.root / f"helper-readback-{invalid}"
+                output.mkdir()
+
+                # Purpose: Model only the GPU process transport and its raw profile artifact.
+                # Inputs: The real command vector and log path. Outputs: Known bytes and independent JSON readback.
+                def execute(arguments, log, timeout, *, invalid=invalid):
+                    self.assertEqual(timeout, 30)
+                    selector = int(len(arguments) == 2)
+                    (log.parent / "gfx1201.1.profraw").write_bytes(b"raw-profile-fixture")
+                    return {
+                        "stdout": json.dumps(
+                            {
+                                "selector": selector,
+                                "value": (23 if selector == 0 else 17) if invalid else (18 if selector == 0 else 22),
+                                "lanes": 192,
+                                "architecture": "gfx1201",
+                            }
+                        )
+                    }
+
+                with patch.object(coverage, "checked", side_effect=execute):
+                    if invalid:
+                        with self.assertRaisesRegex(ValueError, "readback"):
+                            coverage.run_controls(self.root / "probe.exe", "gfx1201", output)
+                    else:
+                        profiles = coverage.run_controls(self.root / "probe.exe", "gfx1201", output)
+                        self.assertEqual(len(profiles), 2)
+                        self.assertTrue(all(p.read_bytes() == b"raw-profile-fixture" for p in profiles))
+
     # Purpose: Ensure failed profiling cannot contaminate later builds through inherited process settings.
     # Inputs: Both an existing variable and a missing one. Outputs: Exact restoration on an exception.
     def test_child_environment_restores_on_failure(self):
@@ -109,6 +176,121 @@ class HipCoverageTests(unittest.TestCase):
                 raise RuntimeError("control")
             self.assertEqual(os.environ["FLITZZIP_COVERAGE_TEST_EXISTING"], "previous")
             self.assertNotIn("FLITZZIP_COVERAGE_TEST_MISSING", os.environ)
+
+    # Purpose: Keep failed device measurements attributable after the working source changes.
+    # Inputs: Independent compiler/binary fixtures and failures at image, GPU, export or counter boundaries.
+    # Outputs: Original input identities and source survive every failure; no qualification pass is published.
+    def test_failed_qualification_retains_compiled_input_evidence(self):
+        original = self.source.read_bytes()
+        inputs = coverage.identities([self.source])
+        executable = self.root / "probe.exe"
+        executable.write_bytes(b"MZ-independent-compiler-fixture")
+        image = self.root / "device.elf"
+        image.write_bytes(b"independent-image-fixture")
+        profile = self.root / "device.profraw"
+        profile.write_bytes(b"independent-profile-fixture")
+        for failure in ("image", "gpu", "export", "counters"):
+            with self.subTest(failure=failure):
+                output = self.root / failure
+                with (
+                    patch.object(coverage, "ROOT", self.root),
+                    patch.object(coverage, "PROBE", self.source),
+                    patch.object(coverage, "compile_probe", return_value=(executable, inputs)),
+                    patch.object(coverage, "device_image", return_value=image) as extract,
+                    patch.object(coverage, "run_controls", return_value=[profile]) as execute,
+                    patch.object(coverage, "export_profile", return_value={}) as export,
+                    patch.object(coverage, "validate_controls", return_value={}) as validate,
+                ):
+                    stage = {"image": extract, "gpu": execute, "export": export, "counters": validate}[failure]
+                    stage.side_effect = RuntimeError("independent " + failure + " failure")
+                    with self.assertRaisesRegex(RuntimeError, "independent " + failure + " failure"):
+                        coverage.qualify(self.root, self.root, self.source, "gfx1201", output)
+                record = json.loads((output / "measurement-inputs.json").read_text(encoding="utf-8"))
+                self.assertEqual(record["qualification"], "not-qualified")
+                self.assertEqual(record["inputs"], inputs)
+                self.assertEqual(record["artifacts"], coverage.identities([executable]))
+                self.assertEqual(record["architecture"], "gfx1201")
+                self.assertFalse((output / "qualification.json").exists())
+                self.source.write_bytes(b"working source changed after the failed measurement")
+                self.assertEqual((output / "probe-source.hip.cpp").read_bytes(), original)
+                self.source.write_bytes(original)
+
+    # Purpose: Reject a probe changed between capture and the compiler's own input snapshot.
+    # Inputs: A compiler transport fixture that changes source before returning its compiled identity.
+    # Outputs: Frozen original bytes remain available, and no device execution or pass receipt is possible.
+    def test_probe_capture_rejects_compilation_source_drift(self):
+        original = self.source.read_bytes()
+        executable = self.root / "probe.exe"
+        executable.write_bytes(b"independent-binary-fixture")
+        output = self.root / "source-drift"
+
+        # Purpose: Model source replacement before the compiler records the bytes it consumes.
+        # Inputs: Unused compiler command metadata. Outputs: Binary and a different actual source identity.
+        def compile_changed(*_arguments):
+            self.source.write_bytes(b"changed before compilation")
+            return executable, coverage.identities([self.source])
+
+        with (
+            patch.object(coverage, "ROOT", self.root),
+            patch.object(coverage, "PROBE", self.source),
+            patch.object(coverage, "compile_probe", side_effect=compile_changed),
+            patch.object(coverage, "device_image") as execute,
+            self.assertRaisesRegex(ValueError, "between evidence capture and compilation"),
+        ):
+            coverage.qualify(self.root, self.root, self.source, "gfx1201", output)
+        execute.assert_not_called()
+        self.assertEqual((output / "probe-source.hip.cpp").read_bytes(), original)
+        self.assertFalse((output / "qualification.json").exists())
+
+    # Purpose: Bind accepted counters to the exact source and executable that produced them.
+    # Inputs: Independent valid counter reports, plus source or binary mutation after counter validation.
+    # Outputs: Only unchanged inputs receive a pass; changed inputs retain unqualified original evidence.
+    def test_qualification_rechecks_source_and_binary_before_acceptance(self):
+        original = self.source.read_bytes()
+        executable = self.root / "probe.exe"
+        image = self.root / "device.elf"
+        profiles = [self.root / "false.profraw", self.root / "true.profraw"]
+        image.write_bytes(b"independent-image-fixture")
+        for profile in profiles:
+            profile.write_bytes(b"independent-profile-fixture")
+        validate_original = coverage.validate_controls
+        for mutation in ("source", "binary", "none"):
+            with self.subTest(mutation=mutation):
+                self.source.write_bytes(original)
+                executable.write_bytes(b"independent-binary-fixture")
+                inputs = coverage.identities([self.source])
+                output = self.root / mutation
+
+                # Purpose: Inject mutation only after real independent counter validation succeeds.
+                # Inputs: Actual reports and probe path; a frozen mutation choice. Outputs: Counter evidence.
+                def validate_and_mutate(reports, source, *, mutation=mutation):
+                    result = validate_original(reports, source)
+                    if mutation != "none":
+                        (self.source if mutation == "source" else executable).write_bytes(b"changed after execution")
+                    return result
+
+                with (
+                    patch.object(coverage, "ROOT", self.root),
+                    patch.object(coverage, "PROBE", self.source),
+                    patch.object(coverage, "compile_probe", return_value=(executable, inputs)),
+                    patch.object(coverage, "device_image", return_value=image),
+                    patch.object(coverage, "run_controls", return_value=profiles),
+                    patch.object(coverage, "export_profile", side_effect=copy.deepcopy(self.reports)),
+                    patch.object(coverage, "validate_controls", side_effect=validate_and_mutate),
+                ):
+                    if mutation == "none":
+                        result = coverage.qualify(self.root, self.root, self.source, "gfx1201", output)
+                        self.assertEqual(result["qualification"], "passed")
+                        self.assertEqual(result["inputs"], inputs)
+                        self.assertIn(str((output / "probe-source.hip.cpp").resolve()), result["artifacts"])
+                    else:
+                        with self.assertRaisesRegex(ValueError, "inputs or measured binary changed"):
+                            coverage.qualify(self.root, self.root, self.source, "gfx1201", output)
+                        self.assertFalse((output / "qualification.json").exists())
+                    pending = json.loads((output / "measurement-inputs.json").read_text(encoding="utf-8"))
+                    self.assertEqual(pending["qualification"], "not-qualified")
+                    self.assertEqual(pending["inputs"], inputs)
+                    self.assertEqual((output / "probe-source.hip.cpp").read_bytes(), original)
 
     # Purpose: Detect changed binary/profile bytes and refuse missing or redirected evidence.
     # Inputs: Small owned file with successive values. Outputs: Distinct identities and explicit invalid-path refusal.

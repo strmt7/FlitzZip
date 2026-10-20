@@ -9,6 +9,7 @@
 #include "core/path_text.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <fcntl.h>
@@ -486,6 +487,58 @@ void require_cab_admission_rejected(const std::filesystem::path& archive, const 
 }
 
 }  // namespace
+
+// Purpose: Reject payload corruption after metadata admission without publishing or retaining decoder resources.
+// Inputs: A stored CAB with either a false checksum or an MSZIP declaration over non-MSZIP bytes.
+// Outputs: Both decoder failures preserve existing files; replacing the archive permits exact extraction.
+TEST_CASE(cab_payload_failure_preserves_destination_and_recovers) {
+    const auto root = test_temp_dir("cab-payload-failure");
+    const auto archive = root / "sample.cab";
+    const auto destination = root / "out";
+    const std::vector<CabFixtureEntry> entries{{.name = "file.txt", .payload = "cab payload\n"}};
+    write_uncompressed_cab(archive, entries);
+    const auto original = read_binary_file(archive);
+    std::filesystem::create_directories(destination);
+    for (const bool invalid_mszip : {false, true}) {
+        auto corrupted = original;
+        if (invalid_mszip) {
+            // CFFOLDER type 1 requires a CK-prefixed MSZIP stream, absent from this stored payload.
+            corrupted[42] = 1U;
+        } else {
+            // This ASCII payload and its small CFDATA lengths cannot XOR to all high bits set.
+            std::fill_n(corrupted.begin() + static_cast<std::ptrdiff_t>(cab_data_header_offset(entries)), 4, 0xFFU);
+        }
+        write_binary_file(archive, corrupted);
+        const auto metadata = flitzzip::scan_cab_metadata(archive);
+        REQUIRE_EQ(metadata.entries.size(), 1U);
+        REQUIRE_EQ(metadata.entries.front().size, entries.front().payload.size());
+        {
+            std::ofstream target(destination / "file.txt", std::ios::binary | std::ios::trunc);
+            target.exceptions(std::ios::badbit | std::ios::failbit);
+            target << "retain";
+        }
+        bool rejected = false;
+        try {
+            (void)flitzzip::extract_cab(archive, destination, true);
+        } catch (const flitzzip::ArchiveError& error) {
+            REQUIRE_TRUE(std::string_view(error.what()).find("CAB decompression failed (fdi_error=") !=
+                         std::string_view::npos);
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(read_text_file(destination / "file.txt"), "retain");
+        REQUIRE_EQ(
+            std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator()), 1);
+        REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(root), std::filesystem::directory_iterator()), 2);
+
+        write_binary_file(archive, original);
+        REQUIRE_EQ(read_binary_file(archive), original);
+        const auto result = flitzzip::extract_cab(archive, destination, true);
+        REQUIRE_EQ(result.entries, 1U);
+        REQUIRE_EQ(result.output_bytes, entries.front().payload.size());
+        REQUIRE_EQ(read_text_file(destination / "file.txt"), entries.front().payload);
+    }
+}
 
 // Purpose: Exercise each binary CAB admission boundary independently of Windows decompression.
 // Inputs: Known-good stored fixture and hostile sizes, offsets, versions, counts and folder references.

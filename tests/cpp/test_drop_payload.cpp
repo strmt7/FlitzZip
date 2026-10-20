@@ -2,6 +2,10 @@
 #include "test_util.hpp"
 
 #include <algorithm>
+#include <array>
+#include <limits>
+#include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -58,6 +62,28 @@ class TestGlobalHandle {
   private:
     HGLOBAL handle_ = nullptr;
 };
+
+// Purpose: Frame arbitrary shell metadata without allowing allocator padding to supply missing terminators.
+// Inputs: The wire offset, character mode and deliberately bounded raw list bytes.
+// Outputs: Returns caller-owned global memory whose unused allocation bytes are nonzero.
+TestGlobalHandle make_raw_drop_payload(DWORD offset, bool wide, std::span<const unsigned char> list) {
+    using Header = flitzzip::app::detail::DropFilesHeader;
+    REQUIRE_TRUE(list.size() <= flitzzip::app::kMaxShellDropPayloadBytes - sizeof(Header));
+    const auto required_bytes = sizeof(Header) + list.size();
+    TestGlobalHandle handle(GlobalAlloc(GMEM_MOVEABLE, required_bytes));
+    REQUIRE_TRUE(handle.get() != nullptr);
+    const flitzzip::app::detail::GlobalLockView view(handle.get());
+    REQUIRE_TRUE(view.data() != nullptr);
+    auto* bytes = const_cast<unsigned char*>(static_cast<const unsigned char*>(view.data()));
+    const auto allocation_bytes = GlobalSize(handle.get());
+    REQUIRE_TRUE(allocation_bytes >= required_bytes);
+    const std::span allocation(bytes, allocation_bytes);
+    std::ranges::fill(allocation, static_cast<unsigned char>(0x7f));
+    std::construct_at(reinterpret_cast<Header*>(bytes), Header{.pFiles = offset, .fWide = wide ? TRUE : FALSE});
+    const auto destination = allocation.subspan(sizeof(Header), list.size());
+    REQUIRE_EQ(std::ranges::copy(list, destination.begin()).out, destination.end());
+    return handle;
+}
 
 // Purpose: Build a DROPFILES payload containing UTF-16 paths.
 // Inputs: `paths` is the ordered path list to encode.
@@ -204,4 +230,108 @@ TEST_CASE(drop_path_policy_accepts_local_absolute_path) {
 
     REQUIRE_TRUE(!error);
     REQUIRE_TRUE(flitzzip::app::is_supported_local_drop_path(path));
+}
+
+// Purpose: Reject unusable memory and hostile offsets before interpreting shell metadata.
+// Inputs: Null/discarded handles, short allocations, out-of-range offsets and unaligned wide data.
+// Outputs: Returns no paths and leaves every caller-owned allocation releasable.
+TEST_CASE(drop_payload_rejects_invalid_memory_and_header_geometry) {
+    REQUIRE_TRUE(flitzzip::app::paths_from_dropfiles_global(nullptr).empty());
+    const TestGlobalHandle short_payload(GlobalAlloc(GMEM_MOVEABLE, 1));
+    REQUIRE_TRUE(short_payload.get() != nullptr);
+    REQUIRE_TRUE(flitzzip::app::paths_from_dropfiles_global(short_payload.get()).empty());
+    const TestGlobalHandle discarded(GlobalAlloc(GMEM_MOVEABLE, 0));
+    REQUIRE_TRUE(discarded.get() != nullptr);
+    REQUIRE_TRUE(flitzzip::app::paths_from_dropfiles_global(discarded.get()).empty());
+    using Header = flitzzip::app::detail::DropFilesHeader;
+    const std::array<unsigned char, 8> list{'a', 0, 0};
+    for (const DWORD offset : {0UL, static_cast<DWORD>(sizeof(Header) - 1U), std::numeric_limits<DWORD>::max()}) {
+        const auto handle = make_raw_drop_payload(offset, false, list);
+        REQUIRE_TRUE(flitzzip::app::paths_from_dropfiles_global(handle.get()).empty());
+    }
+    const auto unaligned = make_raw_drop_payload(sizeof(Header) + 1U, true, list);
+    REQUIRE_TRUE(flitzzip::app::paths_from_dropfiles_global(unaligned.get()).empty());
+}
+
+// Purpose: Refuse partial path lists instead of exposing a valid prefix to the queue.
+// Inputs: Independently framed ANSI/wide lists with a valid first path and an unterminated second.
+// Outputs: Public parsing returns an empty vector for either encoding; a terminated control survives.
+TEST_CASE(drop_payload_discards_prefix_when_final_path_is_unterminated) {
+    using Header = flitzzip::app::detail::DropFilesHeader;
+    const std::array<unsigned char, 8> ansi{'o', 'k', 0, 'b', 'r', 'o', 'k', 'e'};
+    const auto broken_ansi = make_raw_drop_payload(sizeof(Header), false, ansi);
+    REQUIRE_TRUE(flitzzip::app::paths_from_dropfiles_global(broken_ansi.get()).empty());
+    const std::array<wchar_t, 8> wide{L'o', L'k', 0, L'b', L'r', L'o', L'k', L'e'};
+    const auto wide_bytes = std::as_bytes(std::span(wide));
+    const auto broken_wide = make_raw_drop_payload(
+        sizeof(Header), true, {reinterpret_cast<const unsigned char*>(wide_bytes.data()), wide_bytes.size()});
+    REQUIRE_TRUE(flitzzip::app::paths_from_dropfiles_global(broken_wide.get()).empty());
+    const auto good = make_ansi_drop_payload({"ok", "broken"});
+    const auto parsed = flitzzip::app::paths_from_dropfiles_global(good.get());
+    REQUIRE_EQ(parsed.size(), 2U);
+    REQUIRE_EQ(parsed.back(), std::filesystem::path("broken"));
+}
+
+// Purpose: Require complete multisz termination even for empty and truncated direct views.
+// Inputs: Exact bounded arrays, avoiding any global allocator padding, in both character encodings.
+// Outputs: Accepts only the two-zero empty form and rejects every truncated path boundary.
+TEST_CASE(drop_payload_direct_views_require_complete_termination) {
+    const std::array<char, 5> ansi{'a', 0, 'b', 0, 0};
+    const std::array<wchar_t, 5> wide{L'a', 0, L'b', 0, 0};
+    for (std::size_t size = 0; size <= ansi.size(); ++size) {
+        std::vector<std::filesystem::path> paths;
+        const bool valid = flitzzip::app::detail::append_ansi_drop_paths(ansi.data(), ansi.data() + size, paths);
+        REQUIRE_EQ(valid, size == ansi.size());
+        paths.clear();
+        REQUIRE_EQ(flitzzip::app::detail::append_wide_drop_paths(wide.data(), wide.data() + size, paths),
+                   size == wide.size());
+    }
+    const std::array<char, 2> empty_ansi{};
+    const std::array<wchar_t, 2> empty_wide{};
+    std::vector<std::filesystem::path> paths;
+    REQUIRE_TRUE(!flitzzip::app::detail::append_ansi_drop_paths(empty_ansi.data(), empty_ansi.data() + 1, paths));
+    REQUIRE_TRUE(flitzzip::app::detail::append_ansi_drop_paths(empty_ansi.data(), empty_ansi.data() + 2, paths));
+    REQUIRE_TRUE(!flitzzip::app::detail::append_wide_drop_paths(empty_wide.data(), empty_wide.data() + 1, paths));
+    REQUIRE_TRUE(flitzzip::app::detail::append_wide_drop_paths(empty_wide.data(), empty_wide.data() + 2, paths));
+    REQUIRE_TRUE(paths.empty());
+}
+
+// Purpose: Reject invalid conversion extents without accessing attacker-controlled pointers.
+// Inputs: Null, empty and greater-than-int conversion requests, plus a valid ASCII control.
+// Outputs: Invalid requests yield no text; the control retains exact characters.
+TEST_CASE(drop_payload_conversion_validates_extent_before_access) {
+    REQUIRE_TRUE(flitzzip::app::detail::ansi_drop_path_to_wide(nullptr, 3).empty());
+    REQUIRE_TRUE(flitzzip::app::detail::ansi_drop_path_to_wide("x", 0).empty());
+    REQUIRE_TRUE(flitzzip::app::detail::ansi_drop_path_to_wide("x", static_cast<std::size_t>(INT_MAX) + 1U).empty());
+    REQUIRE_EQ(flitzzip::app::detail::ansi_drop_path_to_wide("C:\\ascii", 8), L"C:\\ascii");
+}
+
+// Purpose: Enforce the aggregate shell-path budget separately from the path-count/per-path limits.
+// Inputs: Valid exact-budget lists and otherwise identical lists exceeding that budget by one character.
+// Outputs: Both encodings accept the boundary and reject overflow without retaining a partial result.
+TEST_CASE(drop_payload_aggregate_character_budget_has_exact_boundary) {
+    const auto limit = flitzzip::app::kMaxShellPathCharacters;
+    const auto budget = flitzzip::app::kMaxShellDropPathCharacters;
+    std::vector<std::wstring> wide(budget / limit, std::wstring(limit, L'a'));
+    wide.emplace_back(budget % limit, L'b');
+    std::vector<std::string> ansi(wide.size() - 1U, std::string(limit, 'a'));
+    ansi.emplace_back(budget % limit, 'b');
+    for (const bool excessive : {false, true}) {
+        std::vector<std::string_view> views;
+        for (const auto& path : ansi) {
+            views.emplace_back(path);
+        }
+        {
+            const auto handle = make_ansi_drop_payload(views);
+            const auto parsed = flitzzip::app::paths_from_dropfiles_global(handle.get());
+            REQUIRE_EQ(parsed.size(), excessive ? 0U : wide.size());
+        }
+        {
+            const auto handle = make_wide_drop_payload(wide);
+            const auto parsed = flitzzip::app::paths_from_dropfiles_global(handle.get());
+            REQUIRE_EQ(parsed.size(), excessive ? 0U : wide.size());
+        }
+        wide.back().push_back(L'b');
+        ansi.back().push_back('b');
+    }
 }

@@ -148,31 +148,47 @@ def validate_controls(reports: list[dict], source: Path) -> dict:
     if len(reports) != 3:
         raise ValueError("Qualification requires false, true and merged reports")
     expected = ((0, 192), (192, 0), (192, 192))
+    contracts = {
+        "_Z22coverage_counter_probePii": ("if (selector != 0)", expected),
+        "_Z21coverage_helper_probei": ("if (selector == 0)", (expected[1], expected[0], expected[2])),
+    }
+    source_lines = source.read_text(encoding="utf-8").splitlines()
     for index, report in enumerate(reports):
         if report.get("type") != "llvm.coverage.json.export" or report.get("version") != "3.1.0":
             raise ValueError("Unsupported LLVM coverage export schema")
         data = report.get("data", [])
-        if len(data) != 1 or len(data[0].get("functions", [])) != 1:
-            raise ValueError("Probe must contain exactly one measured device function")
-        function = data[0]["functions"][0]
-        if (
-            function.get("name") != "_Z22coverage_counter_probePii"
-            or type(function.get("count")) is not int
-            or function["count"] != (192 if index < 2 else 384)
-        ):
-            raise ValueError("Probe device function or invocation count differs from the controls")
-        if function.get("filenames") != [str(source.resolve())]:
-            raise ValueError("Device mapping does not identify the exact probe source")
-        branches = function.get("branches", [])
-        if len(branches) != 1 or len(branches[0]) != 9:
-            raise ValueError("Probe must contain exactly one measured device branch")
-        branch = branches[0]
-        if any(type(value) is not int or value < 0 for value in branch) or tuple(branch[4:6]) != expected[index]:
-            raise ValueError("Device hit and miss controls did not match independently known branches")
-        source_lines = source.read_text(encoding="utf-8").splitlines()
-        if branch[0] > len(source_lines) or branch[0] < 1 or "if (selector != 0)" not in source_lines[branch[0] - 1]:
-            raise ValueError("Device branch mapping differs from the probe source")
-    return {"false_counts": [0, 192], "true_counts": [192, 0], "merged_counts": [192, 192]}
+        if len(data) != 1 or len(data[0].get("functions", [])) != len(contracts):
+            raise ValueError("Probe must measure its kernel and non-inlined device helper")
+        functions = data[0]["functions"]
+        if {function.get("name") for function in functions} != set(contracts):
+            raise ValueError("Probe device functions differ from the controls")
+        for function in functions:
+            marker, counts = contracts[function["name"]]
+            expected_count = 192 if index < 2 else 384
+            if type(function.get("count")) is not int or function["count"] != expected_count:
+                raise ValueError(
+                    "Probe device function invocation count differs from the controls: "
+                    f"{function['name']}, export={index}, observed={function.get('count')!r}, "
+                    f"expected={expected_count}"
+                )
+            if function.get("filenames") != [str(source.resolve())]:
+                raise ValueError("Device mapping does not identify the exact probe source")
+            branches = function.get("branches", [])
+            if len(branches) != 1 or len(branches[0]) != 9:
+                raise ValueError("Probe function must contain exactly one measured device branch")
+            branch = branches[0]
+            if any(type(value) is not int or value < 0 for value in branch) or tuple(branch[4:6]) != counts[index]:
+                raise ValueError("Device hit and miss controls did not match independently known branches")
+            if branch[0] > len(source_lines) or branch[0] < 1 or marker not in source_lines[branch[0] - 1]:
+                raise ValueError("Device branch mapping differs from the probe source")
+    return {
+        "false_counts": [0, 192],
+        "true_counts": [192, 0],
+        "merged_counts": [192, 192],
+        "helper_false_counts": [192, 0],
+        "helper_true_counts": [0, 192],
+        "helper_merged_counts": [192, 192],
+    }
 
 
 # Purpose: Compile a bounded control using the selected SDK and matching host/device profiler.
@@ -248,7 +264,7 @@ def compile_probe(compiler: Path, sdk: Path, runtime: Path, target: str, output:
 # Inputs: Control executable, architecture and owned output. Outputs: One device profile per run and diagnostics.
 def run_controls(executable: Path, target: str, output: Path) -> list[Path]:
     profiles = []
-    for selector, expected in ((0, 23), (1, 17)):
+    for selector, expected in ((0, 18), (1, 22)):
         directory = output / f"selector-{selector}"
         directory.mkdir()
         with child_environment({"LLVM_PROFILE_FILE": str(directory / "probe.%p.profraw"), "LLVM_PROFILE_VERBOSE": "1"}):
@@ -272,10 +288,23 @@ def qualify(compiler: Path, sdk: Path, runtime: Path, target: str, output: Path)
         reject_link_chain(path)
     output = owned_path(ROOT, output)
     output.mkdir(parents=True, exist_ok=False)
+    probe_snapshot = output / "probe-source.hip.cpp"
+    probe_snapshot.write_bytes(PROBE.read_bytes())
     llvm_bin = compiler / "bin"
     with child_environment({"PATH": os.pathsep.join((str(sdk / "bin"), str(llvm_bin), os.environ["PATH"]))}):
         executable, inputs = compile_probe(compiler, sdk, runtime, target, output)
+        snapshot_identity = identities([probe_snapshot])[str(probe_snapshot.resolve())]
+        if snapshot_identity != inputs.get(str(PROBE.resolve())):
+            raise ValueError("Probe source changed between evidence capture and compilation")
         binary_identity = identities([executable])
+        measurement = {
+            "schema_version": 1,
+            "qualification": "not-qualified",
+            "architecture": target,
+            "inputs": inputs,
+            "artifacts": binary_identity,
+        }
+        (output / "measurement-inputs.json").write_text(json.dumps(measurement, indent=2) + "\n", encoding="utf-8")
         image = device_image(llvm_bin, executable, target, output)
         profiles = run_controls(executable, target, output)
         reports = [export_profile(llvm_bin, image, [profile], profile.parent) for profile in profiles]
@@ -286,10 +315,10 @@ def qualify(compiler: Path, sdk: Path, runtime: Path, target: str, output: Path)
     receipt = {
         "schema_version": 1,
         "qualification": "passed",
-        "scope": "three-workgroup device kernel counter controls only",
+        "scope": "three-workgroup device kernel and non-inlined helper counter controls",
         "architecture": target,
         "inputs": inputs,
-        "artifacts": identities([executable, image, *profiles]),
+        "artifacts": identities([executable, image, probe_snapshot, *profiles]),
         "controls": controls,
     }
     (output / "qualification.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")

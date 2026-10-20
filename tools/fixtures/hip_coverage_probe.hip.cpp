@@ -4,14 +4,25 @@
 #include <array>
 #include <iostream>
 
+// Purpose: Require profiling of a real non-inlined device call independently from its calling kernel.
+// Inputs: A binary selector. Outputs: One known value and opposite branch counts to the kernel.
+__device__ __attribute__((noinline)) int coverage_helper_probe(int selector) {
+    if (selector == 0) {
+        return 23;
+    } else {
+        return 17;
+    }
+}
+
 // Purpose: Supply independent device hit and miss controls across multiple workgroups.
 // Inputs: 192 allocated integers and a binary selector. Outputs: One known store per lane without shared writes.
 __global__ void coverage_counter_probe(int* output, int selector) {
     const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+    const int value = coverage_helper_probe(selector);
     if (selector != 0) {
-        output[index] = 17;
+        output[index] = value + 5;
     } else {
-        output[index] = 23;
+        output[index] = value - 5;
     }
 }
 
@@ -40,7 +51,7 @@ int main(int argc, char**) {
                   << " free=" << hipGetErrorName(freed) << '\n';
         return 12;
     }
-    const auto expected = selector == 1 ? 17 : 23;
+    const auto expected = selector == 1 ? 22 : 18;
     if (!std::ranges::all_of(output, [expected](int value) { return value == expected; })) {
         return 13;
     }

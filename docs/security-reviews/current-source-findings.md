@@ -75,6 +75,12 @@ The source snapshot has already been required to contain at least `sizeof(DropFi
 
 `GlobalSize` supplies the bounded allocation size, `GlobalLockView` holds the source lock through the copy, and the destination vector has exactly that size. The non-null lock is checked before copying. The owned snapshot prevents later parsing from retaining an external allocation pointer.
 
+The expanded independent fixtures cover invalid handles, header geometry,
+unterminated suffixes, conversion lengths and the exact aggregate character
+budget. Neither production copy nor its bound changes. Fixture construction
+checks allocation arithmetic and actual capacity, constructs the header as a
+typed object and fills an exact destination span; its lock is owned by RAII.
+
 ### Alert 8348
 
 **Sanitizer allocator instrumentation.** `DS161085` at `third_party/miniz/miniz_common.h:76`.
@@ -164,11 +170,18 @@ The format is the constant file/line diagnostic and its arguments are `__FILE__`
 
 The macro maps the default C allocator to the corresponding free/calloc family. Its allocation calls use fixed `LZ4_stream_t` or stream-decoder sizes, check allocation failure and free their owners on the corresponding exits. Custom and disabled allocator modes preserve their upstream contracts. This is an allocator-choice report, not evidence of an unbounded allocation or mismatched release.
 
+Re-review of the six LZ4 primitive reports and the four unsigned-sentinel
+reports below confirms that their production source and existing codec
+regressions remain unchanged. The caller-context change adds a progress
+cancel/restart test; it changes no LZ4 allocation, copy, diagnostic or length
+handling. Renewed context identities retain all malformed-length, canary and
+dictionary consumers.
+
 ### Alert 8349
 
-**Serial benchmark opt-in flag.** `DS154189` at `tests/cpp/test_flzip_gpu_prefix.cpp:1052`.
+**Serial benchmark opt-in flag.** `DS154189` at `tests/cpp/test_flzip_gpu_prefix.cpp:1134`.
 
-The test reads `FLITZZIP_PATTERN_GPU_BENCHMARK` once to decide whether an optional benchmark is enabled. It does not modify the environment concurrently, cache the returned pointer across changes, use the value as a command or treat it as trusted input for a buffer size. Production compression does not use this opt-in. Adding the independent CPU prefix-decoder test changes this file's identity and the reported location; the benchmark function and these assumptions remain unchanged on re-review.
+The test reads `FLITZZIP_PATTERN_GPU_BENCHMARK` once to decide whether an optional benchmark is enabled. It does not modify the environment concurrently, cache the returned pointer across changes, use the value as a command or treat it as trusted input for a buffer size. Production compression does not use this opt-in. Adding independent CPU prefix-decoder and segment-framing tests changes this file's identity and the reported location; the benchmark function and these assumptions remain unchanged on re-review.
 
 ### Alert 853
 
