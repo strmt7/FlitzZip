@@ -1,14 +1,18 @@
 """Exact-public-metadata review must never admit code, stale inputs or unrelated findings."""
 
+import contextlib
 import copy
 import csv
 import hashlib
 import io
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from tools import scanner_metadata_review as review
 
@@ -63,6 +67,24 @@ class ScannerMetadataReviewTests(unittest.TestCase):
 
     # Purpose: Admit only the reviewed snapshot while retaining unrelated rules and all raw results.
     # Inputs: One known metadata match and one actual-code diagnostic. Outputs: One reviewed and one unresolved.
+    def test_empty_rows_invalid_digests_and_malformed_public_commit_metadata(self):
+        """Purpose: Refuse incomplete reviews and malformed typed metadata without changing raw evidence.
+        Inputs: Empty fields, invalid hashes and a correctly located commit string inside invalid JSON.
+        Outputs: Explicit policy refusal or no exact match; no broader source admission.
+        """
+        row = next(csv.DictReader(io.StringIO(self.policy.decode())))
+        for field, value, message in (("public_sha256", "", "malformed"), ("input_sha256", "g" * 64, "invalid digest")):
+            output = io.StringIO()
+            writer = csv.DictWriter(output, fieldnames=review.FIELDS)
+            writer.writeheader()
+            writer.writerow({**row, field: value})
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, message):
+                review.read_reviews(output.getvalue().encode())
+        value = "a" * 40
+        payload = ('{"commit":"' + value + '"]').encode()
+        typed = {"public_value": value, "value_kind": "git_commit", "input_sha256": hashlib.sha256(payload).hexdigest()}
+        self.assertFalse(review.public_value_matches(typed, payload, {"charOffset": 10, "charLength": 42}))
+
     def test_exact_review_and_lossless_report(self):
         result = self.evaluate([self.finding, {"ruleId": "actual-code-diagnostic"}])
         self.assertEqual(len(result["reviewed_metadata"]), 1)
@@ -309,6 +331,56 @@ class ScannerSourceReviewTests(unittest.TestCase):
             ],
         }
 
+    def test_legacy_review_reader_refuses_duplicate_unbounded_or_empty_regions(self):
+        """Purpose: Prevent broader historical ledgers from passing structural admission.
+        Inputs: Independent component-count, coordinate and duplicate-identity mutations. Outputs: Explicit refusal.
+        """
+        invalid = [([self.row, self.row], "identity is duplicated")]
+        for field, value in (("startLine", "0"), ("endColumn", "10000000"), ("endLine", self.row["startLine"])):
+            changed = dict(self.row)
+            changed[field] = value
+            if field == "endLine":
+                changed["endColumn"] = changed["startColumn"]
+            invalid.append(([changed], "positive extent" if field == "endLine" else "positive region coordinates"))
+        rows = []
+        for index in range(22):
+            rows.append(
+                {
+                    **self.row,
+                    "path": "cmake/ZstdCoverSelection.c",
+                    "evidence": review.SOURCE_EVIDENCE,
+                    "startLine": str(index + 1),
+                    "startColumn": "1",
+                    "endLine": str(index + 1),
+                    "endColumn": "2",
+                }
+            )
+        invalid.append((rows, "component counts"))
+        for rows, message in invalid:
+            output = io.StringIO()
+            writer = csv.DictWriter(output, fieldnames=review.SOURCE_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+            with self.subTest(rows=rows), self.assertRaisesRegex(ValueError, message):
+                review.read_source_reviews(output.getvalue().encode())
+
+    def test_source_read_byte_budget_stops_before_digest_admission(self):
+        """Purpose: Keep oversized live or published sources out of exact-review matching.
+        Inputs: An oversized private source and controlled Git size output. Outputs: No digest admission or blob read.
+        """
+        original = self.source.read_bytes()
+        self.source.write_bytes(b"x" * (review.MAX_POLICY_BYTES + 1))
+        with self.assertRaisesRegex(ValueError, "Reviewed source exceeds"):
+            review.reviewed_source_finding(self.root, self.finding, [self.row])
+        self.source.write_bytes(original)
+        self.assertEqual(review.reviewed_source_finding(self.root, self.finding, [self.row]), self.row)
+        with patch.object(
+            review.subprocess, "run", return_value=SimpleNamespace(stdout=str(review.MAX_POLICY_BYTES + 1).encode())
+        ) as git:
+            with self.assertRaisesRegex(ValueError, "Published reviewed source exceeds"):
+                review.committed_source_matches(self.root, "0" * 40, self.row)
+            self.assertEqual(git.call_count, 1)
+
     # Purpose: Keep an exactly reviewed source finding blocking rather than crediting a review as a repair.
     # Inputs: One historically reviewed finding and an unreviewed sibling. Outputs: Both unresolved and identical SARIF.
     def test_lossless_exact_admission(self):
@@ -526,6 +598,26 @@ class CurrentHostedMetadataTests(unittest.TestCase):
         )
         self.commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()
 
+    def test_committed_source_size_is_bounded_and_consistent_before_review(self):
+        """Purpose: Refuse oversized or inconsistent Git responses before matching public metadata.
+        Inputs: Real fixture policy/commit plus controlled source size/body responses. Outputs: No accepted finding.
+        """
+        real_run = subprocess.run
+        for advertised in (b"not-a-size", str(review.MAX_POLICY_BYTES + 1).encode(), b"1"):
+            # Purpose: Inject one Git transport inconsistency after the actual policy snapshot is read.
+            # Inputs: Fixed production Git command and options. Outputs: Original policy or controlled source response.
+            def git(arguments, selected=advertised, **kwargs):
+                if arguments[:3] == ["git", "cat-file", "-s"] and arguments[-1] == f"{self.commit}:{self.name}":
+                    return SimpleNamespace(stdout=selected)
+                return real_run(arguments, **kwargs)
+
+            with (
+                self.subTest(advertised=advertised),
+                patch.object(review.subprocess, "run", side_effect=git),
+                self.assertRaisesRegex(ValueError, "byte budget|inconsistent size"),
+            ):
+                review.match_current_metadata_alerts(self.root, [self.alert], self.commit, self.policy)
+
     # Purpose: Preserve the original hosted report and match only its committed metadata value.
     # Inputs: The same current public checksum in each active hosted state. Outputs: Its ID without mutation.
     def test_current_exact_committed_metadata(self):
@@ -608,6 +700,128 @@ class CurrentHostedMetadataTests(unittest.TestCase):
         self.assertEqual(review.match_current_metadata_alerts(self.root, [self.alert], self.commit, self.policy), [42])
         self.alert["most_recent_instance"]["location"].update(start_column=len(prefix), end_column=len(prefix) + 66)
         self.assertEqual(review.match_current_metadata_alerts(self.root, [self.alert], self.commit, self.policy), [])
+
+
+class ScannerReviewCommandTests(unittest.TestCase):
+    # Purpose: Exercise only owned alert snapshots. Inputs: None. Outputs: Cleanup-bound files and real module root.
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.snapshot = self.root / "alerts.json"
+        self.snapshot.write_text("[]")
+        self.checkout = Path(review.__file__).resolve().parents[1]
+
+    # Purpose: Exercise the actual process entry point with current policy bytes and no scanner or remote API.
+    # Inputs: Empty complete snapshot and explicit read modes. Outputs: Exact empty classification and no raw changes.
+    def test_real_cli_empty_snapshot_modes_preserve_input(self):
+        cases = (
+            ([], {"historically_reviewed": [], "blocking": [], "unresolved_count": 0}),
+            (["--current-metadata"], {"reviewed_metadata": []}),
+            (["--current-reviews", "--repository", "strmt7/FlitzZip"], {"reviewed_findings": []}),
+        )
+        for options, expected in cases:
+            with self.subTest(options=options):
+                process = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        "-m",
+                        "tools.scanner_metadata_review",
+                        "--hosted-alerts",
+                        str(self.snapshot),
+                        *options,
+                    ],
+                    cwd=self.checkout,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertEqual(process.returncode, 0, process.stderr)
+                self.assertEqual(json.loads(process.stdout), expected)
+                self.assertEqual(self.snapshot.read_bytes(), b"[]")
+
+    # Purpose: Fail before policy matching on malformed or oversized hosted input.
+    # Inputs: Invalid complete-array shapes and one bounded over-budget file. Outputs: No success JSON or review action.
+    def test_cli_snapshot_shape_and_size_fail_closed(self):
+        for payload, message in (
+            (b"{}", "complete alert array"),
+            (b"[null]", "complete alert array"),
+            (b" " * (16 * 1024**2 + 1), "snapshot exceeds its byte budget"),
+        ):
+            self.snapshot.write_bytes(payload)
+            with (
+                self.subTest(message=message),
+                patch.object(sys, "argv", ["review", "--hosted-alerts", str(self.snapshot)]),
+                patch.object(review, "match_current_metadata_alerts") as match,
+                self.assertRaisesRegex(ValueError, message),
+            ):
+                review.main()
+            match.assert_not_called()
+            self.assertEqual(self.snapshot.read_bytes(), payload)
+
+    # Purpose: Retain historical source findings as blocking and reject overlapping review identities.
+    # Inputs: Controlled classifier results at the CLI routing boundary. Outputs: Exact mode output or explicit refusal.
+    def test_review_mode_routing_never_treats_historical_source_review_as_repair(self):
+        self.snapshot.write_text(json.dumps([{"number": 9, "state": "open"}, {"number": 10, "state": "open"}]))
+        cases = (
+            ([], [9], [4], {"historically_reviewed": [4, 9], "blocking": [9, 10], "unresolved_count": 2}),
+            (["--current-metadata"], [9], [], {"reviewed_metadata": [9]}),
+            (["--current-reviews", "--repository", "strmt7/FlitzZip"], [9], [4], {"reviewed_findings": [4, 9]}),
+            ([], [9], [9], None),
+            (["--current-reviews", "--repository", "strmt7/FlitzZip"], [9], [9], None),
+        )
+        for options, first, second, expected in cases:
+            output = io.StringIO()
+            with (
+                self.subTest(options=options, second=second),
+                patch.object(
+                    sys,
+                    "argv",
+                    ["review", "--hosted-alerts", str(self.snapshot), "--commit", "0" * 40, *options],
+                ),
+                patch.object(review, "read_policy", return_value=b"fixture"),
+                patch.object(review, "read_source_policy", return_value=b"fixture"),
+                patch.object(review, "read_hosted_policy", return_value=b"fixture"),
+                patch.object(review, "match_current_metadata_alerts", return_value=first),
+                patch.object(review, "match_current_false_positives", return_value=second),
+                patch.object(review, "match_historical_source_alerts", return_value=first),
+                patch.object(review, "match_historical_hosted_alerts", return_value=second),
+                contextlib.redirect_stdout(output),
+            ):
+                if expected is None:
+                    with self.assertRaisesRegex(ValueError, "overlap"):
+                        review.main()
+                    self.assertEqual(output.getvalue(), "")
+                else:
+                    review.main()
+                    self.assertEqual(json.loads(output.getvalue()), expected)
+
+    # Purpose: Require the exact audited repository before combining current false-positive reviews.
+    # Inputs: Missing, URL-shaped and traversal-like repository declarations. Outputs: No classifier invocation.
+    def test_current_review_requires_audited_repository(self):
+        for repository in ("", "https://github.com/strmt7/FlitzZip", "owner/../repo"):
+            with (
+                self.subTest(repository=repository),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "review",
+                        "--hosted-alerts",
+                        str(self.snapshot),
+                        "--commit",
+                        "0" * 40,
+                        "--current-reviews",
+                        "--repository",
+                        repository,
+                    ],
+                ),
+                patch.object(review, "match_current_false_positives") as match,
+                self.assertRaisesRegex(ValueError, "audited repository"),
+            ):
+                review.main()
+            match.assert_not_called()
 
 
 if __name__ == "__main__":
