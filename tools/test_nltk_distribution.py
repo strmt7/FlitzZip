@@ -18,6 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from tools import crawl4ai_source_build, semgrep_distribution
 from tools import nltk_distribution as build
 from tools import python_wheel as packaging
 
@@ -50,6 +51,59 @@ def source_fixture(path: Path, data: dict) -> dict:
 
 class DistributionTests(unittest.TestCase):
     """Preserve upstream identity, complete source admission and portable standard packaging."""
+
+    # Purpose: Reject contradictory or non-JSON provenance before a recipe can admit or build dependency bytes.
+    # Inputs: Actual NLTK, Crawl4AI and Semgrep recipes with duplicate, nonfinite, untyped or oversized metadata.
+    # Outputs: Every consumer raises ValueError without including private input values in its diagnostic.
+    def test_all_packaging_recipes_reject_ambiguous_metadata(self):
+        for module, reader, attribute, filename in (
+            (build, build.distribution, "SOURCE_ROOT", "distribution.json"),
+            (crawl4ai_source_build, crawl4ai_source_build.recipe, "SOURCE_ROOT", "build.json"),
+            (semgrep_distribution, semgrep_distribution.recipe, "MANIFEST", None),
+        ):
+            original = reader()
+            literal = json.dumps(original)
+            private_value = "private-recipe-value-do-not-log"
+            variants = {
+                "repeated-schema": literal[:-1] + ',"schema":1}',
+                "nested-duplicate": literal[:-1] + ',"extra":{"pin":1,"pin":2}}',
+                "nonfinite": literal[:-1] + ',"extra":NaN}',
+                "overflow": literal[:-1] + ',"extra":1e999}',
+                "fractional-schema": json.dumps(original | {"schema": 1.0}),
+                "boolean-schema": json.dumps(original | {"schema": True}),
+                "scalar": '"' + private_value + '"',
+                "array": "[]",
+                "empty": "",
+                "malformed": '{"schema":',
+                "oversized": literal[:-1] + ',"extra":"' + "x" * (1024 * 1024) + '"}',
+            }
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                record = root / (filename or "semgrep.json")
+                for case, contents in variants.items():
+                    record.write_text(contents, encoding="utf-8")
+                    with self.subTest(project=original.get("project", "semgrep"), case=case):
+                        with (
+                            patch.object(module, attribute, root if filename else record),
+                            self.assertRaises(ValueError) as failure,
+                        ):
+                            reader()
+                        self.assertNotIn(private_value, str(failure.exception))
+
+    # Purpose: Preserve the exact metadata byte ceiling without making a prior stat result authoritative.
+    # Inputs: One complete JSON recipe padded to the boundary, then one excess byte and invalid UTF-8.
+    # Outputs: Exact bounded metadata is accepted unchanged; oversized or undecodable bytes fail.
+    def test_packaging_recipe_exact_byte_boundary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "recipe.json"
+            document = b'{"schema":1}'
+            payload = document + b" " * (packaging.MAX_RECIPE_BYTES - len(document))
+            path.write_bytes(payload)
+            self.assertEqual(packaging.read_recipe(path), {"schema": 1})
+            for invalid in (payload + b" ", b'{"private":"\xff"}'):
+                path.write_bytes(invalid)
+                with self.subTest(bytes=len(invalid)), self.assertRaises(ValueError):
+                    packaging.read_recipe(path)
 
     # Purpose: Reject real redirected cache roots and installed-package entries without traversing their targets.
     # Inputs: One owned Windows junction or POSIX link to the inert wheel cache and an isolated alternate tool home.

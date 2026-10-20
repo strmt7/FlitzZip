@@ -18,6 +18,8 @@ from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
+from tools.python_wheel import read_recipe
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / ".github/requirements/semgrep-distribution.json"
 MAX_BYTES = 512 * 1024 * 1024
@@ -30,9 +32,10 @@ def sha256(data: bytes) -> str:
 
 def recipe() -> dict:
     """Purpose: Load the narrow reviewed packaging operation. Inputs: Tracked manifest. Outputs: Validated pins."""
-    data = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    data = read_recipe(MANIFEST)
     if (
-        data.get("schema") != 1
+        type(data.get("schema")) is not int
+        or data["schema"] != 1
         or data.get("upstream_version") != "1.181.0"
         or data.get("version") != "1.181.0+flitzzip.mcp1"
         or data.get("mcp_before") != "1.29.0"

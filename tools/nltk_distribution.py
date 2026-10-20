@@ -12,7 +12,7 @@ import tempfile
 from email.parser import BytesParser
 from pathlib import Path
 
-from tools.python_wheel import MAX_SOURCE_BYTES, digest, wheel_files
+from tools.python_wheel import MAX_SOURCE_BYTES, digest, read_recipe, wheel_files
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_ROOT = ROOT / "third_party/upstream/nltk/3.10.4-rc1"
@@ -20,7 +20,7 @@ SOURCE_ROOT = ROOT / "third_party/upstream/nltk/3.10.4-rc1"
 
 def distribution() -> dict:
     """Purpose: Validate exact upstream provenance. Inputs: Tracked record. Outputs: Admitted metadata."""
-    data = json.loads((SOURCE_ROOT / "distribution.json").read_text(encoding="utf-8"))
+    data = read_recipe(SOURCE_ROOT / "distribution.json")
     if not isinstance(data, dict) or not isinstance(data.get("version"), str) or not isinstance(data.get("tag"), str):
         raise ValueError("Unsupported NLTK upstream distribution record")
     version = data.get("version", "")
