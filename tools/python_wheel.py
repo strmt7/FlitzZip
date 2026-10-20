@@ -56,8 +56,11 @@ def read_recipe(path: Path) -> dict:
 
 
 def digest(path: Path) -> str:
-    """Purpose: Measure bounded artifacts. Inputs: File. Outputs: SHA-256 or size refusal."""
-    if path.stat().st_size > MAX_SOURCE_BYTES:
+    """Purpose: Measure bounded regular artifacts. Inputs: File path. Outputs: SHA-256 or admission refusal."""
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        raise ValueError("Python artifact is missing, special or redirected")
+    if info.st_size > MAX_SOURCE_BYTES:
         raise ValueError("Python artifact exceeds its reviewed size budget")
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -74,7 +77,10 @@ def wheel_files(path: Path) -> dict[str, bytes]:
     """Purpose: Admit complete pure-wheel payloads before use.
     Inputs: Bounded ZIP file. Outputs: Regular canonical members; rejects redirects, aliases and oversized content.
     """
-    if path.stat().st_size > MAX_SOURCE_BYTES:
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        raise ValueError("Python wheel is missing, special or redirected")
+    if info.st_size > MAX_SOURCE_BYTES:
         raise ValueError("Python wheel exceeds its reviewed extent")
     with zipfile.ZipFile(path) as archive:
         entries = archive.infolist()
@@ -108,6 +114,8 @@ def canonical_wheel(built: Path, destination: Path, data: dict, *, project: str)
     """Purpose: Make pure wheels reproducible without accepting ambiguous package identities.
     Inputs: Standard wheel and recipe. Outputs: Canonical wheel; missing or repeated identity headers fail first.
     """
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError("Canonical Python wheel destination already exists or is redirected")
     files = wheel_files(built)
     info = f"{project}-{data['version']}.dist-info/"
     metadata_path = info + "METADATA"
@@ -133,7 +141,7 @@ def canonical_wheel(built: Path, destination: Path, data: dict, *, project: str)
     files[record_path] = record.getvalue().encode("utf-8")
     stamp = datetime.datetime.fromtimestamp(data["source_date_epoch"], datetime.UTC)
     # Stored members avoid cross-host zlib variation; Python code and license payloads stay byte-exact.
-    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_STORED) as output:
+    with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_STORED) as output:
         for name, contents in sorted(files.items()):
             member = zipfile.ZipInfo(name, stamp.timetuple()[:6])
             member.create_system = 3
