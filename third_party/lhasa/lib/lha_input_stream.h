@@ -37,6 +37,13 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 int lha_input_stream_read(LHAInputStream *stream, void *buf, size_t buf_len);
 
+/* Purpose: Read an exact byte span while preserving EOF versus input failure.
+ * Inputs: A live stream, writable buf_len-byte buffer, and non-null bytes_read.
+ * Outputs: Sets the initialized byte count; OK means full, END means short EOF,
+ * and ERROR means an input failure. Partial bytes never establish a header end. */
+LHAReadResult lha_input_stream_read_full(LHAInputStream *stream, void *buf,
+                                       size_t buf_len, size_t *bytes_read);
+
 /**
  * Skip over the specified number of bytes.
  *

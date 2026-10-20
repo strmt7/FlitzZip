@@ -347,6 +347,28 @@ function Get-CppAuditProjection {
     return [pscustomobject]@{ Lines = @($masked -split '\r?\n'); CommentLines = $commentLines }
 }
 
+# Purpose: Locate a constructor declaration across parenthesized and braced member initializers.
+# Inputs: Masked source lines and the opening body-brace line.
+# Outputs: The bounded declaration start or -1; initializer calls never acquire a separate contract.
+function Get-CppConstructorStart {
+    param([string[]]$Lines, [int]$Index)
+
+    $initializer = '[A-Za-z_][\w:<>]*\s*(?:\([^;{}]*\)|\{[^;{}]*\})'
+    $pattern = '^(?:(?:explicit|constexpr|inline)\s+)*(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*\s*\([^;{}]*\)\s*' +
+        '(?:noexcept(?:\([^;{}]*\))?\s*)?:(?!:)\s*' + $initializer +
+        '(?:\s*,\s*' + $initializer + ')*\s*\{\s*$'
+    for ($start = $Index; $start -ge [Math]::Max(0, $Index - 12); --$start) {
+        if ($Lines[$start] -match ';') { break }
+        if ([string]::IsNullOrWhiteSpace($Lines[$start])) { continue }
+        $signature = ($Lines[$start..$Index] -join ' ').Trim()
+        if ($signature -match $pattern) {
+            if ($start -gt 0 -and $Lines[$start - 1].Trim() -match '^template\s*<.*>\s*$') { --$start }
+            return $start
+        }
+    }
+    return -1
+}
+
 # Purpose: Locate a C/C++ definition's signature for either same-line or next-line opening braces.
 # Inputs: Masked source lines and candidate brace line; control blocks and test registrations are excluded.
 # Outputs: Signature start index, or -1 when the candidate is not a recognized function definition.
@@ -355,6 +377,8 @@ function Get-CppFunctionStart {
 
     $candidate = $Lines[$Index].Trim()
     if ($candidate -notmatch '\{\s*$') { return -1 }
+    $constructorStart = Get-CppConstructorStart -Lines $Lines -Index $Index
+    if ($constructorStart -ge 0) { return $constructorStart }
     $start = $Index
     $balance = ([regex]::Matches($candidate, '\(')).Count - ([regex]::Matches($candidate, '\)')).Count
     # An initializer call is part of its constructor, not a separate function declaration.

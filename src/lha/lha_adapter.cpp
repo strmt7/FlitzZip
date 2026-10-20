@@ -67,29 +67,20 @@ int lha_stream_read(void* handle, void* buffer, std::size_t buffer_len) {
     auto* input = static_cast<std::ifstream*>(handle);
     input->read(static_cast<char*>(buffer), static_cast<std::streamsize>(buffer_len));
     const auto read = input->gcount();
+    if (input->bad() || (input->fail() && !input->eof())) {
+        return -1;
+    }
     if (read == static_cast<std::streamsize>(buffer_len) || input->eof()) {
-        input->clear();
         return static_cast<int>(std::max<std::streamsize>(0, read));
     }
     return -1;
 }
 
-// Purpose: Skip forward in a heap-owned C++ stream for the Lhasa C API.
-// Inputs: `handle` points to an open `std::ifstream` and `bytes` is the relative forward distance.
-// Outputs: Returns non-zero when the seek succeeds.
-int lha_stream_skip(void* handle, std::size_t bytes) {
-    if (handle == nullptr || bytes > static_cast<std::size_t>(std::numeric_limits<std::streamoff>::max())) {
-        return 0;
-    }
-    auto* input = static_cast<std::ifstream*>(handle);
-    input->clear();
-    input->seekg(static_cast<std::streamoff>(bytes), std::ios::cur);
-    return *input ? 1 : 0;
-}
-
 const LHAInputStreamType kFlitzZipLhaInputStreamType{
     lha_stream_read,
-    lha_stream_skip,
+    // Consume skipped bytes through the bounded read path: seekg can succeed
+    // beyond EOF and does not prove that a declared compressed extent exists.
+    nullptr,
     nullptr,
 };
 
@@ -135,6 +126,21 @@ class LhaReaderSession {
     // Outputs: Returns a non-null pointer while the session is alive.
     LHAReader* reader() const {
         return reader_;
+    }
+
+    // Purpose: Advance only across an explicitly validated LHA member boundary.
+    // Inputs: The session's current header/payload position.
+    // Outputs: Returns a borrowed header, nullptr for permitted termination, or throws on any reader error.
+    LHAFileHeader* next_header() {
+        LHAFileHeader* header = nullptr;
+        const auto result = lha_reader_next_file(reader_, &header);
+        if (result == LHA_READ_END) {
+            return nullptr;
+        }
+        if (result != LHA_READ_OK || header == nullptr) {
+            throw ArchiveError("LHA header or compressed extent is truncated, malformed, or unreadable");
+        }
+        return header;
     }
 
   private:
@@ -204,7 +210,7 @@ LhaMetadata scan_lha_metadata(const std::filesystem::path& archive_path) {
     std::uint32_t entry_count = 0;
 
     for (;;) {
-        LHAFileHeader* header = lha_reader_next_file(session.reader());
+        LHAFileHeader* header = session.next_header();
         if (header == nullptr) {
             break;
         }
@@ -302,7 +308,7 @@ void extract_lha_payloads(const std::filesystem::path& archive_path, const LhaMe
     std::size_t metadata_index = 0;
 
     for (;;) {
-        LHAFileHeader* header = lha_reader_next_file(session.reader());
+        LHAFileHeader* header = session.next_header();
         if (header == nullptr) {
             break;
         }

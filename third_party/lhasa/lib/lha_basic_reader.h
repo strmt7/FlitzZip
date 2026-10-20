@@ -63,15 +63,13 @@ void lha_basic_reader_free(LHABasicReader *reader);
 LHAFileHeader *lha_basic_reader_curr_file(LHABasicReader *reader);
 
 /**
- * Read the header of the next archived file from the input stream.
- *
- * @param reader     The LHABasicReader structure.
- * @return           Pointer to an LHAFileHeader structure, or NULL if
- *                   an error occurred.  This pointer is only valid until
- *                   the next time that lha_basic_reader_next_file is called.
+ * Purpose: Advance past remaining compressed bytes to the next member.
+ * Inputs: A live basic reader and a non-null header output.
+ * Outputs: OK borrows a header until next advance/free; END means permitted
+ * termination, ERROR means sticky parse/read/skip failure. Non-OK clears *header.
  */
 
-LHAFileHeader *lha_basic_reader_next_file(LHABasicReader *reader);
+LHAReadResult lha_basic_reader_next_file(LHABasicReader *reader, LHAFileHeader **header);
 
 /**
  * Read some of the compressed data for the current archived file.

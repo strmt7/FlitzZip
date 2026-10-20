@@ -169,6 +169,17 @@ try {
     Write-AuditFixture -RelativePath $vendorPath -Lines @('Owner(int count)',
         '    : allocation(count) {', '    initialize();', '}')
     Test-AuditCase -Name 'constructor initializer lists still require a contract' -Options '-ChangedOnly' -Expected @($vendorPath)
+    $mixedInitializers = @('explicit Owner(int count)',
+        '    : type{count, 0},',
+        '      stream(create(count)),',
+        '      reader(stream ? create(count) : nullptr) {', '    use(reader);', '}')
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + $mixedInitializers)
+    Test-AuditCase -Name 'mixed braced and parenthesized constructor initializers share one contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines $mixedInitializers
+    Test-AuditCase -Name 'mixed constructor initializers cannot bypass a missing contract' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @(
+        'Owner(int count) : type{count, 0}, stream(create(count)) {', '}', 'int next() {', '}'))
+    Test-AuditCase -Name 'constructor contract does not cover a following empty function' -Options '-ChangedOnly' -Expected @($vendorPath)
     Write-AuditFixture -RelativePath $vendorPath -Lines @('extern "C"', 'int parse(int first,',
         '          int second) {', '    return first + second;', '}')
     Test-AuditCase -Name 'multiline attached-brace signatures still require all contract fields' -Options '-ChangedOnly' -Expected @($vendorPath)

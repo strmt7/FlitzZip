@@ -728,6 +728,15 @@ The LHA/LZH path uses the ISC-licensed Lhasa 0.6.0 decoder in process:
    unsafe paths, duplicate normalized paths, and file/child conflicts before
    destination writes.
 4. Decode every regular-file payload once with Lhasa's CRC/size checker.
+   The reader distinguishes a member, permitted archive termination, and a
+   parse/read/skip error. Both passes require explicit clean termination:
+   physical EOF at a member boundary or a zero terminator followed only by zero
+   padding through EOF. PMarc members also permit a zero terminator followed by
+   at most 127 `0x1A` bytes from the final CP/M record. Partial next headers,
+   malformed full headers, missing
+   compressed bytes, nonzero trailing data and I/O errors fail validation before
+   destination writes. Level-2 headers with a zero low length byte remain valid;
+   they must not be mistaken for a terminator.
 5. Reopen the archive for the publish pass, verify that metadata matches the
    validation pass, then publish only approved directories and regular files
    through the standard private temporary-file path.
@@ -740,7 +749,7 @@ flowchart TD
     D --> E["Reopen archive for publish pass"]
     E --> F["Publish directories and verified files"]
     C -->|"unsafe or unsupported"| G["Reject archive"]
-    D -->|"decode, size, or CRC failure"| G
+    D -->|"decode, size, CRC, or termination failure"| G
 ```
 
 ## XAR Security Contract

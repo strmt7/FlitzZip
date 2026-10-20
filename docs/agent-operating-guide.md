@@ -671,6 +671,11 @@ obfuscate a useful test, exclude a path/detector, or change verification to
 manufacture a clean scan. Individual authorizations belong in review records.
 
 - Validate all archive entry names with `safe_join_archive_path` before extraction.
+- Preserve explicit member/end/error outcomes at archive iterator boundaries.
+  A null pointer or zero-byte read alone cannot prove successful completion.
+  Test malformed next headers after a CRC-correct prefix, non-EOF input errors,
+  and unread compressed extents; validation must reject them before publication.
+  Keep documented clean termination and buffered short-read behavior covered.
 - Open or create writable output directories relative to their already-open
   parent handles, rejecting reparse resolution within that operation. Denying
   delete sharing prevents renaming a pinned directory but does not prevent an

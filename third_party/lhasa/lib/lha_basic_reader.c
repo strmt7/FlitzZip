@@ -31,9 +31,12 @@ struct _LHABasicReader {
 	LHAInputStream *stream;
 	LHAFileHeader *curr_file;
 	size_t curr_file_remaining;
-	int eof;
+	LHAReadResult status;
 };
 
+/* Purpose: Allocate basic-reader ownership and initialize explicit iteration state.
+ * Inputs: A caller-owned live input stream.
+ * Outputs: Returns an owned reader or NULL on allocation failure. */
 LHABasicReader *lha_basic_reader_new(LHAInputStream *stream)
 {
 	LHABasicReader *reader;
@@ -47,7 +50,7 @@ LHABasicReader *lha_basic_reader_new(LHAInputStream *stream)
 	reader->stream = stream;
 	reader->curr_file = NULL;
 	reader->curr_file_remaining = 0;
-	reader->eof = 0;
+	reader->status = LHA_READ_OK;
 
 	return reader;
 }
@@ -66,45 +69,58 @@ LHAFileHeader *lha_basic_reader_curr_file(LHABasicReader *reader)
 	return reader->curr_file;
 }
 
-LHAFileHeader *lha_basic_reader_next_file(LHABasicReader *reader)
+/* Purpose: Advance members without converting failed consumption into clean EOF.
+ * Inputs: A live reader and non-null borrowed-header output.
+ * Outputs: Returns sticky END/ERROR or OK with the next reader-owned header. */
+LHAReadResult lha_basic_reader_next_file(LHABasicReader *reader, LHAFileHeader **header)
 {
+	int allow_cpm_padding = 0;
+	*header = NULL;
 	// Free the current file header and skip over any remaining
 	// compressed data that hasn't been read yet.
 
 	if (reader->curr_file != NULL) {
+		allow_cpm_padding =
+		    strcmp(reader->curr_file->compress_method, "-pm0-") == 0
+		 || strcmp(reader->curr_file->compress_method, "-pm1-") == 0
+		 || strcmp(reader->curr_file->compress_method, "-pm2-") == 0;
 		lha_file_header_free(reader->curr_file);
 		reader->curr_file = NULL;
 
-		if (!lha_input_stream_skip(reader->stream,
+		if (reader->status == LHA_READ_OK
+		 && !lha_input_stream_skip(reader->stream,
 		                           reader->curr_file_remaining)) {
-			reader->eof = 1;
+			reader->status = LHA_READ_ERROR;
 		}
 	}
 
-	if (reader->eof) {
-		return NULL;
+	if (reader->status != LHA_READ_OK) {
+		return reader->status;
 	}
 
 	// Read the header for the next file.
 
-	reader->curr_file = lha_file_header_read(reader->stream);
-
-	if (reader->curr_file == NULL) {
-		reader->eof = 1;
-		return NULL;
+	reader->status = lha_file_header_read(reader->stream, allow_cpm_padding,
+	                                     &reader->curr_file);
+	if (reader->status != LHA_READ_OK) {
+		return reader->status;
 	}
 
 	reader->curr_file_remaining = reader->curr_file->compressed_length;
 
-	return reader->curr_file;
+	*header = reader->curr_file;
+	return LHA_READ_OK;
 }
 
+/* Purpose: Read only compressed bytes belonging to the current member.
+ * Inputs: A reader, writable buf_len-byte buffer, and requested extent.
+ * Outputs: Returns bytes consumed; short input sets a sticky reader error. */
 size_t lha_basic_reader_read_compressed(LHABasicReader *reader, void *buf,
                                         size_t buf_len)
 {
 	size_t bytes;
 
-	if (reader->eof || reader->curr_file_remaining == 0) {
+	if (reader->status != LHA_READ_OK || reader->curr_file_remaining == 0) {
 		return 0;
 	}
 
@@ -117,7 +133,7 @@ size_t lha_basic_reader_read_compressed(LHABasicReader *reader, void *buf,
 	}
 
 	if (!lha_input_stream_read(reader->stream, buf, bytes)) {
-		reader->eof = 1;
+		reader->status = LHA_READ_ERROR;
 		return 0;
 	}
 
