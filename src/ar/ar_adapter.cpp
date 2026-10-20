@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cctype>
 #include <cstdio>
 #include <fstream>
 #include <limits>
@@ -127,24 +126,25 @@ std::string trim_right_spaces(std::string value) {
 // Inputs: `field` is a fixed-width ASCII decimal field and `name` labels diagnostics.
 // Outputs: Returns the decoded value or throws on malformed input.
 std::uint64_t parse_decimal_field(std::string_view field, const char* name) {
+    while (!field.empty() && field.front() == ' ') {
+        field.remove_prefix(1U);
+    }
+    while (!field.empty() && field.back() == ' ') {
+        field.remove_suffix(1U);
+    }
+    if (field.empty()) {
+        throw ArchiveError(std::string("empty AR decimal field: ") + name);
+    }
     std::uint64_t value = 0;
-    bool saw_digit = false;
     for (const unsigned char ch : field) {
-        if (ch == ' ') {
-            continue;
-        }
-        if (!std::isdigit(ch)) {
+        if (ch < static_cast<unsigned char>('0') || ch > static_cast<unsigned char>('9')) {
             throw ArchiveError(std::string("malformed AR decimal field: ") + name);
         }
-        saw_digit = true;
         const auto digit = static_cast<std::uint64_t>(ch - '0');
         if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 10U) {
             throw ArchiveError(std::string("AR decimal field overflows: ") + name);
         }
         value = value * 10U + digit;
-    }
-    if (!saw_digit) {
-        throw ArchiveError(std::string("empty AR decimal field: ") + name);
     }
     return value;
 }
@@ -238,7 +238,7 @@ std::uint64_t parse_prefixed_decimal(std::string_view value, std::string_view pr
     std::uint64_t result = 0;
     for (std::size_t i = prefix.size(); i < value.size(); ++i) {
         const auto ch = static_cast<unsigned char>(value[i]);
-        if (!std::isdigit(ch)) {
+        if (ch < static_cast<unsigned char>('0') || ch > static_cast<unsigned char>('9')) {
             throw ArchiveError(std::string("malformed AR ") + label);
         }
         const auto digit = static_cast<std::uint64_t>(ch - '0');
