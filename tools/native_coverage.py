@@ -588,6 +588,8 @@ def main() -> None:
     args = parser.parse_args()
     if os.name != "nt":
         raise ValueError("Native coverage uses the Windows MSVC/PDB collector")
+    if args.provision_only and (args.hip_host or args.gui):
+        raise ValueError("--hip-host and --gui require coverage collection")
     directory = "coverage" + ("-hip-host" if args.hip_host else "") + ("-gui" if args.gui else "")
     output = owned_path(ROOT, ROOT / "out" / directory)
     output.mkdir(parents=True, exist_ok=True)
