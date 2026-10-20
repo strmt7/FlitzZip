@@ -56,13 +56,16 @@ typedef enum {
 } LHAInputStreamState;
 
 struct _LHAInputStream {
-	const LHAInputStreamType *type;
+	LHAInputStreamType type;
 	void *handle;
 	LHAInputStreamState state;
 	uint8_t leadin[LEADIN_BUFFER_LEN];
 	size_t leadin_len;
 };
 
+/* Purpose: Create an input stream with an owned snapshot of its callbacks.
+ * Inputs: A valid callback table and a context that remains alive until stream release.
+ * Outputs: An owned stream or NULL; the caller's callback table is not retained. */
 LHAInputStream *lha_input_stream_new(const LHAInputStreamType *type,
                                      void *handle)
 {
@@ -78,7 +81,7 @@ LHAInputStream *lha_input_stream_new(const LHAInputStreamType *type,
 		return NULL;
 	}
 
-	result->type = type;
+	result->type = *type;
 	result->handle = handle;
 	result->leadin_len = 0;
 	result->state = LHA_INPUT_STREAM_INIT;
@@ -86,12 +89,15 @@ LHAInputStream *lha_input_stream_new(const LHAInputStreamType *type,
 	return result;
 }
 
+/* Purpose: Release the stream using its original close callback.
+ * Inputs: A live owned stream and its still-valid callback context.
+ * Outputs: Invokes close when configured and frees the stream exactly once. */
 void lha_input_stream_free(LHAInputStream *stream)
 {
 	// Close the input stream.
 
-	if (stream->type->close != NULL) {
-		stream->type->close(stream->handle);
+	if (stream->type.close != NULL) {
+		stream->type.close(stream->handle);
 	}
 
 	free(stream);
@@ -153,7 +159,7 @@ static int do_read(LHAInputStream *stream, void *buf, size_t buf_len)
 	if (buf_len > INT_MAX) {
 		buf_len = INT_MAX;
 	}
-	result = stream->type->read(stream->handle, buf, buf_len);
+	result = stream->type.read(stream->handle, buf, buf_len);
 	if (result < 0 || (size_t) result > buf_len) {
 		stream->state = LHA_INPUT_STREAM_FAIL;
 		return -1;
@@ -309,8 +315,8 @@ int lha_input_stream_skip(LHAInputStream *stream, size_t bytes)
 		stream->state = LHA_INPUT_STREAM_FAIL;
 		return 0;
 	}
-	if (stream->type->skip != NULL) {
-		if (stream->type->skip(stream->handle, bytes)) {
+	if (stream->type.skip != NULL) {
+		if (stream->type.skip(stream->handle, bytes)) {
 			return 1;
 		}
 		stream->state = LHA_INPUT_STREAM_FAIL;

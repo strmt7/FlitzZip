@@ -103,8 +103,9 @@ typedef struct {
  * Create new @ref LHAInputStream structure, using a set of generic functions
  * to provide LHA data.
  *
- * @param type         Pointer to a @ref LHAInputStreamType structure
- *                     containing callback functions to read data.
+ * @param type         Pointer to a @ref LHAInputStreamType callback table.
+ *                     The callbacks are copied; the table need not outlive
+ *                     this call.
  * @param handle       Opaque caller-owned stream handle to pass to callback
  *                     functions. The caller must keep it alive until this
  *                     input stream is freed.

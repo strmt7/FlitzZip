@@ -198,6 +198,7 @@ struct LhaMemoryInput {
     std::size_t fail_at = std::numeric_limits<std::size_t>::max();
     bool fail_skip = false;
     std::size_t skip_calls = 0;
+    std::size_t close_calls = 0;
 };
 
 // Purpose: Model fragmented successful input and deterministic non-EOF device errors.
@@ -227,6 +228,13 @@ int lha_memory_skip(void* handle, std::size_t length) {
     }
     input.position += length;
     return 1;
+}
+
+// Purpose: Observe release through the callback retained when a stream was created.
+// Inputs: The caller-owned memory source, which outlives the stream.
+// Outputs: Records one close invocation without freeing caller-owned memory.
+void lha_memory_close(void* handle) {
+    ++static_cast<LhaMemoryInput*>(handle)->close_calls;
 }
 
 struct LhaMemoryReader {
@@ -617,4 +625,26 @@ TEST_CASE(lha_stream_skip_consumes_buffered_bytes_before_callback) {
         REQUIRE_EQ(byte, bytes[31]);
         REQUIRE_EQ(input.skip_calls, with_skip ? 1U : 0U);
     }
+}
+
+// Purpose: Keep active stream behavior independent from a caller's callback table lifetime.
+// Inputs: A valid memory stream whose original skip/close slots are changed after construction.
+// Outputs: The stream still uses its original callbacks, including exactly one close.
+TEST_CASE(lha_stream_owns_callback_configuration) {
+    const auto bytes = stored_lha_member(0);
+    LhaMemoryInput input{bytes};
+    LHAInputStreamType callbacks{lha_memory_read, lha_memory_skip, lha_memory_close};
+    std::unique_ptr<LHAInputStream, decltype(&lha_input_stream_free)> stream(lha_input_stream_new(&callbacks, &input),
+                                                                             lha_input_stream_free);
+    REQUIRE_TRUE(stream != nullptr);
+    callbacks.skip = nullptr;
+    callbacks.close = nullptr;
+    std::array<unsigned char, 32> header{};
+    REQUIRE_TRUE(lha_input_stream_read(stream.get(), header.data(), header.size()) != 0);
+    REQUIRE_TRUE(lha_input_stream_skip(stream.get(), 12) != 0);
+    REQUIRE_EQ(input.skip_calls, 1U);
+    REQUIRE_EQ(input.position, bytes.size());
+    REQUIRE_EQ(input.close_calls, 0U);
+    stream.reset();
+    REQUIRE_EQ(input.close_calls, 1U);
 }
