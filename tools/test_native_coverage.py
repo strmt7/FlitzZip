@@ -2,12 +2,14 @@
 
 import copy
 import hashlib
+import io
 import json
 import os
 import re
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlsplit
@@ -240,7 +242,7 @@ class CoverageTests(unittest.TestCase):
     # Purpose: Detect rejection paths that modify caller bytes or leave publication debris despite correct errors.
     # Inputs: Controlled mutation after one case. Outputs: Immediate refusal; clean repeated cases remain admissible.
     def test_cli_rejection_checks_files_and_publication_debris(self):
-        for mutation in (None, "input with spaces.txt", "preserved.zip", "unexpected.tmp"):
+        for mutation in (None, "input with spaces.txt", "preserved.zip", "independent.zip", "unexpected.tmp"):
             # Purpose: Model a CLI side effect independently from its exit status.
             # Inputs: Owned case paths. Outputs: A report and the selected unwanted write.
             def execute_case(binary, case, log, selected_mutation=mutation):
@@ -252,6 +254,7 @@ class CoverageTests(unittest.TestCase):
                 self.subTest(mutation=mutation),
                 patch.object(collector, "ROOT", self.root),
                 patch.object(collector, "cli_admission_cases", return_value=[([], 2, None)] * 2),
+                patch.object(collector, "run_cli_capability_contracts", return_value=[]),
                 patch.object(collector, "run_cli_admission_case", side_effect=execute_case) as run,
             ):
                 if mutation:
@@ -261,6 +264,176 @@ class CoverageTests(unittest.TestCase):
                 else:
                     collector.run_cli_admission(self.root / "cli.exe", self.root)
                     self.assertEqual(run.call_count, 2)
+
+    # Purpose: Prove ZIP-only rejection cases reach format admission using an independently readable valid archive.
+    # Inputs: Native collector fixture builder and no child execution. Outputs: Exact stored content and both readers.
+    def test_compatibility_rejection_fixture_is_independent_and_valid(self):
+        with (
+            patch.object(collector, "ROOT", self.root),
+            patch.object(collector, "cli_admission_cases", return_value=[]),
+            patch.object(collector, "run_cli_capability_contracts", return_value=[]),
+        ):
+            collector.run_cli_admission(self.root / "cli.exe", self.root)
+        directory = next(self.root.glob("cli-admission-*"))
+        with zipfile.ZipFile(io.BytesIO((directory / "independent.zip").read_bytes())) as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertEqual(archive.namelist(), ["item.txt"])
+            self.assertEqual(archive.read("item.txt"), b"Independent ZIP admission fixture\n")
+        cases = collector.cli_admission_cases(
+            directory / "input.txt", directory / "output.zip", directory / "independent.zip"
+        )
+        readers = {
+            arguments[0]
+            for arguments, code, message in cases
+            if message and "compatibility does not support FLZIP GPU" in message and code == 1
+        }
+        self.assertEqual(readers, {"extract", "verify"})
+
+    # Purpose: Supply independent native capability observations without starting a GPU during offline contracts.
+    # Inputs: Explicit fixture role. Outputs: A complete process observation with legal zero checksum.
+    @staticmethod
+    def capability_result(kind):
+        hip = kind != "cpu"
+        fields = {
+            "hip_compiled": str(hip).lower(),
+            "hip_runtime_loadable": str(hip).lower(),
+            "hip_kernel_loadable": str(hip).lower(),
+            "available": str(hip).lower(),
+            "dependency_status": "ready" if hip else "cpu_only_build",
+        }
+        if kind == "diagnostic":
+            del fields["hip_kernel_loadable"]
+            del fields["dependency_status"]
+            fields.update(
+                {
+                    "gcn_arch": "gfx1201",
+                    "diagnostic_bytes": str(16 * 1024**2),
+                    "diagnostic_kernel_launches": "2",
+                    "diagnostic_kernel_ms": "1.25",
+                    "diagnostic_h2d_bytes": str(16 * 1024**2),
+                    "diagnostic_d2h_bytes": "1024",
+                    "diagnostic_device_allocation_bytes": str(16 * 1024**2 + 1024),
+                    "diagnostic_checksum": "0",
+                    "diagnostic_wall_seconds": "1.1",
+                }
+            )
+        return {
+            "stdout": "\n".join(key + "=" + value for key, value in fields.items()),
+            "stderr": "",
+            "exit_code": 0 if hip else 10,
+            "timed_out": False,
+            "output_limit_exceeded": False,
+            "output_truncated": False,
+        }
+
+    # Purpose: Keep offline CPU status and actual-HIP diagnostics distinct and bound every external command.
+    # Inputs: Independent successful observations. Outputs: Exact argv, private directory, limits and raw evidence.
+    def test_capability_contracts_require_explicit_mode_and_bounded_commands(self):
+        for hip in (False, True):
+            directory = self.root / str(hip)
+            directory.mkdir()
+            results = [self.capability_result("hip" if hip else "cpu")]
+            if hip:
+                results.append(self.capability_result("diagnostic"))
+            with self.subTest(hip=hip), patch.object(collector, "process_owner") as owner:
+                runner = owner.return_value.run_bounded_command
+                runner.side_effect = results
+                names = collector.run_cli_capability_contracts(self.root / "cli.exe", directory, hip)
+                self.assertEqual(names, ["dependency-check.json"] + (["gpu-diagnostic.json"] if hip else []))
+                expected = [[str(self.root / "cli.exe"), "dependency-check"]]
+                if hip:
+                    expected.append(
+                        [
+                            str(self.root / "cli.exe"),
+                            "gpu-diagnostic",
+                            "--seconds",
+                            "1",
+                            "--buffer-mib",
+                            "16",
+                            "--inner-iterations",
+                            "1",
+                        ]
+                    )
+                self.assertEqual([call.args[0] for call in runner.call_args_list], expected)
+                for call, name, result in zip(runner.call_args_list, names, results, strict=True):
+                    self.assertEqual(
+                        call.kwargs,
+                        {
+                            "timeout_seconds": 30,
+                            "max_output_bytes": 65536,
+                            "response_tail_bytes": 65536,
+                            "working_directory": directory,
+                        },
+                    )
+                    self.assertEqual(json.loads((directory / name).read_text())["result"], result)
+
+    # Purpose: Reject ambiguous, interrupted and contradictory process evidence while preserving its raw contents.
+    # Inputs: Independent transport failures, duplicate output and CPU/HIP mode contradictions.
+    # Outputs: No diagnostic runs after a bad dependency result; each error has an exclusive raw log.
+    def test_capability_contracts_fail_closed_on_process_and_mode_errors(self):
+        valid = self.capability_result("hip")
+        mutations = [{"exit_code": code} for code in (True, "0", 1, None)]
+        mutations += [{key: True} for key in ("timed_out", "output_limit_exceeded", "output_truncated")]
+        mutations += [
+            {"stdout": value} for value in (None, "", "malformed", "=value", valid["stdout"] + "\navailable=true")
+        ]
+        mutations += [
+            {"stdout": valid["stdout"].replace(key + "=true", key + "=false")}
+            for key in ("hip_compiled", "hip_runtime_loadable", "hip_kernel_loadable", "available")
+        ]
+        mutations.append(
+            {"stdout": valid["stdout"].replace("dependency_status=ready", "dependency_status=cpu_only_build")}
+        )
+        for number, mutation in enumerate(mutations):
+            directory = self.root / str(number)
+            directory.mkdir()
+            result = {**valid, **mutation}
+            with self.subTest(mutation=mutation), patch.object(collector, "process_owner") as owner:
+                runner = owner.return_value.run_bounded_command
+                runner.return_value = result
+                with self.assertRaises((ValueError, RuntimeError)):
+                    collector.run_cli_capability_contracts(self.root / "cli.exe", directory, True)
+                self.assertEqual(runner.call_count, 1)
+                self.assertEqual(json.loads((directory / "dependency-check.json").read_text())["result"], result)
+
+    # Purpose: Reject telemetry that claims GPU execution without coherent measured transfers, timing and work.
+    # Inputs: One-field mutations of independently specified successful observations.
+    # Outputs: Every malformed result fails, retains both reports, and cannot qualify the measurement.
+    def test_gpu_diagnostic_telemetry_refuses_missing_nonfinite_or_impossible_values(self):
+        valid = self.capability_result("diagnostic")
+        fields = dict(line.split("=", 1) for line in valid["stdout"].splitlines())
+        mutations = [(key, None) for key in fields if key.startswith("diagnostic_")]
+        mutations += [
+            ("gcn_arch", ""),
+            ("hip_runtime_loadable", "false"),
+            ("diagnostic_bytes", "1024"),
+            ("diagnostic_kernel_launches", "1"),
+            ("diagnostic_h2d_bytes", "1024"),
+            ("diagnostic_device_allocation_bytes", "1024"),
+            ("diagnostic_d2h_bytes", "0"),
+            ("diagnostic_kernel_launches", "2.5"),
+            ("diagnostic_checksum", "-1"),
+            ("diagnostic_checksum", str(2**64)),
+        ]
+        mutations += [
+            (key, value)
+            for key in ("diagnostic_kernel_ms", "diagnostic_wall_seconds")
+            for value in ("0", "-1", "nan", "inf", "bad")
+        ]
+        for number, (key, value) in enumerate(mutations):
+            directory = self.root / str(number)
+            directory.mkdir()
+            changed = dict(fields)
+            if value is None:
+                del changed[key]
+            else:
+                changed[key] = value
+            result = {**valid, "stdout": "\n".join(key + "=" + value for key, value in changed.items())}
+            with self.subTest(key=key, value=value), patch.object(collector, "process_owner") as owner:
+                owner.return_value.run_bounded_command.side_effect = [self.capability_result("hip"), result]
+                with self.assertRaises(ValueError):
+                    collector.run_cli_capability_contracts(self.root / "cli.exe", directory, True)
+                self.assertEqual(json.loads((directory / "gpu-diagnostic.json").read_text())["result"], result)
 
     # Purpose: Keep CLI admission a required consumer of the actual measured executable.
     # Inputs: Passing earlier scenarios and a failed CLI contract. Outputs: Collection fails with the original cause.
@@ -425,7 +598,9 @@ class CoverageTests(unittest.TestCase):
                         collector.run_scenarios(self.root, hip_host)
                         self.assertEqual(run.call_count, 6)
                         self.assertEqual(require.call_count, int(hip_host))
-                        admission.assert_called_once_with(collector.ROOT / "build/Debug/flitzzip_cli.exe", self.root)
+                        admission.assert_called_once_with(
+                            collector.ROOT / "build/Debug/flitzzip_cli.exe", self.root, hip_host=hip_host
+                        )
                     validate.assert_called_once_with(collector.ROOT, "Debug", hip_host)
 
     # Purpose: Prevent unavailable, truncated or ambiguous device output from qualifying a HIP host run.
@@ -453,7 +628,7 @@ class CoverageTests(unittest.TestCase):
             with (
                 self.subTest(result=result),
                 patch.object(collector, "run_checked", return_value=result),
-                self.assertRaisesRegex(ValueError, "HIP host coverage requires"),
+                self.assertRaisesRegex(ValueError, "HIP host coverage (requires|contains duplicate fields)"),
             ):
                 collector.require_hip_device(self.root)
         with patch.object(collector, "run_checked", return_value=valid) as run:
