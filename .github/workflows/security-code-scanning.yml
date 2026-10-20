@@ -49,7 +49,7 @@ jobs:
           --repository "$env:GITHUB_REPOSITORY" --ref "$env:GITHUB_REF"
 
   codeql-cpp:
-    name: CodeQL C++ (${{ matrix.configuration }})
+    # Default names keep skipped jobs readable and append each configuration when expanded.
     needs: cpp-security-plan
     if: >-
       ${{ !cancelled() && (needs.cpp-security-plan.result != 'success' ||

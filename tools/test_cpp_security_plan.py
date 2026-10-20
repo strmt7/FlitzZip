@@ -134,7 +134,7 @@ class CppSecurityContracts(unittest.TestCase):
         """Purpose: Qualify consumers. Inputs: Actual workflow/job states. Outputs: Both successful jobs required."""
         run = {"id": 17, "head_sha": "a" * 40, "head_branch": "main", "status": "completed", "conclusion": "success"}
         jobs = [
-            {"name": f"CodeQL C++ ({role})", "status": "completed", "conclusion": "success"}
+            {"name": f"codeql-cpp ({role})", "status": "completed", "conclusion": "success"}
             for role in ["cpu", "hip-host"]
         ]
         for conclusion in ["cancelled", "failure", None]:
@@ -147,6 +147,7 @@ class CppSecurityContracts(unittest.TestCase):
             (jobs[:1], False),
             (jobs + [jobs[0]], False),
             ([jobs[0], {**jobs[1], "conclusion": "skipped"}], False),
+            ([{"name": "codeql-cpp", "status": "completed", "conclusion": "skipped"}], False),
         ]:
             with mock.patch.object(
                 cpp, "capture_metadata", side_effect=[json.dumps([run]).encode(), json.dumps(job_page).encode()]
@@ -178,7 +179,7 @@ class CppSecurityContracts(unittest.TestCase):
     def test_invalid_workflow_metadata_cannot_establish_qualification(self):
         """Purpose: Reject ambiguous consumers. Inputs: Malformed workflows/jobs. Outputs: Failure, never reuse."""
         run = {"id": 17, "head_sha": "a" * 40, "head_branch": "main", "status": "completed", "conclusion": "success"}
-        job = {"name": "CodeQL C++ (cpu)", "status": "completed", "conclusion": "success"}
+        job = {"name": "codeql-cpp (cpu)", "status": "completed", "conclusion": "success"}
         for page in [
             None,
             {},
@@ -319,6 +320,7 @@ class CppSecurityContracts(unittest.TestCase):
         workflow = (cpp.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
         cpp.validate_workflow(workflow)
         for original, replacement in (
+            ("\n  codeql-cpp:\n", "\n  codeql-cpp:\n    name: CodeQL C++ (${{ matrix.configuration }})\n"),
             ("fail-fast: false", "fail-fast: true"),
             ("queries: security-extended,security-and-quality", "queries: security-extended"),
             ("if: matrix.configuration == 'cpu'", "if: matrix.configuration == 'hip-host'"),
