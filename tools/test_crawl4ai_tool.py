@@ -8,6 +8,7 @@ import json
 import os
 import py_compile
 import re
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -445,6 +446,250 @@ class CrawlerContracts(unittest.TestCase):
                     [sys.executable, "-c", "print('x' * (5 * 1024 * 1024))"], dict(os.environ), 10, quiet=True
                 )
             self.assertLessEqual(error_path.stat().st_size, 8200)
+
+    # Purpose: Admit only bounded, typed, distinct public HTTPS research targets before the crawler starts.
+    # Inputs: Owned 20-site manifest plus independent encoding, schema, shape, endpoint and marker mutations.
+    # Outputs: Exact rows pass; ambiguous JSON and local, credentialed, numeric or stateful URLs fail closed.
+    def test_research_site_manifest_admission(self):
+        sites = [
+            {"url": f"https://docs{index}.example.invalid/reference/", "marker": f"Marker {index}"}
+            for index in range(20)
+        ]
+        document = {"schema": 1, "purpose": "Owned offline crawler admission fixture.", "sites": sites}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sites.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            self.assertEqual(research.read_sites(path), sites)
+            for payload, message in (
+                (b"", "1..65536 bytes"),
+                (b"x" * (research.MAX_SITES_BYTES + 1), "1..65536 bytes"),
+                (b"\xff", "UTF-8 JSON"),
+                (b"{", "UTF-8 JSON"),
+            ):
+                path.write_bytes(payload)
+                with self.subTest(payload=len(payload)), self.assertRaisesRegex(ValueError, message):
+                    research.read_sites(path)
+            mutations = (
+                ("boolean schema", lambda row: row.__setitem__("schema", True), "fields or schema"),
+                ("empty purpose", lambda row: row.__setitem__("purpose", ""), "purpose"),
+                ("few sites", lambda row: row.__setitem__("sites", row["sites"][:19]), "20-100"),
+                ("site fields", lambda row: row["sites"][0].__setitem__("extra", True), "fields"),
+                ("blank marker", lambda row: row["sites"][0].__setitem__("marker", " "), "URL or marker"),
+                (
+                    "insecure scheme",
+                    lambda row: row["sites"][0].__setitem__("url", "ftp://docs0.example.invalid/reference/"),
+                    "public HTTPS origins",
+                ),
+                (
+                    "credentials",
+                    lambda row: row["sites"][0].__setitem__("url", "https://user@docs0.example.invalid/reference/"),
+                    "public HTTPS origins",
+                ),
+                (
+                    "query",
+                    lambda row: row["sites"][0].__setitem__("url", "https://docs0.example.invalid/reference/?state=1"),
+                    "public HTTPS origins",
+                ),
+                (
+                    "numeric host",
+                    lambda row: row["sites"][0].__setitem__("url", "https://192.0.2.1/reference/"),
+                    "public HTTPS origins",
+                ),
+                (
+                    "ambiguous port",
+                    lambda row: row["sites"][0].__setitem__("url", "https://docs0.example.invalid:invalid/"),
+                    "unambiguous public HTTPS URLs",
+                ),
+                (
+                    "duplicate host",
+                    lambda row: row["sites"][1].__setitem__("url", row["sites"][0]["url"] + "other"),
+                    "public HTTPS origins",
+                ),
+            )
+            for label, mutate, message in mutations:
+                invalid = json.loads(json.dumps(document))
+                mutate(invalid)
+                path.write_text(json.dumps(invalid), encoding="utf-8")
+                with self.subTest(mutation=label), self.assertRaisesRegex(ValueError, message):
+                    research.read_sites(path)
+
+    # Purpose: Preserve successful crawl diagnosis and convert owned request failures into retained evidence.
+    # Inputs: In-memory CrawlResult/error doubles and the actual upstream configuration constructor boundary.
+    # Outputs: Success uses content inspection; OSError becomes request_error without claiming access denial.
+    def test_fetch_success_and_request_error(self):
+        module = SimpleNamespace(CacheMode=SimpleNamespace(BYPASS="bypass"), CrawlerRunConfig=Mock())
+        result = SimpleNamespace(
+            success=True,
+            status_code=200,
+            redirected_status_code=None,
+            response_headers={},
+            error_message="",
+            markdown=SimpleNamespace(raw_markdown="Expected documentation " * 20),
+        )
+        with patch.dict(sys.modules, {"crawl4ai": module}):
+            row = asyncio.run(
+                research.fetch(
+                    SimpleNamespace(arun=AsyncMock(return_value=result)), "https://example.invalid", "Expected"
+                )
+            )
+            self.assertTrue(row["success"])
+            self.assertGreaterEqual(row["seconds"], 0)
+            failure = asyncio.run(
+                research.fetch(
+                    SimpleNamespace(arun=AsyncMock(side_effect=OSError("owned request failure"))),
+                    "https://example.invalid",
+                )
+            )
+        self.assertEqual(failure["failure_category"], "request_error")
+        self.assertIn("OSError: owned request failure", failure["error"])
+        self.assertEqual(module.CrawlerRunConfig.call_count, 2)
+
+    # Purpose: Bind crawler construction to the reviewed package and exercise the local raw-document doctor lane.
+    # Inputs: Installed-version doubles, upstream constructor and successful/failed local extraction results.
+    # Outputs: Version drift refuses construction; exact local marker controls the doctor's exit status.
+    def test_crawler_constructor_and_doctor_lane(self):
+        crawler_owner = Mock(return_value=SimpleNamespace())
+        module = SimpleNamespace(
+            AsyncWebCrawler=crawler_owner,
+            CacheMode=SimpleNamespace(DISABLED="disabled"),
+            CrawlerRunConfig=Mock(),
+        )
+        with (
+            patch.dict(sys.modules, {"crawl4ai": module}),
+            patch.object(research.importlib.metadata, "version", return_value="different"),
+            self.assertRaisesRegex(ValueError, "reviewed integration"),
+        ):
+            research.crawler()
+        with (
+            patch.dict(sys.modules, {"crawl4ai": module}),
+            patch.object(research.importlib.metadata, "version", return_value=tool.VERSION),
+        ):
+            self.assertIs(research.crawler(), crawler_owner.return_value)
+        crawler_owner.assert_called_once_with()
+        for markdown, expected in (("FlitzZip crawler contract", 0), ("wrong content", 1)):
+            result = SimpleNamespace(success=True, markdown=markdown)
+            context = AsyncMock()
+            context.__aenter__.return_value = SimpleNamespace(arun=AsyncMock(return_value=result))
+            with (
+                self.subTest(markdown=markdown),
+                patch.dict(sys.modules, {"crawl4ai": module}),
+                patch.object(research, "crawler", return_value=context),
+                patch("builtins.print") as output,
+            ):
+                self.assertEqual(asyncio.run(research.execute(SimpleNamespace(command="doctor"))), expected)
+            emitted = json.loads(output.call_args.args[0])
+            self.assertEqual(emitted["doctor_passed"], not expected)
+            module.CrawlerRunConfig.assert_called_with(cache_mode="disabled", word_count_threshold=0)
+
+    # Purpose: Bind qualification to every repository integration and admitted upstream artifact identity.
+    # Inputs: Isolated repository paths and deterministic source, wheel and source-build digests.
+    # Outputs: The complete expected identity inventory is returned without importing NLTK or Crawl4AI runtime code.
+    def test_research_source_identity_inventory(self):
+        from tools import crawl4ai_source_build, nltk_distribution
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            distribution = root / "third_party/nltk/distribution.json"
+            wheel = root / "nltk.whl"
+
+            def identity(path):
+                """Purpose: Model source identity. Inputs: Owned path. Outputs: Deterministic SHA-256."""
+                return hashlib.sha256(str(path).encode()).hexdigest()
+
+            with (
+                patch.object(research, "ROOT", root),
+                patch.object(research, "text_identity", side_effect=identity),
+                patch.object(nltk_distribution, "SOURCE_ROOT", distribution.parent),
+                patch.object(nltk_distribution, "wheel_path", return_value=wheel),
+                patch.object(nltk_distribution, "digest", return_value="a" * 64),
+                patch.object(crawl4ai_source_build, "identity", return_value="b" * 64),
+            ):
+                observed = research.source_identity()
+            self.assertEqual(observed["third_party/nltk/distribution.json"], identity(distribution))
+            self.assertEqual(observed["nltk_upstream_wheel"], "a" * 64)
+            self.assertEqual(observed["crawl4ai_source_build"], "b" * 64)
+            self.assertIn("tools/crawl4ai_research.py", observed)
+
+    # Purpose: Qualify only diverse successful domains with unchanged integration bytes and immutable evidence paths.
+    # Inputs: Owned 20-domain manifest, in-memory crawler, exact capture writer and stable/drifting source identities.
+    # Outputs: Stable evidence qualifies; source drift returns one; an existing receipt is never overwritten.
+    def test_research_qualification_publication_and_source_drift(self):
+        sites = [
+            {"url": f"https://docs{index}.example.invalid/reference/", "marker": f"Marker {index}"}
+            for index in range(20)
+        ]
+        context = AsyncMock()
+        context.__aenter__.return_value = SimpleNamespace()
+
+        async def retain(_owner, url, marker, capture):
+            capture.write_text(json.dumps({"url": url, "marker": marker}), encoding="utf-8")
+            return {"url": url, "success": True, "capture": capture.name}
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "sites.json"
+            manifest.write_text(
+                json.dumps({"schema": 1, "purpose": "Owned qualification fixture.", "sites": sites}),
+                encoding="utf-8",
+            )
+            for label, identities, expected in (
+                ("stable", [{"source": "a"}, {"source": "a"}], 0),
+                ("drift", [{"source": "a"}, {"source": "b"}], 1),
+            ):
+                receipt = root / f"{label}.json"
+                args = SimpleNamespace(command="qualify", receipt=receipt)
+                with (
+                    patch.object(research, "SITES", manifest),
+                    patch.object(research, "crawler", return_value=context),
+                    patch.object(research, "fetch", AsyncMock(side_effect=retain)),
+                    patch.object(research, "source_identity", side_effect=identities),
+                    patch("builtins.print"),
+                ):
+                    self.assertEqual(asyncio.run(research.execute(args)), expected)
+                record = json.loads(receipt.read_text(encoding="utf-8"))
+                self.assertEqual(record["qualified"], not expected)
+                self.assertEqual(record["successful_domains"], 20)
+                self.assertEqual(len(list((root / f"{label}.json.captures").iterdir())), 20)
+            with (
+                patch.object(research, "SITES", manifest),
+                patch.object(research, "crawler") as forbidden,
+                self.assertRaisesRegex(FileExistsError, "already exists"),
+            ):
+                asyncio.run(research.execute(SimpleNamespace(command="qualify", receipt=root / "stable.json")))
+            forbidden.assert_not_called()
+
+    # Purpose: Exercise both parser routes and preserve the module entrypoint's exact exit status.
+    # Inputs: Controlled asynchronous executor and a run-path invocation with an owned parsed command.
+    # Outputs: Doctor/qualify arguments route correctly and __main__ raises the executor status unchanged.
+    def test_research_cli_and_module_entrypoint(self):
+        with (
+            patch("sys.argv", ["crawl4ai_research", "doctor"]),
+            patch.object(research, "execute", AsyncMock(return_value=0)) as execute,
+        ):
+            self.assertEqual(research.main(), 0)
+        self.assertEqual(execute.await_args.args[0].command, "doctor")
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / "receipt.json"
+            with (
+                patch("sys.argv", ["crawl4ai_research", "qualify", "--receipt", str(receipt)]),
+                patch.object(research, "execute", AsyncMock(return_value=1)) as execute,
+            ):
+                self.assertEqual(research.main(), 1)
+            self.assertEqual(execute.await_args.args[0].receipt, receipt)
+
+        def finish(coroutine):
+            coroutine.close()
+            return 7
+
+        with (
+            patch.object(
+                research.argparse.ArgumentParser, "parse_args", return_value=SimpleNamespace(command="doctor")
+            ),
+            patch.object(research.asyncio, "run", side_effect=finish),
+            self.assertRaises(SystemExit) as stopped,
+        ):
+            runpy.run_path(str(Path(research.__file__).resolve()), run_name="__main__")
+        self.assertEqual(stopped.exception.code, 7)
 
     def test_result_rejects_challenges_empty_and_error_pages(self):
         """Purpose: Prevent false crawling success. Inputs: Result doubles. Outputs: Content/status validation."""
