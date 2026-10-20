@@ -55,6 +55,23 @@ foreach ($path in @('docs/design.md', 'resources/design/fixture.svg', 'tools/nat
 $mixed = Get-FlitzZipHostedWorkflowSelection -Paths @('src/gpu/hip_codec.hip.cpp', 'src/core/checksum.cpp')
 Assert-NativeCi ($mixed.windows -and $mixed.rocm) 'mixed CPU/HIP batches retain both compile boundaries'
 $root = Split-Path -Parent $PSScriptRoot
+Push-Location $root
+try {
+    $collectorInputsJson = & py -3 -c 'import json; from tools.native_coverage import SCENARIO_INPUTS; print(json.dumps(SCENARIO_INPUTS))'
+    Assert-NativeCi ($LASTEXITCODE -eq 0) 'collector input discovery must remain an offline import'
+    $collectorInputs = $collectorInputsJson | ConvertFrom-Json
+} finally {
+    Pop-Location
+}
+foreach ($path in $collectorInputs) {
+    $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path)
+    Assert-NativeCi ($selection.windows -and -not $selection.rocm) "every frozen host collector input requires its CPU measurement consumer: $path"
+    Assert-NativeCi (Test-NativeCiWorkflowPath windows-ci $path) "collector input must trigger the actual workflow: $path"
+}
+foreach ($path in @('tools/release_metadata.py', 'tools/test_release_metadata.py')) {
+    $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path)
+    Assert-NativeCi (-not $selection.windows -and -not $selection.rocm) "release metadata is consumed by release orchestration, not native compilation: $path"
+}
 $cmake = Get-Content -LiteralPath (Join-Path $root 'CMakeLists.txt') -Raw
 $hipSources = @([regex]::Matches($cmake, 'src/gpu/[\w_]+\.hip\.cpp') | ForEach-Object Value | Sort-Object -Unique)
 Assert-NativeCi ($hipSources.Count -gt 0) 'CMake must expose HIP translation unit inputs'
@@ -65,7 +82,8 @@ $paths = @($hipSources) + @('src/core/checksum.cpp', 'src/core/checksum.hpp', 's
     'tools/rocm-sdk-lock.json', 'tools/native_ci.ps1', 'tools/gui_smoke.ps1', 'resources/design/fixture.svg',
     'docs/design.md', '.github/workflows/windows-ci.yml', '.github/workflows/rocm-qualification.yml',
     'tools/native_coverage.py', 'tools/native_coverage_report.py', 'tools/native-coverage-toolchain.json',
-    'tools/test_native_coverage.py')
+    'tools/test_native_coverage.py', 'tools/release_metadata.py', 'tools/test_release_metadata.py',
+    'mcp/test_flitzzip_mcp.py') + $collectorInputs
 foreach ($path in $paths) {
     $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path)
     Assert-NativeCi ((Test-NativeCiWorkflowPath windows-ci $path) -eq $selection.windows) "CPU planner/filter parity: $path"
@@ -89,8 +107,7 @@ foreach ($case in @(
         $plan.formatMatrix -eq $case.matrix -and -not $plan.gpuExecutionQualified) "canonical native projection: $($case.path)"
     Assert-NativeCi (-not $plan.coverage) "Release lane does not duplicate symbols-based coverage: $($case.path)"
 }
-foreach ($path in @('.github/workflows/windows-ci.yml', 'tools/native_coverage.py',
-        'tools/native_coverage_report.py', 'tools/native-coverage-toolchain.json')) {
+foreach ($path in (@('.github/workflows/windows-ci.yml') + $collectorInputs)) {
     $collector = Get-FlitzZipHostedNativePlan -Paths @($path) -Configuration Debug
     Assert-NativeCi ($collector.build -and $collector.coverage -and $collector.testMode -eq 'none' -and
         -not $collector.formatMatrix) "collector or integration changes require one real hosted measurement: $path"

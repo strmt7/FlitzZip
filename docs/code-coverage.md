@@ -41,6 +41,11 @@ These correctness workloads retain their bounds; their timing is not performance
 evidence. A failed scenario stops collection and retains its diagnostics.
 There is no extra compilation or coverage runner. Collector changes select this
 hosted consumer; offline collector tests do not silently rebuild the product.
+The routing contract imports the collector's actual frozen host-scenario inputs
+and requires every path to select Debug measurement and match the owned push/PR
+filters. Changes to its MCP process owner or scenario helpers therefore reach
+the real measurement/upload consumer. The Release lane and ordinary local
+planning retain their independent build requirements.
 
 The collector selects first-party `src` files linked into the native test and
 CLI executables. It publishes their measured executable lines, including zero-hit

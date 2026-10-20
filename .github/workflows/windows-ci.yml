@@ -39,6 +39,13 @@ on:
       - tools/native_coverage.py
       - tools/native_coverage_report.py
       - tools/native-coverage-toolchain.json
+      - mcp/flitzzip_mcp.py
+      - tools/test_memory_benchmark_plan.ps1
+      - tools/test_memory_benchmark_corpus.ps1
+      - tools/bench.ps1
+      - tools/benchmark_statistics.ps1
+      - tools/benchmark_corpus.ps1
+      - tools/format_matrix_smoke.ps1
       - '!src/gpu/*.hip.cpp'
   pull_request:
     paths: *native-inputs

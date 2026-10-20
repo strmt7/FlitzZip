@@ -1,3 +1,14 @@
+# Purpose: Identify the frozen host collector dependency closure without admitting unrelated product builds.
+# Inputs: Normalized changed paths. Outputs: True for the producer, its owned configuration and scenario helpers.
+function Test-FlitzZipNativeCoverageInput {
+    param([string[]]$Paths)
+    return Test-FlitzZipAnyPath -Path $Paths -Pattern @(
+        '^\.github/workflows/windows-ci\.yml$', '^mcp/flitzzip_mcp\.py$',
+        '^tools/native_coverage(_report)?\.py$', '^tools/native-coverage-toolchain\.json$',
+        '^tools/test_memory_benchmark_(plan|corpus)\.ps1$',
+        '^tools/(bench|benchmark_statistics|benchmark_corpus|format_matrix_smoke)\.ps1$')
+}
+
 # Purpose: Route hosted compilation to actual CPU and HIP source boundaries.
 # Inputs: Paths are normalized changes; Full explicitly admits both compile qualifications.
 # Outputs: Returns CPU/HIP workflow admission without substituting CPU tests for device compilation.
@@ -7,8 +18,7 @@ function Get-FlitzZipHostedWorkflowSelection {
     $cpu = Get-FlitzZipVerificationScope -ChangedPath $cpuPaths
     $windows = $Full.IsPresent -or $cpu.touchesCpp -or $cpu.touchesProductionSource -or
         $cpu.touchesGui -or $cpu.touchesPackaging -or $cpu.touchesNativeBuildInputs -or
-        (Test-FlitzZipAnyPath -Path $Paths -Pattern @('^\.github/workflows/windows-ci\.yml$',
-            '^tools/native_coverage(_report)?\.py$', '^tools/native-coverage-toolchain\.json$'))
+        (Test-FlitzZipNativeCoverageInput -Paths $Paths)
     $rocm = $Full.IsPresent -or (Test-FlitzZipAnyPath -Path $Paths -Pattern @(
         '^\.github/workflows/rocm-qualification\.yml$', '^CMakeLists\.txt$', '^cmake/',
         '^src/gpu/', '^src/core/[^/]+\.hpp$', '^third_party/',
@@ -26,10 +36,8 @@ function Get-FlitzZipHostedNativePlan {
     param([string[]]$Paths, [switch]$Full,
           [ValidateSet('Debug', 'Release', 'RelWithDebInfo')][string]$Configuration = 'Release')
     $plan = Get-FlitzZipVerificationPlan -ChangedPath $Paths -SuspectGlobalBug:$Full -Checkpoint intermediate
-    # Collector and workflow changes exercise measurement/upload; local planning remains offline.
-    $coverageChanged = Test-FlitzZipAnyPath -Path $Paths -Pattern @(
-        '^\.github/workflows/windows-ci\.yml$',
-        '^tools/native_coverage(_report)?\.py$', '^tools/native-coverage-toolchain\.json$')
+    # Collector dependencies exercise measurement/upload; local planning remains offline.
+    $coverageChanged = Test-FlitzZipNativeCoverageInput -Paths $Paths
     $build = ($coverageChanged -and $Configuration -eq 'Debug') -or
         @($plan.requiredLocalCommands | Where-Object id -eq 'release-build').Count -gt 0
     $unit = @($plan.requiredLocalCommands | Where-Object id -eq 'unit-tests')
