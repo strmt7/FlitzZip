@@ -240,7 +240,7 @@ def has_qualified_cpp_workflow(repository: str, reference: str, commit: str) -> 
             )
         ):
             raise ValueError("C++ security source-analysis job page is invalid")
-        required = ("CodeQL C++ (cpu)", "CodeQL C++ (hip-host)")
+        required = ("codeql-cpp (cpu)", "codeql-cpp (hip-host)")
         selected = [job for job in jobs if job["name"] in required]
         if (
             len(selected) == len(required)
@@ -315,6 +315,8 @@ def validate_workflow(text: str) -> None:
     ):
         raise ValueError("C++ security must preserve cancelled-analysis recovery")
     job = text[start:end]
+    if re.search(r"(?m)^    name:", job):
+        raise ValueError("C++ security must retain default matrix job names for skipped and expanded checks")
     canonical = " ".join(job.split())
     required = (
         "fail-fast: false matrix: configuration:",
