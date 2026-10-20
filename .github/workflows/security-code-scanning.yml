@@ -25,7 +25,6 @@ jobs:
     outputs:
       codeql_cpp: ${{ steps.cpp_plan.outputs.codeql_cpp }}
       codeql_hip_host: ${{ steps.cpp_plan.outputs.codeql_hip_host }}
-      codeql_configurations: ${{ steps.cpp_plan.outputs.codeql_configurations }}
     steps:
       - name: Checkout complete change range
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,20 +47,16 @@ jobs:
           --push-base "$env:PUSH_BASE" --github-output $env:GITHUB_OUTPUT
           --repository "$env:GITHUB_REPOSITORY" --ref "$env:GITHUB_REF"
 
-  codeql-cpp:
-    # Default names keep skipped jobs readable and append each configuration when expanded.
+  codeql-cpp-cpu:
+    name: CodeQL C++ (CPU)
     needs: cpp-security-plan
     if: >-
       ${{ !cancelled() && (needs.cpp-security-plan.result != 'success' ||
           needs.cpp-security-plan.outputs.codeql_cpp != 'false') }}
     runs-on: windows-2022
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        configuration: >-
-          ${{ fromJSON((needs.cpp-security-plan.result == 'success' &&
-              needs.cpp-security-plan.outputs.codeql_configurations) || '["cpu","hip-host"]') }}
+    env:
+      FLITZZIP_CODEQL_CONFIGURATION: cpu
     # The build script derives compiler admission from RAM and logical CPUs,
     # and applies one shared CMake/MSBuild job budget without a fixed CPU cap.
     # Keep C++ analysis whole-repository. Do not split FlitzZip into
@@ -77,11 +72,11 @@ jobs:
     # Device-kernel extraction is not claimed; its existing gates remain separate.
     # CodeQL needs action metadata for analysis, repository contents to build,
     # and security-events write permission to upload SARIF.
-    permissions:
+    permissions: &cpp-analysis-permissions
       actions: read # allow CodeQL to read workflow/action metadata
       contents: read # allow checkout and C++ database construction
       security-events: write # allow CodeQL SARIF upload to code scanning
-    steps:
+    steps: &cpp-analysis-steps
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,7 +86,7 @@ jobs:
         with:
           python-version: "3.14.8"
       - name: Provision pinned HIP headers and compiler
-        if: matrix.configuration == 'hip-host'
+        if: env.FLITZZIP_CODEQL_CONFIGURATION == 'hip-host'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -111,27 +106,40 @@ jobs:
           config-file: ./.github/codeql/codeql-config.yml
           queries: security-extended,security-and-quality
       - name: Build C++ database input
-        if: matrix.configuration == 'cpu'
+        if: env.FLITZZIP_CODEQL_CONFIGURATION == 'cpu'
         shell: pwsh
         run: tools/build.ps1 -Configuration Release -CpuOnlyValidation
       - name: Build HIP host database input
-        if: matrix.configuration == 'hip-host'
+        if: env.FLITZZIP_CODEQL_CONFIGURATION == 'hip-host'
         shell: pwsh
         run: tools/build.ps1 -Configuration Release -HipArch gfx1201 -HipPath $env:HIP_PATH
       - name: Analyze C++
         id: analyze_cpp
         uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
-          category: ${{ matrix.configuration == 'cpu' && '/language:c-cpp' || '/language:c-cpp/configuration:hip-host' }}
+          category: ${{ env.FLITZZIP_CODEQL_CONFIGURATION == 'cpu' && '/language:c-cpp' || '/language:c-cpp/configuration:hip-host' }}
           output: out/codeql-cpp-sarif
       - name: Retain complete C++ analysis reports
         if: always() && steps.analyze_cpp.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: codeql-cpp-raw-${{ matrix.configuration }}-${{ github.sha }}
+          name: codeql-cpp-raw-${{ env.FLITZZIP_CODEQL_CONFIGURATION }}-${{ github.sha }}
           path: out/codeql-cpp-sarif/*.sarif
           if-no-files-found: error
           retention-days: 14
+
+  codeql-cpp-hip-host:
+    name: CodeQL C++ (HIP host)
+    needs: cpp-security-plan
+    if: >-
+      ${{ !cancelled() && (needs.cpp-security-plan.result != 'success' ||
+          needs.cpp-security-plan.outputs.codeql_hip_host != 'false') }}
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      FLITZZIP_CODEQL_CONFIGURATION: hip-host
+    permissions: *cpp-analysis-permissions
+    steps: *cpp-analysis-steps
 
   codeql-actions:
     name: CodeQL GitHub Actions

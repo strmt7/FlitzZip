@@ -134,8 +134,8 @@ class CppSecurityContracts(unittest.TestCase):
         """Purpose: Qualify consumers. Inputs: Actual workflow/job states. Outputs: Both successful jobs required."""
         run = {"id": 17, "head_sha": "a" * 40, "head_branch": "main", "status": "completed", "conclusion": "success"}
         jobs = [
-            {"name": f"codeql-cpp ({role})", "status": "completed", "conclusion": "success"}
-            for role in ["cpu", "hip-host"]
+            {"name": f"CodeQL C++ ({role})", "status": "completed", "conclusion": "success"}
+            for role in ["CPU", "HIP host"]
         ]
         for conclusion in ["cancelled", "failure", None]:
             with mock.patch.object(
@@ -148,6 +148,8 @@ class CppSecurityContracts(unittest.TestCase):
             (jobs + [jobs[0]], False),
             ([jobs[0], {**jobs[1], "conclusion": "skipped"}], False),
             ([{"name": "codeql-cpp", "status": "completed", "conclusion": "skipped"}], False),
+            ([{**job, "name": job["name"] + " / Other"} for job in jobs], False),
+            ([jobs[0], {**jobs[1], "conclusion": "failure"}], False),
         ]:
             with mock.patch.object(
                 cpp, "capture_metadata", side_effect=[json.dumps([run]).encode(), json.dumps(job_page).encode()]
@@ -179,7 +181,7 @@ class CppSecurityContracts(unittest.TestCase):
     def test_invalid_workflow_metadata_cannot_establish_qualification(self):
         """Purpose: Reject ambiguous consumers. Inputs: Malformed workflows/jobs. Outputs: Failure, never reuse."""
         run = {"id": 17, "head_sha": "a" * 40, "head_branch": "main", "status": "completed", "conclusion": "success"}
-        job = {"name": "codeql-cpp (cpu)", "status": "completed", "conclusion": "success"}
+        job = {"name": "CodeQL C++ (CPU)", "status": "completed", "conclusion": "success"}
         for page in [
             None,
             {},
@@ -277,7 +279,7 @@ class CppSecurityContracts(unittest.TestCase):
                 cpp.main()
             self.assertEqual(
                 output.read_bytes(),
-                b'codeql_cpp=true\ncodeql_hip_host=true\ncodeql_configurations=["cpu","hip-host"]\n',
+                b"codeql_cpp=true\ncodeql_hip_host=true\n",
             )
         with (
             mock.patch.object(sys, "argv", ["cpp-plan", "--event", "schedule", "--repository", "fixture/repository"]),
@@ -292,46 +294,53 @@ class CppSecurityContracts(unittest.TestCase):
             "codeql_cpp: ${{ steps.cpp_plan.outputs.codeql_cpp }}",
             "python -B -m tools.cpp_security_plan",
             "fetch-depth: 0",
-            "queries: security-extended,security-and-quality",
-            "build-mode: manual",
             "codeql_hip_host: ${{ steps.cpp_plan.outputs.codeql_hip_host }}",
-            "codeql_configurations: ${{ steps.cpp_plan.outputs.codeql_configurations }}",
-            "fromJSON((needs.cpp-security-plan.result == 'success' && "
-            "needs.cpp-security-plan.outputs.codeql_configurations)",
-            '|| \'["cpu","hip-host"]\')',
-            "if: matrix.configuration == 'cpu'",
-            "if: matrix.configuration == 'hip-host'",
-            "fail-fast: false",
-            "tools/build.ps1 -Configuration Release -HipArch gfx1201",
-            "Join-Path $env:RUNNER_TOOL_CACHE",
-            "bootstrap_rocm_sdk.py --parent $sdkParent",
-            "-HipPath $env:HIP_PATH",
-            "output: out/codeql-cpp-sarif",
-            "'/language:c-cpp' || '/language:c-cpp/configuration:hip-host'",
-            "name: codeql-cpp-raw-${{ matrix.configuration }}-${{ github.sha }}",
-            "if-no-files-found: error",
+            "needs.cpp-security-plan.outputs.codeql_hip_host != 'false'",
+            "steps: &cpp-analysis-steps",
+            "steps: *cpp-analysis-steps",
         ]:
             self.assertIn(required, " ".join(workflow.split()))
         self.assertNotIn("paths-ignore", workflow)
         self.assertNotIn("continue-on-error", workflow)
+        self.assertIn("bootstrap_rocm_sdk.py --parent $sdkParent", workflow)
 
     def test_actual_workflow_rejects_database_merging_and_configuration_loss(self):
         """Purpose: Prevent recurrence. Inputs: Actual workflow and scope mutations. Outputs: Fail-closed admission."""
         workflow = (cpp.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
         cpp.validate_workflow(workflow)
         for original, replacement in (
-            ("\n  codeql-cpp:\n", "\n  codeql-cpp:\n    name: CodeQL C++ (${{ matrix.configuration }})\n"),
-            ("fail-fast: false", "fail-fast: true"),
-            ("queries: security-extended,security-and-quality", "queries: security-extended"),
-            ("if: matrix.configuration == 'cpu'", "if: matrix.configuration == 'hip-host'"),
-            ("if: matrix.configuration == 'hip-host'", "if: always()"),
-            ('|| \'["cpu","hip-host"]\'', "|| '[\"cpu\"]'"),
-            ("if-no-files-found: error", "if-no-files-found: ignore"),
-            ("-CpuOnlyValidation", "-CpuOnlyValidation\n          tools/build.ps1 -Configuration Release"),
+            ("    name: CodeQL C++ (CPU)\n", ""),
+            ("name: CodeQL C++ (CPU)", "name: CodeQL C++ (${{ matrix.configuration }})"),
+            ("name: CodeQL C++ (HIP host)", "name: CodeQL C++ (CPU)"),
+            ("FLITZZIP_CODEQL_CONFIGURATION: hip-host", "FLITZZIP_CODEQL_CONFIGURATION: cpu"),
+            ("outputs.codeql_hip_host != 'false'", "outputs.codeql_cpp == 'true'"),
+            ("needs.cpp-security-plan.result != 'success'", "needs.cpp-security-plan.result == 'success'"),
+            ("steps: *cpp-analysis-steps", "steps: []"),
+            ("permissions: *cpp-analysis-permissions", "permissions: {}"),
             ("security-events: read", "security-events: none"),
+            ("security-events: write", "security-events: read"),
             ("actions: read", "actions: none"),
             ("GH_TOKEN: ${{ github.token }}", "UNUSED_TOKEN: ${{ github.token }}"),
             ('--repository "$env:GITHUB_REPOSITORY" --ref "$env:GITHUB_REF"', ""),
+        ):
+            with self.subTest(original=original):
+                self.assertIn(original, workflow)
+                with self.assertRaisesRegex(ValueError, "C\\+\\+ security"):
+                    cpp.validate_workflow(workflow.replace(original, replacement))
+
+    def test_shared_analysis_rejects_missing_builds_and_partial_reports(self):
+        """Purpose: Retain analysis coverage. Inputs: Shared-step mutations. Outputs: Each loss is rejected."""
+        workflow = (cpp.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
+        for original, replacement in (
+            ("build-mode: manual", "build-mode: none"),
+            ("queries: security-extended,security-and-quality", "queries: security-extended"),
+            ("if: env.FLITZZIP_CODEQL_CONFIGURATION == 'cpu'", "if: env.FLITZZIP_CODEQL_CONFIGURATION == 'hip-host'"),
+            ("if: env.FLITZZIP_CODEQL_CONFIGURATION == 'hip-host'", "if: always()"),
+            ("if-no-files-found: error", "if-no-files-found: ignore"),
+            ("-CpuOnlyValidation", "-CpuOnlyValidation\n          tools/build.ps1 -Configuration Release"),
+            ("'/language:c-cpp/configuration:hip-host'", "'/language:c-cpp'"),
+            ("raw-${{ env.FLITZZIP_CODEQL_CONFIGURATION }}", "raw"),
+            ("steps.analyze_cpp.outcome == 'success'", "failure()"),
         ):
             with self.subTest(original=original):
                 self.assertIn(original, workflow)
@@ -356,14 +365,14 @@ class CppSecurityContracts(unittest.TestCase):
             with self.subTest(path=path):
                 plan = cpp.select_cpp([path])
                 self.assertTrue(plan["codeql_hip_host"])
-                self.assertEqual(plan["codeql_configurations"], ["cpu", "hip-host"])
+                self.assertTrue(plan["codeql_cpp"])
         for path in [
             "README.md",
             "tools/requirements/crawl4ai.txt",
         ]:
             plan = cpp.select_cpp([path])
             self.assertFalse(plan["codeql_hip_host"])
-            self.assertEqual(plan["codeql_configurations"], ["cpu"])
+            self.assertFalse(plan["codeql_cpp"])
         self.assertTrue(cpp.select_cpp([], full=True)["codeql_hip_host"])
         workflow = (cpp.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
         self.assertIn("tools/build.ps1 -Configuration Release -CpuOnlyValidation", workflow)

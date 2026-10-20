@@ -121,7 +121,6 @@ def select_cpp(paths: list[str], *, full: bool = False) -> dict:
     return {
         "codeql_cpp": full or changed,
         "codeql_hip_host": full or changed,
-        "codeql_configurations": ["cpu", "hip-host"] if full or changed else ["cpu"],
         "whole_database": True,
         "changed_path_count": len(paths),
         "reason": "explicit full qualification"
@@ -240,7 +239,7 @@ def has_qualified_cpp_workflow(repository: str, reference: str, commit: str) -> 
             )
         ):
             raise ValueError("C++ security source-analysis job page is invalid")
-        required = ("codeql-cpp (cpu)", "codeql-cpp (hip-host)")
+        required = ("CodeQL C++ (CPU)", "CodeQL C++ (HIP host)")
         selected = [job for job in jobs if job["name"] in required]
         if (
             len(selected) == len(required)
@@ -289,19 +288,18 @@ def main() -> None:
         with args.github_output.open("a", encoding="utf-8", newline="\n") as output:
             output.write(f"codeql_cpp={str(plan['codeql_cpp']).lower()}\n")
             output.write(f"codeql_hip_host={str(plan['codeql_hip_host']).lower()}\n")
-            configurations = json.dumps(plan["codeql_configurations"], separators=(",", ":"))
-            output.write(f"codeql_configurations={configurations}\n")
     print(json.dumps(plan, sort_keys=True))
 
 
 # Purpose: Reject a workflow that combines incompatible build definitions or silently retires a configuration.
-# Inputs: The actual repository workflow text; this gate checks the owned C++ job before planner admission.
-# Outputs: Returns on the explicit matrix/build/category contract; mutations raise and admit both downstream jobs.
+# Inputs: Actual workflow text, including the shared step and permission definitions.
+# Outputs: Returns on the named CPU/HIP build/category contract; mutations raise and admit both downstream jobs.
 def validate_workflow(text: str) -> None:
     selector_start = text.find("\n  cpp-security-plan:\n")
-    start = text.find("\n  codeql-cpp:\n")
+    start = text.find("\n  codeql-cpp-cpu:\n")
+    hip_start = text.find("\n  codeql-cpp-hip-host:\n", start)
     end = text.find("\n  codeql-actions:\n", start)
-    if selector_start < 0 or start < 0 or end < 0:
+    if not 0 <= selector_start < start < hip_start < end:
         raise ValueError("C++ security workflow job boundaries changed")
     selector = " ".join(text[selector_start:start].split())
     if any(
@@ -314,27 +312,54 @@ def validate_workflow(text: str) -> None:
         )
     ):
         raise ValueError("C++ security must preserve cancelled-analysis recovery")
-    job = text[start:end]
-    if re.search(r"(?m)^    name:", job):
-        raise ValueError("C++ security must retain default matrix job names for skipped and expanded checks")
-    canonical = " ".join(job.split())
+    for job, label, configuration, output, reference in (
+        (text[start:hip_start], "CPU", "cpu", "codeql_cpp", "&"),
+        (text[hip_start:end], "HIP host", "hip-host", "codeql_hip_host", "*"),
+    ):
+        name = re.findall(r"(?m)^    name: (.+)$", job)
+        canonical = " ".join(job.split())
+        required = (
+            "needs: cpp-security-plan",
+            "if: >- ${{ !cancelled() && (needs.cpp-security-plan.result != 'success' || "
+            f"needs.cpp-security-plan.outputs.{output} != 'false') }}}}",
+            "runs-on: windows-2022",
+            "timeout-minutes: 90",
+            f"env: FLITZZIP_CODEQL_CONFIGURATION: {configuration}",
+            f"permissions: {reference}cpp-analysis-permissions",
+            f"steps: {reference}cpp-analysis-steps",
+        )
+        if name != [f"CodeQL C++ ({label})"] or any(item not in canonical for item in required):
+            raise ValueError("C++ security must retain both named, fail-closed analysis jobs")
+    validate_analysis_steps(text[start:hip_start])
+
+
+# Purpose: Preserve the complete traced builds and raw reports shared by the two named analysis jobs.
+# Inputs: Actual anchored step/permission definitions. Outputs: Validated build, category and report contract.
+def validate_analysis_steps(text: str) -> None:
+    canonical = " ".join(text.split())
     required = (
-        "fail-fast: false matrix: configuration:",
-        "fromJSON((needs.cpp-security-plan.result == 'success' && "
-        'needs.cpp-security-plan.outputs.codeql_configurations) || \'["cpu","hip-host"]\')',
+        "actions: read",
+        "contents: read",
+        "security-events: write",
+        "languages: c-cpp build-mode: manual dependency-caching: false",
+        "config-file: ./.github/codeql/codeql-config.yml",
         "queries: security-extended,security-and-quality",
-        "'/language:c-cpp' || '/language:c-cpp/configuration:hip-host'",
-        "name: codeql-cpp-raw-${{ matrix.configuration }}-${{ github.sha }}",
+        "category: ${{ env.FLITZZIP_CODEQL_CONFIGURATION == 'cpu' && '/language:c-cpp' || "
+        "'/language:c-cpp/configuration:hip-host' }}",
+        "name: codeql-cpp-raw-${{ env.FLITZZIP_CODEQL_CONFIGURATION }}-${{ github.sha }}",
+        "if: always() && steps.analyze_cpp.outcome == 'success'",
+        "output: out/codeql-cpp-sarif",
+        "path: out/codeql-cpp-sarif/*.sarif",
         "if-no-files-found: error",
     )
-    if any(item not in canonical for item in required) or job.count("tools/build.ps1") != 2:
+    if any(item not in canonical for item in required) or text.count("tools/build.ps1") != 2:
         raise ValueError("C++ security configuration, coverage or report-retention contract changed")
     for step, configuration, arguments in (
         ("Build C++ database input", "cpu", "-CpuOnlyValidation"),
         ("Build HIP host database input", "hip-host", "-HipArch gfx1201 -HipPath $env:HIP_PATH"),
     ):
         expected = (
-            f"- name: {step} if: matrix.configuration == '{configuration}' "
+            f"- name: {step} if: env.FLITZZIP_CODEQL_CONFIGURATION == '{configuration}' "
             f"shell: pwsh run: tools/build.ps1 -Configuration Release {arguments}"
         )
         if expected not in canonical:

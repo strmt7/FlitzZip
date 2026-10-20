@@ -219,11 +219,16 @@ function Test-WorkflowSecurityPolicy {
                 'build-mode: manual',
                 'tools/build.ps1 -Configuration Release -CpuOnlyValidation',
                 'tools/build.ps1 -Configuration Release -HipArch gfx1201',
-                'codeql_configurations: ${{ steps.cpp_plan.outputs.codeql_configurations }}',
-                "if: matrix.configuration == 'cpu'",
-                "if: matrix.configuration == 'hip-host'",
+                'name: CodeQL C++ (CPU)',
+                'name: CodeQL C++ (HIP host)',
+                'FLITZZIP_CODEQL_CONFIGURATION: cpu',
+                'FLITZZIP_CODEQL_CONFIGURATION: hip-host',
+                'steps: &cpp-analysis-steps',
+                'steps: *cpp-analysis-steps',
+                "if: env.FLITZZIP_CODEQL_CONFIGURATION == 'cpu'",
+                "if: env.FLITZZIP_CODEQL_CONFIGURATION == 'hip-host'",
                 "'/language:c-cpp' || '/language:c-cpp/configuration:hip-host'",
-                'name: codeql-cpp-raw-${{ matrix.configuration }}-${{ github.sha }}')) {
+                'name: codeql-cpp-raw-${{ env.FLITZZIP_CODEQL_CONFIGURATION }}-${{ github.sha }}')) {
             if ($securityWorkflowText -notmatch [regex]::Escape($requiredSnippet)) {
                 throw "CodeQL C++ workflow is missing required manual Windows build setting: $requiredSnippet"
             }
