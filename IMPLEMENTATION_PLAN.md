@@ -69,12 +69,18 @@ request; this does not authorize publication of a replacement.
    requesting release approval. Earlier successful artifacts cover their own
    source identities, not every later commit.
 
-4. **Complete meaningful coverage.** Use the native coverage artifact's uncovered-line
+4. **Complete meaningful coverage in the delegated follow-up.** The maintainer has
+   assigned coverage-gap closure to another model. Continue all non-coverage
+   release prerequisites in this round, including regression tests for actual
+   fixes; do not expand or recollect coverage merely to increase the percentage.
+   Coverage remains unfinished, not waived or passed.
+   Use the native coverage artifact's uncovered-line
    and unmeasured-source inventories; the Debug measurement is the current baseline.
    Close gaps with independent behavior and failure-path tests, and qualify separate
    measurement for executable-only, tooling and device code. Do not equate a native
    CPU percentage with whole-repository coverage or declare the requested complete
-   coverage achieved while those gaps remain.
+   coverage achieved while those gaps remain. The [coverage handoff](docs/code-coverage.md#coverage-follow-up)
+   identifies the existing measurements and their reuse limits.
 
 ## Deferred Improvement Work
 

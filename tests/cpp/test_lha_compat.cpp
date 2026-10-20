@@ -461,6 +461,31 @@ TEST_CASE(lha_extraction_rejects_malformed_trailing_members_and_terminators) {
     }
 }
 
+// Purpose: Reject truncated unread directory data instead of seeking beyond physical EOF.
+// Inputs: A valid archive prefix and a level-1 directory declaring 32 compressed bytes.
+// Outputs: Every incomplete extent preserves destinations; the complete extent extracts correctly.
+TEST_CASE(lha_extraction_checks_unread_directory_extent) {
+    constexpr std::size_t data_size = 32;
+    constexpr std::size_t header_size = kNestedLhaFixture[0] + 2U + kNestedLhaFixture[7];
+    std::vector<unsigned char> directory(kNestedLhaFixture.begin(), kNestedLhaFixture.begin() + header_size);
+    directory[1] = static_cast<unsigned char>(directory[1] + data_size);
+    directory[7] = static_cast<unsigned char>(directory[7] + data_size);
+    constexpr std::array<unsigned char, 6> name{'b', 'r', 'o', 'k', 'e', 'n'};
+    std::copy(name.begin(), name.end(), directory.begin() + 40);
+    std::vector<unsigned char> bytes(kNestedLhaFixture.begin(), kNestedLhaFixture.end() - 1);
+    bytes.insert(bytes.end(), directory.begin(), directory.end());
+    for (std::size_t present = 0; present < data_size; ++present) {
+        require_lha_suffix_rejected(bytes);
+        bytes.push_back(0);
+    }
+    const auto root = test_temp_dir("lha-directory-extent");
+    const auto archive = root / "complete.lzh";
+    write_lha_fixture(archive, bytes);
+    static_cast<void>(flitzzip::extract_lha(archive, root / "out", false));
+    REQUIRE_TRUE(std::filesystem::is_directory(root / "out" / "broken"));
+    REQUIRE_EQ(read_text_file(root / "out" / "subdir" / "subdir2" / "hello.txt"), "hello world\n");
+}
+
 // Purpose: Preserve valid header levels and documented clean termination forms.
 // Inputs: Independent level 0/2/3 members, including a zero-low-byte level-2 length, with EOF/zero padding.
 // Outputs: Exact payload readback succeeds for each encoding and termination.
