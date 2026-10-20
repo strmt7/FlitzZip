@@ -87,7 +87,7 @@ jobs:
           python .github/openvas/enforce_gate.py reports/openvas/openvas-summary.json
       - name: Authenticate and upload OpenVAS SARIF to Vulnetix
         if: ${{ !cancelled() && steps.scan.conclusion == 'success' }}
-        uses: Vulnetix/cli@a93468ac69147bc9c0869d0199956d5351504348 # v3.109.0
+        uses: Vulnetix/cli@af9e2e3d95ab602ad7de730d8d3d45249b71f7d5 # v3.114.0
         with:
           org-id: ${{ steps.config.outputs.vulnetix_org_id }}
           api-key: ${{ steps.config.outputs.vulnetix_api_key }}
@@ -96,7 +96,7 @@ jobs:
           upload-file: reports/openvas/openvas-report.sarif
       - name: Upload OpenVAS artifact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: greenbone-openvas-reports
           path: reports/openvas

@@ -69,6 +69,23 @@ if ($configuration -notcontains 'tools/new_fixture.py' -or
 }
 Write-Output 'Lint routing changed/all/configuration/new-file checks passed.'
 
+foreach ($path in @('.github/requirements/requirements-lint-windows.in',
+        '.github/requirements/requirements-lint-windows.txt',
+        '.github/workflows/lint.yml', 'tools/bootstrap_lint_env.ps1', 'tools/lint.ps1')) {
+    if (-not (Test-LintToolchainChange -Path @($path))) {
+        throw "Changed linter inputs must qualify existing language consumers: $path"
+    }
+    $targets = @(Get-LintTargetFile -ChangedPath @($path, 'tools/new_fixture.py') `
+        -AllPathspec @('tools/*.py') -FilePattern @('^tools/.*\.py$') `
+        -ForceAll:(Test-LintToolchainChange -Path @($path)))
+    if ($targets -notcontains 'tools/test_benchmark_graph.py' -or $targets -notcontains 'tools/new_fixture.py') {
+        throw 'Toolchain qualification lost an existing or newly changed consumer.'
+    }
+}
+if (Test-LintToolchainChange -Path @('docs/release.md', 'tools/crawl4ai_tool.py')) {
+    throw 'Unrelated documentation or component changes must retain targeted lint.'
+}
+
 $cppExpected = @('src/core/example.cpp', 'tests/cpp/example.cpp', 'fuzz/example.cpp',
     'tools/fixtures/hip_coverage_probe.hip.cpp', 'tools/new_native_tool.hpp')
 $cppSelected = @(Select-FlitzZipCppLintFile -Path ($cppExpected + @('third_party/vendor/example.cpp', 'docs/example.md')))

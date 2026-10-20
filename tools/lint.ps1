@@ -135,6 +135,18 @@ function Test-LintConfigChange {
     return (Select-LintFile -Path $Path -Pattern $Pattern).Count -gt 0
 }
 
+# Purpose: Recheck existing consumers when their linter or routing changes.
+# Inputs: Repository-relative changed paths, including new files.
+# Outputs: True for shared linter installation, version, workflow or routing inputs.
+function Test-LintToolchainChange {
+    param([string[]]$Path)
+
+    return Test-LintConfigChange -Path $Path -Pattern @(
+        '^\.github/requirements/requirements-lint-windows\.(in|txt)$',
+        '^\.github/workflows/lint\.yml$',
+        '^tools/(bootstrap_lint_env|lint)\.ps1$')
+}
+
 # Purpose: Build a lint target set from changed files, or all tracked files when requested.
 # Inputs: Changed paths, all-file pathspecs, file patterns, config patterns, and `ForceAll`.
 # Outputs: Returns unique targets, retaining new changed files even when the scope expands to all tracked files.
@@ -201,13 +213,14 @@ function Invoke-PowerShellLint {
 Push-Location $repo
 try {
     $changedFiles = Get-ChangedLintFile -BaseRef $BaseRef -HeadRef $HeadRef -IncludeUntracked:$IncludeUntracked
+    $lintAll = $CppMode -eq "All" -or (Test-LintToolchainChange -Path $changedFiles)
 
     $pythonFiles = Get-LintTargetFile `
         -ChangedPath $changedFiles `
         -AllPathspec @(".github/openvas/*.py", "mcp/*.py", "tools/*.py") `
         -FilePattern @("^(\.github/openvas|mcp|tools)/.*\.py$") `
         -ConfigPattern @("^\.ruff\.toml$") `
-        -ForceAll:($CppMode -eq "All")
+        -ForceAll:$lintAll
     if ($pythonFiles.Count -gt 0) {
         Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "ruff" -VenvPath $LintVenvPath) -Arguments (@("check") + $pythonFiles) -Label "python-ruff-check"
         Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "ruff" -VenvPath $LintVenvPath) -Arguments (@("format", "--check") + $pythonFiles) -Label "python-ruff-format"
@@ -222,7 +235,7 @@ try {
         -ChangedPath $changedFiles `
         -AllPathspec @("tools/*.ps1", "tools/*.psm1") `
         -FilePattern @("^tools/.*\.(ps1|psm1)$") `
-        -ForceAll:($CppMode -eq "All")
+        -ForceAll:$lintAll
     if ($powershellFiles.Count -gt 0) {
         Invoke-PowerShellLint -Path $powershellFiles
     } else {
@@ -234,7 +247,7 @@ try {
         -AllPathspec @(".github/*.yml", ".github/*.yaml", ".github/**/*.yml", ".github/**/*.yaml") `
         -FilePattern @("^\.github/.*\.ya?ml$") `
         -ConfigPattern @("^\.yamllint$") `
-        -ForceAll:($CppMode -eq "All")
+        -ForceAll:$lintAll
     if ($yamlFiles.Count -gt 0) {
         Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "yamllint" -VenvPath $LintVenvPath) -Arguments (@("-c", ".yamllint") + $yamlFiles) -Label "yaml-yamllint"
     } else {
@@ -246,7 +259,7 @@ try {
         -AllPathspec @("*.md", ":(exclude)third_party/**") `
         -FilePattern @("^(?!third_party/).*\.md$") `
         -ConfigPattern @("^\.pymarkdown\.json$") `
-        -ForceAll:($CppMode -eq "All")
+        -ForceAll:$lintAll
     if ($markdownFiles.Count -gt 0) {
         Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "pymarkdown" -VenvPath $LintVenvPath) -Arguments (@("--config", ".pymarkdown.json", "scan") + $markdownFiles) -Label "markdown-pymarkdown"
     } else {
@@ -257,7 +270,7 @@ try {
         -ChangedPath $changedFiles `
         -AllPathspec @("*CMakeLists.txt", "*.cmake", ":(exclude)third_party/**") `
         -FilePattern @("^(?!third_party/)(?:.*/)?CMakeLists\.txt$", "^(?!third_party/).*\.cmake$") `
-        -ForceAll:($CppMode -eq "All")
+        -ForceAll:$lintAll
     if ($cmakeFiles.Count -gt 0) {
         Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "cmake-lint" -VenvPath $LintVenvPath) -Arguments $cmakeFiles -Label "cmake-lint"
     } else {
@@ -265,7 +278,7 @@ try {
     }
 
     if ($CppMode -ne "Off") {
-        $cppFiles = if ($CppMode -eq "All") {
+        $cppFiles = if ($lintAll) {
             $allCppFiles = @(Get-TrackedLintFile -Pathspec @("src/*", "tests/*", "fuzz/*", "tools/*")) + $changedFiles
             Select-FlitzZipCppLintFile -Path $allCppFiles
         } else {
