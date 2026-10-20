@@ -100,7 +100,7 @@ class DistributionTests(unittest.TestCase):
             build.runtime_source_sha256()
 
     # Purpose: Reject ambiguous package identities before canonical packaging or source admission can select one header.
-    # Inputs: Tiny inert wheels with missing, conflicting, repeated or incorrect Name/Version declarations.
+    # Inputs: Tiny inert wheels with missing, conflicting, repeated, incorrect or undecodable identity headers.
     # Outputs: Both consumers reject each malformed identity with ValueError and never publish a canonical wheel.
     def test_metadata_identity_is_single_and_unambiguous(self):
         files = packaging.wheel_files(self.wheel)
@@ -113,12 +113,14 @@ class DistributionTests(unittest.TestCase):
             f"Name: nltk\nName: nltk\nVersion: {version}\n\n",
             f"Name: nltk\nVersion: {version}\nVersion: other\n\n",
             f"Name: other\nVersion: {version}\n\n",
+            b"Name: \xff\nVersion: " + version.encode("ascii") + b"\n\n",
         )
         mutant, output = self.root / "identity-variant.whl", self.root / "canonical.whl"
         for metadata in variants:
+            replacement = metadata if isinstance(metadata, bytes) else metadata.encode("ascii")
             with zipfile.ZipFile(mutant, "w") as archive:
                 for name, content in files.items():
-                    archive.writestr(name, metadata.encode("ascii") if name == member else content)
+                    archive.writestr(name, replacement if name == member else content)
             data = self.data | {"size": mutant.stat().st_size, "sha256": packaging.digest(mutant)}
             with self.subTest(metadata=metadata):
                 with self.assertRaises(ValueError):

@@ -13,9 +13,10 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import warnings
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from tools.redact_trufflehog import (
     MAX_RECORD_BYTES,
@@ -71,6 +72,82 @@ def finding() -> dict:
 
 
 class ReportRedactionTests(unittest.TestCase):
+    # Purpose: Prevent exact-source review metadata from being redirected through a real directory link.
+    # Inputs: An owned Windows junction or POSIX link to an intact small review file outside the selected root.
+    # Outputs: Review-byte admission refuses the link and leaves the original target untouched.
+    def test_review_input_reparse_boundary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root, target = base / "root", base / "target"
+            root.mkdir()
+            target.mkdir()
+            payload = b'{"schema":1,"reviews":[]}\n'
+            source = target / "review.json"
+            source.write_bytes(payload)
+            link = root / "redirect"
+            if os.name == "nt":
+                subprocess.run(
+                    ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+            else:
+                link.symlink_to(target, target_is_directory=True)
+            try:
+                with self.assertRaisesRegex(ValueError, "reparse point"):
+                    review_bytes(root, "redirect/review.json", MAX_RECORD_BYTES)
+            finally:
+                if os.name == "nt":
+                    link.rmdir()
+                else:
+                    link.unlink()
+            self.assertEqual(source.read_bytes(), payload)
+
+    # Purpose: Refuse contradictory records before any finding or auxiliary secret data is published.
+    # Inputs: Valid synthetic records with conflicting root/nested fields, nonfinite constants and exponent overflow.
+    # Outputs: Every ambiguous record fails without output or review admission; the real CLI uses value-free errors.
+    def test_ambiguous_records_are_not_published(self):
+        raw = json.dumps(finding())
+        invalid = (
+            '{"Verified":true,' + raw[1:],
+            raw.replace('"Git": {', '"Git": {"line": 1,', 1),
+            '{"auxiliary":NaN,' + raw[1:],
+            '{"auxiliary":1e999,' + raw[1:],
+        )
+        script = Path(__file__).with_name("redact_trufflehog.py")
+        for payload in invalid:
+            with self.subTest(payload_kind=payload[:25]):
+                destination = io.StringIO()
+                review = Mock()
+                with self.assertRaises(ValueError):
+                    redact_stream(io.BytesIO(payload.encode()), destination, review)
+                self.assertEqual(destination.getvalue(), "")
+                review.consider.assert_not_called()
+                result = subprocess.run(
+                    [sys.executable, str(script)], input=payload.encode(), capture_output=True, timeout=10, check=False
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, b"")
+                self.assertNotIn(FIXTURE_PRIVATE.encode(), result.stderr)
+                self.assertNotIn(b"Traceback", result.stderr)
+
+    # Purpose: Reject incomplete review arguments before loading a ledger or creating an output file.
+    # Inputs: Each half of the CLI's scanner-identity/review-report pair, with an empty input stream.
+    # Outputs: Both malformed invocations fail with no report, no findings and no private parser context.
+    def test_review_cli_requires_both_arguments(self):
+        script = Path(__file__).with_name("redact_trufflehog.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "review.json"
+            for arguments in (("--scanner-image", "owned-test-image"), ("--review-report", str(destination))):
+                result = subprocess.run(
+                    [sys.executable, str(script), *arguments], input=b"", capture_output=True, timeout=10, check=False
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, b"")
+                self.assertNotIn(b"Traceback", result.stderr)
+                self.assertFalse(destination.exists())
+
     # Purpose: Exercise the real checkout's review references through the publication CLI before scanning.
     # Inputs: Tracked approval cohorts and their actual evidence files, with an empty scanner stream.
     # Outputs: Zero-finding success and a complete review receipt; missing relocated evidence fails the test.
@@ -148,6 +225,10 @@ class ReportRedactionTests(unittest.TestCase):
     # Purpose: Reject invalid location and detector metadata without string coercion.
     # Inputs: Malformed scalar, compound, and out-of-range fixtures. Outputs: Value-free failures.
     def test_metadata_is_strict(self):
+        record = finding()
+        record["SourceMetadata"]["Data"]["Git"] = None
+        with self.assertRaisesRegex(ValueError, "Missing Git"):
+            redact_finding(record)
         for value in (None, True, -1, 1 << 63, "2", {}, []):
             for key in ("DetectorType", "line"):
                 record = finding()
@@ -259,6 +340,48 @@ class ReportRedactionTests(unittest.TestCase):
 
 
 class PublicFixtureReviewTests(unittest.TestCase):
+    # Purpose: Reuse an exact historical-source admission without re-reading Git while still checking current bytes.
+    # Inputs: Two identical public findings followed by a changed current archive under the same review key.
+    # Outputs: Both original findings are admitted, Git transport is reused and changed current bytes are refused.
+    def test_review_cache_retains_current_source_check(self):
+        reviewer = PublicFixtureReview(self.root, self.review["scanner_image"])
+        with patch("tools.redact_trufflehog.subprocess.check_output", wraps=subprocess.check_output) as transport:
+            self.assertTrue(reviewer.consider(self.record()))
+            requests = transport.call_count
+            self.assertGreater(requests, 0)
+            self.assertTrue(reviewer.consider(self.record()))
+            self.assertEqual(transport.call_count, requests)
+            self.archive.write_bytes(self.archive_bytes + b"owned current-source mutation")
+            self.assertFalse(reviewer.consider(self.record()))
+            self.assertEqual(transport.call_count, requests)
+        self.assertEqual((reviewer.total, reviewer.reviewed), (3, 2))
+
+    # Purpose: Refuse invalid historical-object extents before reading or admitting the object.
+    # Inputs: Owned current archive and bounded Git transport controls with nonnumeric/oversized or wrong-size data.
+    # Outputs: Every invalid transport result refuses the finding; no object read follows invalid extent metadata.
+    def test_historical_object_extent_contract(self):
+        for size in (b"not-a-size", str(8 * 1024 * 1024 + 1).encode()):
+            reviewer = PublicFixtureReview(self.root, self.review["scanner_image"])
+            with patch("tools.redact_trufflehog.subprocess.check_output", return_value=size) as transport:
+                self.assertFalse(reviewer.consider(self.record()))
+                self.assertEqual(transport.call_count, 1)
+        reviewer = PublicFixtureReview(self.root, self.review["scanner_image"])
+        with patch(
+            "tools.redact_trufflehog.subprocess.check_output",
+            side_effect=[str(len(self.archive_bytes) + 1).encode(), self.archive_bytes],
+        ):
+            self.assertFalse(reviewer.consider(self.record()))
+
+    # Purpose: Preserve the exact-source approval schema by refusing conflicting properties before interpretation.
+    # Inputs: Original valid fixture ledger with duplicated schema or an individually reviewed identity field.
+    # Outputs: Both root and nested ambiguity fail, even when the last field reproduces an otherwise valid review.
+    def test_ambiguous_approval_ledgers_are_rejected(self):
+        raw = json.dumps(self.ledger)
+        for payload in ('{"schema":2,' + raw[1:], raw.replace('"id": ', '"id": "shadow", "id": ', 1)):
+            (self.root / ".github/scanner-secret-reviews.json").write_text(payload, encoding="utf-8")
+            with self.subTest(nested='"shadow"' in payload), self.assertRaisesRegex(ValueError, "duplicate fields"):
+                PublicFixtureReview(self.root, self.review["scanner_image"])
+
     """Use the actual upstream archive and actual Git blobs, without publishing its match."""
 
     # Purpose: Prepare immutable Git evidence once. Inputs: Canonical review/archive. Outputs: Owned local Git fixture.
@@ -403,6 +526,8 @@ class PublicFixtureReviewTests(unittest.TestCase):
             ("raw_v2_sha256", "short"),
             ("evidence", "docs/missing.md"),
             ("unexpected", "extra"),
+            ("id", "UPPERCASE"),
+            ("scanner_image", 7),
         ):
             ledger = copy.deepcopy(self.ledger)
             ledger["reviews"][0][field] = value
@@ -417,6 +542,12 @@ class PublicFixtureReviewTests(unittest.TestCase):
         for ledger in ([], {"schema": True, "reviews": []}, {"schema": 1, "reviews": [], "extra": 1}):
             self.write_ledger(ledger)
             with self.assertRaises(ValueError):
+                PublicFixtureReview(self.root, self.review["scanner_image"])
+        for format_name, source_line in (("unknown", 1), ("tar.gz", 0), ("zip", True)):
+            ledger = copy.deepcopy(self.ledger)
+            ledger["reviews"][0].update(archive_format=format_name, source_line=source_line)
+            self.write_ledger(ledger)
+            with self.assertRaisesRegex(ValueError, "format or source location"):
                 PublicFixtureReview(self.root, self.review["scanner_image"])
 
     # Purpose: Verify review files are bounded before parsing. Inputs: Exact and excessive byte extents.
@@ -531,6 +662,28 @@ class PublicFixtureReviewTests(unittest.TestCase):
 
 
 class ReviewedTarMemberTests(unittest.TestCase):
+    # Purpose: Require unambiguous ZIP member identity and enforce decoded member bounds without extraction.
+    # Inputs: In-memory duplicate-name ZIPs and complete members at and beyond the existing one-MiB limit.
+    # Outputs: Exact boundary bytes are readable; duplicates and oversized decoded members fail admission.
+    def test_zip_member_identity_and_extent(self):
+        buffer = io.BytesIO()
+        with warnings.catch_warnings(record=True) as observed, zipfile.ZipFile(buffer, "w") as archive:
+            warnings.simplefilter("always")
+            archive.writestr("public.py", b"first owned fixture")
+            archive.writestr("public.py", b"second owned fixture")
+        self.assertEqual(len(observed), 1)
+        with self.assertRaisesRegex(ValueError, "ambiguous member names"):
+            reviewed_member(buffer.getvalue(), {"member": "public.py"})
+        for size in (MAX_RECORD_BYTES, MAX_RECORD_BYTES + 1):
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("public.py", b"x" * size)
+            if size == MAX_RECORD_BYTES:
+                self.assertEqual(reviewed_member(buffer.getvalue(), {"member": "public.py"}), b"x" * size)
+            else:
+                with self.assertRaisesRegex(ValueError, "member exceeds"):
+                    reviewed_member(buffer.getvalue(), {"member": "public.py"})
+
     # Purpose: Build owned in-memory archive controls without writing or extracting member payloads.
     # Inputs: Explicit names, types and bytes. Outputs: A complete gzip/TAR fixture.
     @staticmethod

@@ -76,7 +76,12 @@ def canonical_wheel(built: Path, destination: Path, data: dict, *, project: str)
     metadata_path = info + "METADATA"
     metadata = BytesParser().parsebytes(files[metadata_path])
     names = metadata.get_all("Name", [])
-    if len(names) != 1 or names[0].casefold() != project or metadata.get_all("Version") != [data["version"]]:
+    if (
+        len(names) != 1
+        or not isinstance(names[0], str)
+        or names[0].casefold() != project
+        or metadata.get_all("Version") != [data["version"]]
+    ):
         raise ValueError(f"{project} wheel identity mismatch")
     # Setuptools writes platform line endings; normalize generated metadata only.
     files[metadata_path] = files[metadata_path].replace(b"\r\n", b"\n")
