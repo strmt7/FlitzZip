@@ -12,7 +12,9 @@ DEVELOPMENT = "docs/licenses/development-notices.json"
 
 
 def notice_source(root: Path, name: str) -> Path:
-    """Purpose: Admit a local notice source. Inputs: Root/relative path. Outputs: Existing regular source or error."""
+    """Purpose: Admit a local notice without following redirects.
+    Inputs: Trusted root and relative path. Outputs: Existing regular source, or refusal of links and path escapes.
+    """
     relative = PurePosixPath(name)
     if relative.is_absolute() or ".." in relative.parts or "\\" in name or ":" in name:
         raise ValueError("Notice path must be a relative repository file")
@@ -20,7 +22,7 @@ def notice_source(root: Path, name: str) -> Path:
     for parent in (path, *path.parents):
         if parent == root:
             break
-        if parent.is_symlink() or (parent.exists() and getattr(parent.stat(), "st_file_attributes", 0) & 0x400):
+        if parent.is_symlink() or (parent.exists() and getattr(parent.lstat(), "st_file_attributes", 0) & 0x400):
             raise ValueError("Notice path contains a reparse point")
     if not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
         raise ValueError(f"Notice source is absent or outside the repository: {name}")

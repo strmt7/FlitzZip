@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,24 @@ from tools import devskim_scope as scope
 
 
 class DevSkimScopeTests(unittest.TestCase):
+    # Purpose: Qualify the scope CLI on a fresh checkout with no passive-report directory.
+    # Inputs: An owned empty root and a new options destination outside the passive-data path.
+    # Outputs: No phantom reports are admitted; only the documented Git and validated report-role globs are emitted.
+    def test_real_cli_with_absent_report_directory(self):
+        root = self.root / "fresh-checkout"
+        root.mkdir()
+        self.assertEqual(scope.validate_report_directory(root), [])
+        output = self.root / "fresh-options.json"
+        completed = subprocess.run(
+            [sys.executable, "-m", "tools.devskim_scope", "--root", str(root), "--output", str(output)],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(output.read_text()), {"Globs": scope.ignore_globs(root)})
+
     # Purpose: Isolate scope mutation fixtures. Inputs: None. Outputs: Owned data directory with automatic cleanup.
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
