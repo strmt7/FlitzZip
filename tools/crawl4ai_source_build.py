@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import tarfile
 import tempfile
@@ -20,9 +19,10 @@ BUILD_LOCK = packaging.BUILD_LOCK
 
 def recipe() -> dict:
     """Purpose: Admit original source. Inputs: Pinned recipe/archive. Outputs: Verified build recipe or refusal."""
-    data = json.loads((SOURCE_ROOT / "build.json").read_text(encoding="utf-8"))
+    data = packaging.read_recipe(SOURCE_ROOT / "build.json")
     if (
-        data.get("schema") != 1
+        type(data.get("schema")) is not int
+        or data["schema"] != 1
         or data.get("project") != "crawl4ai"
         or data.get("upstream_version") != "0.9.4"
         or data.get("version") != "0.9.4+flitzzip.portable2"

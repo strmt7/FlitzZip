@@ -7,6 +7,7 @@ import csv
 import datetime
 import hashlib
 import io
+import json
 import re
 import stat
 import zipfile
@@ -16,6 +17,42 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parent.parent
 BUILD_LOCK = ROOT / "tools/requirements/python-build.txt"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
+MAX_RECIPE_BYTES = 1024 * 1024
+
+
+def recipe_object(pairs: list[tuple[str, object]]) -> dict:
+    """Purpose: Reject conflicting provenance. Inputs: Decoded recipe fields. Outputs: Unique object or refusal."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Python packaging recipe contains duplicate fields")
+        result[key] = value
+    return result
+
+
+def reject_recipe_fraction(value: str) -> None:
+    """Purpose: Require integral recipe numbers. Inputs: JSON numeric token. Outputs: Refusal without its value."""
+    raise ValueError("Python packaging recipe numbers must be integers")
+
+
+def read_recipe(path: Path) -> dict:
+    """Purpose: Admit bounded, unambiguous packaging metadata before any artifact is acquired or built.
+    Inputs: Recipe path; supported recipes use only integral numeric fields and a top-level object.
+    Outputs: Decoded object or ValueError; duplicate, nonfinite, fractional and oversized inputs fail closed.
+    """
+    with path.open("rb") as stream:
+        payload = stream.read(MAX_RECIPE_BYTES + 1)
+    if not payload or len(payload) > MAX_RECIPE_BYTES:
+        raise ValueError("Python packaging recipe exceeds its metadata boundary")
+    data = json.loads(
+        payload.decode("utf-8"),
+        object_pairs_hook=recipe_object,
+        parse_float=reject_recipe_fraction,
+        parse_constant=reject_recipe_fraction,
+    )
+    if not isinstance(data, dict):
+        raise ValueError("Python packaging recipe must be an object")
+    return data
 
 
 def digest(path: Path) -> str:
