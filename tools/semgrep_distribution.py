@@ -81,6 +81,8 @@ def download(pin: dict) -> bytes:
             contents.extend(block)
             if len(contents) > pin["bytes"] or time.monotonic() > deadline:
                 raise ValueError("Semgrep wheel download exceeded its byte or lifetime limit")
+    if time.monotonic() > deadline:
+        raise ValueError("Semgrep wheel download exceeded its lifetime boundary at EOF")
     if len(contents) != pin["bytes"] or sha256(contents) != pin["sha256"]:
         raise ValueError("Semgrep wheel bytes differ from the official pin")
     return bytes(contents)

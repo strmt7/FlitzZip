@@ -56,6 +56,27 @@ def fixture(*, newline="\n", dependency="1.29.0", extra=None) -> bytes:
 
 
 class DistributionTests(unittest.TestCase):
+    # Purpose: Reject a transport that returns all expected bytes but reaches EOF after the acquisition deadline.
+    # Inputs: Tiny inert response bytes and a controlled monotonic clock; no remote server or waiting is used.
+    # Outputs: Late EOF fails instead of admitting the wheel; an otherwise identical timely response succeeds.
+    def test_download_deadline_includes_final_eof(self):
+        payload = b"owned wheel transport fixture"
+        pin = {"url": "https://example.invalid/wheel", "bytes": len(payload), "sha256": distribution.sha256(payload)}
+        for elapsed, accepted in ((2, True), (181, False)):
+            response = io.BytesIO(payload)
+            response.headers, response.status = {"Content-Length": str(len(payload))}, 200
+            with (
+                self.subTest(elapsed=elapsed),
+                patch.object(distribution.urllib.request, "build_opener") as opener,
+                patch.object(distribution.time, "monotonic", side_effect=[0, 1, elapsed]),
+            ):
+                opener.return_value.open.return_value = response
+                if accepted:
+                    self.assertEqual(distribution.download(pin), payload)
+                else:
+                    with self.assertRaisesRegex(ValueError, "lifetime"):
+                        distribution.download(pin)
+
     # Purpose: Preserve executable/source/license bytes across platform metadata line endings.
     # Inputs: Independently recorded LF and CRLF wheels. Outputs: Only identity, dependency and RECORD change.
     def test_exact_patch_preserves_payloads_and_permissions(self):

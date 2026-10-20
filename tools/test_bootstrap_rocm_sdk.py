@@ -193,6 +193,70 @@ class RocmBootstrapTests(unittest.TestCase):
         self.assertGreater(lock["unpacked_bytes"], lock["archive_bytes"])
         self.assertIn("not an independently published AMD checksum", lock["digest_origin"])
 
+    # Purpose: Exercise the actual Windows tar consumer and process-failure propagation on admitted tiny source.
+    # Inputs: One owned header in a real TAR.GZ, then deletion of that admitted archive before extraction.
+    # Outputs: Exact extraction succeeds; the missing-source failure cannot be reported as successful extraction.
+    def test_actual_contained_extraction_and_missing_source_failure(self):
+        import os
+
+        from tools import bootstrap_rocm_sdk as bootstrap
+
+        if os.name != "nt":
+            self.skipTest("Native Windows provisioning consumer")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "owned source.tar.gz"
+            payload = b"/* inert SDK extraction correctness fixture */\n"
+            with tarfile.open(archive, "w:gz") as output:
+                item = tarfile.TarInfo("include/fixture.h")
+                item.size = len(payload)
+                output.addfile(item, io.BytesIO(payload))
+            lock = {
+                "archive_bytes": archive.stat().st_size,
+                "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                "members": 1,
+                "unpacked_bytes": len(payload),
+            }
+            self.assertEqual(inspect_archive(archive, lock)["members"], 1)
+            destination = root / "owned extraction"
+            destination.mkdir()
+            bootstrap.bounded_extract(archive, destination)
+            self.assertEqual((destination / "include/fixture.h").read_bytes(), payload)
+            archive.unlink()
+            refused = root / "refused"
+            refused.mkdir()
+            with self.assertRaisesRegex(RuntimeError, "extraction failed"):
+                bootstrap.bounded_extract(archive, refused)
+            self.assertEqual(list(refused.iterdir()), [])
+
+    # Purpose: Keep the whole SDK acquisition deadline active through the terminal response read.
+    # Inputs: Four inert bytes, an offline response and a clock that advances only when EOF is observed.
+    # Outputs: A late response never publishes an archive; failed partial bytes remain available for diagnosis.
+    def test_download_deadline_includes_terminal_read(self):
+        from tools import bootstrap_rocm_sdk as bootstrap
+
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "sdk.tar.gz"
+            payload = b"data"
+            lock = {
+                "url": "https://example.invalid/sdk",
+                "archive_bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+            response = io.BytesIO(payload)
+            response.headers = {"Content-Length": str(len(payload))}
+            with (
+                patch.object(bootstrap.urllib.request, "build_opener") as opener,
+                patch.object(bootstrap.time, "monotonic", side_effect=[0, 1, 1201]),
+            ):
+                opener.return_value.open.return_value = response
+                with self.assertRaisesRegex(ValueError, "lifetime"):
+                    download_archive(lock, destination)
+            self.assertFalse(destination.exists())
+            partials = list(destination.parent.glob("*.partial"))
+            self.assertEqual(len(partials), 1)
+            self.assertEqual(partials[0].read_bytes(), payload)
+
 
 if __name__ == "__main__":
     unittest.main()

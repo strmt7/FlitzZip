@@ -376,6 +376,8 @@ def provision(lock: dict, output: Path) -> Path:
             remaining -= len(chunk)
         if response.read(1):
             raise ValueError("Collector installer exceeded its reviewed size")
+    if time.monotonic() - started > 120:
+        raise TimeoutError("Collector acquisition exceeded its deadline at EOF")
     if digest(installer) != lock["installer_sha256"]:
         raise ValueError("Collector installer SHA-256 mismatch")
     run_checked(

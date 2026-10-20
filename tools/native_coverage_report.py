@@ -6,13 +6,15 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+MAX_REPORT_BYTES = 32 * 1024 * 1024
+
 
 # Purpose: Read the collector's bounded UTF-8 XML without accepting entity declarations or alternate encodings.
 # Inputs: Owned report path. Outputs: Parsed tree; oversized, encoded or entity-bearing documents fail closed.
 def read_report(source: Path) -> ET.Element:
     with source.open("rb") as stream:
-        raw = stream.read(32 * 1024 * 1024 + 1)
-    if len(raw) > 32 * 1024 * 1024:
+        raw = stream.read(MAX_REPORT_BYTES + 1)
+    if len(raw) > MAX_REPORT_BYTES:
         raise ValueError("Coverage XML exceeds the report contract")
     text = raw.decode("utf-8-sig")
     if "\x00" in text or "<!ENTITY" in text.upper():

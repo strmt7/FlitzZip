@@ -167,6 +167,8 @@ def download_archive(lock: dict, destination: Path) -> None:
                 if total > lock["archive_bytes"] or time.monotonic() > deadline:
                     raise ValueError("ROCm distribution download exceeds its byte or lifetime bounds")
                 output.write(block)
+    if time.monotonic() > deadline:
+        raise ValueError("ROCm distribution download exceeded its lifetime boundary at EOF")
     if total != lock["archive_bytes"] or hash_file(partial) != lock["sha256"]:
         raise ValueError("ROCm distribution download size or SHA-256 mismatch")
     partial.rename(destination)
