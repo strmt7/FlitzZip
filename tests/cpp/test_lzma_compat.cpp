@@ -24,6 +24,51 @@ constexpr std::array<unsigned char, 65> kSingleFileLzmaFixture{{
     0x4EU, 0x29U, 0xF8U, 0x26U, 0x46U, 0x88U, 0x0EU, 0x3DU, 0x1FU, 0xFEU, 0x0BU, 0x40U, 0x00U,
 }};
 
+// Independent known-size streams from the unmodified public-domain LZMA SDK 26.03 encoder.
+// The upstream SDK command-line decoder verified all four streams, including both optional-marker forms.
+
+constexpr std::array<unsigned char, 74> kKnownMarkedLzma{{
+    0x5DU, 0x00U, 0x10U, 0x00U, 0x00U, 0x34U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x36U,
+    0x19U, 0x49U, 0x29U, 0x7AU, 0x9AU, 0x86U, 0x9CU, 0xF8U, 0xD4U, 0xF6U, 0xBDU, 0xA4U, 0x95U, 0x43U, 0xFEU,
+    0x6BU, 0x88U, 0x6AU, 0xCFU, 0x73U, 0xEBU, 0xCEU, 0x55U, 0x45U, 0x6DU, 0xCBU, 0xA7U, 0xD8U, 0x38U, 0x2DU,
+    0x78U, 0x25U, 0xA4U, 0x63U, 0x9EU, 0x03U, 0x75U, 0xCFU, 0xC0U, 0x2BU, 0x8AU, 0x5DU, 0xF7U, 0xC6U, 0xE5U,
+    0xC3U, 0x15U, 0x61U, 0x08U, 0x6DU, 0x2BU, 0x17U, 0x2CU, 0x7FU, 0xFFU, 0xDDU, 0xC8U, 0x40U, 0x00U,
+}};
+
+constexpr std::array<unsigned char, 69> kKnownUnmarkedLzma{{
+    0x5DU, 0x00U, 0x10U, 0x00U, 0x00U, 0x34U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+    0x36U, 0x19U, 0x49U, 0x29U, 0x7AU, 0x9AU, 0x86U, 0x9CU, 0xF8U, 0xD4U, 0xF6U, 0xBDU, 0xA4U, 0x95U,
+    0x43U, 0xFEU, 0x6BU, 0x88U, 0x6AU, 0xCFU, 0x73U, 0xEBU, 0xCEU, 0x55U, 0x45U, 0x6DU, 0xCBU, 0xA7U,
+    0xD8U, 0x38U, 0x2DU, 0x78U, 0x25U, 0xA4U, 0x63U, 0x9EU, 0x03U, 0x75U, 0xCFU, 0xC0U, 0x2BU, 0x8AU,
+    0x5DU, 0xF7U, 0xC6U, 0xE5U, 0xC3U, 0x15U, 0x61U, 0x08U, 0x6CU, 0xC6U, 0x47U, 0x00U, 0x00U,
+}};
+
+constexpr std::array<unsigned char, 23> kEmptyMarkedLzma{{
+    0x5DU, 0x00U, 0x10U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+    0x00U, 0x00U, 0x83U, 0xFFU, 0xFBU, 0xFFU, 0xFFU, 0xC0U, 0x00U, 0x00U, 0x00U,
+}};
+
+constexpr std::array<unsigned char, 18> kEmptyUnmarkedLzma{{
+    0x5DU,
+    0x00U,
+    0x10U,
+    0x00U,
+    0x00U,
+    0x00U,
+    0x00U,
+    0x00U,
+    0x00U,
+    0x00U,
+    0x00U,
+    0x00U,
+    0x00U,
+    0x00U,
+    0x00U,
+    0x00U,
+    0x00U,
+    0x00U,
+}};
+
 // Purpose: Write exact fixture bytes to disk.
 // Inputs: `path` is the destination and `bytes` contains a complete `.lzma` stream.
 // Outputs: Creates or replaces the file.
@@ -66,6 +111,120 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
 }
 
 }  // namespace
+
+// Purpose: Verify known-size LZMA termination using independently encoded streams rather than prefix length alone.
+// Inputs: Empty and nonempty upstream SDK fixtures, with and without their optional end marker.
+// Outputs: Requires exact bytes and telemetry, then rejects trailing data while preserving the existing destination.
+TEST_CASE(lzma_known_size_termination_and_trailing_data) {
+    const auto root = test_temp_dir("lzma-known-termination");
+    const std::vector<std::vector<unsigned char>> fixtures{
+        {kKnownMarkedLzma.begin(), kKnownMarkedLzma.end()},
+        {kKnownUnmarkedLzma.begin(), kKnownUnmarkedLzma.end()},
+        {kEmptyMarkedLzma.begin(), kEmptyMarkedLzma.end()},
+        {kEmptyUnmarkedLzma.begin(), kEmptyUnmarkedLzma.end()},
+    };
+    for (std::size_t index = 0; index < fixtures.size(); ++index) {
+        const auto archive = root / (std::to_string(index) + ".lzma");
+        const auto output = root / ("out-" + std::to_string(index));
+        const auto target = output / std::to_string(index);
+        const std::string expected = index < 2 ? "legacy LZMA must not silently truncate this payload\n" : "";
+        write_binary_file(archive, fixtures[index]);
+        const auto stats = flitzzip::extract_lzma_file(archive, output, false);
+        REQUIRE_EQ(stats.entries, 1U);
+        REQUIRE_EQ(stats.output_bytes, expected.size());
+        REQUIRE_EQ(read_text_file(target), expected);
+        REQUIRE_EQ(count_regular_files(output), 1U);
+        for (const unsigned char trailing : {0U, 0xFFU}) {
+            auto malformed = fixtures[index];
+            malformed.push_back(trailing);
+            write_binary_file(archive, malformed);
+            std::ofstream(target, std::ios::binary | std::ios::trunc) << "original";
+            bool rejected = false;
+            try {
+                (void)flitzzip::extract_lzma_file(archive, output, true);
+            } catch (const flitzzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+            REQUIRE_EQ(read_text_file(target), "original");
+            REQUIRE_EQ(
+                std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{}), 1);
+        }
+    }
+}
+
+// Purpose: Reject a known output size that conceals additional compressed payload or requires missing output.
+// Inputs: Independent known-size fixtures with each smaller declaration and a larger declaration.
+// Outputs: Requires failure before publication, unchanged caller bytes and successful subsequent valid reuse.
+TEST_CASE(lzma_declared_size_cannot_truncate_or_extend_payload) {
+    const auto root = test_temp_dir("lzma-size-mismatch");
+    const auto archive = root / "payload.lzma";
+    const auto output = root / "out";
+    std::filesystem::create_directory(output);
+    const std::string expected = "legacy LZMA must not silently truncate this payload\n";
+    const std::vector<std::vector<unsigned char>> fixtures{
+        {kKnownMarkedLzma.begin(), kKnownMarkedLzma.end()},
+        {kKnownUnmarkedLzma.begin(), kKnownUnmarkedLzma.end()},
+    };
+    for (const auto& fixture : fixtures) {
+        for (std::uint64_t declared = 0; declared <= expected.size() + 1; ++declared) {
+            if (declared == expected.size()) {
+                continue;
+            }
+            auto malformed = fixture;
+            for (unsigned byte = 0; byte < 8; ++byte) {
+                malformed[5U + byte] = static_cast<unsigned char>(declared >> (byte * 8U));
+            }
+            write_binary_file(archive, malformed);
+            std::ofstream(output / "payload", std::ios::binary | std::ios::trunc) << "original";
+            bool rejected = false;
+            try {
+                (void)flitzzip::extract_lzma_file(archive, output, true);
+            } catch (const flitzzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+            REQUIRE_EQ(read_text_file(output / "payload"), "original");
+            REQUIRE_EQ(
+                std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{}), 1);
+        }
+        write_binary_file(archive, fixture);
+        REQUIRE_EQ(flitzzip::extract_lzma_file(archive, output, true).output_bytes, expected.size());
+        REQUIRE_EQ(read_text_file(output / "payload"), expected);
+    }
+}
+
+// Purpose: Require complete range-coder termination even when an LZMA header declares zero output bytes.
+// Inputs: Every strict prefix of four independently encoded known-size streams.
+// Outputs: Rejects truncation without replacing an existing file or leaving a staging directory.
+TEST_CASE(lzma_known_size_rejects_every_truncation) {
+    const auto root = test_temp_dir("lzma-known-truncation");
+    const auto archive = root / "payload.lzma";
+    const auto output = root / "out";
+    std::filesystem::create_directory(output);
+    std::ofstream(output / "payload", std::ios::binary) << "original";
+    const std::vector<std::vector<unsigned char>> fixtures{
+        {kKnownMarkedLzma.begin(), kKnownMarkedLzma.end()},
+        {kKnownUnmarkedLzma.begin(), kKnownUnmarkedLzma.end()},
+        {kEmptyMarkedLzma.begin(), kEmptyMarkedLzma.end()},
+        {kEmptyUnmarkedLzma.begin(), kEmptyUnmarkedLzma.end()},
+    };
+    for (const auto& fixture : fixtures) {
+        for (std::size_t size = 0; size < fixture.size(); ++size) {
+            write_binary_file(archive, {fixture.begin(), fixture.begin() + static_cast<std::ptrdiff_t>(size)});
+            bool rejected = false;
+            try {
+                (void)flitzzip::extract_lzma_file(archive, output, true);
+            } catch (const flitzzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+            REQUIRE_EQ(read_text_file(output / "payload"), "original");
+            REQUIRE_EQ(
+                std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{}), 1);
+        }
+    }
+}
 
 // Purpose: Verify native `.lzma` extraction over a deterministic LZMA-Alone fixture.
 // Inputs: A small LZMA-Alone stream generated from a single-file payload.

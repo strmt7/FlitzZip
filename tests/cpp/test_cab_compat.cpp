@@ -2,6 +2,7 @@
 #include "test_util.hpp"
 
 #include "cab/cab_adapter.hpp"
+#include "cab/cab_file_descriptor.hpp"
 #include "cab/cab_format.hpp"
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -9,12 +10,16 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <exception>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <new>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -28,6 +33,7 @@ constexpr std::size_t kCabDataHeaderBytes = 8U;
 struct CabFixtureEntry {
     std::string name;
     std::string payload;
+    std::uint16_t attributes = 0x20U;
 };
 
 // Purpose: Read a full text file for CAB extraction equality checks.
@@ -72,7 +78,7 @@ void append_le32(std::vector<unsigned char>& bytes, std::uint32_t value) {
     bytes.push_back(static_cast<unsigned char>((value >> 24U) & 0xFFU));
 }
 
-// Purpose: Append one NUL-terminated ASCII CAB filename.
+// Purpose: Append one NUL-terminated CAB filename in its declared byte encoding.
 // Inputs: `bytes` receives encoded output and `name` is the raw CAB member path.
 // Outputs: Appends the filename and terminating NUL byte.
 void append_cab_name(std::vector<unsigned char>& bytes, std::string_view name) {
@@ -157,7 +163,7 @@ void write_uncompressed_cab(const std::filesystem::path& archive, const std::vec
         append_le16(bytes, 0U);
         append_le16(bytes, 0U);
         append_le16(bytes, 0U);
-        append_le16(bytes, 0x20U);
+        append_le16(bytes, entry.attributes);
         append_cab_name(bytes, entry.name);
         folder_offset += static_cast<std::uint32_t>(entry.payload.size());
     }
@@ -217,6 +223,105 @@ TEST_CASE(cab_extraction_reads_uncompressed_payload) {
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(std::string_view("cab payload\n").size()));
     REQUIRE_EQ(read_text_file(output / "input" / "alpha.txt"), "cab payload\n");
     flitzzip_test::export_compat_fixture(archive, output);
+}
+
+// Purpose: Preserve CAB's declared UTF-8 filenames through metadata checks and Windows FDI publication.
+// Inputs: Independent CFFILE records with accented, Greek and supplementary Unicode names plus a legacy name.
+// Outputs: Requires exact native names and payloads, declared encodings and overwrite protection.
+TEST_CASE(cab_declared_utf8_names_extract_without_code_page_loss) {
+    const auto root = test_temp_dir("cab-utf8-declared");
+    const auto archive = root / "unicode.cab";
+    const std::string name = "caf\xC3\xA9/\xCE\xA9-\xF0\x9F\x93\xA6.txt";
+    write_uncompressed_cab(archive, {{.name = name, .payload = "unicode payload", .attributes = 0xA0U},
+                                     {.name = "legacy.txt", .payload = "legacy payload"}});
+    const auto metadata = flitzzip::scan_cab_metadata(archive);
+    REQUIRE_EQ(metadata.entries.size(), 2U);
+    REQUIRE_EQ(metadata.entries[0].encoding, flitzzip::ArchivePathEncoding::Utf8);
+    REQUIRE_EQ(metadata.entries[1].encoding, flitzzip::ArchivePathEncoding::HostCodePage);
+    const auto output = root / "out";
+    const auto target = output / std::filesystem::path(u"caf\u00E9") / std::filesystem::path(u"\u03A9-\U0001F4E6.txt");
+    REQUIRE_EQ(flitzzip::extract_cab(archive, output, false).entries, 2U);
+    REQUIRE_EQ(read_text_file(target), "unicode payload");
+    REQUIRE_EQ(read_text_file(output / "legacy.txt"), "legacy payload");
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_cab(archive, output, false);
+    } catch (const flitzzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(read_text_file(target), "unicode payload");
+    REQUIRE_EQ(flitzzip::extract_cab(archive, output, true).entries, 2U);
+    REQUIRE_EQ(count_regular_files(output), 2U);
+}
+
+// Purpose: Keep differently declared CAB names distinct while rejecting aliases on UTF-8 system code pages.
+// Inputs: Identical raw filename bytes in UTF-8 and legacy records, interpreted independently by Win32.
+// Outputs: Requires both exact payloads under distinct decoded names, or rejects a decoded collision before output.
+TEST_CASE(cab_mixed_encodings_use_decoded_identity) {
+    const auto root = test_temp_dir("cab-mixed-encodings");
+    const auto archive = root / "mixed.cab";
+    const std::string name = "\xC3\xA9.txt";
+    write_uncompressed_cab(
+        archive, {{.name = name, .payload = "utf8", .attributes = 0x80U}, {.name = name, .payload = "legacy"}});
+    const int length = MultiByteToWideChar(CP_ACP, 0, name.data(), static_cast<int>(name.size()), nullptr, 0);
+    REQUIRE_TRUE(length > 0);
+    std::wstring legacy_name(static_cast<std::size_t>(length), L'\0');
+    REQUIRE_EQ(MultiByteToWideChar(CP_ACP, 0, name.data(), static_cast<int>(name.size()), legacy_name.data(), length),
+               length);
+    const auto output = root / "out";
+    if (legacy_name == L"\u00E9.txt") {
+        bool rejected = false;
+        try {
+            (void)flitzzip::extract_cab(archive, output, false);
+        } catch (const flitzzip::SecurityError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(count_regular_files(output), 0U);
+    } else {
+        REQUIRE_EQ(flitzzip::extract_cab(archive, output, false).entries, 2U);
+        REQUIRE_EQ(read_text_file(output / std::filesystem::path(u"\u00E9.txt")), "utf8");
+        REQUIRE_EQ(read_text_file(output / legacy_name), "legacy");
+        REQUIRE_EQ(count_regular_files(output), 2U);
+    }
+}
+
+// Purpose: Reject malformed UTF-8 and cross-encoding aliases before any CAB payload is published.
+// Inputs: Independent invalid byte sequences, mixed declaration duplicates and a file/descendant conflict.
+// Outputs: Requires typed archive rejection, unchanged existing data and no staging debris.
+TEST_CASE(cab_invalid_encoding_and_mixed_collisions_reject_before_output) {
+    const auto root = test_temp_dir("cab-encoding-rejection");
+    const std::vector<std::string> invalid_names = {"\xC0\xAF.txt", "\xED\xA0\x80.txt", "\xF4\x90\x80\x80.txt",
+                                                    "truncated-\xE2\x82", "\x80.txt"};
+    std::vector<std::vector<CabFixtureEntry>> cases;
+    for (const auto& name : invalid_names) {
+        cases.push_back(
+            {{.name = "first.txt", .payload = "new"}, {.name = name, .payload = "invalid", .attributes = 0x80U}});
+    }
+    cases.push_back(
+        {{.name = "same.txt", .payload = "first"}, {.name = "SAME.txt", .payload = "second", .attributes = 0x80U}});
+    cases.push_back(
+        {{.name = "parent", .payload = "file", .attributes = 0x80U}, {.name = "parent/child.txt", .payload = "child"}});
+    for (std::size_t index = 0; index < cases.size(); ++index) {
+        const auto archive = root / (std::to_string(index) + ".cab");
+        const auto output = root / std::to_string(index);
+        std::filesystem::create_directory(output);
+        std::ofstream(output / "first.txt", std::ios::binary) << "original";
+        write_uncompressed_cab(archive, cases[index]);
+        bool rejected = false;
+        try {
+            (void)flitzzip::extract_cab(archive, output, true);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = index < invalid_names.size();
+        } catch (const flitzzip::SecurityError&) {
+            rejected = index >= invalid_names.size();
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(read_text_file(output / "first.txt"), "original");
+        REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{}),
+                   1);
+    }
 }
 
 // Purpose: Verify CAB extraction rejects traversal paths before output.
@@ -546,4 +651,166 @@ TEST_CASE(cab_active_writer_is_rejected_before_output_and_recovers) {
     const auto stats = flitzzip::extract_cab(archive, output, false);
     REQUIRE_EQ(stats.output_bytes, 11U);
     REQUIRE_EQ(read_text_file(output / "file.txt"), "cab payload");
+}
+
+namespace {
+
+template <typename T> struct CabFailingAllocator {
+    using value_type = T;
+    bool* fail = nullptr;
+
+    // Purpose: Bind a scoped allocation failure without changing the process allocator.
+    // Inputs: A live test-owned switch. Outputs: An allocator sharing that switch with its rebound copies.
+    explicit CabFailingAllocator(bool* value) : fail(value) {}
+
+    // Purpose: Preserve the failure switch when the container allocates its internal node type.
+    // Inputs: Another typed allocator. Outputs: A rebound allocator with identical admission behavior.
+    template <typename U> CabFailingAllocator(const CabFailingAllocator<U>& other) : fail(other.fail) {}
+
+    // Purpose: Fail one container allocation at the exact owner-transfer boundary.
+    // Inputs: Element count and the scoped switch. Outputs: Ordinary storage, or one std::bad_alloc.
+    T* allocate(std::size_t count) {
+        if (std::exchange(*fail, false)) {
+            throw std::bad_alloc();
+        }
+        return std::allocator<T>{}.allocate(count);
+    }
+
+    // Purpose: Release ordinary test-container storage regardless of the failure switch.
+    // Inputs: Previously allocated storage and count. Outputs: Storage returned to its original allocator.
+    void deallocate(T* pointer, std::size_t count) noexcept {
+        std::allocator<T>{}.deallocate(pointer, count);
+    }
+
+    // Purpose: Identify interchangeable allocator instances for the standard container.
+    // Inputs: Another allocator. Outputs: True only for the same scoped failure switch.
+    bool operator==(const CabFailingAllocator& other) const noexcept {
+        return fail == other.fail;
+    }
+};
+
+// Purpose: Query the real Windows resource behind a borrowed CRT descriptor.
+// Inputs: A live descriptor. Outputs: Its native handle, rejecting fixture setup failures.
+HANDLE cab_descriptor_handle(int descriptor) {
+    REQUIRE_TRUE(descriptor >= 0);
+    const auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(descriptor));
+    REQUIRE_TRUE(handle != INVALID_HANDLE_VALUE);
+    return handle;
+}
+
+// Purpose: Check resource lifetime independently from the owning class's bookkeeping.
+// Inputs: A previously captured native handle. Outputs: Whether Windows still admits the handle.
+bool cab_descriptor_is_open(HANDLE handle) {
+    DWORD flags = 0;
+    return GetHandleInformation(handle, &flags) != FALSE;
+}
+
+// Purpose: Produce distinct caller failures at real FDI callback boundaries.
+// Inputs: A controlled failure kind. Outputs: Throws a standard, allocation or non-standard exception.
+void throw_cab_observer_failure(unsigned kind) {
+    if (kind == 0U) {
+        throw std::runtime_error("independent CAB observer failure");
+    }
+    if (kind == 1U) {
+        throw std::bad_alloc();
+    }
+    throw 31415;
+}
+}  // namespace
+
+// Purpose: Prove CAB descriptors remain singly owned through moves, replacement and repeated close.
+// Inputs: Real Windows CRT discard descriptors. Outputs: Replaced and completed handles close exactly once.
+TEST_CASE(cab_descriptor_moves_release_the_previous_resource) {
+    flitzzip::detail::CabFileDescriptor first(_open("NUL", _O_WRONLY | _O_BINARY));
+    const HANDLE first_handle = cab_descriptor_handle(first.get());
+    flitzzip::detail::CabFileDescriptor second(_open("NUL", _O_WRONLY | _O_BINARY));
+    const HANDLE second_handle = cab_descriptor_handle(second.get());
+    second = std::move(first);
+    REQUIRE_EQ(first.get(), -1);
+    REQUIRE_TRUE(!cab_descriptor_is_open(second_handle));
+    REQUIRE_TRUE(cab_descriptor_is_open(first_handle));
+    {
+        flitzzip::detail::CabFileDescriptor third(std::move(second));
+        REQUIRE_EQ(second.get(), -1);
+        REQUIRE_TRUE(cab_descriptor_is_open(first_handle));
+        REQUIRE_EQ(third.close(), 0);
+        REQUIRE_EQ(third.get(), -1);
+        REQUIRE_EQ(third.close(), 0);
+        REQUIRE_TRUE(!cab_descriptor_is_open(first_handle));
+    }
+}
+
+// Purpose: Prevent a descriptor leak if the callback output map cannot allocate its owning node.
+// Inputs: The production descriptor owner, a real handle and a single controlled container-allocation failure.
+// Outputs: Allocation fails, the map stays empty and Windows confirms the descriptor was closed during unwinding.
+TEST_CASE(cab_descriptor_allocation_failure_preserves_ownership) {
+    using Owner = flitzzip::detail::CabFileDescriptor;
+    using Element = std::pair<const int, Owner>;
+    bool fail = false;
+    std::unordered_map<int, Owner, std::hash<int>, std::equal_to<int>, CabFailingAllocator<Element>> outputs(
+        0, std::hash<int>{}, std::equal_to<int>{}, CabFailingAllocator<Element>(&fail));
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    bool rejected = false;
+    try {
+        Owner descriptor(_open("NUL", _O_WRONLY | _O_BINARY));
+        handle = cab_descriptor_handle(descriptor.get());
+        const int key = descriptor.get();
+        fail = true;
+        outputs.emplace(key, std::move(descriptor));
+    } catch (const std::bad_alloc&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!fail);
+    REQUIRE_TRUE(outputs.empty());
+    REQUIRE_TRUE(handle != INVALID_HANDLE_VALUE);
+    REQUIRE_TRUE(!cab_descriptor_is_open(handle));
+}
+
+// Purpose: Keep every caller exception inside the C++ boundary while FDI closes files and releases its context.
+// Inputs: A real cabinet and observer failures before publication or immediately after the first file commits.
+// Outputs: Original exception identity, defined per-file publication, no temporary debris and successful reuse.
+TEST_CASE(cab_callback_failures_preserve_types_cleanup_and_reuse) {
+    const auto root = test_temp_dir("cab-observer-failures");
+    const auto archive = root / "source.cab";
+    for (unsigned phase = 0; phase < 2U; ++phase) {
+        for (unsigned kind = 0; kind < 3U; ++kind) {
+            write_uncompressed_cab(archive, {{"file.txt", "new CAB bytes"}, {"later.txt", "second file"}});
+            const auto destination = root / (std::to_string(phase) + "-" + std::to_string(kind));
+            std::filesystem::create_directory(destination);
+            std::ofstream(destination / "file.txt", std::ios::binary) << "original";
+            unsigned callbacks = 0;
+            bool observed = false;
+            try {
+                (void)flitzzip::extract_cab(archive, destination, true,
+                                            [&](const flitzzip::ProgressSnapshot& snapshot) {
+                                                ++callbacks;
+                                                if (snapshot.completed_entries == phase) {
+                                                    throw_cab_observer_failure(kind);
+                                                }
+                                            });
+            } catch (const std::bad_alloc&) {
+                REQUIRE_EQ(kind, 1U);
+                observed = true;
+            } catch (const std::runtime_error& error) {
+                REQUIRE_EQ(kind, 0U);
+                REQUIRE_EQ(std::string(error.what()), "independent CAB observer failure");
+                observed = true;
+            } catch (int marker) {
+                REQUIRE_EQ(kind, 2U);
+                REQUIRE_EQ(marker, 31415);
+                observed = true;
+            }
+            REQUIRE_TRUE(observed);
+            REQUIRE_EQ(callbacks, phase + 1U);
+            REQUIRE_EQ(read_text_file(destination / "file.txt"), phase == 0U ? "original" : "new CAB bytes");
+            REQUIRE_EQ(
+                std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+                1);
+            write_uncompressed_cab(archive, {{"file.txt", "new CAB bytes"}, {"later.txt", "second file"}});
+            REQUIRE_EQ(flitzzip::extract_cab(archive, destination, true).entries, 2U);
+            REQUIRE_EQ(read_text_file(destination / "file.txt"), "new CAB bytes");
+            REQUIRE_EQ(read_text_file(destination / "later.txt"), "second file");
+        }
+    }
 }

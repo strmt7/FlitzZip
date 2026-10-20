@@ -1,5 +1,6 @@
 #include "cab/cab_adapter.hpp"
 
+#include "cab/cab_file_descriptor.hpp"
 #include "cab/cab_format.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
@@ -11,7 +12,9 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -46,11 +49,14 @@ struct CabValidatedEntry {
     std::uint64_t size = 0;
 };
 
+using CabEntryMap = std::map<std::pair<std::string, ArchivePathEncoding>, CabValidatedEntry>;
+
 struct CabOutputTarget {
     ReservedFilePublishTarget temporary;
     std::filesystem::path final_path;
-    std::string archive_path;
     std::uint64_t size = 0;
+    // Destruction closes the payload before the reservation removes its private tree.
+    detail::CabFileDescriptor descriptor{};
 };
 
 struct CabFdiContext {
@@ -61,10 +67,11 @@ struct CabFdiContext {
     bool progress_enabled = false;
     ProgressState progress;
     ProgressCallback progress_callback;
-    std::unordered_map<std::string, CabValidatedEntry> entries;
+    CabEntryMap entries;
     std::unordered_map<INT_PTR, CabOutputTarget> outputs;
     std::string error_message;
     bool security_error = false;
+    std::exception_ptr callback_exception;
 };
 
 thread_local std::shared_ptr<CabFdiContext> g_cab_fdi_context;
@@ -97,9 +104,17 @@ class ScopedCabFdiContextBinding {
 // Inputs: `context` owns callback state and `message` is safe diagnostic text.
 // Outputs: Stores the first error message for the caller to throw after `FDICopy`.
 void set_cab_callback_error(CabFdiContext& context, std::string message, bool security_error = false) {
-    if (context.error_message.empty()) {
+    if (context.error_message.empty() && !context.callback_exception) {
         context.error_message = std::move(message);
         context.security_error = security_error;
+    }
+}
+
+// Purpose: Preserve a callback failure without allocating another diagnostic or unwinding through Windows FDI.
+// Inputs: Context and the exception currently being handled. Outputs: Retains the first failure for later rethrow.
+void capture_cab_callback_exception(CabFdiContext& context) noexcept {
+    if (context.error_message.empty() && !context.callback_exception) {
+        context.callback_exception = std::current_exception();
     }
 }
 
@@ -147,14 +162,22 @@ FNFREE(cab_fdi_free) {
 
 // Purpose: Open the virtual CAB path requested by FDI.
 // Inputs: `pszFile` is the FDI path token, `oflag`/`pmode` are CRT open flags.
-// Outputs: Returns a CRT file descriptor as `INT_PTR`, or -1 without opening attacker-named paths.
+// Outputs: Returns a CRT descriptor or -1; retains exceptions for rethrow after FDI returns.
 FNOPEN(cab_fdi_open) {
-    if (g_cab_fdi_context != nullptr && std::strcmp(pszFile, kCabFdiVirtualCabinetName) == 0) {
-        return static_cast<INT_PTR>(
-            _wopen(g_cab_fdi_context->archive_path.wstring().c_str(), oflag | _O_BINARY, pmode));
-    }
-    if (g_cab_fdi_context != nullptr) {
-        set_cab_callback_error(*g_cab_fdi_context, "CAB decompressor requested an unexpected external cabinet path");
+    try {
+        if (g_cab_fdi_context != nullptr && pszFile != nullptr &&
+            std::strcmp(pszFile, kCabFdiVirtualCabinetName) == 0) {
+            return static_cast<INT_PTR>(
+                _wopen(g_cab_fdi_context->archive_path.wstring().c_str(), oflag | _O_BINARY, pmode));
+        }
+        if (g_cab_fdi_context != nullptr) {
+            set_cab_callback_error(*g_cab_fdi_context,
+                                   "CAB decompressor requested an unexpected external cabinet path");
+        }
+    } catch (...) {
+        if (g_cab_fdi_context != nullptr) {
+            capture_cab_callback_exception(*g_cab_fdi_context);
+        }
     }
     return -1;
 }
@@ -177,8 +200,17 @@ FNWRITE(cab_fdi_write) {
 
 // Purpose: Close a CRT file descriptor opened for FDI.
 // Inputs: `hf` is a CRT file descriptor.
-// Outputs: Returns the CRT close result.
+// Outputs: Closes once and retires any tracked output reservation, returning the CRT status.
 FNCLOSE(cab_fdi_close) {
+    if (g_cab_fdi_context != nullptr) {
+        auto& outputs = g_cab_fdi_context->outputs;
+        const auto output = outputs.find(hf);
+        if (output != outputs.end()) {
+            const int status = output->second.descriptor.close();
+            outputs.erase(output);
+            return status;
+        }
+    }
     return _close(static_cast<int>(hf));
 }
 
@@ -198,35 +230,30 @@ INT_PTR open_cab_discard_sink() {
 
 // Purpose: Start extracting one validated CAB file to a private temporary file.
 // Inputs: `context` owns validation/extraction state, `path` is normalized, and `size` is the FDI-reported uncompressed
-// size. Outputs: Returns a writable FDI file descriptor or -1 after recording callback error.
-INT_PTR open_cab_extract_target(CabFdiContext& context, const std::string& path, std::uint64_t size) {
+// size; `encoding` is the validated filename declaration. Outputs: Returns a tracked descriptor or -1;
+// all resources remain owned during allocation failure.
+INT_PTR open_cab_extract_target(CabFdiContext& context, const std::string& path, std::uint64_t size,
+                                ArchivePathEncoding encoding) {
     try {
         if (context.progress_enabled) {
             context.progress.set_current(path);
             publish_cab_progress(context);
         }
-        const auto target = safe_join_archive_path(context.destination, path);
-        auto temporary = reserve_file_publish_target(target);
-        const auto fd =
-            _wopen(temporary.file.wstring().c_str(), _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE);
+        const auto target = safe_join_archive_path(context.destination, path, encoding);
+        CabOutputTarget output{.temporary = reserve_file_publish_target(target), .final_path = target, .size = size};
+        output.descriptor =
+            detail::CabFileDescriptor(_wopen(output.temporary.file.wstring().c_str(),
+                                             _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE));
+        const int fd = output.descriptor.get();
         if (fd < 0) {
-            cleanup_file_publish_target(temporary);
             set_cab_callback_error(context,
                                    "failed to create temporary CAB extraction target: " + path_diagnostic_utf8(target));
             return -1;
         }
-        context.outputs.emplace(static_cast<INT_PTR>(fd), CabOutputTarget{
-                                                              .temporary = std::move(temporary),
-                                                              .final_path = target,
-                                                              .archive_path = path,
-                                                              .size = size,
-                                                          });
+        context.outputs.emplace(static_cast<INT_PTR>(fd), std::move(output));
         return static_cast<INT_PTR>(fd);
-    } catch (const SecurityError& error) {
-        set_cab_callback_error(context, error.what(), true);
-        return -1;
-    } catch (const std::exception& error) {
-        set_cab_callback_error(context, error.what());
+    } catch (...) {
+        capture_cab_callback_exception(context);
         return -1;
     }
 }
@@ -246,7 +273,7 @@ bool close_and_publish_cab_output(CabFdiContext& context, INT_PTR hf) {
 
     auto output = std::move(it->second);
     context.outputs.erase(it);
-    if (_close(static_cast<int>(hf)) != 0) {
+    if (output.descriptor.close() != 0) {
         cleanup_file_publish_target(output.temporary);
         set_cab_callback_error(context,
                                "failed to close CAB extraction target: " + path_diagnostic_utf8(output.final_path));
@@ -262,13 +289,9 @@ bool close_and_publish_cab_output(CabFdiContext& context, INT_PTR hf) {
             publish_cab_progress(context);
         }
         return true;
-    } catch (const SecurityError& error) {
+    } catch (...) {
         cleanup_file_publish_target(output.temporary);
-        set_cab_callback_error(context, error.what(), true);
-        return false;
-    } catch (const std::exception& error) {
-        cleanup_file_publish_target(output.temporary);
-        set_cab_callback_error(context, error.what());
+        capture_cab_callback_exception(context);
         return false;
     }
 }
@@ -297,9 +320,10 @@ FNFDINOTIFY(cab_fdi_notify) {
             }
             const auto path = normalize_fdi_cab_name(pfdin->psz1);
             const auto size = static_cast<std::uint64_t>(pfdin->cb);
-            const auto entry = context->entries.find(path);
+            const auto encoding = cab_entry_path_encoding(pfdin->attribs);
+            const auto entry = context->entries.find({path, encoding});
             if (entry == context->entries.end()) {
-                set_cab_callback_error(*context, "CAB decompressor exposed an unvalidated path: " + path);
+                set_cab_callback_error(*context, "CAB decompressor exposed an unvalidated path or encoding: " + path);
                 return -1;
             }
             if (entry->second.size != size) {
@@ -313,13 +337,13 @@ FNFDINOTIFY(cab_fdi_notify) {
                 }
                 return sink;
             }
-            return open_cab_extract_target(*context, path, size);
+            return open_cab_extract_target(*context, path, size, encoding);
         }
         case fdintCLOSE_FILE_INFO:
             return close_and_publish_cab_output(*context, pfdin->hf) ? TRUE : FALSE;
         }
-    } catch (const std::exception& error) {
-        set_cab_callback_error(*context, error.what());
+    } catch (...) {
+        capture_cab_callback_exception(*context);
         return -1;
     }
     return 0;
@@ -358,7 +382,10 @@ class ScopedFdiContext {
         char cabinet_name[] = "flitzzip-input.cab";
         char cabinet_path[] = "";
         const BOOL ok = FDICopy(handle_, cabinet_name, cabinet_path, 0, cab_fdi_notify, nullptr, context.get());
-        cleanup_pending_outputs(*context);
+        context->outputs.clear();
+        if (context->callback_exception) {
+            std::rethrow_exception(context->callback_exception);
+        }
         if (!context->error_message.empty()) {
             if (context->security_error) {
                 throw SecurityError(context->error_message);
@@ -371,29 +398,17 @@ class ScopedFdiContext {
     }
 
   private:
-    // Purpose: Remove any extraction temporary files left after an FDI failure.
-    // Inputs: `context` owns the temporary output map.
-    // Outputs: Best-effort cleanup and map reset.
-    static void cleanup_pending_outputs(CabFdiContext& context) {
-        for (const auto& [handle, output] : context.outputs) {
-            (void)_close(static_cast<int>(handle));
-            cleanup_file_publish_target(output.temporary);
-        }
-        context.outputs.clear();
-    }
-
     HFDI handle_ = nullptr;
     ERF error_{};
 };
 
 // Purpose: Build a lookup map from scanner-validated CAB entries.
 // Inputs: `metadata` contains prevalidated entries.
-// Outputs: Returns a path-to-size map used by FDI callbacks.
-std::unordered_map<std::string, CabValidatedEntry> build_cab_entry_map(const CabMetadata& metadata) {
-    std::unordered_map<std::string, CabValidatedEntry> entries;
-    entries.reserve(metadata.entries.size());
+// Outputs: Returns a path-and-encoding-to-size map used by FDI callbacks without conflating raw byte names.
+CabEntryMap build_cab_entry_map(const CabMetadata& metadata) {
+    CabEntryMap entries;
     for (const auto& entry : metadata.entries) {
-        entries.emplace(entry.path, CabValidatedEntry{.size = entry.size});
+        entries.emplace(std::make_pair(entry.path, entry.encoding), CabValidatedEntry{.size = entry.size});
     }
     return entries;
 }
