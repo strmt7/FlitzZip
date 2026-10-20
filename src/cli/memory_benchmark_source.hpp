@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/host_memory_budget.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <iosfwd>
@@ -13,6 +15,12 @@ namespace flitzzip::cli {
 inline constexpr std::size_t kMemoryBenchmarkReferenceBytes = 64U * 1024U;
 // Match the CLI extent representation; physical-memory admission supplies the operational limit.
 inline constexpr std::size_t kMemoryBenchmarkCorpusMaxBytes = std::numeric_limits<std::uint32_t>::max();
+
+// Purpose: Admit source residency without allocating or querying the operating system.
+// Inputs: Requested bytes and one physical-memory snapshot; stream extent validation remains the loader's job.
+// Outputs: Throws ArchiveError unless two source-sized buffers fit below the shared host usage target.
+// This is an estimate from a volatile snapshot, not a reservation against other processes.
+void validate_memory_benchmark_source_headroom(std::size_t size, HostMemorySnapshot memory);
 
 // Purpose: Preload an exact bounded binary stream before measured codec work.
 // Inputs: Readable stream ending after size bytes; the 32-bit extent and current host-headroom limits apply.

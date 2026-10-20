@@ -98,6 +98,15 @@ const std::vector<std::byte>& long_sparse_record_motif() {
 
 }  // namespace
 
+// Purpose: Keep source-memory admission deterministic and independent of transport or allocator side effects.
+// Inputs: Requested bytes and a valid physical-memory snapshot; invalid counters remain fail-closed.
+// Outputs: Returns without allocation or throws ArchiveError before a source buffer could exceed headroom.
+void validate_memory_benchmark_source_headroom(std::size_t size, HostMemorySnapshot memory) {
+    if (size > safe_host_memory_growth_bytes(memory) / 2U) {
+        throw ArchiveError("benchmark corpus exceeds current host memory headroom");
+    }
+}
+
 // Purpose: Own an exact source snapshot without allocating beyond corpus or current host-memory admission.
 // Inputs: Binary stream and declared extent; the caller owns transport lifetime and its deadline.
 // Outputs: Returns every original byte; rejects invalid extents, incomplete reads and undeclared trailing bytes.
@@ -105,9 +114,7 @@ std::vector<std::byte> load_memory_benchmark_stream(std::istream& input, std::si
     if (size == 0U || size > kMemoryBenchmarkCorpusMaxBytes) {
         throw ArchiveError("benchmark corpus extent is outside resource limits");
     }
-    if (size > safe_host_memory_growth_bytes(query_host_memory_snapshot()) / 2U) {
-        throw ArchiveError("benchmark corpus exceeds current host memory headroom");
-    }
+    validate_memory_benchmark_source_headroom(size, query_host_memory_snapshot());
     std::vector<std::byte> bytes(size);
     input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     const bool complete = static_cast<bool>(input);

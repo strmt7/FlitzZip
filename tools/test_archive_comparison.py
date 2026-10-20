@@ -348,13 +348,16 @@ class ComparisonRunnerTests(unittest.TestCase):
         command.assert_not_called()
 
     # Purpose: Require the declared Release/HIP/x64 configuration rather than any nearby executable or cache.
-    # Inputs: Owned nonexecutable path fixtures and individually malformed CMake settings.
+    # Inputs: Canonical owned path fixtures, an explicitly noncanonical alias and malformed CMake settings.
     # Outputs: Valid identity hashes the exact cache; wrong binary, absent cache, CPU-only and wrong arch fail closed.
     def test_build_identity_configuration_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            alias_parent = Path(temporary) / "existing-alias-parent"
+            alias_parent.mkdir()
+            root = (alias_parent / "..").resolve(strict=True)
             binary = root / "build/Release/flitzzip_cli.exe"
             binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"owned nonexecutable unit fixture")
             cache = root / "build/CMakeCache.txt"
             valid = "# unit fixture\nCMAKE_GENERATOR_PLATFORM:STRING=x64\nFLITZZIP_ENABLE_HIP:BOOL=ON\n"
             with patch.object(comparison, "ROOT", root):
@@ -371,6 +374,10 @@ class ComparisonRunnerTests(unittest.TestCase):
                 self.assertEqual(record["cmake_cache_sha256"], hashlib.sha256(cache.read_bytes()).hexdigest())
                 self.assertEqual(record["configuration"], "Release")
                 self.assertTrue(record["hip_enabled"])
+                alias = alias_parent / ".." / "build/Release/flitzzip_cli.exe"
+                self.assertEqual(alias.resolve(strict=True), binary)
+                with self.assertRaisesRegex(ValueError, "repository x64 Release"):
+                    comparison.build_identity(alias)
 
     # Purpose: Preserve subprocess failures and reject impossible elapsed intervals instead of publishing fake speed.
     # Inputs: Actual owned Python successes/failures, plus controlled monotonic intervals and a timeout transport.

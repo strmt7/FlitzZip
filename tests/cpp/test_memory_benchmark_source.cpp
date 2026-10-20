@@ -49,6 +49,39 @@ std::string parallel_validation_error(std::span<const std::byte> bytes, std::uin
 }
 }  // namespace
 
+// Purpose: Check source admission at exact physical-memory boundaries without allocating or pressuring the host.
+// Inputs: Independent even/odd capacity fixtures, at/above-target snapshots, invalid counters and a wrapping-size
+// probe. Outputs: Admits exactly half the available growth and rejects unsafe residency before transport or allocation.
+TEST_CASE(memory_benchmark_source_headroom_admission_is_allocation_free) {
+    struct Fixture {
+        flitzzip::HostMemorySnapshot memory;
+        std::size_t size;
+        bool admitted;
+    };
+    const std::array cases{
+        Fixture{{200U, 200U}, 80U, true},
+        Fixture{{200U, 200U}, 81U, false},
+        Fixture{{103U, 103U}, 41U, true},
+        Fixture{{103U, 103U}, 42U, false},
+        Fixture{{1000U, 201U}, 1U, false},
+        Fixture{{1000U, 202U}, 1U, true},
+        Fixture{{1000U, 200U}, 1U, false},
+        Fixture{{1000U, 199U}, 1U, false},
+        Fixture{{0U, 0U}, 1U, false},
+        Fixture{{1000U, 1001U}, 1U, false},
+        Fixture{{200U, 200U}, std::numeric_limits<std::size_t>::max(), false},
+    };
+    for (const auto& fixture : cases) {
+        bool admitted = true;
+        try {
+            flitzzip::cli::validate_memory_benchmark_source_headroom(fixture.size, fixture.memory);
+        } catch (const flitzzip::ArchiveError&) {
+            admitted = false;
+        }
+        REQUIRE_EQ(admitted, fixture.admitted);
+    }
+}
+
 // Purpose: Keep a fixed nondefault block-size sweep anchored to balanced compression, not its first weak level.
 // Inputs: Unit observations with fast level-one output twice as large as level five; no timing claim is made.
 // Outputs: Requires the fastest size-eligible case even when level one precedes the balanced observation.
