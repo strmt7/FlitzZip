@@ -111,6 +111,16 @@ the public verification and extraction paths with independently framed records;
 malformed GPU block metadata must be rejected before decoder execution. These
 tests complement actual HIP execution and independent format interoperability.
 
+Publication lifetime tests interrupt every observed checkpoint, reject forged
+reservation fields, and check that read-only files and directory junctions are
+cleaned without changing outside files. Source-session tests independently vary
+each recorded identity field, mutate real files in place, and verify that copied
+or moved locks prevent writes until their final owner releases them. These are
+behavioral assertions over the production boundary, not inferred coverage hits.
+Controlled container-allocation failures also verify that source handles already
+have RAII owners before insertion, so unwinding closes the new handle without
+releasing previously retained locks.
+
 Native index I/O tests use independently packed wire bytes across every readable
 version. Forward-only streams exercise every truncation boundary without relying
 on seek-based size checks. Partial-seek fixtures also reject lost positions and

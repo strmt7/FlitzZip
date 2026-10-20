@@ -581,6 +581,10 @@ tools\package.ps1 -Configuration Release
 - Shared worker state must remain owned until the actual worker calls return.
   A completion counter or result signal can precede final worker cleanup;
   qualify teardown with a worker that deliberately signals before its last access.
+- Adopt acquired native handles into RAII owners before any allocating operation.
+  Move owners into containers; passing a raw acquisition to `emplace_back` does
+  not protect it if container growth fails. Retain controlled allocation-failure
+  tests that verify both new-handle cleanup and existing-owner preservation.
 - Keep algorithm work budgets separate from termination decisions. Preserve
   comparison consumption and rank ordering with independent consumer oracles;
   changing loop syntax alone does not establish a repair.

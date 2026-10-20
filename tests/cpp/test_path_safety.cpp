@@ -285,28 +285,70 @@ TEST_CASE(directory_publish_accepts_read_only_payload) {
 
 // Purpose: Prevent private read-only normalization from changing a file outside the publication transaction.
 // Inputs: A read-only caller-owned file hard-linked into the private staging directory.
-// Outputs: Rejects the alias without changing outside attributes or publishing any final file.
+// Outputs: Rejects and cleans the alias without changing outside attributes, identity, bytes or final paths.
 TEST_CASE(directory_publish_read_only_alias_keeps_attributes) {
     const auto root = test_temp_dir("publish-readonly-alias");
     const auto outside = root / "outside.txt";
     std::ofstream(outside, std::ios::binary) << "outside payload";
     REQUIRE_TRUE(SetFileAttributesW(outside.c_str(), FILE_ATTRIBUTE_READONLY) != 0);
+    const auto before = publication_file_identity(outside);
+    std::filesystem::path quarantine;
     bool rejected = false;
     {
         flitzzip::DirectoryPublishTransaction transaction(root / "output");
-        std::filesystem::create_hard_link(outside, transaction.staging_directory() / "alias.txt");
+        quarantine = transaction.staging_directory();
+        std::filesystem::create_hard_link(outside, quarantine / "alias.txt");
         try {
             transaction.publish(false);
         } catch (const flitzzip::SecurityError&) {
             rejected = true;
         }
-        const auto attributes = GetFileAttributesW(outside.c_str());
-        REQUIRE_TRUE(SetFileAttributesW(outside.c_str(), FILE_ATTRIBUTE_NORMAL) != 0);
-        REQUIRE_TRUE((attributes & FILE_ATTRIBUTE_READONLY) != 0U);
     }
+    const auto attributes = GetFileAttributesW(outside.c_str());
+    const auto after = publication_file_identity(outside);
+    // Restore only the test-owned external file after the complete production cleanup has run.
+    REQUIRE_TRUE(SetFileAttributesW(outside.c_str(), FILE_ATTRIBUTE_NORMAL) != 0);
     REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE((attributes & FILE_ATTRIBUTE_READONLY) != 0U);
+    REQUIRE_EQ(after.dwVolumeSerialNumber, before.dwVolumeSerialNumber);
+    REQUIRE_EQ(after.nFileIndexHigh, before.nFileIndexHigh);
+    REQUIRE_EQ(after.nFileIndexLow, before.nFileIndexLow);
+    REQUIRE_TRUE(!std::filesystem::exists(quarantine));
     REQUIRE_EQ(std::filesystem::hard_link_count(outside), 1U);
     REQUIRE_TRUE(!std::filesystem::exists(root / "output" / "alias.txt"));
+    std::ifstream input(outside, std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "outside payload");
+}
+
+// Purpose: Remove read-only private files when a transaction is abandoned or unwinds after failed inspection.
+// Inputs: Nested Unicode staging files, directory attributes and an exception after complete staging.
+// Outputs: Removes all private bytes while leaving the final destination empty in both lifetime paths.
+TEST_CASE(directory_publish_read_only_abandonment_cleans_quarantine) {
+    struct InspectionFailure {};
+    for (const bool unwind : {false, true}) {
+        const auto root = test_temp_dir(unwind ? "readonly-quarantine-unwind" : "readonly-quarantine-return");
+        const auto destination = root / "output";
+        std::filesystem::path quarantine;
+        bool unwound = false;
+        try {
+            flitzzip::DirectoryPublishTransaction transaction(destination);
+            quarantine = transaction.staging_directory();
+            const auto nested = quarantine / L"\u65e5\u672c";
+            std::filesystem::create_directory(nested);
+            const auto payload = nested / L"caf\u00e9.txt";
+            std::ofstream(payload, std::ios::binary) << "private decoded payload";
+            REQUIRE_TRUE(SetFileAttributesW(payload.c_str(), FILE_ATTRIBUTE_READONLY) != 0);
+            REQUIRE_TRUE(SetFileAttributesW(nested.c_str(), FILE_ATTRIBUTE_READONLY) != 0);
+            if (unwind)
+                throw InspectionFailure{};
+        } catch (const InspectionFailure&) {
+            unwound = true;
+        }
+        REQUIRE_EQ(unwound, unwind);
+        REQUIRE_TRUE(!std::filesystem::exists(quarantine));
+        REQUIRE_TRUE(std::filesystem::is_empty(destination));
+        std::filesystem::remove_all(root);
+    }
 }
 
 // Purpose: Keep quarantine ownership exclusive when publication stops copying the payload.
@@ -1023,4 +1065,239 @@ TEST_CASE(file_publish_supports_maximum_length_filename) {
         REQUIRE_TRUE(!std::filesystem::exists(staging.parent_path()));
     }
     std::filesystem::remove_all(std::filesystem::path(flitzzip::windows_api_path(root)));
+}
+
+// Purpose: Verify public reservation fields cannot redirect either publication or recursive cleanup.
+// Inputs: Two independently owned reservations with each mutable identity field forged in turn.
+// Outputs: Refuses forged commits, preserves both owners, and permits the original reservations to publish.
+TEST_CASE(file_publish_rejects_forged_reservation_without_cleaning_other_owners) {
+    for (const int field : {0, 1, 2, 3}) {
+        const auto root = test_temp_dir("publication-forged-owner-" + std::to_string(field));
+        const auto target = root / "first.txt";
+        const auto other_target = root / "second.txt";
+        const auto original = flitzzip::reserve_file_publish_target(target);
+        const auto other = flitzzip::reserve_file_publish_target(other_target);
+        std::ofstream(original.file, std::ios::binary) << "first owner";
+        std::ofstream(other.file, std::ios::binary) << "second owner";
+        auto forged = original;
+        switch (field) {
+        case 0:
+            forged.directory = other.directory;
+            break;
+        case 1:
+            forged.file = other.file;
+            break;
+        case 2:
+            forged.state = other.state;
+            break;
+        case 3:
+            forged.state.reset();
+            break;
+        }
+        flitzzip::cleanup_file_publish_target(forged);
+        bool rejected = false;
+        try {
+            flitzzip::commit_verified_file(forged, target, true);
+        } catch (const flitzzip::SecurityError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_TRUE(!std::filesystem::exists(target));
+        REQUIRE_TRUE(!std::filesystem::exists(other_target));
+        REQUIRE_TRUE(std::filesystem::is_regular_file(original.file));
+        REQUIRE_TRUE(std::filesystem::is_regular_file(other.file));
+        flitzzip::commit_verified_file(original, target, false);
+        flitzzip::commit_verified_file(other, other_target, false);
+        flitzzip::cleanup_file_publish_target(original);
+        flitzzip::cleanup_file_publish_target(other);
+        std::ifstream first(target, std::ios::binary), second(other_target, std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(first), {}), "first owner");
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(second), {}), "second owner");
+        REQUIRE_TRUE(!std::filesystem::exists(original.directory));
+        REQUIRE_TRUE(!std::filesystem::exists(other.directory));
+    }
+}
+
+// Purpose: Reject stale reservation copies after cleanup instead of recreating or publishing their staged files.
+// Inputs: Two owners of one reservation, explicit repeated cleanup and a subsequent commit through the stale owner.
+// Outputs: Leaves final paths absent, preserves the destination directory and permits a fresh transaction there.
+TEST_CASE(file_publish_cleanup_invalidates_all_reservation_aliases) {
+    const auto root = test_temp_dir("publication-cleaned-alias");
+    const auto target = root / "output.txt";
+    const auto reservation = flitzzip::reserve_file_publish_target(target);
+    const auto alias = reservation;
+    std::ofstream(reservation.file, std::ios::binary) << "abandoned";
+    flitzzip::cleanup_file_publish_target(reservation);
+    flitzzip::cleanup_file_publish_target(alias);
+    REQUIRE_TRUE(!std::filesystem::exists(reservation.directory));
+    bool rejected = false;
+    try {
+        flitzzip::commit_verified_file(alias, target, true);
+    } catch (const flitzzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(target));
+    flitzzip::FilePublishTransaction fresh(target);
+    std::ofstream(fresh.staging_path(), std::ios::binary) << "fresh payload";
+    fresh.commit(false);
+    std::ifstream input(target, std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "fresh payload");
+}
+
+// Purpose: Preserve existing output when staging is missing, a directory or locked by a competing reader.
+// Inputs: Each invalid staged-object state followed by a valid file on the same live transaction.
+// Outputs: Refuses invalid commits without losing the old file, then publishes once and rejects a second commit.
+TEST_CASE(file_publish_invalid_staging_preserves_output_and_recovers) {
+    for (const int failure : {0, 1, 2}) {
+        const auto root = test_temp_dir("publication-invalid-staging-" + std::to_string(failure));
+        const auto target = root / "output.txt";
+        std::ofstream(target, std::ios::binary) << "old destination";
+        flitzzip::FilePublishTransaction transaction(target);
+        const auto stage = transaction.staging_path();
+        std::unique_ptr<void, decltype(&CloseHandle)> blocker(nullptr, &CloseHandle);
+        if (failure == 1) {
+            std::filesystem::create_directory(stage);
+        } else if (failure == 2) {
+            std::ofstream(stage, std::ios::binary) << "locked payload";
+            blocker.reset(CreateFileW(stage.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                      FILE_ATTRIBUTE_NORMAL, nullptr));
+            REQUIRE_TRUE(blocker.get() != INVALID_HANDLE_VALUE);
+        }
+        bool rejected = false;
+        try {
+            transaction.commit(true);
+        } catch (const flitzzip::Error&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        {
+            std::ifstream input(target, std::ios::binary);
+            REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "old destination");
+        }
+        blocker.reset();
+        if (failure == 1)
+            REQUIRE_TRUE(std::filesystem::remove(stage));
+        std::ofstream(stage, std::ios::binary) << "valid replacement";
+        transaction.commit(true);
+        bool repeated = false;
+        try {
+            transaction.commit(true);
+        } catch (const flitzzip::SecurityError&) {
+            repeated = true;
+        }
+        REQUIRE_TRUE(repeated);
+        REQUIRE_TRUE(!std::filesystem::exists(stage.parent_path()));
+        std::ifstream input(target, std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "valid replacement");
+    }
+}
+
+// Purpose: Reject a reparse object inside quarantine and prove destructor cleanup never follows its destination.
+// Inputs: A private directory junction to an outside directory containing a read-only sentinel.
+// Outputs: Rejects before publishing ordinary siblings and preserves the outside identity, attributes and bytes.
+TEST_CASE(directory_publish_reparse_cleanup_preserves_outside_tree) {
+    const auto root = test_temp_dir("quarantine-reparse-cleanup");
+    const auto outside = root / "outside";
+    std::filesystem::create_directory(outside);
+    const auto sentinel = outside / "sentinel.txt";
+    std::ofstream(sentinel, std::ios::binary) << "outside bytes";
+    REQUIRE_TRUE(SetFileAttributesW(sentinel.c_str(), FILE_ATTRIBUTE_READONLY) != 0);
+    const auto before = publication_file_identity(sentinel);
+    const auto destination = root / "destination";
+    std::filesystem::path quarantine;
+    bool rejected = false;
+    {
+        flitzzip::DirectoryPublishTransaction transaction(destination);
+        quarantine = transaction.staging_directory();
+        std::ofstream(quarantine / "ordinary.txt", std::ios::binary) << "ordinary sibling";
+        REQUIRE_TRUE(flitzzip_test::try_create_test_directory_junction(quarantine / "linked", outside));
+        try {
+            transaction.publish(false);
+        } catch (const flitzzip::SecurityError&) {
+            rejected = true;
+        }
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(quarantine));
+    REQUIRE_TRUE(std::filesystem::is_empty(destination));
+    const auto after = publication_file_identity(sentinel);
+    const auto attributes = GetFileAttributesW(sentinel.c_str());
+    REQUIRE_TRUE(SetFileAttributesW(sentinel.c_str(), FILE_ATTRIBUTE_NORMAL) != 0);
+    REQUIRE_EQ(after.dwVolumeSerialNumber, before.dwVolumeSerialNumber);
+    REQUIRE_EQ(after.nFileIndexHigh, before.nFileIndexHigh);
+    REQUIRE_EQ(after.nFileIndexLow, before.nFileIndexLow);
+    REQUIRE_TRUE((attributes & FILE_ATTRIBUTE_READONLY) != 0U);
+    std::ifstream input(sentinel, std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "outside bytes");
+}
+
+// Purpose: Exercise cancellation at every observed publication checkpoint without assuming traversal order.
+// Inputs: A bounded two-file quarantine, one existing destination, and a selected callback interruption index.
+// Outputs: Returns checkpoint count; cancellation preserves per-file atomicity, removes staging and allows reuse.
+std::size_t exercise_publication_cancellation(std::size_t cancel_at) {
+    struct Cancelled {};
+    const auto root = test_temp_dir("publication-cancel-" + std::to_string(cancel_at));
+    const auto destination = root / "output";
+    std::filesystem::create_directory(destination);
+    std::ofstream(destination / "existing.txt", std::ios::binary) << "old bytes";
+    std::filesystem::path quarantine;
+    std::size_t checkpoints = 0;
+    bool cancelled = false;
+    try {
+        flitzzip::DirectoryPublishTransaction transaction(destination);
+        quarantine = transaction.staging_directory();
+        std::filesystem::create_directory(quarantine / "nested");
+        std::ofstream(quarantine / "existing.txt", std::ios::binary) << "complete replacement";
+        std::ofstream(quarantine / "nested" / "new.txt", std::ios::binary) << "complete new file";
+        transaction.publish(true, [&] {
+            REQUIRE_TRUE(++checkpoints <= 100U);
+            if (checkpoints == cancel_at)
+                throw Cancelled{};
+        });
+    } catch (const Cancelled&) {
+        cancelled = true;
+    }
+    REQUIRE_EQ(cancelled, cancel_at != 0U);
+    REQUIRE_TRUE(!std::filesystem::exists(quarantine));
+    {
+        std::ifstream existing(destination / "existing.txt", std::ios::binary);
+        const std::string bytes(std::istreambuf_iterator<char>(existing), {});
+        REQUIRE_TRUE(bytes == "old bytes" || bytes == "complete replacement");
+        if (!cancelled)
+            REQUIRE_EQ(bytes, "complete replacement");
+        const auto added = destination / "nested" / "new.txt";
+        if (std::filesystem::exists(added)) {
+            std::ifstream input(added, std::ios::binary);
+            REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "complete new file");
+        } else {
+            REQUIRE_TRUE(cancelled);
+        }
+    }
+    {
+        flitzzip::DirectoryPublishTransaction recovered(destination);
+        std::ofstream(recovered.staging_directory() / "recovered.txt", std::ios::binary) << "recovered bytes";
+        recovered.publish(false);
+        std::ifstream input(destination / "recovered.txt", std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "recovered bytes");
+        bool repeated = false;
+        try {
+            recovered.publish(true);
+        } catch (const flitzzip::ArchiveError&) {
+            repeated = true;
+        }
+        REQUIRE_TRUE(repeated);
+    }
+    std::filesystem::remove_all(root);
+    return checkpoints;
+}
+
+// Purpose: Prove every callback interruption preserves complete files and releases quarantine ownership.
+// Inputs: The live callback count from a successful bounded directory publication.
+// Outputs: Executes each interruption once with exact file assertions and successful subsequent publication.
+TEST_CASE(directory_publish_cancellation_at_every_checkpoint_preserves_atomic_files) {
+    const auto count = exercise_publication_cancellation(0);
+    REQUIRE_TRUE(count > 0U);
+    for (std::size_t cancel_at = 1; cancel_at <= count; ++cancel_at)
+        REQUIRE_EQ(exercise_publication_cancellation(cancel_at), cancel_at);
 }
