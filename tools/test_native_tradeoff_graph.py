@@ -31,6 +31,21 @@ def sweep_fixture() -> list[dict]:
 
 
 class NativeTradeoffGraphTests(unittest.TestCase):
+    # Purpose: Refuse complete-looking sweeps with missing iteration identities or incompatible execution geometry.
+    # Inputs: Six-run records with a noncontiguous iteration, a changed production block size or absent size evidence.
+    # Outputs: Native tradeoff admission rejects each incompatible point before plotting it.
+    def test_point_comparability_contracts(self) -> None:
+        for field, value, diagnostic in (
+            ("iteration", 4, "iterations are incomplete"),
+            ("block_size_kib", 1024, "block size changed"),
+            ("archive_bytes", None, "archive size"),
+            ("compress_seconds", 0, "compression time"),
+        ):
+            records = sweep_fixture()
+            records[0]["runs"][0][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, diagnostic):
+                collect(records)
+
     # Purpose: Preserve interpretation of legacy paired and GPU-only records from one clean binary.
     # Inputs: Immutable regression fixtures, including a real nonmonotonic effort-size observation.
     # Outputs: Rejects missing, inconsistent, repeated-size, or mislabeled diagnostic evidence.

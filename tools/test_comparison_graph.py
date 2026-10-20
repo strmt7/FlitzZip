@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,6 +113,135 @@ def fixture() -> dict:
 
 
 class ComparisonGraphTests(unittest.TestCase):
+    # Purpose: Refuse missing or stale committed charts without silently creating or replacing them during --check.
+    # Inputs: A valid comparison record with an absent output followed by an unrelated existing sentinel.
+    # Outputs: The real entry point fails explicitly in both cases and preserves the destination's prior state.
+    def test_check_preserves_destination_on_mismatch(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temporary:
+            source, output = Path(temporary) / "record.json", Path(temporary) / "graph.svg"
+            source.write_text(json.dumps(fixture()), encoding="utf-8")
+            command = [
+                sys.executable,
+                "-m",
+                "tools.render_comparison_graph",
+                "--input",
+                str(source),
+                "--output",
+                str(output),
+                "--check",
+            ]
+            for sentinel in (None, b"existing unrelated bytes"):
+                if sentinel is not None:
+                    output.write_bytes(sentinel)
+                checked = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+                self.assertEqual(checked.returncode, 1)
+                self.assertIn("does not match", checked.stderr)
+                self.assertNotIn("Traceback", checked.stderr)
+                self.assertEqual(output.read_bytes() if output.exists() else None, sentinel)
+
+    # Purpose: Refuse contradictory, mistyped or impossible evidence before it can become a published chart.
+    # Inputs: One-field mutations of an otherwise admitted independent record, including Python's bool/int aliases.
+    # Outputs: Every invalid record raises ValueError; the complete unmodified record remains admissible.
+    def test_evidence_types_and_resource_bounds(self) -> None:
+        invalid = [
+            (("schema_version",), True),
+            (("settings", "warmups_per_command"), True),
+            (("settings", "warmups_per_command"), 1.0),
+            (("build", "generator"), 7),
+            (("build", "hip_arch"), ["gfx1201"]),
+            (("host", "cpu"), 7),
+            (("corpus", "files", 0, "bytes"), float(fixture()["corpus"]["files"][0]["bytes"])),
+            (("cases", 0, "input_bytes"), float(fixture()["cases"][0]["input_bytes"])),
+            (("cases", 0, "resource_before", "cpu_load_percent"), 101),
+            (("cases", 0, "resource_after", "disk_busy_percent"), -1),
+            (("cases", 0, "resource_before", "gpu_engine_max_percent"), float("nan")),
+            (("cases", 0, "resource_after", "paging_pages_per_second"), float("inf")),
+            (("cases", 0, "resource_before", "free_ram_bytes"), -1),
+            (("cases", 0, "resource_before", "free_ram_bytes"), True),
+            (("cases", 0, "resource_before", "free_ram_bytes"), fixture()["host"]["ram_bytes"] + 1),
+            (("cases", 0, "resource_after", "workspace_bus_type"), ""),
+            (("tools",), fixture()["tools"] + [copy.deepcopy(fixture()["tools"][0])]),
+            (("tools",), fixture()["tools"] + [None]),
+            (("cases", 0), None),
+            (("cases", 0, "results", 0), None),
+        ]
+        graph.summarize(fixture())
+        for path, value in invalid:
+            record = fixture()
+            target = record
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path, value=value), self.assertRaises(ValueError):
+                graph.summarize(record)
+
+    # Purpose: Exercise every provenance and trial boundary with malformed evidence rather than favorable-only data.
+    # Inputs: Independent one-field corruptions of source/build/tool/corpus/reference/sample contracts.
+    # Outputs: Each corruption fails with the owning validator's actionable diagnostic.
+    def test_incomplete_identity_and_trial_contracts(self) -> None:
+        invalid = [
+            (("source_commit",), "short", "source identity"),
+            (("flitzzip_binary_sha256",), None, "binary SHA"),
+            (("build",), None, "build identity"),
+            (("methodology",), "other", "methodology"),
+            (("host", "ram_modules"), 0, "numeric specification"),
+            (("tools", 0, "binary_sha256"), "bad", "executable"),
+            (("tools", 0, "version"), "", "provenance"),
+            (("tools", 0, "binary_sha256"), "a" * 64, "binary identity differs"),
+            (("corpus", "source_url"), "other", "corpus provenance"),
+            (("corpus", "files"), [], "manifest"),
+            (("corpus", "files", 0, "name"), "missing", "unknown corpus"),
+            (("corpus", "files", 1), fixture()["corpus"]["files"][0], "duplicate"),
+            (("corpus", "files", 0, "download_sha256"), None, "download provenance"),
+            (("settings", "runs"), 4, "run count"),
+            (("settings", "round_pause_ms"), True, "pause"),
+            (("cases", 0, "name"), "other", "case identity"),
+            (("cases", 0, "input_bytes"), 1, "input size"),
+            (("cases", 0, "resource_before"), None, "resource context"),
+            (("cases", 0, "results"), [], "tool pairing"),
+            (("cases", 0, "extract_reference_bytes"), 0, "reference is missing"),
+            (("cases", 0, "extract_reference_bytes"), 123, "reference differs"),
+            (("cases", 0, "results", 0, "compress_seconds"), None, "individual runs"),
+            (("cases", 0, "results", 0, "extract_seconds"), [1] * 6, "run count differs"),
+            (("cases", 0, "results", 0, "archive_bytes"), [1, 2, 1, 1, 1], "archive size"),
+            (("cases", 0, "results", 0, "archive_sha256"), ["bad"] * 5, "SHA-256 evidence"),
+            (("cases", 0, "results", 0, "create_argv"), [None], "recorded command"),
+        ]
+        for path, value, diagnostic in invalid:
+            record = fixture()
+            target = record
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, diagnostic):
+                graph.summarize(record)
+
+    # Purpose: Preserve inclusive physical telemetry limits and precise command/token admission.
+    # Inputs: Zero/full percentage and RAM bounds, a large paging rate, and malformed command vectors.
+    # Outputs: Physical endpoints remain admissible; nonstring tokens and unequal command extents are refused.
+    def test_resource_endpoints_and_command_tokens(self) -> None:
+        for percentage, free in ((0, 0), (100, fixture()["host"]["ram_bytes"])):
+            record = fixture()
+            for case in record["cases"]:
+                for field in ("resource_before", "resource_after"):
+                    sample = case[field]
+                    for key in ("cpu_load_percent", "disk_busy_percent", "gpu_engine_max_percent"):
+                        sample[key] = percentage
+                    sample["free_ram_bytes"] = free
+                    sample["paging_pages_per_second"] = 1000.5
+            graph.summarize(record)
+        for command in (None, [], [None], ["wrong"]):
+            with self.subTest(command=command):
+                self.assertFalse(graph.matching_command(command, ["fixed"]))
+
+    # Purpose: Keep derived statistics finite when individually finite samples overflow the even-count median.
+    # Inputs: Six extreme, positive binary64 times whose midpoint addition exceeds binary64 capacity.
+    # Outputs: Rejects the unrepresentable summary before it can produce invalid SVG coordinates.
+    def test_unrepresentable_median_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "nonfinite"):
+            graph.timing([1e308] * 6, "compression")
+
     # Purpose: Verify the published renderer CLI honors explicit effort instead of silently assuming five.
     # Inputs: A temporary reviewed-record fixture for each effort and its exact command vectors.
     # Outputs: All nine charts are generated and byte-checked through the same entry point used by CI.
