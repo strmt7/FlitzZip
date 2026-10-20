@@ -35,6 +35,16 @@ Local hardening changes in the production copy:
 - `lha_reader_check` finishes and validates an already-open decoder so the
   extraction publication pass verifies the exact streamed payload rather than
   attempting to reopen a decoder at end-of-input.
+- Header/basic/public iteration returns `LHAReadResult` with a separate borrowed
+  header output. Parse, read and skip errors remain sticky and cannot be mistaken
+  for permitted termination. Both FlitzZip passes use that explicit result.
+  Clean termination permits member-boundary EOF, a zero-only suffix, or a PMarc
+  zero terminator with at most 127 CP/M `0x1A` padding bytes. Complete
+  level-2 headers retain their 16-bit length semantics even with a zero low byte.
+- Exact stream reads accumulate fragmented callback reads and preserve non-EOF
+  errors. Skips consume buffered lead-in bytes first. FlitzZip uses checked read
+  consumption for skipped extents, because seeking past EOF does not establish
+  that compressed bytes exist.
 - Removal of Lhasa's unused filesystem extraction helpers and platform write
   abstraction from the production copy. FlitzZip retains only header parsing,
   decompression, and CRC validation.

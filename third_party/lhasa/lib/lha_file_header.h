@@ -26,15 +26,15 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #include "lha_input_stream.h"
 
 /**
- * Read a file header from the input stream.
- *
- * @param stream         The input stream to read from.
- * @return               Pointer to a new LHAFileHeader structure, or NULL
- *                       if an error occurred or a valid header could not
- *                       be read.
+ * Purpose: Read a member while distinguishing clean termination from corruption.
+ * Inputs: A stream at a member boundary, whether the previous member was PMarc,
+ * and a non-null header output.
+ * Outputs: OK transfers an owned header; END permits documented termination;
+ * ERROR rejects incomplete/invalid input. Non-OK sets *header NULL.
  */
 
-LHAFileHeader *lha_file_header_read(LHAInputStream *stream);
+LHAReadResult lha_file_header_read(LHAInputStream *stream, int allow_cpm_padding,
+                                 LHAFileHeader **header);
 
 /**
  * Free a file header structure.

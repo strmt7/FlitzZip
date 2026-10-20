@@ -6,13 +6,21 @@
 #include "lha/lha_adapter.hpp"
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
+
+extern "C" {
+#include "lha_reader.h"
+#include "../../third_party/lhasa/lib/lha_input_stream.h"
+}
 
 namespace {
 
@@ -106,6 +114,137 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
     }
     return count;
 }
+
+// Purpose: Build independent stored LHA members covering the supported header encodings.
+// Inputs: `level` selects level 0, 2, or 3; `wide` selects a level-2 length with a zero low byte.
+// Outputs: Returns a complete member without an archive terminator, containing the known CRC-correct payload.
+std::vector<unsigned char> stored_lha_member(unsigned char level, bool wide = false) {
+    const std::size_t header_size = level == 0 ? 32U : (level == 3 ? 45U : (wide ? 256U : 37U));
+    std::vector<unsigned char> bytes(header_size, 0);
+    constexpr std::array<unsigned char, 5> method{'-', 'l', 'h', '0', '-'};
+    constexpr std::array<unsigned char, 8> name{'f', 'i', 'l', 'e', '.', 't', 'x', 't'};
+    constexpr std::array<unsigned char, 12> payload{'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd', '\n'};
+    std::copy(method.begin(), method.end(), bytes.begin() + 2);
+    bytes[7] = bytes[11] = static_cast<unsigned char>(payload.size());
+    bytes[20] = level;
+    if (level == 0) {
+        bytes[0] = static_cast<unsigned char>(header_size - 2);
+        bytes[19] = 0x20;
+        bytes[21] = static_cast<unsigned char>(name.size());
+        std::copy(name.begin(), name.end(), bytes.begin() + 22);
+        bytes[30] = 0x78;
+        bytes[31] = 0x97;
+        unsigned int checksum = 0;
+        for (std::size_t index = 2; index < header_size; ++index) {
+            checksum += bytes[index];
+        }
+        bytes[1] = static_cast<unsigned char>(checksum);
+    } else {
+        bytes[0] = level == 3 ? 4 : static_cast<unsigned char>(header_size & 0xffU);
+        bytes[1] = level == 3 ? 0 : static_cast<unsigned char>(header_size >> 8U);
+        bytes[21] = 0x78;
+        bytes[22] = 0x97;
+        bytes[23] = 'U';
+        if (level == 3) {
+            bytes[24] = static_cast<unsigned char>(header_size);
+            bytes[28] = 13;
+            bytes[32] = 1;
+            std::copy(name.begin(), name.end(), bytes.begin() + 33);
+        } else {
+            bytes[24] = 11;
+            bytes[26] = 1;
+            std::copy(name.begin(), name.end(), bytes.begin() + 27);
+        }
+    }
+    bytes.insert(bytes.end(), payload.begin(), payload.end());
+    return bytes;
+}
+
+// Purpose: Require full validation before any output or overwrite for a malformed archive.
+// Inputs: Exact hostile archive bytes containing the existing nested fixture as a valid prefix.
+// Outputs: Throws if extraction succeeds, creates a destination, or alters any existing output.
+void require_lha_suffix_rejected(std::span<const unsigned char> bytes) {
+    const auto root = test_temp_dir("lha-invalid-suffix");
+    const auto archive = root / "invalid.lzh";
+    write_lha_fixture(archive, bytes);
+    for (const bool overwrite : {false, true}) {
+        const auto output = root / (overwrite ? "existing" : "new");
+        if (overwrite) {
+            std::filesystem::create_directories(output / "subdir" / "subdir2");
+            std::ofstream(output / "subdir" / "subdir2" / "hello.txt") << "original";
+        }
+        bool rejected = false;
+        try {
+            static_cast<void>(flitzzip::extract_lha(archive, output, overwrite));
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        if (overwrite) {
+            REQUIRE_EQ(read_text_file(output / "subdir" / "subdir2" / "hello.txt"), "original");
+            REQUIRE_EQ(std::distance(std::filesystem::recursive_directory_iterator(output),
+                                     std::filesystem::recursive_directory_iterator()),
+                       3);
+        } else {
+            REQUIRE_TRUE(!std::filesystem::exists(output));
+        }
+    }
+}
+
+struct LhaMemoryInput {
+    std::span<const unsigned char> bytes;
+    std::size_t position = 0;
+    std::size_t chunk = std::numeric_limits<std::size_t>::max();
+    std::size_t fail_at = std::numeric_limits<std::size_t>::max();
+    bool fail_skip = false;
+    std::size_t skip_calls = 0;
+};
+
+// Purpose: Model fragmented successful input and deterministic non-EOF device errors.
+// Inputs: A caller-owned memory source, destination, and requested buffer length.
+// Outputs: Copies only available bytes, returns zero for physical EOF, or -1 at the injected failure.
+int lha_memory_read(void* handle, void* buffer, std::size_t length) {
+    auto& input = *static_cast<LhaMemoryInput*>(handle);
+    if (input.position >= input.fail_at) {
+        return -1;
+    }
+    const auto size =
+        std::min({length, input.chunk, input.bytes.size() - input.position, input.fail_at - input.position});
+    std::copy_n(input.bytes.data() + input.position, size, static_cast<unsigned char*>(buffer));
+    input.position += size;
+    return static_cast<int>(size);
+}
+
+// Purpose: Model a checked skip callback, including a deterministic skip failure.
+// Inputs: A live memory source and number of bytes to consume.
+// Outputs: Advances only across bytes that exist; returns zero on any injected or extent failure.
+int lha_memory_skip(void* handle, std::size_t length) {
+    auto& input = *static_cast<LhaMemoryInput*>(handle);
+    ++input.skip_calls;
+    if (input.fail_skip || input.position >= input.fail_at || length > input.bytes.size() - input.position ||
+        length > input.fail_at - input.position) {
+        return 0;
+    }
+    input.position += length;
+    return 1;
+}
+
+struct LhaMemoryReader {
+    const LHAInputStreamType type;
+    std::unique_ptr<LHAInputStream, decltype(&lha_input_stream_free)> stream;
+    std::unique_ptr<LHAReader, decltype(&lha_reader_free)> reader;
+
+    // Purpose: Own a real Lhasa reader over controlled input without replacing parser logic.
+    // Inputs: A memory source that outlives the reader and whether to expose the optional checked skip.
+    // Outputs: Owns stream/reader resources or fails the test on allocation failure.
+    explicit LhaMemoryReader(LhaMemoryInput& input, bool with_skip = false)
+        : type{lha_memory_read, with_skip ? lha_memory_skip : nullptr, nullptr},
+          stream(lha_input_stream_new(&type, &input), lha_input_stream_free),
+          reader(stream ? lha_reader_new(stream.get()) : nullptr, lha_reader_free) {
+        REQUIRE_TRUE(stream != nullptr);
+        REQUIRE_TRUE(reader != nullptr);
+    }
+};
 
 }  // namespace
 
@@ -282,4 +421,175 @@ TEST_CASE(lha_extraction_rejects_symbolic_links) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
+}
+
+// Purpose: Reject every incomplete next header after a CRC-correct, publishable archive prefix.
+// Inputs: Level 0/2/3 headers cut at every byte before their full header extent.
+// Outputs: Every non-terminator prefix fails before destination creation or replacement.
+TEST_CASE(lha_extraction_rejects_all_partial_trailing_headers_before_publication) {
+    for (const unsigned char level : std::array<unsigned char, 3>{0, 2, 3}) {
+        const auto member = stored_lha_member(level);
+        const auto header_size = member.size() - 12U;
+        for (std::size_t cut = 1; cut < header_size; ++cut) {
+            std::vector<unsigned char> bytes(kNestedLhaFixture.begin(), kNestedLhaFixture.end() - 1);
+            bytes.insert(bytes.end(), member.begin(), member.begin() + static_cast<std::ptrdiff_t>(cut));
+            require_lha_suffix_rejected(bytes);
+        }
+    }
+}
+
+// Purpose: Reject complete invalid headers and data after a terminator before publishing valid earlier entries.
+// Inputs: Bad checksums, unsupported header levels, short member data, and nonzero terminator suffixes.
+// Outputs: Rejects the entire archive and preserves existing destinations for each hostile suffix.
+TEST_CASE(lha_extraction_rejects_malformed_trailing_members_and_terminators) {
+    auto checksum = stored_lha_member(0);
+    checksum[1] ^= 1U;
+    auto level = stored_lha_member(0);
+    level[20] = 4;
+    auto short_payload = stored_lha_member(0);
+    short_payload.pop_back();
+    auto wide_partial = stored_lha_member(2, true);
+    wide_partial.resize(21);
+    for (const auto& suffix : {checksum, level, short_payload, wide_partial, std::vector<unsigned char>{0, 1},
+                               std::vector<unsigned char>(4097, 0)}) {
+        std::vector<unsigned char> bytes(kNestedLhaFixture.begin(), kNestedLhaFixture.end() - 1);
+        bytes.insert(bytes.end(), suffix.begin(), suffix.end());
+        if (suffix.size() == 4097) {
+            bytes.push_back(1);  // Invalid data beyond the zero-tail reader's first buffer.
+        }
+        require_lha_suffix_rejected(bytes);
+    }
+}
+
+// Purpose: Preserve valid header levels and documented clean termination forms.
+// Inputs: Independent level 0/2/3 members, including a zero-low-byte level-2 length, with EOF/zero padding.
+// Outputs: Exact payload readback succeeds for each encoding and termination.
+TEST_CASE(lha_extraction_accepts_header_levels_and_clean_termination) {
+    for (const unsigned char level : std::array<unsigned char, 3>{0, 2, 3}) {
+        for (const std::size_t padding : {0U, 1U, 2U, 22U, 4097U}) {
+            for (const bool wide : {false, true}) {
+                if (wide && level != 2) {
+                    continue;
+                }
+                const auto root = test_temp_dir("lha-clean-end");
+                const auto archive = root / "valid.lzh";
+                auto bytes = stored_lha_member(level, wide);
+                bytes.insert(bytes.end(), padding, 0);
+                write_lha_fixture(archive, bytes);
+                const auto stats = flitzzip::extract_lha(archive, root / "out", false);
+                REQUIRE_EQ(stats.entries, 1U);
+                REQUIRE_EQ(stats.output_bytes, 12U);
+                REQUIRE_EQ(read_text_file(root / "out" / "file.txt"), "hello world\n");
+            }
+        }
+    }
+}
+
+// Purpose: Preserve PMarc's CP/M record padding without accepting arbitrary or unbounded suffixes.
+// Inputs: A stored PMarc member with exact CRC and valid, mixed, or excessive padding.
+// Outputs: Valid records extract exactly; invalid suffixes fail before any publication or overwrite.
+TEST_CASE(lha_extraction_validates_pmarc_record_padding) {
+    auto member = stored_lha_member(0);
+    member[3] = 'p';
+    member[4] = 'm';
+    member[1] = static_cast<unsigned char>(member[1] + ('p' - 'l') + ('m' - 'h'));
+    for (const std::size_t padding : {1U, 39U, 95U, 127U, 128U}) {
+        std::vector<unsigned char> bytes(kNestedLhaFixture.begin(), kNestedLhaFixture.end() - 1);
+        bytes.insert(bytes.end(), member.begin(), member.end());
+        bytes.push_back(0);
+        bytes.insert(bytes.end(), padding, 0x1a);
+        if (padding == 128) {
+            require_lha_suffix_rejected(bytes);
+        } else {
+            const auto root = test_temp_dir("lha-pmarc-end");
+            const auto archive = root / "valid.lzh";
+            write_lha_fixture(archive, bytes);
+            const auto stats = flitzzip::extract_lha(archive, root / "out", false);
+            REQUIRE_EQ(stats.entries, 4U);
+            REQUIRE_EQ(read_text_file(root / "out" / "file.txt"), "hello world\n");
+            REQUIRE_EQ(read_text_file(root / "out" / "subdir" / "subdir2" / "hello.txt"), "hello world\n");
+        }
+        bytes.back() = padding > 1 ? 0 : 2;  // Mixed or invalid padding must not disguise a new header.
+        require_lha_suffix_rejected(bytes);
+    }
+    member = stored_lha_member(0);
+    std::vector<unsigned char> bytes(kNestedLhaFixture.begin(), kNestedLhaFixture.end() - 1);
+    bytes.insert(bytes.end(), member.begin(), member.end());
+    bytes.insert(bytes.end(), {0, 0x1a});
+    require_lha_suffix_rejected(bytes);  // CP/M padding is specific to PMarc.
+}
+
+// Purpose: Distinguish real EOF from callback failures, even after a valid last member or terminator.
+// Inputs: An actual Lhasa reader with a failure at each byte position, plus successful fragmented controls.
+// Outputs: Every device error is sticky ERROR; clean readers reach sticky END with a cleared header.
+TEST_CASE(lha_reader_preserves_input_errors_and_fragmented_reads) {
+    auto bytes = stored_lha_member(0);
+    bytes.push_back(0);
+    for (std::size_t fail_at = 0; fail_at <= bytes.size(); ++fail_at) {
+        LhaMemoryInput input{.bytes = bytes, .chunk = 3, .fail_at = fail_at};
+        LhaMemoryReader session(input);
+        LHAFileHeader* header = nullptr;
+        auto result = lha_reader_next_file(session.reader.get(), &header);
+        if (result == LHA_READ_OK) {
+            static_cast<void>(lha_reader_check(session.reader.get(), nullptr, nullptr));
+            result = lha_reader_next_file(session.reader.get(), &header);
+        }
+        REQUIRE_EQ(result, LHA_READ_ERROR);
+        REQUIRE_TRUE(header == nullptr);
+        REQUIRE_EQ(lha_reader_next_file(session.reader.get(), &header), LHA_READ_ERROR);
+        REQUIRE_TRUE(header == nullptr);
+    }
+    for (const std::size_t chunk : {1U, 3U, 24U, 256U}) {
+        LhaMemoryInput input{.bytes = bytes, .chunk = chunk};
+        LhaMemoryReader session(input);
+        LHAFileHeader* header = nullptr;
+        REQUIRE_EQ(lha_reader_next_file(session.reader.get(), &header), LHA_READ_OK);
+        REQUIRE_TRUE(header != nullptr);
+        REQUIRE_EQ(lha_reader_check(session.reader.get(), nullptr, nullptr), 1);
+        REQUIRE_EQ(lha_reader_next_file(session.reader.get(), &header), LHA_READ_END);
+        REQUIRE_TRUE(header == nullptr);
+        REQUIRE_EQ(lha_reader_next_file(session.reader.get(), &header), LHA_READ_END);
+    }
+}
+
+// Purpose: Reject failed compressed-data skips instead of completing a shortened archive.
+// Inputs: Unread payloads, checked skip failures and short physical data without a skip callback.
+// Outputs: Failed skips remain ERROR; complete unread payloads are consumed before a clean END.
+TEST_CASE(lha_reader_preserves_compressed_skip_failures) {
+    const auto full = stored_lha_member(0);
+    for (const bool with_skip : {false, true}) {
+        for (const bool truncated : {false, true}) {
+            auto bytes = full;
+            if (truncated) {
+                bytes.resize(bytes.size() - 5);
+            }
+            LhaMemoryInput input{.bytes = bytes, .fail_skip = with_skip};
+            LhaMemoryReader session(input, with_skip);
+            LHAFileHeader* header = nullptr;
+            REQUIRE_EQ(lha_reader_next_file(session.reader.get(), &header), LHA_READ_OK);
+            const auto expected = with_skip || truncated ? LHA_READ_ERROR : LHA_READ_END;
+            REQUIRE_EQ(lha_reader_next_file(session.reader.get(), &header), expected);
+            REQUIRE_TRUE(header == nullptr);
+            REQUIRE_EQ(lha_reader_next_file(session.reader.get(), &header), expected);
+            REQUIRE_EQ(input.skip_calls, with_skip ? 1U : 0U);
+        }
+    }
+}
+
+// Purpose: Verify buffered lead-in bytes and callback bytes share one logical skip position.
+// Inputs: A recognized member read one byte at a time, with and without a dedicated skip callback.
+// Outputs: Reads the byte at the exact logical offset after skipping across the buffered region.
+TEST_CASE(lha_stream_skip_consumes_buffered_bytes_before_callback) {
+    const auto bytes = stored_lha_member(0);
+    for (const bool with_skip : {false, true}) {
+        LhaMemoryInput input{.bytes = bytes};
+        LhaMemoryReader session(input, with_skip);
+        unsigned char byte = 0;
+        REQUIRE_EQ(lha_input_stream_read(session.stream.get(), &byte, 1), 1);
+        REQUIRE_EQ(byte, bytes[0]);
+        REQUIRE_EQ(lha_input_stream_skip(session.stream.get(), 30), 1);
+        REQUIRE_EQ(lha_input_stream_read(session.stream.get(), &byte, 1), 1);
+        REQUIRE_EQ(byte, bytes[31]);
+        REQUIRE_EQ(input.skip_calls, with_skip ? 1U : 0U);
+    }
 }

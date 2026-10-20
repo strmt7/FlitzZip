@@ -944,14 +944,89 @@ static int normalize_header_metadata(LHAFileHeader *header)
 	return 1;
 }
 
-/* Purpose: Read and validate the next LHA entry header without rewriting unsafe paths.
- * Inputs: A live archive input stream at a header boundary.
- * Outputs: A fully owned decoded header, or NULL after releasing all partial state. */
-LHAFileHeader *lha_file_header_read(LHAInputStream *stream)
+/* Purpose: Validate the complete terminator suffix, including padding and I/O status.
+ * Inputs: A stream, nonempty initial span starting with zero, and PMarc padding admission.
+ * Outputs: END only for zero padding or at most 127 CP/M padding bytes through EOF. */
+static LHAReadResult read_archive_tail(LHAInputStream *stream,
+                                      const uint8_t *initial, size_t length,
+                                      int allow_cpm_padding)
+{
+	uint8_t buffer[4096];
+	uint8_t padding = length > 1 ? initial[1] : 0;
+	size_t cpm_bytes = 0;
+	size_t i;
+	LHAReadResult result;
+	if (padding != 0 && (padding != 0x1a || !allow_cpm_padding)) {
+		return LHA_READ_ERROR;
+	}
+	for (i = 1; i < length; ++i) {
+		if (initial[i] != padding) {
+			return LHA_READ_ERROR;
+		}
+	}
+	if (padding == 0x1a) {
+		cpm_bytes = length - 1;
+	}
+	do {
+		result = lha_input_stream_read_full(stream, buffer, sizeof(buffer), &length);
+		if (result == LHA_READ_ERROR) {
+			return LHA_READ_ERROR;
+		}
+		for (i = 0; i < length; ++i) {
+			if (buffer[i] != padding) {
+				return LHA_READ_ERROR;
+			}
+		}
+		// CP/M writes fixed 128-byte records. Only its final record can be padding.
+		if (padding == 0x1a) {
+			if (length > 127 - cpm_bytes) {
+				return LHA_READ_ERROR;
+			}
+			cpm_bytes += length;
+		}
+	} while (result == LHA_READ_OK);
+	return LHA_READ_END;
+}
+
+/* Purpose: Distinguish member headers from permitted end-of-archive forms.
+ * Inputs: A live stream, COMMON_HEADER_LEN-byte writable buffer, and PMarc padding admission.
+ * Outputs: OK for a complete common header, END for clean termination, else ERROR. */
+static LHAReadResult read_common_header(LHAInputStream *stream, uint8_t *data,
+                                       int allow_cpm_padding)
+{
+	size_t length;
+	LHAReadResult result;
+	result = lha_input_stream_read_full(stream, data, COMMON_HEADER_LEN, &length);
+	if (result == LHA_READ_ERROR) {
+		return result;
+	}
+	if (length == 0) {
+		return LHA_READ_END;
+	}
+	// A level-2 header has a 16-bit length and can start with zero.
+	// Never interpret that valid encoding as the one-byte terminator.
+	if (data[0] == 0 && (length < COMMON_HEADER_LEN || data[20] != 2)) {
+		return read_archive_tail(stream, data, length, allow_cpm_padding);
+	}
+	return result == LHA_READ_OK ? LHA_READ_OK : LHA_READ_ERROR;
+}
+
+/* Purpose: Read and validate the next LHA header with explicit termination status.
+ * Inputs: A live stream at a header boundary, PMarc padding admission, and non-null output pointer.
+ * Outputs: OK transfers an owned header; END/ERROR release all partial state. */
+LHAReadResult lha_file_header_read(LHAInputStream *stream, int allow_cpm_padding,
+                                 LHAFileHeader **output)
 {
 	LHAFileHeader *header;
+	uint8_t common[COMMON_HEADER_LEN];
+	LHAReadResult result;
 	int success;
 
+	*output = NULL;
+	result = read_common_header(stream, common, allow_cpm_padding);
+	if (result != LHA_READ_OK) {
+		return result;
+	}
 	// We cannot decode the file header until we identify the
 	// header level (as different header level formats are
 	// decoded in different ways. The header level field is
@@ -965,7 +1040,7 @@ LHAFileHeader *lha_file_header_read(LHAInputStream *stream)
 	header = lhasa_allocate(sizeof(LHAFileHeader));
 
 	if (header == NULL) {
-		return NULL;
+		return LHA_READ_ERROR;
 	}
 
 	header->_refcount = 1;
@@ -978,10 +1053,7 @@ LHAFileHeader *lha_file_header_read(LHAInputStream *stream)
 	}
 	header->raw_data_len = COMMON_HEADER_LEN;
 
-	if (!lha_input_stream_read(stream, header->raw_data,
-	                           header->raw_data_len)) {
-		goto fail;
-	}
+	lhasa_bytes_copy(header->raw_data, common, COMMON_HEADER_LEN);
 
 	// Identify header level, and decode header depending on
 	// the value encountered.
@@ -1034,10 +1106,11 @@ LHAFileHeader *lha_file_header_read(LHAInputStream *stream)
 		header->compress_method[2] = 'k';
 	}
 
-	return header;
+	*output = header;
+	return LHA_READ_OK;
 fail:
 	lha_file_header_free(header);
-	return NULL;
+	return LHA_READ_ERROR;
 }
 
 void lha_file_header_free(LHAFileHeader *header)

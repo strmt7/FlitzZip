@@ -23,6 +23,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <limits.h>
 
 #include "lha_input_stream.h"
 #include "lhasa_compat.h"
@@ -50,6 +51,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 typedef enum {
 	LHA_INPUT_STREAM_INIT,
 	LHA_INPUT_STREAM_READING,
+	LHA_INPUT_STREAM_EOF,
 	LHA_INPUT_STREAM_FAIL
 } LHAInputStreamState;
 
@@ -136,11 +138,30 @@ static void empty_leadin(LHAInputStream *stream, size_t bytes)
 	stream->leadin_len -= bytes;
 }
 
-// Read bytes from the input stream into the specified buffer.
-
+/* Purpose: Bound callback requests and retain terminal input errors.
+ * Inputs: A stream and writable buf_len-byte buffer.
+ * Outputs: Returns bytes read, zero at EOF, or -1 on a sticky input error. */
 static int do_read(LHAInputStream *stream, void *buf, size_t buf_len)
 {
-	return stream->type->read(stream->handle, buf, buf_len);
+	int result;
+	if (stream->state == LHA_INPUT_STREAM_FAIL) {
+		return -1;
+	}
+	if (stream->state == LHA_INPUT_STREAM_EOF || buf_len == 0) {
+		return 0;
+	}
+	if (buf_len > INT_MAX) {
+		buf_len = INT_MAX;
+	}
+	result = stream->type->read(stream->handle, buf, buf_len);
+	if (result < 0 || (size_t) result > buf_len) {
+		stream->state = LHA_INPUT_STREAM_FAIL;
+		return -1;
+	}
+	if (result == 0) {
+		stream->state = LHA_INPUT_STREAM_EOF;
+	}
+	return result;
 }
 
 // Skip the self-extractor header at the start of the file.
@@ -197,10 +218,19 @@ static int skip_sfx(LHAInputStream *stream)
 	return 0;
 }
 
-int lha_input_stream_read(LHAInputStream *stream, void *buf, size_t buf_len)
+/* Purpose: Fill a requested span without confusing short reads with clean EOF.
+ * Inputs: A live stream, writable buf_len-byte buffer, and initialized-count output.
+ * Outputs: Returns OK, END, or ERROR and reports only bytes actually initialized. */
+LHAReadResult lha_input_stream_read_full(LHAInputStream *stream, void *buf,
+                                       size_t buf_len, size_t *bytes_read)
 {
 	size_t total_bytes, n;
 	int result;
+
+	*bytes_read = 0;
+	if (buf_len == 0) {
+		return LHA_READ_OK;
+	}
 
 	// Start of the stream?  Skip self-extract header, if there is one.
 
@@ -213,7 +243,7 @@ int lha_input_stream_read(LHAInputStream *stream, void *buf, size_t buf_len)
 	}
 
 	if (stream->state == LHA_INPUT_STREAM_FAIL) {
-		return 0;
+		return LHA_READ_ERROR;
 	}
 
 	// Now fill the result buffer. Start by emptying the lead-in buffer.
@@ -234,52 +264,65 @@ int lha_input_stream_read(LHAInputStream *stream, void *buf, size_t buf_len)
 
 	// Read from the input stream.
 
-	if (total_bytes < buf_len) {
+	while (total_bytes < buf_len) {
 		result = do_read(stream, (uint8_t *) buf + total_bytes,
 		                 buf_len - total_bytes);
 
-		if (result > 0) {
-			total_bytes += (unsigned int) result;
+		if (result <= 0) {
+			*bytes_read = total_bytes;
+			return result == 0 ? LHA_READ_END : LHA_READ_ERROR;
 		}
+		total_bytes += (unsigned int) result;
 	}
 
-	// Only successful if the complete buffer is filled.
-
-	return total_bytes == buf_len;
+	*bytes_read = total_bytes;
+	return LHA_READ_OK;
 }
 
+/* Purpose: Preserve the existing exact-read contract for payload/header consumers.
+ * Inputs: A live stream and writable buf_len-byte buffer.
+ * Outputs: Returns non-zero only when every requested byte was read. */
+int lha_input_stream_read(LHAInputStream *stream, void *buf, size_t buf_len)
+{
+	size_t bytes_read;
+	return lha_input_stream_read_full(stream, buf, buf_len, &bytes_read)
+	       == LHA_READ_OK;
+}
+
+/* Purpose: Consume compressed bytes through the same buffered stream as reads.
+ * Inputs: A live stream already positioned by a header read and a byte count.
+ * Outputs: Returns non-zero only after complete consumption; failures stay sticky. */
 int lha_input_stream_skip(LHAInputStream *stream, size_t bytes)
 {
-	// If we have a dedicated skip function, use it; otherwise,
-	// the read function can be used to perform a skip.
-
-	if (stream->type->skip != NULL) {
-		return stream->type->skip(stream->handle, bytes);
-	} else {
-		uint8_t data[32];
-		size_t len;
-		int result;
-
-		while (bytes > 0) {
-
-			// Read as many bytes left as possible to fit in
-			// the buffer:
-
-			if (bytes > sizeof(data)) {
-				len = sizeof(data);
-			} else {
-				len = bytes;
-			}
-
-			result = do_read(stream, data, len);
-
-			if (result <= 0) {
-				return 0;
-			}
-
-			bytes -= (size_t) result;
-		}
-
+	uint8_t data[4096];
+	size_t len;
+	if (stream->state == LHA_INPUT_STREAM_FAIL) {
+		return 0;
+	}
+	len = bytes < stream->leadin_len ? bytes : stream->leadin_len;
+	empty_leadin(stream, len);
+	bytes -= len;
+	if (bytes == 0) {
 		return 1;
 	}
+	if (stream->state != LHA_INPUT_STREAM_READING) {
+		stream->state = LHA_INPUT_STREAM_FAIL;
+		return 0;
+	}
+	if (stream->type->skip != NULL) {
+		if (stream->type->skip(stream->handle, bytes)) {
+			return 1;
+		}
+		stream->state = LHA_INPUT_STREAM_FAIL;
+		return 0;
+	}
+	while (bytes > 0) {
+		len = bytes < sizeof(data) ? bytes : sizeof(data);
+		if (!lha_input_stream_read(stream, data, len)) {
+			stream->state = LHA_INPUT_STREAM_FAIL;
+			return 0;
+		}
+		bytes -= len;
+	}
+	return 1;
 }

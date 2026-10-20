@@ -187,6 +187,15 @@ device-only helpers require a separate qualification before their apparent
 zero counts can be interpreted. Product kernel reports remain separate work. Kernel dispatch counts
 and CPU-side HIP API coverage cannot substitute for device counters.
 
+The helper-inclusive control fails with the tested unmodified ROCm 10.1
+toolchain: GPU readback and kernel counters are correct, but the executed
+non-inlined helper retains zero counters. This is a measurement limitation,
+not evidence that those instructions were unexecuted or that the product GPU
+operation failed. Preserve that failed control and require correct helper
+registration and counters before admitting whole-device coverage. Inlining
+helpers solely to satisfy the control or deriving counts from dispatches would
+not qualify the missing measurement.
+
 Prepare an isolated coverage compiler from AMD's
 [ROCm 10.1 distribution](https://rocm.docs.amd.com/en/docs-10.1.0/install/rocm.html).
 The tested compiler source is the ROCm LLVM commit

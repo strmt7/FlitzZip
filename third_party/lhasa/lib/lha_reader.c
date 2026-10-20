@@ -39,6 +39,9 @@ typedef enum {
 	// End of input stream has been reached.
 
 	CURR_FILE_EOF,
+
+	// Parsing or consuming the input failed; never a clean archive end.
+	CURR_FILE_ERROR,
 } CurrFileType;
 
 struct _LHAReader {
@@ -166,24 +169,34 @@ void lha_reader_free(LHAReader *reader)
 	free(reader);
 }
 
-LHAFileHeader *lha_reader_next_file(LHAReader *reader)
+/* Purpose: Preserve member, clean-end and error outcomes through the public reader.
+ * Inputs: A live reader and non-null borrowed-header output.
+ * Outputs: Returns explicit status; terminal outcomes remain sticky on repetition. */
+LHAReadResult lha_reader_next_file(LHAReader *reader, LHAFileHeader **header)
 {
+	LHAReadResult result;
+	*header = NULL;
 	close_decoder(reader);
 
 	if (reader->curr_file_type == CURR_FILE_EOF) {
-		return NULL;
+		return LHA_READ_END;
+	}
+	if (reader->curr_file_type == CURR_FILE_ERROR) {
+		return LHA_READ_ERROR;
 	}
 
-	lha_basic_reader_next_file(reader->reader);
-	reader->curr_file = lha_basic_reader_curr_file(reader->reader);
+	result = lha_basic_reader_next_file(reader->reader, &reader->curr_file);
 
-	if (reader->curr_file == NULL) {
+	if (result == LHA_READ_END) {
 		reader->curr_file_type = CURR_FILE_EOF;
+	} else if (result == LHA_READ_ERROR) {
+		reader->curr_file_type = CURR_FILE_ERROR;
 	} else {
 		reader->curr_file_type = CURR_FILE_NORMAL;
 	}
 
-	return reader->curr_file;
+	*header = reader->curr_file;
+	return result;
 }
 
 size_t lha_reader_read(LHAReader *reader, void *buf, size_t buf_len)

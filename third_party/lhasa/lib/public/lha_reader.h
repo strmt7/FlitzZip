@@ -63,15 +63,14 @@ LHAReader *lha_reader_new(LHAInputStream *stream);
 void lha_reader_free(LHAReader *reader);
 
 /**
- * Read the header of the next archived file from the input stream.
- *
- * @param reader     The @ref LHAReader structure.
- * @return           Pointer to an @ref LHAFileHeader structure, or NULL if
- *                   an error occurred.  This pointer is only valid until
- *                   the next time that lha_reader_next_file is called.
+ * Purpose: Iterate members with an explicit clean-end versus error result.
+ * Inputs: A live reader and non-null header output.
+ * Outputs: OK borrows a header until next advance/free; END is permitted
+ * termination; ERROR is sticky malformed/truncated input or read/skip failure.
+ * Both END and ERROR clear *header. Callers must not treat ERROR as completion.
  */
 
-LHAFileHeader *lha_reader_next_file(LHAReader *reader);
+LHAReadResult lha_reader_next_file(LHAReader *reader, LHAFileHeader **header);
 
 /**
  * Read some of the (decompressed) data for the current archived file,

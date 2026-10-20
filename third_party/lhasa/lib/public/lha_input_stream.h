@@ -46,6 +46,18 @@ extern "C" {
 typedef struct _LHAInputStream LHAInputStream;
 
 /**
+ * Result of a bounded read or member iteration. For byte reads, END means
+ * physical EOF and the initialized byte count may be short. Header iteration
+ * returns END only after validating permitted termination; malformed/partial
+ * headers and I/O failures return ERROR.
+ */
+typedef enum {
+	LHA_READ_ERROR = -1,
+	LHA_READ_END = 0,
+	LHA_READ_OK = 1
+} LHAReadResult;
+
+/**
  * Structure containing pointers to callback functions to read data from
  * the input stream.
  */
@@ -67,6 +79,8 @@ typedef struct {
 	/**
 	 * Skip the specified number of bytes from the input stream.
 	 * This is an optional function.
+	 * Success must establish that all requested bytes exist and were skipped;
+	 * seeking past the physical end of input is not successful consumption.
 	 *
 	 * @param handle       Opaque caller-owned stream handle.
 	 * @param bytes        Number of bytes to skip.
