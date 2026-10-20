@@ -78,10 +78,11 @@ request; this does not authorize publication of a replacement.
 
 ## Deferred Improvement Work
 
-- **Development dependency:** the maintainer temporarily accepts the exact NLTK
-  advisory for this round under the [current risk record](docs/security-reviews/dependency-risk-acceptance.md).
-  Keep the upstream alert visible and reassess when the official fix or pinned
-  environment changes. This accepted item does not block the current round.
+- **Development dependency:** qualify the current official NLTK release-candidate
+  asset and patched aiohttp graph through the portable installer, affected hosts
+  and exact pushed dependency audit. The [remediation record](docs/security-reviews/dependency-risk-acceptance.md)
+  preserves the specific candidate authorization; earlier risk acceptance does
+  not transfer to the updated graph.
 - **Neutron effectiveness:** the complete version-eleven Govdocs1 study now
   covers all 991 original files through the licensed RAM-only controller at
   its recorded native source identity. The 6,060-byte aggregate gain is small.

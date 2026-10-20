@@ -20,7 +20,7 @@ function Test-FlitzZipResearchLockChange {
     param([string[]]$Paths)
     foreach ($path in $Paths) {
         if ($path.Replace('\', '/') -match ('^(tools/requirements/|' +
-            'tools/(crawl4ai_tool|crawl4ai_source_build|nltk_security_build|crawl4ai_download_opener)\.py$|' +
+            'tools/(crawl4ai_tool|crawl4ai_source_build|python_wheel|nltk_distribution|crawl4ai_download_opener)\.py$|' +
             'third_party/upstream/(crawl4ai|nltk)/|\.github/workflows/component-contracts\.yml$)')) {
             return $true
         }

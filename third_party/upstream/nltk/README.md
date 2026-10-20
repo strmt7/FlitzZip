@@ -1,33 +1,32 @@
-# NLTK Security Source Provenance
+# NLTK Upstream Distribution Provenance
 
-The original, unmodified upstream archive is retained under its full commit ID.
-`build.json` records its official codeload URL, upstream version, exact commit,
-UTC build timestamp and the merged model-artifact repairs. The adjacent SHA-256
-sidecars admit that archive and the resulting canonical wheel. No generated
-wheel or installed environment is tracked.
+The crawler installs the unmodified `nltk-3.10.4-py3-none-any.whl` published in
+the official [v3.10.4-rc1 release](https://github.com/nltk/nltk/releases/tag/v3.10.4-rc1).
+The tag denotes a release candidate; the upstream wheel's own version is
+`3.10.4`. FlitzZip preserves both identities and does not relabel or rebuild it.
+The maintainer explicitly authorized testing and adopting this candidate to
+resolve the previous NLTK vulnerability.
 
-This is NLTK upstream development source at
-[1bd574cfd4e3bca82c6b145d9271a646df410707](https://github.com/nltk/nltk/commit/1bd574cfd4e3bca82c6b145d9271a646df410707),
-not a published NLTK release. It contains the merged repairs in
-[3757](https://github.com/nltk/nltk/pull/3757),
-[3759](https://github.com/nltk/nltk/pull/3759) and
-[3813](https://github.com/nltk/nltk/pull/3813) for
-[GHSA-8mgp-746c-j5xp](https://github.com/nltk/nltk/security/advisories/GHSA-8mgp-746c-j5xp).
-The source archive contains the complete original Apache 2.0 `LICENSE.txt`,
-`AUTHORS.md`, README and existing source notices.
+[The distribution record](3.10.4-rc1/distribution.json) binds the official asset
+URL, filename, byte size, SHA-256, release tag and license. The adjacent wheel
+is immutable upstream provenance. It contains the original Apache-2.0 license
+and authors; the [development notice](../../../docs/licenses/NLTK-3.10.4.txt)
+is byte-identical to that license.
 
-The standard setuptools build changes only `nltk/VERSION` to the explicitly
-identified downstream version and `setup.cfg` to include a prominent build
-notice. It also adds `FLITZZIP_BUILD_NOTICE.txt`. Upstream Python implementation
-files remain byte-exact. The wheel retains all original notices and that build
-notice. Canonical packaging normalizes generated metadata line endings,
-recomputes the standard wheel `RECORD`, fixes archive metadata to the upstream
-timestamp and uses stored members to avoid host zlib differences. Runtime code
-and original license payloads are not rewritten.
+`tools/nltk_distribution.py` verifies the complete wheel, metadata and runtime
+version before installation. It binds every installed Python source and the
+VERSION file to the admitted wheel without importing the package. Additional,
+missing or changed source, redirects, native modules and sourceless bytecode
+fail admission. Runtime commands retain the source-only import boundary.
 
-The build tools have a separate complete hash lock. Wheel construction uses
-`--no-deps --no-build-isolation --no-index` in that isolated builder; runtime
-installation uses the complete crawler dependency graph with normal resolution,
-`--require-hashes`, binary-only selection and `pip check`. It never patches
-installed code or metadata. Replace this downstream build with a compatible
-patched upstream release after the source regressions and consumer checks pass.
+Installation uses the complete hash-locked dependency graph, the verified local
+wheel as a normal pip candidate, and `pip check`. No dependency constraint,
+installed code or package metadata is patched. Regression tests cover the
+model-artifact sandbox and legitimate consumer behavior. Upstream path-security
+tests and actual crawler extraction are qualified separately; successful
+crawling alone does not establish a security fix.
+
+The earlier commit archive and its original record remain immutable evidence
+for the individually approved historical secret-scanner fixture. The history
+review binds both that archive and its Git blob. They are not installation
+inputs. The retired custom NLTK builder has been removed.

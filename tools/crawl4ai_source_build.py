@@ -10,7 +10,7 @@ import tempfile
 import venv
 from pathlib import Path, PurePosixPath
 
-from tools import nltk_security_build as packaging
+from tools import python_wheel as packaging
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_ROOT = ROOT / "third_party/upstream/crawl4ai/0.9.4"
@@ -190,7 +190,7 @@ def build_wheel(home: Path, output: Path, data: dict) -> Path:
     """Purpose: Use the pinned standard builder. Inputs: External cache/output/recipe. Outputs: Canonical wheel."""
     from tools.crawl4ai_tool import installation_lock, run, text_identity, tool_environment
 
-    builder = home / ("nltk-builder-" + text_identity(BUILD_LOCK)[:16])
+    builder = home / ("python-builder-" + text_identity(BUILD_LOCK)[:16])
     python = builder / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     env = tool_environment(home)
     env.update(SOURCE_DATE_EPOCH=str(data["source_date_epoch"]), PYTHONHASHSEED="0")

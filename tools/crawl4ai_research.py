@@ -127,27 +127,25 @@ async def fetch(owner, url: str, marker: str = "", capture: Path | None = None) 
 
 def source_identity() -> dict[str, str]:
     """Purpose: Bind qualification to integration bytes. Inputs: Repository sources. Outputs: Exact source digests."""
-    from tools import crawl4ai_source_build, nltk_security_build
+    from tools import crawl4ai_source_build, nltk_distribution
 
     paths = (
         "tools/crawl4ai_tool.py",
         "tools/crawl4ai_research.py",
         "tools/requirements/crawl4ai.txt",
         "tools/crawl4ai_sites.json",
-        "tools/nltk_security_build.py",
+        "tools/nltk_distribution.py",
+        "tools/python_wheel.py",
         "tools/test_nltk_model_security.py",
-        "tools/requirements/nltk-build.txt",
+        "tools/requirements/python-build.txt",
         "tools/crawl4ai_source_build.py",
         "tools/crawl4ai_download_opener.py",
         "tools/test_crawl4ai_downloads.py",
     )
     identities = {path: text_identity(ROOT / path) for path in paths}
-    for name in ("build.json", "nltk-source.zip.sha256", "nltk-wheel.sha256"):
-        path = nltk_security_build.SOURCE_ROOT / name
-        identities[path.relative_to(ROOT).as_posix()] = text_identity(path)
-    identities["nltk_source_archive"] = nltk_security_build.digest(
-        nltk_security_build.SOURCE_ROOT / nltk_security_build.recipe()["source"]
-    )
+    record = nltk_distribution.SOURCE_ROOT / "distribution.json"
+    identities[record.relative_to(ROOT).as_posix()] = text_identity(record)
+    identities["nltk_upstream_wheel"] = nltk_distribution.digest(nltk_distribution.wheel_path())
     identities["crawl4ai_source_build"] = crawl4ai_source_build.identity()
     return identities
 
