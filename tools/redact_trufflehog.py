@@ -44,6 +44,16 @@ def decode_record(payload: str | bytes) -> object:
     return value
 
 
+# Purpose: Read one admitted member without accepting a short or overlong decoded stream.
+# Inputs: Bounded binary member stream and its authenticated declared size.
+# Outputs: Complete bytes or a value-free incomplete-member error.
+def read_complete_member(source: BinaryIO, expected_size: int) -> bytes:
+    selected = source.read(MAX_RECORD_BYTES + 1)
+    if len(selected) != expected_size:
+        raise ValueError("Public fixture member is incomplete")
+    return selected
+
+
 # Purpose: Read one exact approved member without extracting files or accepting ambiguous archive names.
 # Inputs: Authenticated bounded archive bytes and an exact review; TAR expansion is separately bounded.
 # Outputs: Complete bounded member bytes; malformed, duplicate, linked or oversized inputs fail closed.
@@ -81,9 +91,7 @@ def reviewed_member(data: bytes, review: dict) -> bytes:
             if not member.isfile() or member.size > MAX_RECORD_BYTES:
                 raise ValueError("Public fixture member exceeds its byte limit")
             with archive.extractfile(member) as source:
-                selected = source.read(MAX_RECORD_BYTES + 1)
-            if len(selected) != member.size:
-                raise ValueError("Public fixture member is incomplete")
+                selected = read_complete_member(source, member.size)
     if selected is None:
         raise ValueError("Public fixture member is missing")
     return selected
