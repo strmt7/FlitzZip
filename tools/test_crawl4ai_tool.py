@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import errno
 import hashlib
+import io
 import json
 import os
 import py_compile
@@ -217,6 +220,22 @@ class CrawlerContracts(unittest.TestCase):
             tool.run_source_python([], environment)
         child.assert_not_called()
 
+    def test_source_runtime_refuses_an_escaped_temporary_directory(self):
+        """Purpose: Keep import bytecode inside the owned temporary root.
+        Inputs: A temporary-directory provider that returns a sibling path. Outputs: Refusal before launch.
+        """
+        with tempfile.TemporaryDirectory() as owned:
+            root = Path(owned)
+            outside = root.parent / "escaped-bytecode-fixture"
+            with (
+                patch.object(tool.tempfile, "gettempdir", return_value=str(root)),
+                patch.object(tool.tempfile, "TemporaryDirectory", return_value=contextlib.nullcontext(str(outside))),
+                patch.object(tool, "run_owned") as child,
+                self.assertRaisesRegex(ValueError, "escaped"),
+            ):
+                tool.run_source_python([sys.executable, "-c", "pass"], {})
+            child.assert_not_called()
+
     def test_script_entrypoint_imports_its_checkout_from_another_directory(self):
         """Purpose: Preserve direct script use. Inputs: External cwd/script path. Outputs: Local helper imports."""
         with tempfile.TemporaryDirectory() as temp:
@@ -270,6 +289,36 @@ class CrawlerContracts(unittest.TestCase):
             self.assertLess(model_index, download_index)
             self.assertLess(download_index, browser_index)
             self.assertTrue((directory / "flitzzip-install.json").exists())
+
+    def test_provision_creates_a_missing_builder_and_rejects_unsupported_python(self):
+        """Purpose: Exercise first-use setup and interpreter admission.
+        Inputs: Missing inert environment and unsupported host versions. Outputs: Created builder or early refusal.
+        """
+        with tempfile.TemporaryDirectory() as owned:
+            home = Path(owned)
+            directory = home / "environment"
+            python = directory / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+            def create(path):
+                selected = Path(path) / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+                selected.parent.mkdir(parents=True)
+                selected.write_bytes(b"inert interpreter fixture")
+
+            with (
+                patch.object(tool.venv, "EnvBuilder") as builder,
+                patch("tools.nltk_distribution.wheel_path", return_value=home / "nltk.whl"),
+                patch("tools.crawl4ai_source_build.ensure_wheel", return_value=home / "crawl4ai.whl"),
+                patch.object(tool, "run"),
+                patch.object(tool, "verify_versions"),
+            ):
+                builder.return_value.create.side_effect = create
+                self.assertEqual(tool.provision(home, directory, python, "new-environment"), python)
+            builder.assert_called_once_with(with_pip=True)
+        with patch.object(tool.sys, "version_info", (3, 12)):
+            with self.assertRaisesRegex(ValueError, "CPython 3.13 or 3.14"):
+                tool.install(Path.cwd())
+            with self.assertRaisesRegex(ValueError, "CPython 3.13 or 3.14"):
+                tool.check_lock(Path.cwd())
 
     def test_fresh_install_never_admits_a_failed_dependency_or_api_gate(self):
         """Purpose: Enforce setup admission. Inputs: Failed fresh dependency/API gates. Outputs: No receipt."""
@@ -422,6 +471,85 @@ class CrawlerContracts(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(output_path.read_text(encoding="utf-8"), "")
 
+    def test_install_lock_refuses_redirects_and_supports_posix_locking(self):
+        """Purpose: Keep lock ownership on the selected cache across supported hosts.
+        Inputs: A real redirected directory, a fake POSIX locker and an unexpected lock error. Outputs: Refusal/unlock.
+        """
+        with tempfile.TemporaryDirectory() as owned:
+            root = Path(owned)
+            target = root / "target"
+            target.mkdir()
+            redirected = root / "redirected"
+            if os.name == "nt":
+                subprocess.run(
+                    ["cmd.exe", "/d", "/c", "mklink", "/J", str(redirected), str(target)],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+            else:
+                redirected.symlink_to(target, target_is_directory=True)
+            try:
+                with self.assertRaisesRegex(ValueError, "redirected"), tool.installation_lock(redirected):
+                    self.fail("Redirected cache lock was admitted")
+            finally:
+                if os.name == "nt":
+                    redirected.rmdir()
+                else:
+                    redirected.unlink()
+
+            calls = []
+            fcntl = SimpleNamespace(
+                LOCK_EX=1,
+                LOCK_NB=2,
+                LOCK_UN=4,
+                flock=lambda _descriptor, operation: calls.append(operation),
+            )
+
+            def native_open(path, flags):
+                """Purpose: Model the POSIX opener. Inputs: Owned path/flags. Outputs: Native descriptor."""
+                return os.open(path, flags)
+
+            with (
+                patch.object(tool, "os", SimpleNamespace(name="posix")),
+                patch.dict(sys.modules, {"fcntl": fcntl}),
+                patch("tools.crawl4ai_download_opener.open_download", side_effect=native_open),
+                tool.installation_lock(root / "posix-cache"),
+            ):
+                pass
+            self.assertEqual(calls, [fcntl.LOCK_EX | fcntl.LOCK_NB, fcntl.LOCK_UN])
+
+            if os.name == "nt":
+                import msvcrt
+
+                with (
+                    patch.object(msvcrt, "locking", side_effect=OSError(errno.EINVAL, "invalid lock fixture")),
+                    self.assertRaisesRegex(OSError, "invalid lock fixture"),
+                    tool.installation_lock(root / "invalid-lock"),
+                ):
+                    pass
+
+    def test_receipt_publication_is_exclusive_atomic_and_cleans_failures(self):
+        """Purpose: Prevent predictable receipt staging from following aliases.
+        Inputs: An occupied legacy name and injected replacement failure. Outputs: Preserved sentinel and no debris.
+        """
+        with tempfile.TemporaryDirectory() as owned:
+            root = Path(owned)
+            receipt = root / "flitzzip-install.json"
+            legacy = receipt.with_suffix(".tmp")
+            legacy.write_bytes(b"preserve legacy target")
+            tool.write_install_receipt(receipt, {"schema": 1})
+            self.assertEqual(json.loads(receipt.read_text(encoding="utf-8")), {"schema": 1})
+            self.assertEqual(legacy.read_bytes(), b"preserve legacy target")
+            receipt.unlink()
+            with (
+                patch.object(tool.os, "replace", side_effect=OSError("publication failure")),
+                self.assertRaisesRegex(OSError, "publication failure"),
+            ):
+                tool.write_install_receipt(receipt, {"schema": 1})
+            self.assertFalse(receipt.exists())
+            self.assertEqual(list(root.glob(receipt.name + ".*.tmp")), [])
+
     def test_setup_diagnostics_and_output_limit(self):
         """Purpose: Retain errors without unbounded logs. Inputs: Real setup children. Outputs: Error/budget checks."""
         with tempfile.TemporaryDirectory() as temp:
@@ -446,6 +574,183 @@ class CrawlerContracts(unittest.TestCase):
                     [sys.executable, "-c", "print('x' * (5 * 1024 * 1024))"], dict(os.environ), 10, quiet=True
                 )
             self.assertLessEqual(error_path.stat().st_size, 8200)
+
+    def test_setup_early_overflow_quiet_timeout_and_missing_owner_contract(self):
+        """Purpose: Exercise bounded child failures before a setup process exits.
+        Inputs: Immediate overflow, quiet timeout and missing Windows owner loader. Outputs: Prompt cleanup/refusal.
+        """
+
+        def overflow(_stream, _tail, exceeded):
+            exceeded.set()
+
+        with (
+            patch.object(tool, "retain_setup_output", side_effect=overflow),
+            self.assertRaisesRegex(ValueError, "output budget"),
+        ):
+            tool.run_owned([sys.executable, "-c", "import time; time.sleep(10)"], dict(os.environ), 10, quiet=True)
+        with self.assertRaises(subprocess.TimeoutExpired):
+            tool.run_owned([sys.executable, "-c", "import time; time.sleep(10)"], dict(os.environ), 0.1, quiet=True)
+        if os.name == "nt":
+            with (
+                patch.object(tool.importlib.util, "spec_from_file_location", return_value=None),
+                self.assertRaisesRegex(ValueError, "ownership contract"),
+            ):
+                tool.run_owned([sys.executable, "-c", "pass"], dict(os.environ), 10)
+
+    def test_setup_detects_completed_and_late_output_overflow_with_posix_cleanup(self):
+        """Purpose: Preserve both EOF-time overflow checks and non-Windows process-group cleanup.
+        Inputs: Completed fake children with immediate and join-time readers. Outputs: Budget refusal and killpg.
+        """
+
+        class Child:
+            pid = 123
+
+            def __init__(self):
+                self.stdout = io.BytesIO()
+
+            @staticmethod
+            def poll():
+                return 0
+
+            @staticmethod
+            def wait(timeout=None):
+                return 0
+
+            @staticmethod
+            def kill():
+                raise AssertionError("Completed child must not be killed")
+
+        class ImmediateThread:
+            def __init__(self, *, target, args, daemon):
+                self.target, self.args = target, args
+
+            def start(self):
+                self.target(*self.args)
+
+            @staticmethod
+            def join(timeout=None):
+                pass
+
+        class LateThread(ImmediateThread):
+            def start(self):
+                pass
+
+            def join(self, timeout=None):
+                self.target(*self.args)
+
+        process_group = Mock()
+        fake_os = SimpleNamespace(name="posix", killpg=process_group)
+
+        def overflow(_stream, _tail, exceeded):
+            exceeded.set()
+
+        for thread in (ImmediateThread, LateThread):
+            with (
+                self.subTest(thread=thread.__name__),
+                patch.object(tool, "os", fake_os),
+                patch.object(tool, "signal", SimpleNamespace(SIGKILL=9)),
+                patch.object(tool.subprocess, "Popen", return_value=Child()),
+                patch.object(tool.threading, "Thread", thread),
+                patch.object(tool, "retain_setup_output", side_effect=overflow),
+                self.assertRaisesRegex(ValueError, "output budget"),
+            ):
+                tool.run_owned(["python", "fixture"], {}, quiet=True)
+        self.assertEqual(process_group.call_count, 2)
+
+    def test_install_lock_classifies_open_and_advisory_lock_failures(self):
+        """Purpose: Retry only ownership conflicts at both lock stages.
+        Inputs: Unexpected open error and transient/permanent POSIX contention. Outputs: Propagation, retry or timeout.
+        """
+        with tempfile.TemporaryDirectory() as owned:
+            root = Path(owned)
+            with (
+                patch("builtins.open", side_effect=OSError(errno.EINVAL, "invalid open fixture")),
+                self.assertRaisesRegex(OSError, "invalid open fixture"),
+                tool.installation_lock(root / "bad-open"),
+            ):
+                pass
+
+            calls = []
+
+            def retry_once(_descriptor, operation):
+                calls.append(operation)
+                if len(calls) == 1:
+                    raise OSError(errno.EAGAIN, "owned")
+
+            fcntl = SimpleNamespace(LOCK_EX=1, LOCK_NB=2, LOCK_UN=4, flock=retry_once)
+
+            def native_open(path, flags):
+                """Purpose: Model the POSIX opener. Inputs: Owned path/flags. Outputs: Native descriptor."""
+                return os.open(path, flags)
+
+            with (
+                patch.object(tool, "os", SimpleNamespace(name="posix")),
+                patch.dict(sys.modules, {"fcntl": fcntl}),
+                patch("tools.crawl4ai_download_opener.open_download", side_effect=native_open),
+                patch.object(tool.time, "sleep") as delay,
+                tool.installation_lock(root / "retry-lock", timeout=1),
+            ):
+                pass
+            delay.assert_called_once_with(0.05)
+            self.assertEqual(calls, [3, 3, 4])
+
+            blocked = SimpleNamespace(
+                LOCK_EX=1,
+                LOCK_NB=2,
+                LOCK_UN=4,
+                flock=Mock(side_effect=OSError(errno.EAGAIN, "still owned")),
+            )
+            with (
+                patch.object(tool, "os", SimpleNamespace(name="posix")),
+                patch.dict(sys.modules, {"fcntl": blocked}),
+                patch("tools.crawl4ai_download_opener.open_download", side_effect=native_open),
+                patch.object(tool.time, "monotonic", side_effect=(0.0, 2.0)),
+                self.assertRaises(TimeoutError),
+                tool.installation_lock(root / "timeout-lock", timeout=1),
+            ):
+                pass
+
+    def test_launcher_cli_routes_and_direct_error_entrypoint(self):
+        """Purpose: Cover every public launcher route and direct-script failure contract.
+        Inputs: Controlled CLI arguments and invalid external cache. Outputs: Exact routing/status and concise error.
+        """
+        python = Path(sys.executable)
+        for command in ("check-lock", "install"):
+            with (
+                patch.object(tool.sys, "argv", ["crawler", command, "unexpected"]),
+                patch.object(tool.sys, "stderr", io.StringIO()),
+                self.assertRaises(SystemExit),
+            ):
+                tool.main()
+        with (
+            patch.object(tool.sys, "argv", ["crawler", "install"]),
+            patch.object(tool, "install", return_value=python) as install,
+            patch("builtins.print") as output,
+        ):
+            self.assertEqual(tool.main(), 0)
+        install.assert_called_once()
+        self.assertEqual(json.loads(output.call_args.args[0])["python"], str(python))
+        with (
+            patch.object(tool.sys, "argv", ["crawler", "doctor"]),
+            patch.object(tool, "install", return_value=python),
+            patch.object(tool, "run") as check,
+            patch.object(tool, "run_source_python", return_value=9) as launch,
+        ):
+            self.assertEqual(tool.main(), 9)
+        check.assert_called_once()
+        self.assertEqual(launch.call_args.args[0][-2:], ["tools.crawl4ai_research", "doctor"])
+
+        original_path = list(sys.path)
+        try:
+            with (
+                patch.object(sys, "argv", ["crawl4ai_tool.py", "--home", "relative", "doctor"]),
+                patch.object(sys, "stderr"),
+                self.assertRaises(SystemExit) as failure,
+            ):
+                runpy.run_path(str(Path(tool.__file__).resolve()), run_name="__main__")
+            self.assertEqual(failure.exception.code, 1)
+        finally:
+            sys.path[:] = original_path
 
     # Purpose: Admit only bounded, typed, distinct public HTTPS research targets before the crawler starts.
     # Inputs: Owned 20-site manifest plus independent encoding, schema, shape, endpoint and marker mutations.
