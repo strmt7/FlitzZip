@@ -63,7 +63,9 @@ This evidence does not qualify a later dependency update.
   through the exact-source contract; unmatched findings remain blocking.
 - Exact candidate ZIP/MSI, checksums and installer install/repair/uninstall
   qualification must pass on the candidate's pushed SHA before release approval.
-- The requested complete meaningful coverage remains unfinished. The
+- The requested complete meaningful coverage remains unfinished and is delegated
+  to a separate model. This development round completes the other prerequisites;
+  the delegation does not mark coverage as passed. The
   [coverage report](code-coverage.md) distinguishes the hosted CPU measurement
   from the qualified local GUI/HIP-host measurement. Uncovered host lines,
   tooling and device instructions still require further work. Passing tests or

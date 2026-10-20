@@ -733,8 +733,8 @@ The LHA/LZH path uses the ISC-licensed Lhasa 0.6.0 decoder in process:
    physical EOF at a member boundary or a zero terminator followed only by zero
    padding through EOF. PMarc members also permit a zero terminator followed by
    at most 127 `0x1A` bytes from the final CP/M record. Partial next headers,
-   malformed full headers, missing
-   compressed bytes, nonzero trailing data and I/O errors fail validation before
+   malformed full headers, missing compressed bytes, nonzero trailing data and
+   I/O errors fail validation before
    destination writes. Level-2 headers with a zero low length byte remain valid;
    they must not be mistaken for a terminator.
 5. Reopen the archive for the publish pass, verify that metadata matches the

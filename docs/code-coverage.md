@@ -4,6 +4,27 @@ The README Codecov badge links to measured native CPU line coverage. Coverage
 helps locate untested behavior; it does not establish correctness, security,
 performance, or a release qualification by itself.
 
+## Coverage Follow-up
+
+The maintainer has assigned coverage-gap closure to a separate model. Preserve
+the existing collectors, tests and CI uploads. The current release-preparation
+round continues defect regressions and package qualification without expanding
+tests merely to increase coverage.
+
+The last local GUI/HIP-host measurement is retained under
+`out/coverage-hip-host-gui`: 21,234 of 24,041 measured lines across 157 files
+(88.32%). Its source identities precede the LHA termination repair, so it is a
+gap-discovery baseline, not current-source acceptance. Review its `summary.json`,
+uncovered-line inventory and raw report before choosing additional tests. Reuse
+individual evidence only after checking its recorded identities. The hosted
+CPU report, GUI/HIP-host report, tooling and device instructions have distinct
+scopes; none establishes whole-repository coverage.
+
+Device measurement must first pass the helper-inclusive qualification control
+described below. Its current zero helper counters are a measurement limitation,
+not a reason to rewrite correct product code or invent line hits. Coverage
+remains unfinished until the independent behavior and measurement gaps close.
+
 ## Measurement
 
 The existing Windows 2022 CI build uses unoptimized `Debug` binaries and matching
