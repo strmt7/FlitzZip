@@ -26,7 +26,16 @@ References checked on 2026-06-16:
 
 ## Mission
 
-FlitzZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.flzip` is the native FlitzZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.2, `.zipx` remains extract-only compatibility through the ZIP reader for ZIP-compatible records and must fail explicitly for unsupported ZIPX methods, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.lz`/`.tlz` extraction remains compatibility-only through the TAR stream adapter over the lzip stream decoder and vendored LZMA SDK 26.03, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.lzma` extraction remains single-file compatibility-only through the vendored LZMA SDK 26.03 decoder, `.lz` extraction remains single-file compatibility-only through the lzip wrapper and vendored LZMA SDK 26.03 decoder, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.b64` remains native single-file compatibility-only through the bounded Base64 adapter, `.hqx` remains native extract-only data-fork compatibility through the bounded BinHex 4.0 adapter with header/data/resource CRC validation, `.macbin` and strongly header-detected MacBinary `.bin` streams remain native extract-only data-fork compatibility through the bounded MacBinary adapter, `.xxe` remains native single-file compatibility-only through the bounded XXEncode adapter, `.uue`/`.uu` remain native single-file compatibility-only through the bounded UUencode adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.cpio.gz`/`.cpgz` remain native compatibility-only through the Gzip stream adapter over the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, `.cab` extraction remains native read-only compatibility through the bounded CAB metadata scanner and Windows FDI, `.7z` extraction remains native read-only compatibility through the vendored LZMA SDK 26.03 decoder, `.lha`/`.lzh` extraction remains native read-only compatibility through the vendored Lhasa 0.6.0 decoder, standalone `.wim` extraction remains read-only compatibility through the bundled app-local wimlib 1.14.5 DLL with FlitzZip path validation and verified output publication, `.xar` extraction remains native read-only compatibility for the bounded no-TOC-checksum XAR subset through the native XAR adapter over miniz zlib inflate, `.arj` extraction remains native read-only compatibility for stored entries through the bounded ARJ adapter, `.arc`/`.ark` extraction remains native read-only compatibility for SEA ARC unpacked entries through the bounded ARC adapter, and all security-sensitive extraction paths must be validated before writing to disk.
+FlitzZip is a Windows-native C++20 archive application. AMD HIP is the only
+approved GPU compute boundary; `.flzip` is its versioned native format.
+Compatibility formats use their documented in-process adapters. The normative
+[format support matrix](archive-format-support.md) defines each format's writer,
+reader, supported methods and limitations; the [native specification](native-flzip-format.md)
+defines wire compatibility. Read those sources before changing recognition or
+format behavior instead of relying on a copied inventory here. Unsupported
+methods fail explicitly, and every extraction path must be validated before
+writing to disk. Dependency identities remain in their canonical provenance
+records and build definitions.
 
 ## Non-Negotiable Boundaries
 
@@ -1057,6 +1066,10 @@ boundary, and re-read them when changed. Use the
 [development-context tools](development-context.md) for bounded section reads
 and explicit source-backed notes. Its caches never replace required reading,
 verification, scanner coverage or the exact-source confirmation of semantic hits.
+Apply its report-inspection and output discipline repo-wide: retain complete
+artifacts, return bounded decision-relevant fields with explicit omissions,
+and continue from recorded state rather than repeating unchanged investigations.
+Efficiency never permits weaker production code, tests or acceptance criteria.
 
 Report a blocking tool or service error immediately with the exact returned
 cause, the work it prevents, and the next actionable step. Distinguish a

@@ -71,9 +71,17 @@ Use heading metadata before opening a long document:
 
 ```powershell
 py -3 tools/agent_context.py outline docs/agent-operating-guide.md
+py -3 tools/agent_context.py outline tools/crawl4ai_tool.py
 py -3 tools/agent_context.py read docs/agent-operating-guide.md --section "Git Workflow"
 py -3 tools/agent_context.py read tools/cocoindex_agent_search.py --start 1 --end 40
 ```
+
+Outlines are paged: `--offset` continues from `next_offset`, and `--limit`
+selects at most 100 entries. The default outline output budget is 4,000 serialized
+characters. Python outlines use the syntax tree without importing or executing
+source; they include qualified names, decorators and exact line spans. Other
+files use Markdown headings; use exact `rg -n` symbols for other languages.
+An outline routes reading and does not establish review of the listed code.
 
 The reader returns exact numbered lines and a full-file SHA-256. ATX headings
 inside fenced examples are ignored; duplicate/missing headings are errors.
@@ -101,6 +109,64 @@ return source again. A session means one retained model context, not a chat ID.
 After compaction, restart, handoff or uncertain retention, use a new session or
 `--force`; a filesystem cache cannot prove the model still remembers a read.
 Histories are bounded to 200 reads. No cache substitutes for tests or scanners.
+
+## Report Inspection And Output Discipline
+
+Keep full scanner, test, benchmark, research and workflow results in their existing
+local artifacts. Inspect a report's shape, then select the fields needed for the
+current decision:
+
+```powershell
+py -3 tools/agent_context.py json out/verification-plan.json
+py -3 tools/agent_context.py json out/verification-plan.json --pointer /requiredLocalCommands
+py -3 tools/agent_context.py json out/verification-plan.json --pointer /requiredLocalCommands --field id --field command
+py -3 tools/agent_context.py json out/verification-plan.json --pointer /requiredLocalCommands/0
+```
+
+Use actual artifacts, not these example names unless they exist. JSON inspection
+accepts UTF-8 reports up to 16 MiB, returns the complete file's SHA-256, and does
+not rewrite evidence. Exact RFC 6901 pointers select members: `~1` encodes `/`,
+`~0` encodes `~`, and array indexes are zero-based. Ambiguous duplicate keys,
+non-finite numbers, missing members and invalid paths fail explicitly.
+
+The default page contains at most 12 immediate members and 4,000 serialized
+characters. Containers and large scalars show their type and extent with
+`expanded=false`; they have not been read. Follow their pointer or `next_offset`
+to continue. `--limit`, `--offset` and `--max-chars` control the page. A page that
+cannot fit even one member fails instead of silently dropping it. Every result
+states that the context tool has not established acceptance. The report's own
+status, failures and counts must still be inspected; a successful reader exit
+only establishes a successful read.
+
+For arrays of objects, repeat `--field` to project up to 16 exact member names
+per row in one call. Missing fields fail explicitly. Projected rows still carry
+`expanded=false`: selected fields do not imply their other contents were read.
+
+Apply the same discipline to all agent tool calls, including MCP and shell:
+
+- Choose exact paths/fields before printing. Use `rg --files`, `rg -l`, `rg -c`
+  or bounded `rg -n` according to the question. Do not dump whole collections
+  just to find one field. Match the combined output budget to batched reads.
+- Keep each command's exit status and every unresolved failure visible. Retain
+  complete evidence before projecting it. Never pipe away failures, call a
+  truncated output complete, or repeat an expensive command to retrieve text
+  already saved locally.
+- For a passing check, return its result, scope, evidence location and relevant
+  identity. For a failure, inspect the exact failing case and diagnostics before
+  widening scope. Tool output limits affect presentation, not executed checks.
+- Use native Crawl4AI captures and compact diagnoses for research. Read relevant
+  extracted passages from retained captures; do not repeatedly crawl or print an
+  entire site. Respect the research access and freshness rules.
+- Do not modify a working MCP/provider registration or add an agent dependency,
+  hidden summarizer or external model to reduce context. Existing bounded MCP
+  process ownership and output limits remain mandatory.
+
+Keep canonical rules in the operating guide, navigation in AGENTS.md, domain
+procedures in their existing documents and current work in the implementation
+plan. Skills route to these sources instead of copying them. Do not minify code,
+strip contracts, remove tests or shorten public documentation at the expense of
+clarity. Output character counts are measurable; they are not token, billing,
+quality or end-to-end performance guarantees.
 
 ## Explicit Notes With Freshness Checks
 
@@ -130,6 +196,14 @@ inspectable JSON. Source reads reject traversal, secret-like filenames,
 symlinks/reparse points, binary content and inputs above 1 MiB. Deleting local
 state loses convenience, not repository evidence. Promote durable lessons into
 existing reviewed documents/tests instead of appending another giant wiki.
+
+At a substantial work boundary, update one concise local continuation note:
+objective and current user steering, exact working tree/commit, changed files,
+completed evidence and its identities, unresolved failures, active owned process
+IDs and the next concrete action. Link artifacts instead of copying logs,
+transcripts or old checkpoint narratives. Separate verified facts, hypotheses
+and deferred work. After compaction, refresh volatile Git/process/service state;
+reuse unchanged evidence rather than restarting the whole investigation.
 
 ## Evidence And Research Basis
 
