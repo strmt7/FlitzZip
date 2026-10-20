@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -51,6 +53,52 @@ def fixture() -> dict:
 
 
 class DevSkimReportTests(unittest.TestCase):
+    # Purpose: Enforce the serialized publication budget after ASCII escaping expands otherwise admitted UTF-8 input.
+    # Inputs: A tiny Unicode extension bag and a budget admitting the raw report but not its published serialization.
+    # Outputs: Publication fails before a destination or staging file exists; raw source bytes remain intact.
+    def test_serialized_report_expansion_is_bounded(self) -> None:
+        report = fixture()
+        report["properties"]["unicode_evidence"] = "λ" * 100
+        raw = json.dumps(report, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        prepared = copy.deepcopy(report)
+        publication.prepare_report(prepared)
+        serialized = json.dumps(prepared, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+        self.assertGreater(len(serialized), len(raw))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, output = root / "raw.json", root / "published.json"
+            source.write_bytes(raw)
+            with (
+                patch.object(publication, "MAX_REPORT_BYTES", len(raw)),
+                self.assertRaisesRegex(ValueError, "Published.*byte budget"),
+            ):
+                publication.publish_report(source, output)
+            self.assertEqual(source.read_bytes(), raw)
+            self.assertEqual(sorted(path.name for path in root.iterdir()), ["raw.json"])
+
+    # Purpose: Qualify the real publisher entry point and its value-free finding-count status.
+    # Inputs: An owned raw SARIF report with one finding and an empty optional excerpt.
+    # Outputs: Exact finding metadata survives, source bytes remain intact and the CLI reports preserved counts.
+    def test_real_cli_publishes_losslessly(self) -> None:
+        checkout = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temporary:
+            source, output = Path(temporary) / "raw.json", Path(temporary) / "published.json"
+            raw = json.dumps(fixture()).encode("utf-8")
+            source.write_bytes(raw)
+            result = subprocess.run(
+                [sys.executable, "-m", "tools.devskim_report", str(source), str(output)],
+                cwd=checkout,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("1 findings preserved; 1 empty excerpts removed", result.stdout)
+            expected = fixture()
+            del expected["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"]["snippet"]
+            self.assertEqual(json.loads(output.read_bytes()), expected)
+            self.assertEqual(source.read_bytes(), raw)
+
     # Purpose: Prove exact finding and metadata parity, extension preservation, and idempotence.
     # Inputs: Two independently identified findings from the synthetic pinned-writer report.
     # Outputs: Assertions reject filtering or unrelated metadata changes.
