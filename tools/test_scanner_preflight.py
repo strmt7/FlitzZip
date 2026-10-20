@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -177,6 +178,39 @@ class ScannerPreflightTests(unittest.TestCase):
             snapshot_inputs(self.root, [row["path"], "CMakeLists.txt"], self.root / "oversized")
         self.assertFalse((self.root / "oversized").exists())
 
+    # Purpose: Enforce repository, inventory-count and regular-file boundaries before any detector starts.
+    # Inputs: Credential-bearing origin, over-count Git metadata and a directory presented as a changed file.
+    # Outputs: Every ambiguous input is rejected without creating a source snapshot.
+    def test_repository_and_changed_input_admission_bounds(self):
+        with (
+            patch.object(subprocess, "check_output", return_value=b"https://token@github.com/owner/repository.git\n"),
+            self.assertRaisesRegex(ValueError, "credential-free GitHub origin"),
+        ):
+            preflight.review_repository(self.root)
+        with patch.object(subprocess, "check_output", return_value=b"git@github.com:owner/repository.git\n"):
+            self.assertEqual(preflight.review_repository(self.root), "owner/repository")
+        responses = [b"a" * 40 + b"\n", b"first.py\0second.py\0", b""]
+        with (
+            patch.object(subprocess, "check_output", side_effect=responses),
+            patch.object(preflight, "MAX_FILES", 1),
+            self.assertRaisesRegex(ValueError, "Changed input count"),
+        ):
+            changed_paths(self.root, "HEAD")
+        (self.root / "directory.py").mkdir()
+        with self.assertRaisesRegex(ValueError, "not a regular file"):
+            snapshot_inputs(self.root, ["directory.py"], self.root / "snapshot")
+
+    # Purpose: Refuse review cohorts whose exact source/caller evidence exceeds the bounded cache contract.
+    # Inputs: A valid affected review with a deliberately reduced aggregate byte ceiling.
+    # Outputs: Review freezing fails before copying its source context.
+    def test_current_review_evidence_budget(self):
+        row, _blobs, _report = self.write_context_fixture()
+        with (
+            patch.object(preflight, "MAX_CURRENT_CACHE_BYTES", 1),
+            self.assertRaisesRegex(ValueError, "evidence byte budget"),
+        ):
+            preflight.freeze_current_reviews(self.root, [row["path"]], self.root / "bounded-review")
+
     # Purpose: Allow removal of obsolete reviewed code without inventing a finding on a nonexistent source.
     # Inputs: A legitimate source deletion together with its affected build context.
     # Outputs: No scan or approval is claimed for that source; the unchanged ledger remains recorded.
@@ -253,6 +287,160 @@ class ScannerPreflightTests(unittest.TestCase):
             finding_count(path, "gitleaks")
         with self.assertRaises(FileNotFoundError):
             finding_count(self.root / "absent.json", "gitleaks")
+
+    # Purpose: Reject structurally malformed SARIF without leaking nested indexing exceptions.
+    # Inputs: Wrong producer, result type, run type, tool type and driver type.
+    # Outputs: Every malformed report raises the same controlled schema error.
+    def test_devskim_report_requires_exact_producer_shape(self):
+        path = self.root / "devskim.sarif"
+        malformed_runs = (
+            {"tool": {"driver": {"name": "other"}}, "results": []},
+            {"tool": {"driver": {"name": "devskim"}}, "results": None},
+            None,
+            {"tool": None, "results": []},
+            {"tool": {"driver": None}, "results": []},
+        )
+        for run in malformed_runs:
+            path.write_text(json.dumps({"version": "2.1.0", "runs": [run]}), encoding="utf-8")
+            with self.subTest(run=run), self.assertRaisesRegex(ValueError, "unexpected producer or result shape"):
+                finding_count(path, "devskim")
+
+    # Purpose: Bind both detector binaries to unambiguous repository pins before scanning any source.
+    # Inputs: Missing workflow pin, failed version process and a successful but mismatched version response.
+    # Outputs: Each state fails closed with an actionable, value-free diagnostic.
+    def test_pinned_scanner_version_failures_are_closed(self):
+        workflow = self.root / ".github/workflows/security-code-scanning.yml"
+        requirements = self.root / ".github/requirements/devskim-packaging.json"
+        workflow.parent.mkdir(parents=True)
+        requirements.parent.mkdir(parents=True)
+        requirements.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+        with patch.object(preflight, "ROOT", self.root), self.assertRaisesRegex(ValueError, "pin is ambiguous"):
+            workflow.write_text("no detector pin", encoding="utf-8")
+            preflight.require_versions("gitleaks", "devskim")
+        workflow.write_text("ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:fixture", encoding="utf-8")
+        failure = {"exit_code": 1, "timed_out": False, "output_limit_exceeded": False, "stdout": "", "stderr": ""}
+        with (
+            patch.object(preflight, "ROOT", self.root),
+            patch.object(preflight, "run_scanner", return_value=failure),
+            self.assertRaisesRegex(ValueError, "version probe failed"),
+        ):
+            preflight.require_versions("gitleaks", "devskim")
+        mismatch = {
+            "exit_code": 0,
+            "timed_out": False,
+            "output_limit_exceeded": False,
+            "stdout": "unrelated version",
+            "stderr": "",
+        }
+        with (
+            patch.object(preflight, "ROOT", self.root),
+            patch.object(preflight, "run_scanner", return_value=mismatch),
+            self.assertRaisesRegex(ValueError, "differs from the repository pin"),
+        ):
+            preflight.require_versions("gitleaks", "devskim")
+        gitleaks = self.root / "gitleaks.exe"
+        devskim = self.root / "devskim.exe"
+        gitleaks.write_bytes(b"owned gitleaks fixture")
+        devskim.write_bytes(b"owned devskim fixture")
+        success = (
+            {**mismatch, "stdout": "gitleaks 8.30.1"},
+            {**mismatch, "stdout": "Microsoft.DevSkim.CLI 1.2.3"},
+        )
+        with patch.object(preflight, "ROOT", self.root), patch.object(preflight, "run_scanner", side_effect=success):
+            observed = preflight.require_versions(str(gitleaks), str(devskim))
+        self.assertEqual(set(observed), {"gitleaks", "devskim"})
+        self.assertEqual(observed["gitleaks"]["binary_sha256"], hashlib.sha256(gitleaks.read_bytes()).hexdigest())
+
+    # Purpose: Exercise bounded process ownership and exact detector command framing without external scanners.
+    # Inputs: A real short Python child plus an owned empty source/report directory and mocked detector results.
+    # Outputs: Child evidence is complete and both detector vectors retain their report/options boundaries.
+    def test_bounded_scanner_execution_and_command_framing(self):
+        result = preflight.run_scanner(
+            [sys.executable, "-c", "print('bounded scanner fixture')"],
+            timeout=15,
+            directory=Path(__file__).resolve().parents[1],
+        )
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIn("bounded scanner fixture", result["stdout"])
+        snapshot = self.root / "snapshot"
+        reports = self.root / "reports"
+        snapshot.mkdir()
+        reports.mkdir()
+        status = {"exit_code": 0, "timed_out": False, "output_limit_exceeded": False}
+        with patch.object(preflight, "run_scanner", side_effect=[status, status]) as scanner:
+            observed = preflight.scan_snapshot(snapshot, reports, "gitleaks", "devskim")
+        self.assertEqual(set(observed), {"gitleaks", "devskim"})
+        self.assertEqual(scanner.call_count, 2)
+        gitleaks_command = scanner.call_args_list[0].args[0]
+        devskim_command = scanner.call_args_list[1].args[0]
+        self.assertEqual(gitleaks_command[gitleaks_command.index("--report-path") + 1], str(reports / "gitleaks.json"))
+        self.assertEqual(devskim_command[devskim_command.index("-O") + 1], str(reports / "devskim.sarif"))
+        self.assertTrue((reports / "devskim-options.json").is_file())
+
+    # Purpose: Exercise no-change, missing-tool and redirected-output admission before detector execution.
+    # Inputs: Controlled path inventories, explicit empty/tool arguments and a simulated output junction.
+    # Outputs: No-change returns cleanly; the two unsafe states raise before source copying.
+    def test_main_early_admission_boundaries(self):
+        with (
+            patch.object(preflight, "ROOT", self.root),
+            patch.object(preflight, "changed_paths", return_value=[]),
+            patch.object(preflight, "validate_report_directory"),
+            patch("sys.argv", ["scanner_preflight"]),
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(preflight.main(), 0)
+        self.assertIn("no changed publication inputs", output.getvalue())
+        with (
+            patch.object(preflight, "ROOT", self.root),
+            patch.object(preflight, "changed_paths", return_value=["source.py"]),
+            patch.object(preflight, "validate_report_directory"),
+            patch("sys.argv", ["scanner_preflight", "--gitleaks", "", "--devskim", ""]),
+            self.assertRaisesRegex(ValueError, "Pinned detectors unavailable"),
+        ):
+            preflight.main()
+        with (
+            patch.object(preflight, "ROOT", self.root),
+            patch.object(preflight, "changed_paths", return_value=["source.py"]),
+            patch.object(preflight, "validate_report_directory"),
+            patch.object(preflight, "require_versions", return_value={}),
+            patch.object(Path, "is_junction", return_value=True),
+            patch("sys.argv", ["scanner_preflight", "--gitleaks", "gitleaks", "--devskim", "devskim"]),
+            self.assertRaisesRegex(ValueError, "output crosses a reparse point"),
+        ):
+            preflight.main()
+
+    # Purpose: Detect source drift between review-context and detector snapshots before either scanner runs.
+    # Inputs: One real source file with a deliberately mismatched frozen review digest.
+    # Outputs: Main rejects the split snapshot without starting a detector.
+    def test_main_rejects_snapshot_drift(self):
+        (self.root / "source.py").write_text("owned source", encoding="utf-8")
+        with (
+            patch.object(preflight, "ROOT", self.root),
+            patch.object(preflight, "changed_paths", return_value=["source.py"]),
+            patch.object(preflight, "validate_report_directory"),
+            patch.object(preflight, "require_versions", return_value={}),
+            patch.object(preflight, "freeze_current_reviews", return_value=([], {"source.py": "0" * 64})),
+            patch.object(preflight, "read_policy", return_value=b"policy"),
+            patch.object(preflight, "read_source_policy", return_value=b"source policy"),
+            patch("sys.argv", ["scanner_preflight", "--gitleaks", "gitleaks", "--devskim", "devskim"]),
+            self.assertRaisesRegex(ValueError, "Source changed between detector and review snapshots"),
+        ):
+            preflight.main()
+
+    # Purpose: Exercise the real CLI failure boundary without requiring either external detector.
+    # Inputs: An invalid Git comparison base handled by the module entry point.
+    # Outputs: Exit one and a controlled diagnostic without traceback.
+    def test_real_module_entry_point_reports_controlled_failure(self):
+        completed = subprocess.run(
+            [sys.executable, "-m", "tools.scanner_preflight", "--base=not-a-complete-ref"],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("Scanner preflight failed:", completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
 
 
 if __name__ == "__main__":
