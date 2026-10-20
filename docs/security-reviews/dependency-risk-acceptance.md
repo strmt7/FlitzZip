@@ -28,6 +28,12 @@ The complete crawler graph resolves normally. The upstream security regressions
 exercise initial-connection deadlines, Secure cookies and bounded parser,
 WebSocket, cookie and decompression behavior.
 
+The updated graph passed clean installation, installed API contracts, browser
+extraction and cache reuse on Windows, macOS and Linux. Website qualification
+retains both successful extraction and access failures; a timeout or a site
+challenge is not reported as a successful crawl. The exact pushed dependency
+audit reports the preceding alerts fixed, without manual dismissal.
+
 Retain raw reports and verify the exact pushed revision's dependency alerts and
 workflows. A changed lock, successful package install or version string alone
 does not close a finding. New source, environment or advisory information

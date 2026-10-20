@@ -38,6 +38,12 @@ Neutron is GPU-only and separate from efforts 1–9. The
 retain full-file sizes, actual HIP work, byte-exact readback and measurement limits.
 Broad size superiority and comparative GPU speed remain research targets.
 
+The development crawler's [dependency remediation](security-reviews/dependency-risk-acceptance.md)
+uses the maintainer-authorized official NLTK candidate and patched aiohttp.
+Clean installations and browser extraction passed on Windows, macOS and Linux;
+the pushed dependency audit reports no open Dependabot alerts for that graph.
+This evidence does not qualify a later dependency update.
+
 ## Outstanding Acceptance Limits
 
 - The previously reported system freeze has no confirmed cause. The original
@@ -55,12 +61,6 @@ Broad size superiority and comparative GPU speed remain research targets.
   not equate a dismissal or an empty open-alert list with a production repair.
   The maintainer authorizes only [individually proven false positives](security-reviews/current-source-findings.md)
   through the exact-source contract; unmatched findings remain blocking.
-- Dependabot reports the development crawler's upstream NLTK advisory, whose
-  reviewed upstream version has no officially released fix. The source-built
-  downstream repair has retained original-failure and installed-consumer tests.
-  It does not relabel the upstream version or remove the advisory. The maintainer
-  [temporarily accepts this exact alert](security-reviews/dependency-risk-acceptance.md)
-  for this round, so it is not a current blocker.
 - Exact candidate ZIP/MSI, checksums and installer install/repair/uninstall
   qualification must pass on the candidate's pushed SHA before release approval.
 - The requested complete meaningful coverage remains unfinished. The
