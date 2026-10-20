@@ -492,6 +492,14 @@ foreach ($unrelatedPath in @('tools/scanner_preflight.py', '.github/scanner-sour
 }
 $sanitizerToolPlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/test_zstd_sanitizers.ps1')
 Assert-Selector (-not (Test-RequiredCommand -Plan $sanitizerToolPlan -Id 'release-build')) 'isolated sanitizer tooling must not select an unrelated product rebuild'
+foreach ($metadataPath in @('tools/release_metadata.py', 'tools/test_release_metadata.py')) {
+    $metadataPlan = Get-FlitzZipVerificationPlan -ChangedPath @($metadataPath)
+    Assert-Selector (Test-RequiredCommand -Plan $metadataPlan -Id 'release-metadata-contracts') "release metadata must run its real behavior contracts: $metadataPath"
+}
+$metadataTestsPlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/test_release_metadata.py')
+foreach ($id in @('release-build', 'unit-tests', 'package-smoke')) {
+    Assert-Selector (-not (Test-RequiredCommand -Plan $metadataTestsPlan -Id $id)) "metadata tests alone must not execute unchanged product work: $id"
+}
 foreach ($releasePath in @('.github/workflows/release.yml', 'tools/release_workflow_policy.ps1',
         'tools/test_release_workflow_policy.ps1')) {
     $releasePlan = Get-FlitzZipVerificationPlan -ChangedPath @($releasePath)

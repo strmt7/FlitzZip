@@ -393,6 +393,8 @@ function Get-FlitzZipVerificationScope {
 function Get-FlitzZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
     $definitions = @(
+        @{ Pattern = @('^tools/(release_metadata|test_release_metadata)\.py$', '^CMakeLists\.txt$', '^\.github/workflows/release\.yml$')
+           Command = (Get-FlitzZipVerificationCommand -Id 'release-metadata-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_release_metadata') -Reason 'release versions, tag collisions and Actions exports require independent boundary tests and the real metadata CLI without publishing a release') }
         @{ Pattern = @('^tools/(hip_coverage(_export)?|test_hip_coverage)\.py$', '^tools/fixtures/hip_coverage_probe\.hip\.cpp$', '^tools/native_coverage\.py$', '^mcp/flitzzip_mcp\.py$')
            Command = (Get-FlitzZipVerificationCommand -Id 'hip-coverage-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_hip_coverage') -Reason 'device coverage must reject incorrect hit/miss controls, foreign images and incomplete subprocess evidence; offline tests do not execute a GPU or rebuild the product') }
         @{ Pattern = @('^tools/(native_coverage(_report)?|test_native_coverage)\.py$', '^tools/native-coverage-toolchain\.json$', '^tools/native_build_receipt\.py$', '^mcp/flitzzip_mcp\.py$', '^\.github/workflows/windows-ci\.yml$')

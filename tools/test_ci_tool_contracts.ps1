@@ -45,6 +45,8 @@ Assert-CiContractPlan -Path 'tools/hip_coverage.py' -Required @('hip-coverage-co
 Assert-CiContractPlan -Path 'tools/fixtures/hip_coverage_probe.hip.cpp' -Required @('hip-coverage-contracts')
 Assert-CiContractPlan -Path '.github/workflows/rocm-qualification.yml' -Required @('native-ci-contracts', 'rocm-toolchain-tests')
 Assert-CiContractPlan -Path '.github/workflows/release.yml' -Required @('release-workflow-contracts')
+Assert-CiContractPlan -Path 'tools/release_metadata.py' -Required @('release-metadata-contracts')
+Assert-CiContractPlan -Path 'tools/test_release_metadata.py' -Required @('release-metadata-contracts')
 Assert-CiContractPlan -Path 'cmake/ZstdLegacyHistoryV05.c' -Required @('zstd-rewrite-policy-contracts')
 Assert-CiContractPlan -Path '.github/scanner-source-reviews.csv' -Required @('scanner-metadata-review-tests')
 Assert-CiContractPlan -Path '.github/scanner-governance-baseline.json' -Required @('github-post-push-audit-tests')
