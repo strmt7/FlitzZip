@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
+import io
 import json
+import math
 import os
 import re
 import stat
 import sys
 import time
 import uuid
+import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, build_opener
@@ -104,8 +107,9 @@ def run_checked(arguments: list[str], timeout: int, log: Path) -> dict:
 
 
 # Purpose: Describe independent CLI admission failures without starting a workload or relying on a GPU.
-# Inputs: Two private fixture paths. Outputs: Arguments, required exit status and diagnostic for each contract.
-def cli_admission_cases(source: Path, destination: Path) -> list[tuple[list[str], int, str | None]]:
+# Inputs: Plain input, existing destination and independently framed ZIP fixture paths.
+# Outputs: Arguments, required exit status and diagnostic for each contract.
+def cli_admission_cases(source: Path, destination: Path, zip_source: Path) -> list[tuple[list[str], int, str | None]]:
     create = ["compress", "--format", "zip", "--output", str(destination), str(source)]
     cases = [
         ([], 2, None),
@@ -124,6 +128,23 @@ def cli_admission_cases(source: Path, destination: Path) -> list[tuple[list[str]
         (["verify", "--unknown"], 1, "unknown verify argument"),
         (["gpu-diagnostic", "--unknown"], 1, "unknown gpu-diagnostic argument"),
         (["gpu-diagnostic", "--seconds", "0"], 1, "invalid value for --seconds: 0"),
+        (
+            ["compress", "--format", "rar", "--output", str(destination), str(source)],
+            1,
+            "archive format recognized but not yet implemented for create: rar",
+        ),
+        (
+            ["verify", str(source), "--sha256", "--defender-scan"],
+            1,
+            "read-only verify is currently supported only for FLZIP and ZIP",
+        ),
+        (
+            ["extract", str(source), "--output", str(destination)],
+            1,
+            "unable to detect archive format",
+        ),
+        (["gpu-diagnostic", "--buffer-mib", "-1"], 1, "invalid value for --buffer-mib"),
+        (["gpu-diagnostic", "--inner-iterations", "4294967296"], 1, "invalid value for --inner-iterations"),
     ]
     for arguments in (
         ["--force-cpu"],
@@ -135,6 +156,15 @@ def cli_admission_cases(source: Path, destination: Path) -> list[tuple[list[str]
         cases.append(([*create, *arguments], 1, "does not support FLZIP GPU, worker, or block-size flags"))
     for command in ("gpu-info", "dependency-check", "formats"):
         cases.append(([command, "unexpected"], 2, None))
+    for command in ("extract", "verify"):
+        for options in (["--workers", "2"], ["--inflight", "2"], ["--require-gpu"], ["--force-cpu"]):
+            arguments = [command, str(zip_source), *options]
+            if command == "extract":
+                arguments.extend(["--output", str(destination)])
+            label = "ZIP/ZIPX" if command == "extract" else "ZIP"
+            cases.append(
+                (arguments, 1, label + " compatibility does not support FLZIP GPU, worker, or in-flight flags")
+            )
     return cases
 
 
@@ -161,21 +191,27 @@ def run_cli_admission_case(binary: Path, case: tuple[list[str], int, str | None]
 
 
 # Purpose: Exercise real CLI rejection and destination-preservation boundaries under the native collector.
-# Inputs: Existing executable and owned evidence directory. Outputs: Bounded fixture/report files; no build or GPU work.
-def run_cli_admission(binary: Path, output: Path) -> None:
+# Inputs: Existing executable, owned evidence directory and explicit HIP-host selection.
+# Outputs: Preserved caller fixtures and raw admission/capability reports; HIP mode adds one bounded GPU diagnostic.
+def run_cli_admission(binary: Path, output: Path, *, hip_host: bool = False) -> None:
     directory = owned_path(ROOT, output / ("cli-admission-" + uuid.uuid4().hex))
     directory.mkdir()
     source = directory / "input with spaces.txt"
     destination = directory / "preserved.zip"
+    zip_source = directory / "independent.zip"
     fixtures = {
         source: b"Independent CLI admission input\n",
         destination: b"Existing destination must survive failed admission.\n",
     }
+    with io.BytesIO() as buffer:
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+            archive.writestr(zipfile.ZipInfo("item.txt", (1980, 1, 1, 0, 0, 0)), b"Independent ZIP admission fixture\n")
+        fixtures[zip_source] = buffer.getvalue()
     for path, expected in fixtures.items():
         with path.open("xb") as stream:
             stream.write(expected)
     expected_files = {path.name for path in fixtures}
-    for number, case in enumerate(cli_admission_cases(source, destination)):
+    for number, case in enumerate(cli_admission_cases(source, destination, zip_source)):
         log = directory / f"case-{number:02}.json"
         run_cli_admission_case(binary, case, log)
         expected_files.add(log.name)
@@ -183,6 +219,104 @@ def run_cli_admission(binary: Path, output: Path) -> None:
             {path.name for path in directory.iterdir()} != expected_files
         ):
             raise RuntimeError(f"Rejected CLI request changed caller files: {log}")
+    expected_files.update(run_cli_capability_contracts(binary, directory, hip_host))
+    if any(path.read_bytes() != expected for path, expected in fixtures.items()) or (
+        {path.name for path in directory.iterdir()} != expected_files
+    ):
+        raise RuntimeError("CLI capability requests changed caller files or produced unexpected output files")
+
+
+# Purpose: Reject incomplete or ambiguous machine-readable CLI output without losing native diagnostics.
+# Inputs: A bounded process result and human-readable operation label. Outputs: Unique key/value fields or refusal.
+def cli_key_values(result: dict, label: str) -> dict[str, str]:
+    if result.get("output_truncated") is not False or not isinstance(result.get("stdout"), str):
+        raise ValueError(f"{label} requires complete key/value evidence")
+    pairs = [line.split("=", 1) for line in result["stdout"].splitlines()]
+    if not pairs or any(len(pair) != 2 or not pair[0] for pair in pairs):
+        raise ValueError(f"{label} requires complete key/value evidence")
+    values = dict(pairs)
+    if len(values) != len(pairs):
+        raise ValueError(f"{label} contains duplicate fields")
+    return values
+
+
+# Purpose: Verify CLI dependency status and required-HIP diagnostic telemetry through real command entry points.
+# Inputs: Admitted binary, private working directory and explicit host mode. Outputs: Retained log names or failure.
+def run_cli_capability_contracts(binary: Path, directory: Path, hip_host: bool) -> list[str]:
+    checks = [("dependency-check", ["dependency-check"], 0 if hip_host else 10)]
+    if hip_host:
+        checks.append(
+            (
+                "gpu-diagnostic",
+                [
+                    "gpu-diagnostic",
+                    "--seconds",
+                    "1",
+                    "--buffer-mib",
+                    "16",
+                    "--inner-iterations",
+                    "1",
+                ],
+                0,
+            )
+        )
+    logs = []
+    for name, arguments, expected_exit in checks:
+        result = process_owner().run_bounded_command(
+            [str(binary), *arguments],
+            timeout_seconds=30,
+            max_output_bytes=65536,
+            response_tail_bytes=65536,
+            working_directory=directory,
+        )
+        log = directory / f"{name}.json"
+        with log.open("x", encoding="utf-8") as stream:
+            json.dump({"arguments": arguments, "result": result}, stream, indent=2)
+            stream.write("\n")
+        if (
+            type(result.get("exit_code")) is not int
+            or result["exit_code"] != expected_exit
+            or any(result.get(key) is not False for key in ("timed_out", "output_limit_exceeded"))
+        ):
+            raise RuntimeError(f"CLI capability command failed: {log}")
+        values = cli_key_values(result, name)
+        expected_available = "true" if hip_host else "false"
+        mode_fields = ["hip_compiled", "hip_runtime_loadable", "available"]
+        if name == "dependency-check":
+            mode_fields.append("hip_kernel_loadable")
+        if any(values.get(key) != expected_available for key in mode_fields):
+            raise ValueError("CLI capability mode does not match the admitted build and device")
+        if name == "dependency-check":
+            if values.get("dependency_status") != ("ready" if hip_host else "cpu_only_build"):
+                raise ValueError("CLI dependency status contradicts its exit code")
+        else:
+            integer_keys = (
+                "diagnostic_bytes",
+                "diagnostic_kernel_launches",
+                "diagnostic_h2d_bytes",
+                "diagnostic_d2h_bytes",
+                "diagnostic_device_allocation_bytes",
+                "diagnostic_checksum",
+            )
+            time_keys = ("diagnostic_kernel_ms", "diagnostic_wall_seconds")
+            if not set((*integer_keys, *time_keys)).issubset(values):
+                raise ValueError("GPU diagnostic CLI telemetry is incomplete")
+            integers = {key: int(values[key]) for key in integer_keys}
+            times = [float(values[key]) for key in time_keys]
+            if (
+                values.get("hip_runtime_loadable") != "true"
+                or not values.get("gcn_arch")
+                or any(integers[key] <= 0 for key in integer_keys if key != "diagnostic_checksum")
+                or not 0 <= integers["diagnostic_checksum"] <= 2**64 - 1
+                or any(not math.isfinite(value) or value <= 0 for value in times)
+                or integers["diagnostic_bytes"] != 16 * 1024**2
+                or integers["diagnostic_kernel_launches"] < 2
+                or integers["diagnostic_h2d_bytes"] < integers["diagnostic_bytes"]
+                or integers["diagnostic_device_allocation_bytes"] < integers["diagnostic_bytes"]
+            ):
+                raise ValueError("GPU diagnostic CLI lacks consistent positive HIP execution evidence")
+        logs.append(log.name)
+    return logs
 
 
 # Purpose: Keep installer acquisition on authenticated official release transports, including every redirect.
@@ -285,11 +419,8 @@ def coverage_build(hip_host: bool) -> dict:
 # Inputs: Current Debug CLI and owned evidence directory. Outputs: Retained real capability result or failure.
 def require_hip_device(output: Path) -> None:
     result = run_checked([str(ROOT / "build/Debug/flitzzip_cli.exe"), "gpu-info"], 60, output / "gpu-info-process.json")
-    pairs = [line.split("=", 1) for line in result["stdout"].splitlines()]
-    if result["output_truncated"] or any(len(pair) != 2 for pair in pairs):
-        raise ValueError("HIP host coverage requires complete GPU capability evidence")
-    values = dict(pairs)
-    if len(values) != len(pairs) or any(
+    values = cli_key_values(result, "HIP host coverage")
+    if any(
         values.get(name) != "true"
         for name in ("hip_compiled", "hip_runtime_loadable", "hip_kernel_loadable", "available")
     ):
@@ -353,7 +484,7 @@ def run_scenarios(output: Path, hip_host: bool = False, include_gui: bool = Fals
         # overall deadline and each matrix command's independent timeout.
         timeout = 900 if name in {"registry", "cli-formats", "gui"} else 300
         run_checked(arguments, timeout, output / f"{name}-process.json")
-    run_cli_admission(binary / "flitzzip_cli.exe", output)
+    run_cli_admission(binary / "flitzzip_cli.exe", output, hip_host=hip_host)
 
 
 # Purpose: Measure native host instructions in an existing symbols-enabled build without inferring device hits.
