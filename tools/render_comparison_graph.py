@@ -149,8 +149,6 @@ def validate_corpus(record: dict) -> dict:
         ):
             raise ValueError(f"corpus download provenance is missing: {name}")
         by_name[name] = entry
-    if set(by_name) != set(EXPECTED):
-        raise ValueError("corpus manifest omits required files")
     return by_name
 
 

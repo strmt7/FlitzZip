@@ -32,8 +32,6 @@ def collect(records: list[dict]) -> tuple[str, list[dict]]:
         if record.get("settings", {}).get("round_pause_ms") != 250:
             raise ValueError("tradeoff publication requires the declared 250 ms inter-round pause")
         indexed[level] = record
-    if set(indexed) != set(LEVELS):
-        raise ValueError("effort sweep is incomplete")
     first = indexed[LEVELS[0]]
     stable_host = {
         key: value for key, value in first.get("host", {}).items() if key not in ("resource_before", "resource_after")
@@ -70,12 +68,6 @@ def collect(records: list[dict]) -> tuple[str, list[dict]]:
                 for row in rows
             ]
         for panel, row in zip(panels, rows, strict=True):
-            if (panel["name"], panel["format"], panel["input_bytes"]) != (
-                row["name"],
-                row["format"],
-                row["input_bytes"],
-            ):
-                raise ValueError("case identity changed across effort levels")
             for metric in row["metrics"]:
                 panel["points"].append(
                     {

@@ -754,6 +754,15 @@ class BenchmarkGraphTests(unittest.TestCase):
                 plans.append(extra)
             with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, "geometry"):
                 graph.summarize_records([record], allow_dirty=False)
+        record = sampling_fixture()
+        pilot = copy.deepcopy(record["pilot_runs"][0])
+        pilot["block_size_kib"] = 256
+        record["pilot_runs"].append(pilot)
+        plan = copy.deepcopy(record["sampling_policy"]["geometry_plans"][0])
+        plan["case"] = "CPU:256"
+        record["sampling_policy"]["geometry_plans"].append(plan)
+        with self.assertRaisesRegex(ValueError, "pilot contains unmatched cases"):
+            graph.summarize_records([record], allow_dirty=False)
 
     # Purpose: Preserve all timing variation and label inverse-median throughput precisely.
     # Inputs: Complete fixed-size observations with small, deliberately nonzero timing differences.

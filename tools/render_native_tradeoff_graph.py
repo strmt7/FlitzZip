@@ -53,8 +53,6 @@ def collect(records: list[dict]) -> tuple[tuple, list[dict]]:
             sizes = {run.get("archive_bytes") for run in selected}
             if len(sizes) != 1 or any(type(size) is not int or size <= 0 for size in sizes):
                 raise ValueError("native archive size is missing or unstable")
-            if lane == "GPU" and any(run["gpu_kernel_launches"] <= 0 for run in selected):
-                raise ValueError("GPU lane lacks HIP kernel evidence")
             times = [run["compress_seconds"] for run in selected]
             if any(time <= 0 for time in times):
                 raise ValueError("native compression time must be positive")

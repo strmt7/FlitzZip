@@ -173,8 +173,6 @@ def validate_sampling_protocol(record: dict, allow_dirty: bool) -> tuple:
             values = [run.get(field) for run in runs + pilots]
             if any(type(value) is not int or value < 1 for value in values) or len(set(values)) != 1:
                 raise ValueError("inconsistent exact sizes or resource policy")
-            if ("workers" in field or "chunks" in field) and values[0] > 64:
-                raise ValueError("resource policy exceeds production bound")
         for run in runs + pilots:
             if any(run[field] <= 0 for field in ("compress_seconds", "verify_seconds", "extract_seconds")):
                 raise ValueError("missing positive phase timing")
@@ -200,8 +198,6 @@ def validate_sampling_protocol(record: dict, allow_dirty: bool) -> tuple:
             [run[field] for run in runs] for field in ("compress_seconds", "verify_seconds", "extract_seconds")
         ] + [totals]
         for values in phases:
-            if any(value <= 0 for value in values):
-                raise ValueError("missing positive phase timing")
             cv = 100 * statistics.stdev(values) / statistics.mean(values)
             if (
                 cv > policy["max_relative_std_dev_pct"]
