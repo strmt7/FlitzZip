@@ -64,6 +64,26 @@ def validate_locked_packages(contents: str) -> set[str]:
 
 
 class InstallationTests(unittest.TestCase):
+    # Purpose: Keep every active certifi tooling lane above the compromised emSign trust-store range.
+    # Inputs: Both Linux resolver inputs and all three installed dependency locks, including the crawler.
+    # Outputs: Exact locks meet the advisory floor and both reusable Linux inputs retain that floor for refreshes.
+    def test_certificate_authority_advisory_floor(self):
+        floor = (2026, 10, 19)
+        root = REQUIREMENTS.parents[1]
+        paths = [REQUIREMENTS / f"requirements-{lane}-linux.txt" for lane in ("semgrep", "gvm-tools")]
+        paths.append(root / "tools/requirements/crawl4ai.txt")
+        for path in paths:
+            version = pinned_version(path.read_text(encoding="utf-8"), "certifi")
+            with self.subTest(lock=path.name):
+                self.assertRegex(version, r"^[0-9]+\.[0-9]+\.[0-9]+$")
+                self.assertGreaterEqual(tuple(map(int, version.split("."))), floor)
+        for lane in ("semgrep", "gvm-tools"):
+            contents = (REQUIREMENTS / f"requirements-{lane}-linux.in").read_text(encoding="utf-8")
+            minimum = re.findall(r"(?m)^certifi>=([0-9]+\.[0-9]+\.[0-9]+)$", contents)
+            with self.subTest(input=lane):
+                self.assertEqual(len(minimum), 1)
+                self.assertGreaterEqual(tuple(map(int, minimum[0].split("."))), floor)
+
     # Purpose: Keep the reviewed scanner packaging revision and official fixed dependencies aligned.
     # Inputs: Requirements, artifact provenance and complete lock. Outputs: Exact identities and derived hashes.
     def test_official_configuration_parity(self):

@@ -136,6 +136,16 @@ class DistributionTests(unittest.TestCase):
                 packaging.digest(self.wheel)
             with self.assertRaisesRegex(ValueError, "wheel exceeds"):
                 packaging.wheel_files(self.wheel)
+        directory_limited = self.root / "entry-budget.whl"
+        for count in (2000, 2001):
+            with zipfile.ZipFile(directory_limited, "w") as archive:
+                for index in range(count):
+                    archive.writestr(f"owned-empty-fixture/part-{index:04}.txt", b"")
+            if count == 2000:
+                self.assertEqual(len(packaging.wheel_files(directory_limited)), count)
+            else:
+                with self.assertRaisesRegex(ValueError, "wheel exceeds"):
+                    packaging.wheel_files(directory_limited)
 
     def setUp(self):
         """Purpose: Keep contracts offline. Inputs: Owned fixture. Outputs: Isolated asset/cache and cleanup."""
