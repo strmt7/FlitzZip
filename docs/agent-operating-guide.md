@@ -233,6 +233,12 @@ Guidelines, and SEI CERT C++.
   measured machine without changing product policy.
 - Design secure-by-default paths: fail closed, make risky behavior opt-in, and
   keep trust boundaries visible in code comments and tests.
+- Treat security, provenance and benchmark JSON as untrusted structured input.
+  Reject duplicate properties and nonfinite numbers before admission or
+  publication. Enforce actual field types, including the distinction between
+  booleans and integers, and validate derived arithmetic as well as individual
+  samples. Retain malformed-input regressions and keep private input out of
+  failure diagnostics.
 - Admit optional accelerator modules explicitly after runtime/device checks;
   registration must not run in executable startup constructors. Test hardware
   absence as well as actual device execution. Keep allocator ownership and C++
@@ -597,6 +603,10 @@ tools\package.ps1 -Configuration Release
 - Scope test-owned file streams and handles before removing their directories
   on Windows. Fix a proven lifetime conflict rather than adding cleanup retries,
   weakening assertions, or changing file-sharing policy to conceal it.
+- For read-only notice and provenance admission, inspect the link itself when
+  checking reparse attributes, using `lstat` or the appropriate no-follow API.
+  Preserve content-identity and lifetime checks. Include real redirects whose
+  targets remain inside the selected root in the boundary regressions.
 - Keep memory bounded. Do not read whole archives or whole large files into memory when streaming APIs are available.
 - Prove byte extents before pointer formation, header access or payload copies.
   Check fixed overhead first, then compare payload length with remaining capacity;
