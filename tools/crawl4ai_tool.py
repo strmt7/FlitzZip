@@ -77,6 +77,7 @@ def tool_environment(home: Path) -> dict[str, str]:
     """Purpose: Keep browser/cache writes scoped. Inputs: Tool cache. Outputs: Child-only environment."""
     env = dict(os.environ)
     env.update(
+        FLITZZIP_CRAWL4AI_HOME=str(home),
         PLAYWRIGHT_BROWSERS_PATH=str(home / "browsers"),
         CRAWL4AI_BASE_DIRECTORY=str(home / "data"),
         PYTHONUTF8="1",
@@ -214,7 +215,7 @@ def verify_versions(python: Path, env: dict[str, str]) -> None:
             script,
             json.dumps(pins),
             json.dumps(crawl4ai_source_build.runtime_hashes()),
-            nltk_distribution.runtime_source_sha256(),
+            nltk_distribution.runtime_source_sha256(cache_home(env.get("FLITZZIP_CRAWL4AI_HOME"))),
         ],
         env,
         60,
@@ -291,7 +292,7 @@ def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
         venv.EnvBuilder(with_pip=True).create(directory)
     from tools import crawl4ai_source_build, nltk_distribution
 
-    nltk_wheel = nltk_distribution.wheel_path()
+    nltk_wheel = nltk_distribution.wheel_path(home)
     crawler_wheel = crawl4ai_source_build.ensure_wheel(home)
     run(
         [
@@ -346,7 +347,7 @@ def check_lock(home: Path, requirements: Path = LOCK) -> None:
     if not (3, 13) <= sys.version_info[:2] <= (3, 14):
         raise ValueError("Use CPython 3.13 or 3.14; this lock has not qualified other Python versions")
     home.mkdir(parents=True, exist_ok=True)
-    nltk_wheel = nltk_distribution.wheel_path()
+    nltk_wheel = nltk_distribution.wheel_path(home)
     crawler = crawl4ai_source_build.ensure_wheel(home)
     with tempfile.TemporaryDirectory(prefix="lock-validation-", dir=home) as owned:
         directory = Path(owned)

@@ -48,6 +48,33 @@ try {
         [IO.File]::WriteAllText($path, 'ordinary product text')
     }
     $policy.InvokeWithContext($fixtureFunctions, $null)
+    $hygieneAst = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot 'verify_change_hygiene.ps1'), [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw 'Changed-file hygiene contains PowerShell syntax errors.' }
+    $binaryFunction = $hygieneAst.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Test-ChangedBinaryPolicy'
+    }, $false)
+    if ($null -eq $binaryFunction) { throw 'Production binary admission is missing.' }
+    $binaryPolicy = [ScriptBlock]::Create(
+        $binaryFunction.Extent.Text + [Environment]::NewLine + 'Test-ChangedBinaryPolicy -Path $candidate')
+    foreach ($candidate in @('src/built.whl', 'third_party/upstream/fixture/built.WHL')) {
+        $path = Join-Path $repo $candidate
+        [IO.Directory]::CreateDirectory((Split-Path -Parent $path)) | Out-Null
+        [IO.File]::WriteAllText($path, 'inert built-package fixture')
+        $rejected = $false
+        try { & $binaryPolicy }
+        catch {
+            if ($_.Exception.Message -notlike '*Generated binary artifact is not allowed*') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected) { throw "Binary admission missed $candidate" }
+        Remove-Item -LiteralPath $path
+        & $binaryPolicy
+    }
+    $candidate = 'third_party/upstream/fixture/source.tar.gz'
+    [IO.File]::WriteAllText((Join-Path $repo $candidate), 'inert source-archive fixture')
+    & $binaryPolicy
     Write-Output 'Policy scan traversal and source-detection controls passed.'
 } finally {
     if (Test-Path -LiteralPath $repo) {

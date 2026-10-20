@@ -7,6 +7,8 @@ import json
 import os
 import re
 import stat
+import sys
+import tempfile
 from email.parser import BytesParser
 from pathlib import Path
 
@@ -17,7 +19,7 @@ SOURCE_ROOT = ROOT / "third_party/upstream/nltk/3.10.4-rc1"
 
 
 def distribution() -> dict:
-    """Purpose: Validate exact upstream provenance. Inputs: Tracked record and wheel. Outputs: Admitted metadata."""
+    """Purpose: Validate exact upstream provenance. Inputs: Tracked record. Outputs: Admitted metadata."""
     data = json.loads((SOURCE_ROOT / "distribution.json").read_text(encoding="utf-8"))
     if not isinstance(data, dict) or not isinstance(data.get("version"), str) or not isinstance(data.get("tag"), str):
         raise ValueError("Unsupported NLTK upstream distribution record")
@@ -42,16 +44,19 @@ def distribution() -> dict:
         or not 0 < data["size"] <= MAX_SOURCE_BYTES
     ):
         raise ValueError("Unsupported NLTK upstream distribution record")
-    wheel = SOURCE_ROOT / filename
-    if wheel.stat().st_size != data["size"] or digest(wheel) != data["sha256"]:
-        raise ValueError("NLTK upstream wheel digest or size mismatch")
     return data
 
 
-def wheel_path() -> Path:
-    """Purpose: Install exact upstream bytes without rebuilding. Inputs: Tracked provenance. Outputs: Verified wheel."""
-    data = distribution()
-    path = SOURCE_ROOT / data["filename"]
+def verify_wheel(path: Path, data: dict) -> Path:
+    """Purpose: Admit original upstream bytes. Inputs: Asset and provenance. Outputs: Verified wheel or refusal."""
+    info = path.lstat()
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        or info.st_size != data["size"]
+        or digest(path) != data["sha256"]
+    ):
+        raise ValueError("NLTK upstream wheel digest or size mismatch, or redirected asset")
     files = wheel_files(path)
     prefix = f"nltk-{data['version']}.dist-info/"
     metadata = BytesParser().parsebytes(files[prefix + "METADATA"])
@@ -69,8 +74,54 @@ def wheel_path() -> Path:
     return path
 
 
+def wheel_path(home: Path | None = None) -> Path:
+    """Purpose: Cache the official asset outside Git. Inputs: Optional tool home. Outputs: Verified wheel.
+    Downloads use pip's normal HTTPS transport and hash admission; package installation still resolves dependencies.
+    """
+    from tools.crawl4ai_tool import cache_home, installation_lock, run, tool_environment
+
+    data = distribution()
+    home = cache_home(str(home) if home is not None else None)
+    directory = home / "wheels" / ("nltk-" + data["sha256"])
+    if directory.is_symlink() or directory.is_junction():
+        raise ValueError("NLTK wheel cache is redirected")
+    with installation_lock(directory, timeout=180):
+        destination = directory / data["filename"]
+        if destination.exists() or destination.is_symlink():
+            return verify_wheel(destination, data)
+        with tempfile.TemporaryDirectory(prefix="download-", dir=directory) as temporary:
+            stage = Path(temporary)
+            requirements = stage / "asset.txt"
+            requirements.write_text(f"nltk @ {data['url']} --hash=sha256:{data['sha256']}\n", encoding="utf-8")
+            run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "download",
+                    "--disable-pip-version-check",
+                    "--require-hashes",
+                    "--only-binary=:all:",
+                    "--no-deps",
+                    "--timeout",
+                    "30",
+                    "--retries",
+                    "2",
+                    "--dest",
+                    str(stage),
+                    "-r",
+                    str(requirements),
+                ],
+                tool_environment(home),
+                180,
+            )
+            verified = verify_wheel(stage / data["filename"], data)
+            os.replace(verified, destination)
+        return verify_wheel(destination, data)
+
+
 def identity() -> str:
-    """Purpose: Reuse only the admitted distribution. Inputs: Record and verified wheel. Outputs: Cache identity."""
+    """Purpose: Isolate the pinned distribution. Inputs: Validated provenance. Outputs: Cache identity."""
     from tools.crawl4ai_tool import text_identity
 
     data = distribution()
@@ -79,9 +130,9 @@ def identity() -> str:
     ).hexdigest()
 
 
-def runtime_source_sha256() -> str:
+def runtime_source_sha256(home: Path | None = None) -> str:
     """Purpose: Bind installed runtime to upstream bytes. Inputs: Official wheel. Outputs: Canonical source digest."""
-    files = wheel_files(wheel_path())
+    files = wheel_files(wheel_path(home))
     hashes = {
         name: hashlib.sha256(contents.replace(b"\r\n", b"\n")).hexdigest()
         for name, contents in files.items()

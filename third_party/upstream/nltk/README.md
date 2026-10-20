@@ -8,8 +8,9 @@ The maintainer explicitly authorized testing and adopting this candidate to
 resolve the previous NLTK vulnerability.
 
 [The distribution record](3.10.4-rc1/distribution.json) binds the official asset
-URL, filename, byte size, SHA-256, release tag and license. The adjacent wheel
-is immutable upstream provenance. It contains the original Apache-2.0 license
+URL, filename, byte size, SHA-256, release tag and license. The wheel is retrieved
+into the external development cache and verified before use; built packages
+are not tracked in Git. It contains the original Apache-2.0 license
 and authors; the [development notice](../../../docs/licenses/NLTK-3.10.4.txt)
 is byte-identical to that license.
 

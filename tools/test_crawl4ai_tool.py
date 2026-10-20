@@ -130,7 +130,10 @@ class CrawlerContracts(unittest.TestCase):
         """Purpose: Bound lifetime and verify pins. Inputs: CPU child and metadata. Outputs: Deadline/version checks."""
         with self.assertRaises(subprocess.TimeoutExpired):
             tool.run_owned([sys.executable, "-c", "import time; time.sleep(30)"], dict(os.environ), 0.2)
-        with patch.object(tool, "run") as child:
+        with (
+            patch.object(tool, "run") as child,
+            patch("tools.nltk_distribution.runtime_source_sha256", return_value=hashlib.sha256(b"fixture").hexdigest()),
+        ):
             tool.verify_versions(Path(sys.executable), dict(os.environ))
             argv = child.call_args.args[0]
             pins = json.loads(argv[3])
@@ -227,10 +230,13 @@ class CrawlerContracts(unittest.TestCase):
             directory = Path(temp)
             python = directory / "python"
             python.touch()
-            from tools.nltk_distribution import wheel_path
-
-            wheel = wheel_path()
+            wheel = directory / "asset.whl"
             with (
+                patch("tools.nltk_distribution.wheel_path", return_value=wheel),
+                patch(
+                    "tools.nltk_distribution.runtime_source_sha256",
+                    return_value=hashlib.sha256(b"fixture").hexdigest(),
+                ),
                 patch("tools.crawl4ai_source_build.ensure_wheel", return_value=wheel),
                 patch.object(tool, "run") as run,
             ):
@@ -271,6 +277,11 @@ class CrawlerContracts(unittest.TestCase):
 
                 with (
                     patch("tools.crawl4ai_source_build.ensure_wheel", return_value=directory / "crawl4ai.whl"),
+                    patch("tools.nltk_distribution.wheel_path", return_value=directory / "nltk.whl"),
+                    patch(
+                        "tools.nltk_distribution.runtime_source_sha256",
+                        return_value=hashlib.sha256(b"fixture").hexdigest(),
+                    ),
                     patch.object(tool, "run", side_effect=admit),
                     self.assertRaises(subprocess.CalledProcessError),
                 ):

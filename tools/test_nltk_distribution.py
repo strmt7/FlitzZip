@@ -20,11 +20,56 @@ from tools import nltk_distribution as build
 from tools import python_wheel as packaging
 
 
+def source_fixture(path: Path, data: dict) -> dict:
+    """Purpose: Exercise admission offline. Inputs: Owned path/provenance shape. Outputs: Inert wheel and digest."""
+    prefix = f"nltk-{data['version']}.dist-info/"
+    members = {
+        "nltk/VERSION": data["version"].encode(),
+        prefix + "METADATA": f"Name: nltk\nVersion: {data['version']}\n\n".encode(),
+        prefix + "WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n\n",
+        prefix + "licenses/LICENSE.txt": (build.ROOT / "docs/licenses/NLTK-3.10.4.txt").read_bytes(),
+        prefix + "licenses/AUTHORS.md": b"Owned author-notice fixture.\n" * 5,
+    }
+    for name in (
+        "__init__.py",
+        "pathsec.py",
+        "picklesec.py",
+        "data.py",
+        "tag/perceptron.py",
+        "parse/transitionparser.py",
+        "classify/maxent.py",
+    ):
+        members["nltk/" + name] = b"raise RuntimeError('source admission must not import this fixture')\n"
+    with zipfile.ZipFile(path, "w") as wheel:
+        for name, contents in members.items():
+            wheel.writestr(name, contents)
+    return data | {"sha256": packaging.digest(path), "size": path.stat().st_size}
+
+
 class DistributionTests(unittest.TestCase):
     """Preserve upstream identity, complete source admission and portable standard packaging."""
 
-    def test_official_wheel_retains_version_license_and_authors(self):
-        """Purpose: Avoid fabricated release identities. Inputs: Pinned official asset. Outputs: Exact provenance."""
+    def setUp(self):
+        """Purpose: Keep contracts offline. Inputs: Owned fixture. Outputs: Isolated asset/cache and cleanup."""
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        original = build.distribution()
+        self.wheel = self.root / original["filename"]
+        self.data = source_fixture(self.wheel, original)
+        record = self.root / "record"
+        record.mkdir()
+        (record / "distribution.json").write_text(json.dumps(self.data), encoding="utf-8")
+        self.enterContext(patch.object(build, "SOURCE_ROOT", record))
+        self.home = self.root / "cache"
+        self.enterContext(patch("tools.crawl4ai_tool.cache_home", return_value=self.home))
+        cached = self.home / "wheels" / ("nltk-" + self.data["sha256"]) / self.wheel.name
+        cached.parent.mkdir(parents=True)
+        shutil.copyfile(self.wheel, cached)
+        self.cached = cached
+
+    def test_admission_retains_version_license_and_authors(self):
+        """Purpose: Avoid fabricated identities. Inputs: Provenance and inert wheel. Outputs: Matching notices."""
         data = build.distribution()
         self.assertEqual(data["version"], "3.10.4")
         self.assertEqual(data["tag"], "v3.10.4-rc1")
@@ -65,12 +110,60 @@ class DistributionTests(unittest.TestCase):
                 ):
                     record.write_text(json.dumps(data | changes), encoding="utf-8")
                     with self.subTest(changes=changes), self.assertRaises(ValueError):
-                        build.wheel_path()
+                        build.verify_wheel(wheel, build.distribution())
                 record.write_text(json.dumps(data), encoding="utf-8")
-                self.assertEqual(build.wheel_path(), root / wheel.name)
+                self.assertEqual(build.verify_wheel(root / wheel.name, build.distribution()), root / wheel.name)
                 (root / wheel.name).write_bytes(b"substituted")
                 with self.assertRaisesRegex(ValueError, "digest or size"):
-                    build.wheel_path()
+                    build.verify_wheel(root / wheel.name, build.distribution())
+
+    def test_cache_download_is_hash_locked_atomic_and_reused(self):
+        """Purpose: Protect first-use publication. Inputs: Cold cache and pip boundary. Outputs: Exact reuse."""
+        self.cached.unlink()
+
+        def download(command, env, timeout):
+            """Purpose: Observe artifact-only transport. Inputs: Pip argv/env. Outputs: Owned inert asset."""
+            self.assertEqual(command[1:4], ["-m", "pip", "download"])
+            for flag in ("--require-hashes", "--only-binary=:all:", "--no-deps"):
+                self.assertIn(flag, command)
+            self.assertEqual(timeout, 180)
+            self.assertEqual(env["FLITZZIP_CRAWL4AI_HOME"], str(self.home))
+            request = Path(command[command.index("-r") + 1]).read_text(encoding="utf-8")
+            self.assertEqual(request, f"nltk @ {self.data['url']} --hash=sha256:{self.data['sha256']}\n")
+            destination = Path(command[command.index("--dest") + 1])
+            self.assertFalse(self.cached.exists())
+            shutil.copyfile(self.wheel, destination / self.wheel.name)
+
+        with patch("tools.crawl4ai_tool.run", side_effect=download) as transport:
+            self.assertEqual(build.wheel_path(self.home), self.cached)
+            self.assertEqual(build.wheel_path(self.home), self.cached)
+            self.assertEqual(transport.call_count, 1)
+        self.assertFalse(list(self.cached.parent.glob("download-*")))
+        self.cached.write_bytes(b"corrupt cache")
+        with patch("tools.crawl4ai_tool.run") as transport, self.assertRaisesRegex(ValueError, "digest or size"):
+            build.wheel_path(self.home)
+        transport.assert_not_called()
+
+    def test_failed_download_never_publishes_or_accepts_substituted_bytes(self):
+        """Purpose: Reject interrupted or wrong artifacts. Inputs: Transport failures. Outputs: Empty cache."""
+        self.cached.unlink()
+        for interrupted in (False, True):
+
+            def download(command, env, timeout, fail=interrupted):
+                """Purpose: Inject incomplete transport. Inputs: Download destination. Outputs: Failure or junk."""
+                if fail:
+                    raise RuntimeError("owned interrupted download")
+                target = Path(command[command.index("--dest") + 1]) / self.wheel.name
+                target.write_bytes(b"substituted upstream asset")
+
+            with (
+                self.subTest(interrupted=interrupted),
+                patch("tools.crawl4ai_tool.run", side_effect=download),
+                self.assertRaises((RuntimeError, ValueError)),
+            ):
+                build.wheel_path(self.home)
+            self.assertFalse(self.cached.exists())
+            self.assertFalse(list(self.cached.parent.glob("download-*")))
 
     def test_wheel_metadata_rejects_escapes_aliases_and_special_members(self):
         """Purpose: Validate complete archives before use. Inputs: Malformed owned wheels. Outputs: Refusals."""

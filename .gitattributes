@@ -11,7 +11,6 @@
 *.tar.gz binary
 *.tgz binary
 *.zip binary
-*.whl binary
 *.exe binary
 *.dll binary
 *.lib binary
