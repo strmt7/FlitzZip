@@ -1,6 +1,7 @@
-# Crawl4AI 0.9.4 base dependencies; resolved 2026-10-05 on CPython 3.13.
+# Crawl4AI 0.9.4 base dependencies with reviewed security updates.
 # All non-yanked upstream wheel digests allow native Windows/Linux/macOS selection.
-# Install through crawl4ai_tool.py: repaired NLTK wheel is built from pinned source.
+# Install through crawl4ai_tool.py using the pinned original NLTK wheel
+# and the reproducible repaired Crawl4AI wheel.
 # Normal runtime install uses --require-hashes --only-binary=:all:; no optional AI/model extras.
 aiofiles==25.1.0 \
     --hash=sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695
@@ -281,8 +282,8 @@ brotli==1.2.0 \
     --hash=sha256:f8d635cafbbb0c61327f942df2e3f474dde1cff16c3cd0580564774eaba1ee13 \
     --hash=sha256:fc1530af5c3c275b8524f2e24841cbe2599d74462455e9bae5109e9ff42e9361 \
     --hash=sha256:ff09cd8c5eec3b9d02d2408db41be150d8891c5566addce57513bf546e3d6c6d
-certifi==2026.7.22 \
-    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775
+certifi==2026.10.19 \
+    --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
 cffi==2.1.1 \
     --hash=sha256:046bfc24911b37851ee1b51aab8bffe713d89c68c6a057b09484ce9fd5f69b4e \
     --hash=sha256:06c72bb76605a4b0cd0aad6930b69d4baf7dd5d806cfc409b824191099700e66 \

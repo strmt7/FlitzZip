@@ -2,5 +2,6 @@
 --only-binary=:all:
 gvm-tools==26.1.1
 # Advisory floors must also hold when upstream dependency constraints change.
+certifi>=2026.10.19
 cryptography>=50.0.2
 h2>=4.4.1
