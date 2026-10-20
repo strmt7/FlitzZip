@@ -5,8 +5,10 @@ import ctypes
 import io
 import json
 import os
+import runpy
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
@@ -373,6 +375,27 @@ class HipCoverageTests(unittest.TestCase):
                 coverage.export_profile(self.root, self.source, [], self.root)
             native.assert_not_called()
 
+    # Purpose: Verify exact profile merge/export framing and parse the retained native LLVM JSON artifact.
+    # Inputs: One nonempty owned raw profile, device image and a child double that writes the export destination.
+    # Outputs: Both bounded commands receive owned paths and the exact native report is returned unchanged.
+    def test_profile_export_uses_owned_native_artifact(self):
+        profile = self.root / "device.profraw"
+        image = self.root / "device.elf"
+        profile.write_bytes(b"nonempty raw profile")
+        image.write_bytes(b"device image fixture")
+        expected = {"type": "llvm.coverage.json.export", "version": "3.1.0", "data": []}
+
+        def invoke(command, _log, _timeout=120):
+            if "tools.hip_coverage_export" in command:
+                Path(command[command.index("--output") + 1]).write_text(json.dumps(expected), encoding="utf-8")
+            return {"stdout": "", "exit_code": 0}
+
+        with patch.object(coverage, "checked", side_effect=invoke) as native:
+            self.assertEqual(coverage.export_profile(self.root, image, [profile], self.root), expected)
+        self.assertEqual(native.call_count, 2)
+        self.assertIn(str(profile), native.call_args_list[0].args[0])
+        self.assertIn("tools.hip_coverage_export", native.call_args_list[1].args[0])
+
     # Purpose: Reject host-only or ambiguous image evidence before any device counter can be interpreted.
     # Inputs: Independently framed ELF headers and bundle listings. Outputs: Only the exact AMDGPU image is admitted.
     def test_device_image_admission(self):
@@ -402,6 +425,13 @@ class HipCoverageTests(unittest.TestCase):
                     else:
                         with self.assertRaises(ValueError):
                             coverage.device_image(self.root, self.source, "gfx1201", output)
+        absent = self.root / "absent-image"
+        absent.mkdir()
+        with (
+            patch.object(coverage, "checked", return_value={"stdout": bundle}),
+            self.assertRaisesRegex(ValueError, "no HIP device image"),
+        ):
+            coverage.device_image(self.root, self.source, "gfx1201", absent)
 
     # Purpose: Require actual device identity and correct results independently from the instrumenter's exit code.
     # Inputs: Successful process records with incorrect output, target or missing device counters.
@@ -420,6 +450,95 @@ class HipCoverageTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         coverage.run_controls(self.source, "gfx1201", output)
                     self.assertEqual(native.call_count, 1)
+        output = self.root / "missing-profile"
+        output.mkdir()
+        expected = {"selector": 0, "value": 18, "lanes": 192, "architecture": "gfx1201"}
+        with (
+            patch.object(coverage, "checked", return_value={"stdout": json.dumps(expected)}),
+            self.assertRaisesRegex(ValueError, "exactly one nonempty device profile"),
+        ):
+            coverage.run_controls(self.source, "gfx1201", output)
+
+    # Purpose: Admit one exact compiler/runtime closure and reject missing backends or mid-compile input drift.
+    # Inputs: Owned directory geometry with mocked bounded compiler commands and immutable/mutated identity maps.
+    # Outputs: Missing runtimes/backends fail early; stable commands return the probe path; drift never qualifies.
+    def test_compile_probe_toolchain_and_drift_contracts(self):
+        compiler = self.root / "compiler"
+        sdk = self.root / "sdk"
+        runtime = self.root / "device-runtime.obj"
+        output = self.root / "compile-output"
+        (compiler / "bin").mkdir(parents=True)
+        (compiler / "lib/clang/20/lib/windows").mkdir(parents=True)
+        (compiler / "amdgcn/bitcode").mkdir(parents=True)
+        (sdk / "bin").mkdir(parents=True)
+        (sdk / "lib").mkdir()
+        output.mkdir()
+        runtime.write_bytes(b"device runtime")
+        with self.assertRaisesRegex(ValueError, "profiling runtime"):
+            coverage.compile_probe(compiler, sdk, runtime, "gfx1201", output)
+        profile = compiler / "lib/clang/20/lib/windows/clang_rt.profile_rocm-x86_64.lib"
+        profile.write_bytes(b"host profile")
+        with self.assertRaisesRegex(ValueError, "HIP runtime library"):
+            coverage.compile_probe(compiler, sdk, runtime, "gfx1201", output)
+        (sdk / "bin/amdhip64.dll").write_bytes(b"HIP runtime")
+        stable = {"input": {"bytes": 1, "sha256": "a" * 64}}
+        with (
+            patch.object(coverage, "identities", return_value=stable),
+            patch.object(coverage, "checked", return_value={"stdout": "  x86 - host"}),
+            self.assertRaisesRegex(ValueError, "no AMDGPU backend"),
+        ):
+            coverage.compile_probe(compiler, sdk, runtime, "gfx1201", output)
+        commands = ({"stdout": "  amdgcn - AMD GPU"}, {"stdout": "clang fixture"}, {"stdout": ""})
+        with (
+            patch.object(coverage, "identities", side_effect=[stable, stable]),
+            patch.object(coverage, "checked", side_effect=commands) as native,
+        ):
+            executable, observed = coverage.compile_probe(compiler, sdk, runtime, "gfx1201", output)
+        self.assertEqual(executable, output / "probe.exe")
+        self.assertEqual(observed, stable)
+        self.assertEqual(native.call_count, 3)
+        self.assertIn("--offload-arch=gfx1201", native.call_args_list[2].args[0])
+        with (
+            patch.object(coverage, "identities", side_effect=[stable, {"changed": {}}]),
+            patch.object(coverage, "checked", side_effect=commands),
+            self.assertRaisesRegex(ValueError, "changed during compilation"),
+        ):
+            coverage.compile_probe(compiler, sdk, runtime, "gfx1201", output)
+
+    # Purpose: Route explicit CLI paths to qualification and exercise __main__ failure before any native command.
+    # Inputs: Owned existing compiler/SDK/runtime paths plus one nonexistent module-entry compiler path.
+    # Outputs: Successful routing emits bounded summary JSON; missing input raises before qualification.
+    def test_main_routes_explicit_paths_and_module_failure(self):
+        compiler, sdk = self.root / "main-compiler", self.root / "main-sdk"
+        runtime, output = self.root / "main-runtime.obj", self.root / "main-output"
+        compiler.mkdir()
+        sdk.mkdir()
+        runtime.write_bytes(b"runtime fixture")
+        result = {"qualification": "passed", "scope": "device controls", "architecture": "gfx1201", "controls": {}}
+        arguments = [
+            "hip_coverage",
+            "--compiler-root",
+            str(compiler),
+            "--sdk",
+            str(sdk),
+            "--device-runtime",
+            str(runtime),
+            "--arch",
+            "gfx1201",
+            "--output",
+            str(output),
+        ]
+        with (
+            patch("sys.argv", arguments),
+            patch.object(coverage, "qualify", return_value=result) as qualify,
+            redirect_stdout(io.StringIO()) as emitted,
+        ):
+            self.assertEqual(coverage.main(), 0)
+        qualify.assert_called_once_with(compiler, sdk, runtime, "gfx1201", output)
+        self.assertEqual(json.loads(emitted.getvalue()), result)
+        arguments[2] = str(self.root / "absent-compiler")
+        with patch("sys.argv", arguments), self.assertRaises(FileNotFoundError):
+            runpy.run_path(str(Path(coverage.__file__).resolve()), run_name="__main__")
 
     # Purpose: Preserve COFF object image names rather than silently trying the linked-executable section.
     # Inputs: Explicit object-file selection. Outputs: One exact native extraction request, with no retry.
