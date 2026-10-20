@@ -223,15 +223,42 @@ def verify_versions(python: Path, env: dict[str, str]) -> None:
     )
 
 
+def lock_contended(error: OSError) -> bool:
+    """Purpose: Classify portable advisory-lock contention.
+    Inputs: Open or lock error. Outputs: True only for retryable ownership conflicts.
+    """
+    windows_code = getattr(error, "winerror", None)
+    if windows_code is not None:
+        return windows_code in (32, 33)
+    return error.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK)
+
+
 @contextlib.contextmanager
 def installation_lock(directory: Path, timeout: float = 900):
-    """Purpose: Serialize shared-cache setup. Inputs: Environment/deadline. Outputs: Owned lock or timeout."""
-    directory.mkdir(parents=True, exist_ok=True)
-    with (directory / ".install.lock").open("a+b") as lock:
+    """Purpose: Serialize shared-cache setup without following redirects.
+    Inputs: Cache directory and deadline. Outputs: Owned regular-file lock or refusal/timeout.
+    """
+    with contextlib.suppress(FileExistsError):
+        directory.mkdir(parents=True, exist_ok=False)
+    if directory.is_symlink() or directory.is_junction() or not directory.is_dir():
+        raise ValueError("Crawler installation cache is missing, special or redirected")
+    from tools.crawl4ai_download_opener import open_download
+
+    deadline = time.monotonic() + timeout
+    with contextlib.ExitStack() as opened:
+        while True:
+            try:
+                lock = opened.enter_context(open(directory / ".install.lock", "a+b", opener=open_download))
+                break
+            except OSError as error:
+                if not lock_contended(error):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Another crawler installation still owns this cache") from error
+                time.sleep(0.05)
         if lock.tell() == 0:
             lock.write(b"0")
             lock.flush()
-        deadline = time.monotonic() + timeout
         if os.name == "nt":
             import msvcrt
         else:
@@ -245,7 +272,7 @@ def installation_lock(directory: Path, timeout: float = 900):
                     fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except OSError as error:
-                if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                if not lock_contended(error):
                     raise
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Another crawler installation still owns this cache") from error
@@ -261,10 +288,27 @@ def installation_lock(directory: Path, timeout: float = 900):
 
 
 def write_install_receipt(receipt: Path, recorded: dict) -> None:
-    """Purpose: Publish qualified setup atomically. Inputs: Owned receipt/data. Outputs: Replaced receipt."""
-    temporary = receipt.with_suffix(".tmp")
-    temporary.write_text(json.dumps(recorded), encoding="utf-8")
-    temporary.replace(receipt)
+    """Purpose: Publish qualified setup atomically without following a predictable alias.
+    Inputs: Owned receipt path and admitted data. Outputs: Exclusively staged and replaced receipt.
+    """
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            prefix=receipt.name + ".",
+            suffix=".tmp",
+            dir=receipt.parent,
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            json.dump(recorded, stream, separators=(",", ":"))
+        os.replace(temporary, receipt)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
