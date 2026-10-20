@@ -169,6 +169,18 @@ TEST_CASE(flzip_byte_plane_context_stage_catalog_and_extent_admission) {
     }
 }
 
+// Purpose: Prevent empty raw/fill descriptors from becoming valid context stages through zero-equals-zero extents.
+// Inputs: Every serialized kind with zero decoded/encoded lengths, followed by a valid one-byte fill control.
+// Outputs: No empty child is canonical; the independently valid nonempty fill remains accepted.
+TEST_CASE(flzip_byte_plane_context_rejects_empty_stage_for_every_kind) {
+    for (std::uint16_t kind = 0U; kind < 256U; ++kind) {
+        const flitzzip::BlockDescriptor empty{.kind = static_cast<flitzzip::BlockKind>(kind)};
+        REQUIRE_TRUE(!flitzzip::is_canonical_gpu_byte_plane_context_stage(empty));
+    }
+    const flitzzip::BlockDescriptor nonempty{.kind = flitzzip::BlockKind::Fill, .uncompressed_len = 1U};
+    REQUIRE_TRUE(flitzzip::is_canonical_gpu_byte_plane_context_stage(nonempty));
+}
+
 // Purpose: Independently qualify dense context tables, mixed child codecs and every tail through CPU/HIP readers.
 // Inputs: Handcrafted version-eleven frames at segment/block boundaries and all admitted widths.
 // Outputs: Requires byte-exact reconstruction, actual HIP decoding and GPU CRC equal to the independent oracle.

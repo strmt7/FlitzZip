@@ -2,6 +2,7 @@
 #include "test_util.hpp"
 
 #include <array>
+#include <limits>
 #include <string>
 
 namespace {
@@ -37,6 +38,30 @@ std::string dictionary_framing_error(std::span<const std::byte> payload, std::ui
 }
 
 }  // namespace
+
+// Purpose: Reject partial and overflowing dictionary-table slots before forming a field address.
+// Inputs: Independent little-endian values, every truncated prefix and invalid/extreme slot indices.
+// Outputs: Exact values for complete slots and ArchiveError for every incomplete or nonexistent slot.
+TEST_CASE(dictionary_offset_reader_rejects_partial_or_wrapping_slots) {
+    const std::array<std::byte, 8> bytes{std::byte{0x12}, std::byte{0x34}, std::byte{0x56}, std::byte{0x78},
+                                         std::byte{0x90}, std::byte{0xAB}, std::byte{0xCD}, std::byte{0xEF}};
+    REQUIRE_EQ(flitzzip::read_dictionary_offset(bytes, 0U), 0x78563412U);
+    REQUIRE_EQ(flitzzip::read_dictionary_offset(bytes, 1U), 0xEFCDAB90U);
+    for (std::size_t prefix = 0U; prefix <= bytes.size(); ++prefix) {
+        for (const auto slot : std::array<std::size_t, 4>{0U, 1U, 2U, std::numeric_limits<std::size_t>::max()}) {
+            if ((slot == 0U && prefix >= 4U) || (slot == 1U && prefix == 8U)) {
+                continue;
+            }
+            bool rejected = false;
+            try {
+                (void)flitzzip::read_dictionary_offset(std::span(bytes).first(prefix), slot);
+            } catch (const flitzzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+        }
+    }
+}
 
 // Purpose: Preserve exact parser extents and append semantics across a full segment and short coded tail.
 // Inputs: Independently serialized two-segment framing and an existing scratch sentinel.

@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <span>
 #include <vector>
@@ -66,6 +67,36 @@ void require_sparse_rejected(std::span<const std::byte> payload, std::uint32_t d
 }
 
 }  // namespace
+
+// Purpose: Keep sparse-field reads bounded even when an untrusted offset would wrap an addition-based check.
+// Inputs: An independent byte sequence, valid unaligned reads and truncated/extreme offset cases.
+// Outputs: Exact little-endian values for admitted reads; every incomplete field raises ArchiveError.
+TEST_CASE(sparse_pattern_field_reader_rejects_truncation_and_wrapping_offsets) {
+    const std::array<std::byte, 8> bytes{std::byte{0x12}, std::byte{0x34}, std::byte{0x56}, std::byte{0x78},
+                                         std::byte{0x90}, std::byte{0xAB}, std::byte{0xCD}, std::byte{0xEF}};
+    REQUIRE_EQ(flitzzip::read_sparse_u32(bytes, 0U), 0x78563412U);
+    REQUIRE_EQ(flitzzip::read_sparse_u32(bytes, 1U), 0x90785634U);
+    REQUIRE_EQ(flitzzip::read_sparse_u32(bytes, 4U), 0xEFCDAB90U);
+    for (const auto offset : std::array<std::size_t, 5>{5U, 8U, 9U, std::numeric_limits<std::size_t>::max() - 1U,
+                                                        std::numeric_limits<std::size_t>::max()}) {
+        bool rejected = false;
+        try {
+            (void)flitzzip::read_sparse_u32(bytes, offset);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+    for (std::size_t prefix = 0U; prefix < 4U; ++prefix) {
+        bool rejected = false;
+        try {
+            (void)flitzzip::read_sparse_u32(std::span(bytes).first(prefix), 0U);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
 
 // Purpose: Admit a canonical sparse block and preserve exact borrowed motif/patch spans.
 // Inputs: A 64-byte decoded extent with two strictly increasing nonredundant patches.
