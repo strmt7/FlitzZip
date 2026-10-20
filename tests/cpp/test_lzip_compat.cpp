@@ -9,6 +9,7 @@
 #include "lzip/lzip_stream.hpp"
 #include "tar/tar_adapter.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -17,6 +18,7 @@
 #include <memory>
 #include <future>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -412,6 +414,125 @@ TEST_CASE(lzip_rejects_invalid_dictionary_code_without_output) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(0));
+}
+
+// Purpose: Check malformed members through real extraction and its complete publication cleanup.
+// Inputs: Bounded independent fixture bytes, a test-owned root and an optional required diagnostic fragment.
+// Outputs: Rejects new and overwrite extraction, retaining old bytes and no staging objects.
+void require_lzip_fixture_rejected(const std::vector<unsigned char>& bytes, const std::filesystem::path& root,
+                                   std::string_view diagnostic = {}) {
+    const auto archive = root / "input.txt.lz";
+    write_binary_file(archive, bytes);
+    for (const bool overwrite : {false, true}) {
+        const auto destination = root / (overwrite ? "existing" : "new");
+        const auto target = destination / "input.txt";
+        if (overwrite) {
+            std::filesystem::create_directories(destination);
+            std::ofstream(target, std::ios::binary) << "retain original";
+        }
+        std::string error;
+        try {
+            (void)flitzzip::extract_lzip_file(archive, destination, overwrite);
+        } catch (const flitzzip::Error& failure) {
+            error = failure.what();
+        }
+        REQUIRE_TRUE(!error.empty());
+        REQUIRE_TRUE(error.find(diagnostic) != std::string::npos);
+        std::size_t entries = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(destination)) {
+            REQUIRE_TRUE(overwrite);
+            REQUIRE_EQ(entry.path(), target);
+            REQUIRE_TRUE(entry.is_regular_file());
+            ++entries;
+        }
+        REQUIRE_EQ(entries, overwrite ? 1U : 0U);
+        if (overwrite)
+            REQUIRE_EQ(read_text_file(target), "retain original");
+    }
+}
+
+// Purpose: Reject every incomplete member boundary, including late failures after valid decoded bytes.
+// Inputs: Every strict prefix of an independent member, alone and following one complete nonempty member.
+// Outputs: Never publishes partial data or replaces an existing output, even after decoding a complete first member.
+TEST_CASE(lzip_every_member_truncation_preserves_existing_output) {
+    const auto root = test_temp_dir("lzip-every-truncation");
+    for (std::size_t length = 0; length < kSingleFileLzipFixture.size(); ++length) {
+        const std::vector<unsigned char> prefix(kSingleFileLzipFixture.begin(),
+                                                kSingleFileLzipFixture.begin() + static_cast<std::ptrdiff_t>(length));
+        require_lzip_fixture_rejected(prefix, root);
+        if (length != 0) {
+            auto concatenated = single_lzip_bytes();
+            concatenated.insert(concatenated.end(), prefix.begin(), prefix.end());
+            require_lzip_fixture_rejected(concatenated, root);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Check all dictionary codes outside the published format range without allocating large dictionaries.
+// Inputs: Every DS byte whose base is outside 12..29 or whose effective dictionary is below 4096 bytes.
+// Outputs: Rejects with a dictionary diagnostic before publication for both overwrite policies.
+TEST_CASE(lzip_invalid_dictionary_domain_is_rejected_without_publication) {
+    const auto root = test_temp_dir("lzip-dictionary-domain");
+    for (unsigned int code = 0; code <= 255U; ++code) {
+        const auto base = code & 31U;
+        if (base >= 12U && base <= 29U && !(base == 12U && (code >> 5U) != 0U))
+            continue;
+        auto bytes = single_lzip_bytes();
+        bytes[5] = static_cast<unsigned char>(code);
+        require_lzip_fixture_rejected(bytes, root, "dictionary");
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Preserve valid fractional dictionary encodings while enforcing the lower size boundary.
+// Inputs: All valid DS encodings up to 128 KiB and a fixture whose entire decoded history fits in 4096 bytes.
+// Outputs: Exact independent payload and byte telemetry for each admitted encoding, with bounded decoder memory.
+TEST_CASE(lzip_fractional_dictionary_codes_preserve_payload) {
+    const auto root = test_temp_dir("lzip-fractional-dictionaries");
+    const auto archive = root / "input.txt.lz";
+    for (unsigned int base = 12U; base <= 17U; ++base) {
+        for (unsigned int numerator = 0; numerator <= 7U; ++numerator) {
+            if (base == 12U && numerator != 0U)
+                continue;
+            auto bytes = single_lzip_bytes();
+            bytes[5] = static_cast<unsigned char>(base | (numerator << 5U));
+            write_binary_file(archive, bytes);
+            const auto destination = root / "output";
+            const auto stats = flitzzip::extract_lzip_file(archive, destination, true);
+            REQUIRE_EQ(read_text_file(destination / "input.txt"), std::string(kSingleFileLzipPayload));
+            REQUIRE_EQ(stats.input_bytes, bytes.size());
+            REQUIRE_EQ(stats.output_bytes, sizeof(kSingleFileLzipPayload) - 1U);
+            REQUIRE_EQ(stats.entries, 1U);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject invalid framing and trailer counters independently of CRC-only corruption.
+// Inputs: Mutated magic/version, invalid LZMA start, wrong output size, and over-limit member size.
+// Outputs: Rejects both first and subsequent malformed members without publishing any decoded prefix.
+TEST_CASE(lzip_invalid_framing_and_size_fields_never_publish) {
+    const auto root = test_temp_dir("lzip-framing-and-sizes");
+    for (unsigned int mutation = 0; mutation < 10U; ++mutation) {
+        auto bytes = single_lzip_bytes();
+        if (mutation < 4U) {
+            bytes[mutation] ^= 1U;
+        } else if (mutation < 7U) {
+            bytes[4] = std::array<unsigned char, 3>{0U, 2U, 255U}[mutation - 4U];
+        } else if (mutation == 7U) {
+            bytes[6] = 255U;
+        } else if (mutation == 8U) {
+            std::fill(bytes.end() - 16, bytes.end() - 8, 255U);
+        } else {
+            std::fill(bytes.end() - 8, bytes.end(), 255U);
+        }
+        require_lzip_fixture_rejected(bytes, root);
+        auto concatenated = single_lzip_bytes();
+        concatenated.insert(concatenated.end(), bytes.begin(), bytes.end());
+        require_lzip_fixture_rejected(concatenated, root);
+    }
+    std::filesystem::remove_all(root);
 }
 
 // Purpose: Verify in-process `.tar.lz` compatibility extraction for files and directories.
