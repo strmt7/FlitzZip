@@ -10,7 +10,9 @@ import argparse
 import asyncio
 import hashlib
 import importlib.metadata
+import ipaddress
 import json
+import re
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +22,7 @@ from tools.crawl4ai_tool import ATTRIBUTION, ROOT, VERSION, text_identity
 
 MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 MAX_CAPTURE_BYTES = 8 * 1024 * 1024
+MAX_SITES_BYTES = 64 * 1024
 CAPTURE_FIELDS = frozenset(
     {
         "url",
@@ -35,6 +38,75 @@ CAPTURE_FIELDS = frozenset(
     }
 )
 SITES = ROOT / "tools/crawl4ai_sites.json"
+
+
+def read_sites(path: Path) -> list[dict[str, str]]:
+    """Purpose: Admit reviewed public crawl targets. Inputs: Bounded site manifest. Outputs: Exact safe site rows."""
+    with path.open("rb") as source:
+        payload = source.read(MAX_SITES_BYTES + 1)
+    if not payload or len(payload) > MAX_SITES_BYTES:
+        raise ValueError("Crawler site manifest must contain 1..65536 bytes")
+    try:
+        document = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Crawler site manifest must be unambiguous UTF-8 JSON") from error
+    if (
+        not isinstance(document, dict)
+        or set(document) != {"schema", "purpose", "sites"}
+        or type(document["schema"]) is not int
+        or document["schema"] != 1
+    ):
+        raise ValueError("Crawler site manifest fields or schema are invalid")
+    purpose, sites = document["purpose"], document["sites"]
+    if not isinstance(purpose, str) or not purpose.strip() or len(purpose) > 1000:
+        raise ValueError("Crawler site manifest purpose is absent or too long")
+    if not isinstance(sites, list) or not 20 <= len(sites) <= 100:
+        raise ValueError("Crawler qualification requires 20-100 reviewed sites")
+    admitted, hosts = [], set()
+    for site in sites:
+        if not isinstance(site, dict) or set(site) != {"url", "marker"}:
+            raise ValueError("Crawler site fields are missing or unknown")
+        url, marker = site["url"], site["marker"]
+        if (
+            not isinstance(url, str)
+            or len(url) > 2048
+            or not isinstance(marker, str)
+            or not marker.strip()
+            or marker != marker.strip()
+            or len(marker) > 200
+            or any(ord(character) < 32 for character in marker)
+        ):
+            raise ValueError("Crawler site URL or marker is invalid")
+        parsed = urlsplit(url)
+        try:
+            port = parsed.port
+        except ValueError as error:
+            raise ValueError("Crawler sites require unambiguous public HTTPS URLs") from error
+        host = (parsed.hostname or "").casefold()
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            numeric_host = False
+        else:
+            numeric_host = True
+        labels = host.split(".")
+        if (
+            parsed.scheme != "https"
+            or parsed.username is not None
+            or parsed.password is not None
+            or port not in (None, 443)
+            or parsed.query
+            or parsed.fragment
+            or numeric_host
+            or len(host) > 253
+            or len(labels) < 2
+            or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in labels)
+            or host in hosts
+        ):
+            raise ValueError("Crawler sites require distinct named public HTTPS origins")
+        hosts.add(host)
+        admitted.append({"url": url, "marker": marker})
+    return admitted
 
 
 def crawler():
@@ -168,7 +240,7 @@ async def execute(args) -> int:
             json.dumps({"doctor_passed": bool(passed), "version": VERSION, "browser_configuration": "upstream-default"})
         )
         return 0 if passed else 1
-    sites = json.loads(SITES.read_text(encoding="utf-8"))["sites"]
+    sites = read_sites(SITES)
     if args.receipt.exists():
         raise FileExistsError("Research receipt already exists; select a new evidence destination")
     captures = args.receipt.with_suffix(args.receipt.suffix + ".captures")
