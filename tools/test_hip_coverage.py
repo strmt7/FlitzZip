@@ -1,6 +1,7 @@
 """Independent negative controls for real device counter qualification."""
 
 import copy
+import ctypes
 import io
 import json
 import os
@@ -14,6 +15,33 @@ from tools import hip_coverage_export as capture
 
 
 class HipCoverageTests(unittest.TestCase):
+    # Purpose: Require both successful Windows job inspection and confirmed containment before exporting.
+    # Inputs: Explicit API failure, uncontained success and contained success through a controlled Win32 boundary.
+    # Outputs: Only confirmed containment passes; every failure prevents launching the export descendant.
+    def test_export_job_admission_requires_positive_native_evidence(self):
+        for returned, contained, accepted in ((0, 0, False), (0, 1, False), (1, 0, False), (1, 1, True)):
+            # Purpose: Model the OS result. Inputs: Native arguments and output pointer. Outputs: Status/value.
+            def inspect(handle, job, pointer, returned=returned, contained=contained):
+                self.assertEqual(handle, 123)
+                self.assertIsNone(job)
+                ctypes.cast(pointer, ctypes.POINTER(ctypes.c_int)).contents.value = contained
+                return returned
+
+            kernel = Mock()
+            kernel.GetCurrentProcess.return_value = 123
+            kernel.IsProcessInJob.side_effect = inspect
+            with (
+                self.subTest(returned=returned, contained=contained),
+                patch.object(capture.ctypes, "WinDLL", return_value=kernel, create=True),
+                patch.object(capture.subprocess, "Popen") as child,
+            ):
+                if accepted:
+                    capture.require_job()
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "inherited Windows job"):
+                        capture.capture(self.source, self.source, self.source, self.root / "export.json")
+                child.assert_not_called()
+
     # Purpose: Own small tool and source fixtures without invoking a compiler or GPU.
     # Inputs: None. Outputs: Cleanup-bound files and independently framed LLVM control reports.
     def setUp(self):

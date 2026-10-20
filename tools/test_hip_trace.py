@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -21,6 +23,29 @@ def line(time: int, thread: str, body: str) -> str:
 
 
 class HipTraceTests(unittest.TestCase):
+    # Purpose: Verify actual CLI serialization and private-input rejection without invoking a driver or workload.
+    # Inputs: One owned complete transfer trace and the same file replaced by invalid UTF-8.
+    # Outputs: Exact sanitized byte/time accounting passes; unreadable input emits only a value-free diagnostic.
+    def test_real_cli_preserves_accounting_and_hides_private_inputs(self):
+        payload = line(10, "a", "hipMemcpy ( private-destination, private-source, 16, hipMemcpyDeviceToHost )")
+        payload += line(15, "a", "hipMemcpy: Returned hipSuccess :")
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "private trace with spaces.log"
+            source.write_text(payload, encoding="utf-8")
+            command = [sys.executable, "-m", "tools.analyze_hip_trace", str(source)]
+            result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+            self.assertEqual((result.returncode, result.stderr), (0, ""))
+            record = json.loads(result.stdout)
+            self.assertEqual(record["complete_calls"], 1)
+            self.assertEqual(record["selected_trace_span_us"], 5)
+            self.assertEqual(record["transfer_bytes"], {"hipMemcpyDeviceToHost": 16})
+            self.assertNotIn("private", result.stdout)
+            source.write_bytes(b"private-decoder-input\xff")
+            rejected = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+            self.assertEqual((rejected.returncode, rejected.stdout), (1, ""))
+            self.assertEqual(rejected.stderr, "HIP trace analysis failed: unreadable trace\n")
+
     # Purpose: Keep known entry-only logger records separate without inventing elapsed time or success.
     # Inputs: Repeated empty queries, nested calls and cross-thread entries with one complete allocation.
     # Outputs: Requires strict rejection by default and exact separate accounting when explicitly enabled.
