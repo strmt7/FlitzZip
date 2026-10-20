@@ -6,9 +6,11 @@ import copy
 import hashlib
 import io
 import json
+import runpy
 import tempfile
 import unittest
 import zipfile
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -80,6 +82,29 @@ class CorpusAcquisitionTests(unittest.TestCase):
                 invalid[field] = value
                 with self.subTest(field=field), self.assertRaises(ValueError):
                     acquisition.validate_source(invalid)
+            malformed = (
+                ("empty name", lambda row: row.__setitem__("name", ""), "absent or too long"),
+                ("member object", lambda row: row.__setitem__("member", []), "member pin"),
+                ("member name", lambda row: row["member"].__setitem__("name", "../sample.txt"), "flat pinned name"),
+                ("window list", lambda row: row.__setitem__("windows", []), "requires 1-8"),
+                ("window object", lambda row: row["windows"].__setitem__(0, {"label": "first"}), "fields"),
+            )
+            for label, mutate, message in malformed:
+                invalid = copy.deepcopy(spec)
+                mutate(invalid)
+                with self.subTest(shape=label), self.assertRaisesRegex(ValueError, message):
+                    acquisition.validate_source(invalid)
+            invalid = copy.deepcopy(spec)
+            invalid["source_url"] = "https://example.invalid/reviewed?unexpected=query"
+            with (
+                patch.object(
+                    acquisition,
+                    "require_permission",
+                    return_value={"evidence": [invalid["source_url"], invalid["download_url"]]},
+                ),
+                self.assertRaisesRegex(ValueError, "credential-free HTTPS"),
+            ):
+                acquisition.validate_source(invalid)
             for field, value in (("offset", True), ("offset", -1), ("offset", 15), ("bytes", 0), ("label", "FIRST")):
                 invalid = copy.deepcopy(spec)
                 invalid["windows"][1][field] = value
@@ -108,6 +133,20 @@ class CorpusAcquisitionTests(unittest.TestCase):
             target[key] = original
         with self.assertRaisesRegex(ValueError, "archive bytes"):
             acquisition.decode_windows(payload[:-1], spec)
+        wrong_archive = io.BytesIO()
+        with zipfile.ZipFile(wrong_archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
+            output.writestr("other.txt", b"x" * spec["member"]["bytes"])
+        invalid = copy.deepcopy(spec)
+        invalid_payload = wrong_archive.getvalue()
+        invalid["archive_bytes"] = len(invalid_payload)
+        invalid["archive_sha256"] = hashlib.sha256(invalid_payload).hexdigest()
+        with self.assertRaisesRegex(ValueError, "member geometry"):
+            acquisition.decode_windows(invalid_payload, invalid)
+        with (
+            patch.object(acquisition.time, "monotonic", side_effect=[0, 121]),
+            self.assertRaisesRegex(ValueError, "extent or lifetime"),
+        ):
+            acquisition.decode_windows(payload, spec)
 
     # Purpose: Admit chunked responses and reject overflow, truncation or response metadata contradictions.
     # Inputs: Owned in-memory HTTP doubles; no network endpoint is contacted.
@@ -162,6 +201,14 @@ class CorpusAcquisitionTests(unittest.TestCase):
                 patch.object(comparison, "require_permission", return_value=permission),
                 patch.object(acquisition, "download_archive", return_value=payload) as download,
             ):
+                changed_before_download = root / "changed-before-download"
+                with (
+                    patch.object(acquisition, "metadata_digest", side_effect=["a" * 64, "b" * 64]),
+                    self.assertRaisesRegex(ValueError, "changed during admission"),
+                ):
+                    acquisition.acquire(source, changed_before_download)
+                self.assertFalse(changed_before_download.exists())
+                download.assert_not_called()
                 record = acquisition.acquire(source, destination)
                 self.assertTrue(record["complete_member_crc_verified"])
                 for file, selection in zip(record["corpus"]["files"], record["selection"], strict=True):
@@ -178,6 +225,15 @@ class CorpusAcquisitionTests(unittest.TestCase):
                 ):
                     acquisition.acquire(source, other)
                 self.assertFalse(other.exists())
+                redirected = root / "redirected"
+                ancestry_count = len((redirected, *redirected.parents))
+                with (
+                    patch.object(Path, "is_symlink", return_value=False),
+                    patch.object(Path, "is_junction", side_effect=[False] * ancestry_count + [True]),
+                    self.assertRaisesRegex(ValueError, "became linked before publication"),
+                ):
+                    acquisition.acquire(source, redirected)
+                self.assertFalse(redirected.exists())
             with (
                 patch.object(acquisition, "require_permission", side_effect=ValueError("permission denied")),
                 patch.object(acquisition, "download_archive") as forbidden,
@@ -185,6 +241,39 @@ class CorpusAcquisitionTests(unittest.TestCase):
             ):
                 acquisition.acquire(source, root / "denied")
             forbidden.assert_not_called()
+
+    # Purpose: Exercise the executable acquisition route through bounded HTTP, decoding and new-file publication.
+    # Inputs: Owned in-memory ZIP/response, isolated output and patched permission/metadata boundaries.
+    # Outputs: The CLI emits parseable evidence and publishes exact complete-row excerpts without external I/O.
+    def test_cli_entry_point_publishes_owned_fixture(self) -> None:
+        spec, payload, _ = fixture_source()
+        permission = {"evidence": [spec["source_url"], spec["download_url"]]}
+        response = io.BytesIO(payload)
+        response.headers, response.status = {"Content-Length": str(len(payload))}, 200
+        opener = SimpleNamespace(open=lambda request, timeout: response)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, destination = root / "source.json", root / "published"
+            source.write_text(json.dumps(spec), encoding="utf-8")
+            metadata = {"name": spec["name"], "files": []}
+            with (
+                patch("tools.benchmark_cache.read_json", return_value=copy.deepcopy(spec)),
+                patch("tools.benchmark_corpus.metadata_digest", return_value="a" * 64),
+                patch("tools.benchmark_comparators.require_permission", return_value=permission),
+                patch("tools.run_archive_comparison.verify_manifest", return_value=([], (), metadata)),
+                patch("urllib.request.build_opener", return_value=opener),
+                patch(
+                    "sys.argv",
+                    ["acquire_benchmark_corpus", "--source-pin", str(source), "--destination", str(destination)],
+                ),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                runpy.run_path(str(Path(acquisition.__file__).resolve()), run_name="__main__")
+            emitted = json.loads(output.getvalue())
+            self.assertEqual(emitted["archive_sha256"], spec["archive_sha256"])
+            self.assertEqual(len(emitted["selection"]), len(spec["windows"]))
+            self.assertTrue((destination / "manifest.json").is_file())
+            self.assertTrue((destination / "acquisition.json").is_file())
 
 
 if __name__ == "__main__":
