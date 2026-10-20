@@ -10,7 +10,10 @@ authorized by the maintainer after qualification; it does not establish a
 general policy of adopting prereleases or overriding dependency constraints.
 
 The [upstream distribution record](../../third_party/upstream/nltk/3.10.4-rc1/distribution.json)
-binds exact asset bytes and original notices. Installed-source admission,
+binds exact asset bytes and original notices. The installer retrieves the wheel
+into its external cache through normal pip HTTPS transport, verifies it before
+atomic publication, and refuses corrupted cache entries. Built wheels are not
+tracked in Git. Installed-source admission,
 model-artifact failure and positive-flow regressions, selected upstream
 path-security suites and real crawler consumers qualify the candidate.
 Platform and optional-feature skips remain explicit. The locally retained

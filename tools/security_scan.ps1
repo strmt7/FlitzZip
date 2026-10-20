@@ -163,7 +163,7 @@ foreach ($file in $files) {
 
 # Reuse the same complete source inventory instead of traversing generated
 # trees a second time. Both checks retain the identical exclusion policy.
-$forbidden = $files | Where-Object { $_.Extension -in @('.pdb', '.ilk', '.obj', '.exe', '.dll') }
+$forbidden = $files | Where-Object { $_.Extension -in @('.pdb', '.ilk', '.obj', '.exe', '.dll', '.whl') }
 if ($forbidden) {
     throw "Build artifacts found outside build directory: $($forbidden[0].FullName)"
 }

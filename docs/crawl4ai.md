@@ -9,9 +9,9 @@ SHA-256 digests in [the installation lock](../tools/requirements/crawl4ai.txt).
 The installed crawler is the explicitly identified `0.9.4+flitzzip.portable2`
 source build. It repairs the upstream HTTP download opener on Windows while
 preserving POSIX no-follow behavior; see [the repair and qualification](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/development/crawl4ai-portable-download-repair-2026-10-05.md).
-NLTK uses an explicitly identified upstream-source security build because the
-latest published NLTK release remains affected by a model-artifact sandbox
-bypass. See [the source repair and evidence](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/nltk-model-artifact-source-repair.md).
+NLTK uses the maintainer-authorized official `v3.10.4-rc1` asset, with unchanged
+package version `3.10.4`, to address the model-artifact sandbox advisory. See
+[dependency remediation](security-reviews/dependency-risk-acceptance.md).
 
 Normal research invokes Crawl4AI's own `crwl crawl` command, forwarding its
 documented options without an alternative URL parser or extraction pipeline.
@@ -66,7 +66,8 @@ local Crawl4AI caches are installation data and are not committed or packaged.
 The environment identity includes Python's version, the complete lock hash and
 the pinned Crawl4AI build and official NLTK distribution identities. Crawl4AI's
 repaired pure-Python wheel is built with pinned setuptools tooling in a separate
-external environment. NLTK uses its unmodified official release-candidate wheel;
+external environment. NLTK's unmodified official release-candidate wheel is
+downloaded once into the external cache using its exact URL, size and SHA-256;
 see [distribution provenance](../third_party/upstream/nltk/README.md).
 Both wheels are admitted by exact digests before normal dependency installation.
 An API regression covers the source-built crawler's real HTTP download consumer.

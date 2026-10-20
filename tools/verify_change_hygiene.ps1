@@ -242,10 +242,10 @@ function Test-ChangedBinaryPolicy {
     param([Parameter(Mandatory = $true)][string]$Path)
 
     $extension = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
-    if (@(".pdb", ".ilk", ".obj", ".exe", ".dll") -notcontains $extension) {
+    if (@(".pdb", ".ilk", ".obj", ".exe", ".dll", ".whl") -notcontains $extension) {
         return
     }
-    if ($Path -match '^third_party/upstream/') {
+    if ($extension -ne '.whl' -and $Path -match '^third_party/upstream/') {
         return
     }
     $fullPath = Join-Path $repo ($Path -replace "/", "\")
