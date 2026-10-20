@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -336,6 +337,68 @@ TEST_CASE(flzip_prefix_reference_known_bytes) {
                                           std::byte{4},    std::byte{0},    std::byte{0}, std::byte{0},
                                           std::byte{0x10}, std::byte{0x0D}, std::byte{0}, std::byte{0}};
     REQUIRE_TRUE(reference_prefix_payload(input, {}) == expected);
+}
+
+// Purpose: Reject corrupt segment framing independently of GPU availability and preserve decoder bounds.
+// Inputs: Reference-encoded static/adaptive blocks with three segments and one structural mutation at a time.
+// Outputs: Every damaged table/extent fails, surrounding canaries survive, and the original still decodes afterward.
+TEST_CASE(flzip_prefix_segment_framing_rejects_corruption_and_recovers) {
+    const auto decoded_size = 2U * flitzzip::kGpuPrefixSegmentBytes + 1U;
+    std::vector<std::byte> expected(decoded_size, std::byte{0});
+    expected.back() = std::byte{1};
+    for (const bool adaptive : {false, true}) {
+        std::vector<std::byte> codebook;
+        if (adaptive) {
+            for (unsigned int value = 0; value < flitzzip::kGpuAdaptivePrefixCodebookBytes; ++value) {
+                codebook.push_back(static_cast<std::byte>(value));
+            }
+        }
+        const auto valid = reference_prefix_payload(expected, codebook);
+        const auto table_start = codebook.size();
+        const auto header_size = table_start + 4U * sizeof(std::uint32_t);
+        const auto set_offset = [table_start](auto& bytes, std::size_t index, std::uint32_t value) {
+            for (unsigned int byte = 0; byte < 4; ++byte) {
+                bytes[table_start + index * 4U + byte] = static_cast<std::byte>(value >> (byte * 8U));
+            }
+        };
+        for (unsigned int mutation = 0; mutation < 5; ++mutation) {
+            auto damaged = valid;
+            if (mutation == 0) {
+                set_offset(damaged, 0, 1);
+            } else if (mutation == 1) {
+                set_offset(damaged, 2, 0);
+            } else if (mutation == 2) {
+                set_offset(damaged, 1, std::numeric_limits<std::uint32_t>::max());
+            } else if (mutation == 3) {
+                damaged.push_back(std::byte{0});
+            } else {
+                damaged.resize(header_size);
+            }
+            flitzzip::BlockDescriptor block{
+                .kind = adaptive ? flitzzip::BlockKind::GpuAdaptivePrefix : flitzzip::BlockKind::GpuPrefix,
+                .uncompressed_len = static_cast<std::uint32_t>(expected.size()),
+                .encoded_len = static_cast<std::uint32_t>(damaged.size()),
+            };
+            std::vector<std::byte> guarded(expected.size() + 2, std::byte{0xba});
+            auto output = std::span(guarded).subspan(1, expected.size());
+            bool rejected = false;
+            try {
+                flitzzip::decode_chunk_cpu(damaged, std::span(&block, 1), output,
+                                           {.block_size = flitzzip::kMaxArchiveBlockBytes, .worker_count = 2});
+            } catch (const flitzzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+            REQUIRE_EQ(guarded.front(), std::byte{0xba});
+            REQUIRE_EQ(guarded.back(), std::byte{0xba});
+            block.encoded_len = static_cast<std::uint32_t>(valid.size());
+            flitzzip::decode_chunk_cpu(valid, std::span(&block, 1), output,
+                                       {.block_size = flitzzip::kMaxArchiveBlockBytes, .worker_count = 2});
+            REQUIRE_TRUE(std::equal(output.begin(), output.end(), expected.begin()));
+            REQUIRE_EQ(guarded.front(), std::byte{0xba});
+            REQUIRE_EQ(guarded.back(), std::byte{0xba});
+        }
+    }
 }
 
 // Purpose: Reject malformed prefix grammar identically in CPU and required-HIP decode and CRC paths.

@@ -69,10 +69,10 @@ request; this does not authorize publication of a replacement.
    requesting release approval. Earlier successful artifacts cover their own
    source identities, not every later commit.
 
-4. **Complete meaningful coverage in the delegated follow-up.** The maintainer has
-   assigned coverage-gap closure to another model. Continue all non-coverage
-   release prerequisites in this round, including regression tests for actual
-   fixes; do not expand or recollect coverage merely to increase the percentage.
+4. **Complete meaningful coverage.** The maintainer has reactivated coverage-gap
+   closure. Add independent behavior, malformed-input, lifetime and recovery tests,
+   repairing demonstrated production defects at their actual boundaries.
+   Do not expand tests merely to increase the percentage.
    Coverage remains unfinished, not waived or passed.
    Use the native coverage artifact's uncovered-line
    and unmeasured-source inventories; the Debug measurement is the current baseline.

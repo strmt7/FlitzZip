@@ -862,6 +862,80 @@ TEST_CASE(flzip_cpu_layout_admission_preserves_output) {
     }
 }
 
+namespace {
+
+// Purpose: Require the intended codec admission error rather than accepting any unrelated exception.
+// Inputs: A bounded operation and its specified diagnostic. Outputs: Fails if the operation succeeds or differs.
+template <typename Operation> void require_codec_rejection(Operation operation, std::string_view diagnostic) {
+    bool rejected = false;
+    try {
+        operation();
+    } catch (const flitzzip::ArchiveError& error) {
+        REQUIRE_TRUE(std::string_view(error.what()).find(diagnostic) != std::string_view::npos);
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+}
+
+}  // namespace
+
+// Purpose: Enforce codec option bounds even when an internal caller bypasses public archive admission.
+// Inputs: Independent block-size and effort boundaries, immutable source bytes and canary-filled output.
+// Outputs: Invalid options fail before output; a subsequent valid encode/decode returns exact source bytes.
+TEST_CASE(flzip_cpu_codec_options_reject_before_work_and_recover) {
+    constexpr std::array payload{std::byte{0x12}, std::byte{0x34}, std::byte{0x56}, std::byte{0x78}};
+    const flitzzip::BlockDescriptor raw{.kind = Kind::Raw, .uncompressed_len = 4U, .encoded_len = 4U};
+    std::array<std::byte, 4> output{};
+    for (const auto block_size : {0U, flitzzip::kMinArchiveBlockBytes - 1U, flitzzip::kMaxArchiveBlockBytes + 1U,
+                                  std::numeric_limits<std::uint32_t>::max()}) {
+        const flitzzip::ArchiveCodecOptions options{.block_size = block_size};
+        require_codec_rejection([&] { (void)flitzzip::encode_chunk_cpu(payload, options); },
+                                "codec block size is outside");
+        for (const auto decode : {&flitzzip::decode_chunk_cpu, &flitzzip::decode_cpu_only_blocks_cpu}) {
+            output.fill(std::byte{0x7D});
+            require_codec_rejection([&] { decode(payload, std::span(&raw, 1U), output, options); },
+                                    "codec block size is outside");
+            REQUIRE_EQ(std::ranges::count(output, std::byte{0x7D}), 4);
+        }
+    }
+    for (const int effort : {std::numeric_limits<int>::min(), 0, 10, std::numeric_limits<int>::max()}) {
+        require_codec_rejection([&] { (void)flitzzip::encode_chunk_cpu(payload, {.compression_level = effort}); },
+                                "codec compression level must be between 1 and 9");
+    }
+    const auto encoded = flitzzip::encode_chunk_cpu(payload, {});
+    flitzzip::decode_chunk_cpu(encoded.payload, encoded.blocks, output, {});
+    REQUIRE_EQ(output, payload);
+}
+
+// Purpose: Reject caller output extents and excessive tables before parallel decoding can publish a prefix.
+// Inputs: A four-byte raw block, shorter/longer destinations and a genuinely allocated over-limit table.
+// Outputs: Both CPU consumers preserve all canaries on rejection and remain usable for a valid next decode.
+TEST_CASE(flzip_cpu_decode_extent_admission_preserves_output_and_recovers) {
+    constexpr std::array payload{std::byte{0x12}, std::byte{0x34}, std::byte{0x56}, std::byte{0x78}};
+    const flitzzip::BlockDescriptor raw{.kind = Kind::Raw, .uncompressed_len = 4U, .encoded_len = 4U};
+    const std::vector<flitzzip::BlockDescriptor> excessive(flitzzip::kMaxBlocksPerEntry + 1ULL);
+    std::array<std::byte, 8> output{};
+    for (const auto decode : {&flitzzip::decode_chunk_cpu, &flitzzip::decode_cpu_only_blocks_cpu}) {
+        for (const std::size_t length : {2U, 5U}) {
+            output.fill(std::byte{0x7D});
+            require_codec_rejection(
+                [&] { decode(payload, std::span(&raw, 1U), std::span(output).subspan(1U, length), {}); },
+                length < 4U ? "decoded block exceeds output buffer" : "decoded size does not match");
+            REQUIRE_EQ(std::ranges::count(output, std::byte{0x7D}), 8);
+        }
+        require_codec_rejection([&] { decode({}, excessive, output, {}); }, "codec block table exceeds");
+        REQUIRE_EQ(std::ranges::count(output, std::byte{0x7D}), 8);
+        decode(payload, std::span(&raw, 1U), std::span(output).subspan(1U, 4U), {});
+        REQUIRE_EQ(output.front(), std::byte{0x7D});
+        REQUIRE_EQ(std::ranges::count(std::span(output).last(3U), std::byte{0x7D}), 3);
+        if (decode == &flitzzip::decode_chunk_cpu) {
+            REQUIRE_TRUE(std::ranges::equal(std::span(output).subspan(1U, 4U), payload));
+        } else {
+            REQUIRE_EQ(std::ranges::count(output, std::byte{0x7D}), 8);
+        }
+    }
+}
+
 // Purpose: Guard HIP's final host admission even when an internal caller bypasses the public archive parser.
 // Inputs: Independent raw/fill controls and malformed extents for every payload-bearing native block kind.
 // Outputs: Valid controls pass; truncation, overflow, unknown kinds and output mismatches fail without GPU dispatch.

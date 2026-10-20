@@ -284,6 +284,42 @@ TEST_CASE(neutron_dictionary_native_policy_rejects_fallback) {
     }
 }
 
+// Purpose: Preserve isolated progress state across cancel-and-restart transitions.
+// Inputs: An operation with progress, cancellation and a diagnostic note followed by a fresh operation.
+// Outputs: Snapshots retain detached values; restarting clears every field and permits checkpoint reuse.
+TEST_CASE(neutron_progress_restart_clears_cancelled_operation_state) {
+    flitzzip::ProgressState progress;
+    progress.start(flitzzip::OperationKind::Compress, 100, 2);
+    progress.set_current("previous.bin");
+    progress.set_note("waiting for a bounded GPU batch");
+    progress.add_bytes(31);
+    progress.finish_entry();
+    progress.request_cancel();
+    const auto previous = progress.snapshot();
+    REQUIRE_EQ(previous.note, "waiting for a bounded GPU batch");
+    REQUIRE_TRUE(previous.cancel_requested);
+    progress.start(flitzzip::OperationKind::Verify, 200, 3);
+    auto restarted = progress.snapshot();
+    REQUIRE_EQ(restarted.operation, flitzzip::OperationKind::Verify);
+    REQUIRE_EQ(restarted.total_bytes, 200U);
+    REQUIRE_EQ(restarted.total_entries, 3U);
+    REQUIRE_EQ(restarted.processed_bytes, 0U);
+    REQUIRE_EQ(restarted.completed_entries, 0U);
+    REQUIRE_TRUE(restarted.current_entry.empty());
+    REQUIRE_TRUE(restarted.note.empty());
+    REQUIRE_TRUE(!restarted.cancel_requested);
+    unsigned int calls = 0;
+    auto checkpoint = flitzzip::make_cancellation_checkpoint(progress, [&](const auto& snapshot) {
+        REQUIRE_TRUE(!snapshot.cancel_requested);
+        ++calls;
+    });
+    checkpoint();
+    REQUIRE_EQ(calls, 1U);
+    REQUIRE_EQ(previous.current_entry, "previous.bin");
+    REQUIRE_EQ(previous.processed_bytes, 31U);
+    REQUIRE_EQ(previous.completed_entries, 1U);
+}
+
 // Purpose: Serialize observer copies across simultaneous workers and retain synchronous reentrant calls.
 // Inputs: Two concurrent streams of snapshots and a callback that reenters its own serialized wrapper once.
 // Outputs: Requires no observer overlap, exact delivery count and safe reentrancy without a held progress-state lock.

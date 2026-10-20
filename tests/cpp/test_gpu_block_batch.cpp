@@ -10,6 +10,7 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <span>
 #include <sstream>
 
@@ -353,6 +354,187 @@ TEST_CASE(gpu_block_batch_archive_abort) {
     REQUIRE_EQ(flitzzip_test::count_regular_files(root), 74U);
     std::filesystem::remove_all(root);
     REQUIRE_TRUE(!std::filesystem::exists(root));
+}
+
+namespace {
+
+constexpr std::array<std::string_view, 2> kSmallBatchContents{"first::0123456789ABCDEF", "second::ZYXWVUT987654321"};
+
+// Purpose: Produce two independently named, nonuniform sources for batch boundary tests.
+// Inputs: A test-owned directory; the complete source payload totals fewer than 64 bytes.
+// Outputs: Returns identity-pinned manifest metadata after closing both fixture writers.
+flitzzip::Manifest small_archive_batch_fixture(const std::filesystem::path& root) {
+    std::vector<std::filesystem::path> files;
+    for (std::size_t i = 0; i < kSmallBatchContents.size(); ++i) {
+        files.push_back(root / (std::to_string(i) + ".bin"));
+        std::ofstream output(files.back(), std::ios::binary);
+        output << kSmallBatchContents[i];
+        REQUIRE_TRUE(output.good());
+    }
+    return flitzzip::build_manifest(files);
+}
+
+// Purpose: Prove batch teardown released write/delete denial without mutating fixture identities.
+// Inputs: The same source manifest after a successful or failed synchronous batch.
+// Outputs: Opens and closes each source for writing/deletion, failing if a batch lock escaped.
+void require_batch_sources_released(const flitzzip::Manifest& manifest) {
+    for (const auto& source : manifest.entries) {
+        const HANDLE handle = CreateFileW(source.source_path.c_str(), GENERIC_WRITE | DELETE,
+                                          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                          OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        REQUIRE_TRUE(handle != INVALID_HANDLE_VALUE);
+        REQUIRE_TRUE(CloseHandle(handle) != 0);
+    }
+}
+
+class BatchFailureBuffer final : public std::stringbuf {
+  public:
+    // Purpose: Inject only sink position or bounded-write failure into the real archive publisher.
+    // Inputs: Whether tellp fails and the maximum accepted output bytes.
+    // Outputs: Creates a RAM-only sink; no production codec or metadata implementation is replaced.
+    BatchFailureBuffer(bool reject_position, std::size_t write_limit)
+        : reject_position_(reject_position), write_limit_(write_limit) {}
+
+  protected:
+    // Purpose: Fail position discovery independently of data writes.
+    // Inputs: Standard stream position arguments.
+    // Outputs: The real string-buffer position or the standard failure sentinel.
+    pos_type seekoff(off_type offset, std::ios::seekdir direction, std::ios::openmode mode) override {
+        return reject_position_ ? pos_type(off_type(-1)) : std::stringbuf::seekoff(offset, direction, mode);
+    }
+
+    // Purpose: Model a short sink write without consuming the rejected suffix.
+    // Inputs: A valid byte span and count from the production ostream.
+    // Outputs: Writes at most the remaining budget and returns the actual count.
+    std::streamsize xsputn(const char* bytes, std::streamsize count) override {
+        const auto available = write_limit_ - written_;
+        const auto accepted = std::min<std::size_t>(available, static_cast<std::size_t>(count));
+        written_ += accepted;
+        return std::stringbuf::xsputn(bytes, static_cast<std::streamsize>(accepted));
+    }
+
+  private:
+    bool reject_position_;
+    std::size_t write_limit_;
+    std::size_t written_ = 0;
+};
+
+}  // namespace
+
+// Purpose: Reject invalid batch/count geometry before any source read or output mutation.
+// Inputs: Empty/single/oversized batches, disabled batching and exhausted/overflowing total-block counts.
+// Outputs: The owning boundary reports its admission error and leaves index, counters and output unchanged.
+TEST_CASE(gpu_block_batch_rejects_invalid_admission_before_io) {
+    flitzzip::CompressOptions options{.gpu_required = false};
+    const auto invoke = [&](std::span<const flitzzip::ManifestEntry> entries, const flitzzip::CompressOptions& selected,
+                            std::uint64_t count, std::string_view diagnostic) {
+        flitzzip::ArchiveIndex index;
+        flitzzip::OperationStats stats;
+        flitzzip::ProgressState progress;
+        std::ostringstream output;
+        output << "sentinel";
+        const auto before = count;
+        bool rejected = false;
+        try {
+            flitzzip::compress_manifest_batch(entries, selected, output, index, stats, count, progress, {}, {});
+        } catch (const flitzzip::ArchiveError& error) {
+            rejected = std::string_view(error.what()).find(diagnostic) != std::string_view::npos;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(output.str(), "sentinel");
+        REQUIRE_TRUE(index.entries.empty());
+        REQUIRE_EQ(count, before);
+        REQUIRE_EQ(progress.snapshot().processed_bytes, 0U);
+    };
+    std::vector<flitzzip::ManifestEntry> entries(65);
+    for (auto& entry : entries) {
+        entry.size = 16;
+    }
+    for (const std::size_t size : {0U, 1U, 65U}) {
+        invoke(std::span(entries).first(size), options, 0, "batch violates");
+    }
+    options.force_cpu = true;
+    invoke(std::span(entries).first(2), options, 0, "batch violates");
+    options.force_cpu = false;
+    for (const std::uint64_t count :
+         {static_cast<std::uint64_t>(flitzzip::kMaxArchiveBlocks - 1U),
+          static_cast<std::uint64_t>(flitzzip::kMaxArchiveBlocks),
+          static_cast<std::uint64_t>(flitzzip::kMaxArchiveBlocks) + 1U, std::numeric_limits<std::uint64_t>::max()}) {
+        invoke(std::span(entries).first(2), options, count, "too many total blocks");
+    }
+}
+
+// Purpose: Preserve cancellation semantics and source ownership at each batch phase.
+// Inputs: Cancellation before reading, during reads, after all reads and after the first publication.
+// Outputs: No subsequent entry is published; counters reflect committed entries and source locks are released.
+TEST_CASE(gpu_block_batch_cancellation_releases_every_source) {
+    const auto root = test_temp_dir("batch-cancellation-boundaries");
+    const auto manifest = small_archive_batch_fixture(root);
+    for (unsigned int phase = 0; phase < 4; ++phase) {
+        flitzzip::ProgressState progress;
+        progress.start(flitzzip::OperationKind::Compress, manifest.total_file_bytes, 2);
+        if (phase == 0) {
+            progress.request_cancel();
+        }
+        const auto observer = [&](const flitzzip::ProgressSnapshot& snapshot) {
+            if ((phase == 1 && snapshot.processed_bytes != 0) ||
+                (phase == 2 && snapshot.processed_bytes == manifest.total_file_bytes) ||
+                (phase == 3 && snapshot.completed_entries == 1)) {
+                progress.request_cancel();
+            }
+        };
+        std::ostringstream output;
+        flitzzip::ArchiveIndex index;
+        flitzzip::OperationStats stats;
+        std::uint64_t blocks = 0;
+        bool cancelled = false;
+        try {
+            flitzzip::compress_manifest_batch(manifest.entries, {.gpu_required = false}, output, index, stats, blocks,
+                                              progress, observer, {});
+        } catch (const flitzzip::ArchiveError& error) {
+            cancelled = std::string_view(error.what()) == "operation cancelled";
+        }
+        REQUIRE_TRUE(cancelled);
+        REQUIRE_EQ(index.entries.size(), phase == 3 ? 1U : 0U);
+        REQUIRE_EQ(blocks, index.entries.size());
+        if (phase != 3) {
+            REQUIRE_TRUE(output.str().empty());
+        }
+        require_batch_sources_released(manifest);
+    }
+}
+
+// Purpose: Preserve publication accounting when position discovery or either file write fails.
+// Inputs: A real two-source codec batch and independently failing in-memory output sinks.
+// Outputs: Throws without indexing an incomplete file and releases all source locks, with stream exceptions too.
+TEST_CASE(gpu_block_batch_sink_failures_release_sources) {
+    const auto root = test_temp_dir("batch-sink-failure");
+    const auto manifest = small_archive_batch_fixture(root);
+    for (const bool reject_position : {false, true}) {
+        for (const bool exceptions : {false, true}) {
+            BatchFailureBuffer buffer(reject_position, 1);
+            std::ostream output(&buffer);
+            if (exceptions) {
+                output.exceptions(std::ios::badbit | std::ios::failbit);
+            }
+            flitzzip::ArchiveIndex index;
+            flitzzip::OperationStats stats;
+            flitzzip::ProgressState progress;
+            std::uint64_t blocks = 0;
+            bool rejected = false;
+            try {
+                flitzzip::compress_manifest_batch(manifest.entries, {.gpu_required = false}, output, index, stats,
+                                                  blocks, progress, {}, {});
+            } catch (const std::exception&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+            REQUIRE_TRUE(index.entries.empty());
+            REQUIRE_EQ(blocks, 0U);
+            REQUIRE_TRUE(buffer.str().size() <= 1U);
+            require_batch_sources_released(manifest);
+        }
+    }
 }
 
 namespace {

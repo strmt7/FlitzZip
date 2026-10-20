@@ -6,17 +6,16 @@ performance, or a release qualification by itself.
 
 ## Coverage Follow-up
 
-The maintainer has assigned coverage-gap closure to a separate model. Preserve
-the existing collectors, tests and CI uploads. The current release-preparation
-round continues defect regressions and package qualification without expanding
-tests merely to increase coverage.
+The maintainer has reactivated coverage-gap closure. Preserve the existing
+collectors, tests and CI uploads, and work through coherent groups of missing
+behavior with independent correctness, failure and recovery assertions.
 
-The last local GUI/HIP-host measurement is retained under
-`out/coverage-hip-host-gui`: 21,234 of 24,041 measured lines across 157 files
-(88.32%). Its source identities precede the LHA termination repair, so it is a
-gap-discovery baseline, not current-source acceptance. Review its `summary.json`,
-uncovered-line inventory and raw report before choosing additional tests. Reuse
-individual evidence only after checking its recorded identities. The hosted
+Local GUI/HIP-host measurement is retained under `out/coverage-hip-host-gui`.
+Review its `summary.json`, uncovered-line inventory and raw report before choosing
+additional tests. Its recorded source, binary, collector and scenario identities
+determine whether it measures the current checkout; the directory name alone
+does not establish freshness. Reuse individual evidence only after checking
+those identities. The hosted
 CPU report, GUI/HIP-host report, tooling and device instructions have distinct
 scopes; none establishes whole-repository coverage.
 
@@ -184,11 +183,15 @@ its [Windows GPU profiling repair](https://github.com/llvm/llvm-project/pull/202
 also fixes registration of the device profile sections.
 
 `tools/hip_coverage.py` qualifies the measurement mechanism with a 768-byte GPU
-operation across three workgroups. Separate processes take opposite branches, verify
-the independently expected output and report the actual GPU architecture. The
+operation across three workgroups, including a non-inlined device helper.
+Separate processes take opposite branches, verify the independently expected
+output and report the actual GPU architecture. The
 tool extracts the AMDGPU ELF, merges native device profiles with LLVM and requires
 counter pairs `(0, 192)`, `(192, 0)` and `(192, 192)` for the separate and combined
-runs. It disables offload PGO sampling explicitly with
+runs. The helper's opposite branch predicate must independently produce the
+reversed pair in each separate run and the same merged pair. Missing, duplicated,
+zero or incorrectly mapped helper counters fail qualification even when kernel
+counters and readback are correct. It disables offload PGO sampling explicitly with
 `-mllvm -offload-pgo-sampling=0`; the compiler otherwise samples one in eight
 workgroups, which is unsuitable for coverage. The multiple-workgroup control
 rejects that undercount, which a single-thread probe would miss.
@@ -198,21 +201,33 @@ LLVM JSON exports use an eight-MiB bounded artifact writer inside the existing
 Windows process job; response-tail limits remain unchanged. Raw native
 profiles, exports and failed-command diagnostics remain in the selected ignored
 output directory. Existing output directories are never overwritten.
+Before GPU execution, the qualifier freezes the probe source and records compiled
+input and executable identities in `measurement-inputs.json`, explicitly marked
+`not-qualified`. Image, execution, export or counter failures retain this evidence
+without a pass receipt. Source drift during compilation or measurement prevents
+acceptance; successful receipts also bind the frozen source artifact.
 
-This control has passed on gfx1201 with the unmodified AMD ROCm 10.1 compiler and
-its matching upstream device profiling runtime. It qualifies that control on
-that device; it does not measure FlitzZip's kernels or establish complete device
-coverage. [Windows registration in this compiler](https://github.com/ROCm/llvm-project/blob/d6f6cb691863e9258034ab48c1dfce21689d5606/clang/lib/CodeGen/CGCUDANV.cpp#L1444)
-enumerates emitted kernels;
-device-only helpers require a separate qualification before their apparent
-zero counts can be interpreted. Product kernel reports remain separate work. Kernel dispatch counts
-and CPU-side HIP API coverage cannot substitute for device counters.
+Kernel counters alone do not qualify device helpers or measure FlitzZip's
+complete GPU implementation.
+[Windows registration in this compiler](https://github.com/ROCm/llvm-project/blob/d6f6cb691863e9258034ab48c1dfce21689d5606/clang/lib/CodeGen/CGCUDANV.cpp#L1444)
+enumerates emitted kernels; whether that explains a particular missing helper
+counter requires separate source and runtime evidence. Product kernel reports
+remain separate work. Kernel dispatch counts and CPU-side HIP API coverage
+cannot substitute for device counters.
 
 The helper-inclusive control fails with the tested unmodified ROCm 10.1
 toolchain: GPU readback and kernel counters are correct, but the executed
 non-inlined helper retains zero counters. This is a measurement limitation,
 not evidence that those instructions were unexecuted or that the product GPU
-operation failed. Preserve that failed control and require correct helper
+operation failed. The emitted device IR contains the helper's counter increments.
+The native profiler diagnostics report two device data records and four counters,
+but copy only one record and two counters through the registered-section path;
+`llvm-profdata show --all-functions --counts` contains only the kernel.
+The matching `InstrProfilingPlatformROCm.cpp` copies the compiler-provided
+registered section ranges. Preserve the IR, native diagnostics and raw profiles
+when repairing this registration boundary; do not substitute another source
+revision's runtime layout or copy unregistered device addresses.
+Preserve that failed control and require correct helper
 registration and counters before admitting whole-device coverage. Inlining
 helpers solely to satisfy the control or deriving counts from dispatches would
 not qualify the missing measurement.
