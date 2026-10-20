@@ -7,7 +7,9 @@ import csv
 import hashlib
 import io
 import json
+import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 import warnings
@@ -48,6 +50,92 @@ def source_fixture(path: Path, data: dict) -> dict:
 
 class DistributionTests(unittest.TestCase):
     """Preserve upstream identity, complete source admission and portable standard packaging."""
+
+    # Purpose: Reject real redirected cache roots and installed-package entries without traversing their targets.
+    # Inputs: One owned Windows junction or POSIX link to the inert wheel cache and an isolated alternate tool home.
+    # Outputs: Cache, package-root and child-entry admission all refuse the redirect; target bytes remain intact.
+    def test_real_redirects_fail_all_package_boundaries(self):
+        home = self.root / "redirect-home"
+        parent = home / "wheels"
+        parent.mkdir(parents=True)
+        link = parent / ("nltk-" + self.data["sha256"])
+        target = self.cached.parent
+        if os.name == "nt":
+            subprocess.run(
+                ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+        else:
+            link.symlink_to(target, target_is_directory=True)
+        try:
+            with (
+                patch("tools.crawl4ai_tool.cache_home", return_value=home),
+                self.assertRaisesRegex(ValueError, "wheel cache is redirected"),
+            ):
+                build.wheel_path(home)
+            with self.assertRaisesRegex(ValueError, "missing or redirected"):
+                build.installed_runtime_sha256(link)
+            with self.assertRaisesRegex(ValueError, "contains a redirect"):
+                build.installed_runtime_sha256(parent)
+        finally:
+            if os.name == "nt":
+                link.rmdir()
+            else:
+                link.unlink()
+        self.assertEqual(packaging.digest(self.cached), self.data["sha256"])
+
+    # Purpose: Require the runtime's entry source in addition to version metadata when computing source identity.
+    # Inputs: A real inert wheel with its package entry source removed while retaining the remaining payload.
+    # Outputs: Runtime identity refuses an incomplete package rather than producing an apparently valid digest.
+    def test_runtime_identity_requires_complete_source(self):
+        files = packaging.wheel_files(self.wheel)
+        del files["nltk/__init__.py"]
+        mutant = self.root / "incomplete-runtime.whl"
+        with zipfile.ZipFile(mutant, "w") as archive:
+            for name, payload in files.items():
+                archive.writestr(name, payload)
+        with patch.object(build, "wheel_path", return_value=mutant), self.assertRaisesRegex(ValueError, "incomplete"):
+            build.runtime_source_sha256()
+
+    # Purpose: Reject ambiguous package identities before canonical packaging or source admission can select one header.
+    # Inputs: Tiny inert wheels with missing, conflicting, repeated or incorrect Name/Version declarations.
+    # Outputs: Both consumers reject each malformed identity with ValueError and never publish a canonical wheel.
+    def test_metadata_identity_is_single_and_unambiguous(self):
+        files = packaging.wheel_files(self.wheel)
+        member = f"nltk-{self.data['version']}.dist-info/METADATA"
+        version = self.data["version"]
+        variants = (
+            f"Version: {version}\n\n",
+            "Name: nltk\n\n",
+            f"Name: nltk\nName: other\nVersion: {version}\n\n",
+            f"Name: nltk\nName: nltk\nVersion: {version}\n\n",
+            f"Name: nltk\nVersion: {version}\nVersion: other\n\n",
+            f"Name: other\nVersion: {version}\n\n",
+        )
+        mutant, output = self.root / "identity-variant.whl", self.root / "canonical.whl"
+        for metadata in variants:
+            with zipfile.ZipFile(mutant, "w") as archive:
+                for name, content in files.items():
+                    archive.writestr(name, metadata.encode("ascii") if name == member else content)
+            data = self.data | {"size": mutant.stat().st_size, "sha256": packaging.digest(mutant)}
+            with self.subTest(metadata=metadata):
+                with self.assertRaises(ValueError):
+                    packaging.canonical_wheel(mutant, output, data, project="nltk")
+                self.assertFalse(output.exists())
+                with self.assertRaises(ValueError):
+                    build.verify_wheel(mutant, data)
+
+    # Purpose: Admit source-artifact extents before reading or expanding even an otherwise valid ZIP.
+    # Inputs: An owned tiny wheel with a test-only budget one byte below its actual extent.
+    # Outputs: Both digesting and wheel parsing reject the extent before consuming its payload.
+    def test_shared_artifact_extent_admission(self):
+        with patch.object(packaging, "MAX_SOURCE_BYTES", self.wheel.stat().st_size - 1):
+            with self.assertRaisesRegex(ValueError, "artifact exceeds"):
+                packaging.digest(self.wheel)
+            with self.assertRaisesRegex(ValueError, "wheel exceeds"):
+                packaging.wheel_files(self.wheel)
 
     def setUp(self):
         """Purpose: Keep contracts offline. Inputs: Owned fixture. Outputs: Isolated asset/cache and cleanup."""

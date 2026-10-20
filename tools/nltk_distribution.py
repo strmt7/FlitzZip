@@ -62,10 +62,10 @@ def verify_wheel(path: Path, data: dict) -> Path:
     metadata = BytesParser().parsebytes(files[prefix + "METADATA"])
     wheel = BytesParser().parsebytes(files[prefix + "WHEEL"])
     if (
-        metadata["Name"] != "nltk"
-        or metadata["Version"] != data["version"]
+        metadata.get_all("Name") != ["nltk"]
+        or metadata.get_all("Version") != [data["version"]]
         or files["nltk/VERSION"].decode("ascii").strip() != data["version"]
-        or wheel["Root-Is-Purelib"] != "true"
+        or wheel.get_all("Root-Is-Purelib") != ["true"]
         or wheel.get_all("Tag") != ["py3-none-any"]
         or len(files[prefix + "licenses/LICENSE.txt"]) < 100
         or len(files[prefix + "licenses/AUTHORS.md"]) < 100

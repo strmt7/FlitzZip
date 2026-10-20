@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +16,62 @@ from tools import license_inventory as inventory
 
 class LicenseInventoryTests(unittest.TestCase):
     """Exercise actual repository manifests and failing copies without fetching dependencies."""
+
+    # Purpose: Reject redirected notice sources even when their targets stay inside the owned fixture repository.
+    # Inputs: A real Windows junction or POSIX directory link leading to an otherwise valid text file.
+    # Outputs: Admission rejects the redirect; cleanup removes only the owned link and leaves its target intact.
+    def test_notice_source_reparse_boundary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target, link = root / "notice-target", root / "notice-link"
+            target.mkdir()
+            (target / "NOTICE.txt").write_text("owned notice fixture", encoding="utf-8")
+            if os.name == "nt":
+                subprocess.run(
+                    ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+            else:
+                link.symlink_to(target, target_is_directory=True)
+            try:
+                with self.assertRaisesRegex(ValueError, "reparse point"):
+                    inventory.notice_source(root, "notice-link/NOTICE.txt")
+            finally:
+                if os.name == "nt":
+                    link.rmdir()
+                else:
+                    link.unlink()
+            self.assertEqual((target / "NOTICE.txt").read_text(), "owned notice fixture")
+
+    # Purpose: Require unique, attributed development notices rather than accepting duplicated provenance claims.
+    # Inputs: A real-manifest fixture with one repeated development-notice record.
+    # Outputs: Audit rejects the ambiguity before making a coverage claim.
+    def test_duplicate_development_notice_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.copy_sources(root)
+            path = root / inventory.DEVELOPMENT
+            manifest = json.loads(path.read_text())
+            manifest["notices"].append(dict(manifest["notices"][0]))
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unique sources"):
+                inventory.audit(root)
+
+    # Purpose: Verify the actual inventory entry point preserves its legal and release-qualification limitations.
+    # Inputs: Repository notices and real CLI invocation; no third-party runtime is installed or executed.
+    # Outputs: Successful JSON reports notice coverage without claiming legal clearance or release verification.
+    def test_real_cli_retains_qualification_limits(self):
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [sys.executable, "-m", "tools.license_inventory"], cwd=root, capture_output=True, text=True, timeout=30
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = json.loads(result.stdout)
+        self.assertTrue(record["coverage_passed"])
+        self.assertFalse(record["legal_clearance_claimed"])
+        self.assertFalse(record["release_source_and_rebuild_verified"])
 
     def copy_sources(self, root: Path):
         """Purpose: Build a minimal fixture from real manifests. Inputs: Temp root. Outputs: Copied notice sources."""

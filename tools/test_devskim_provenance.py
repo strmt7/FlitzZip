@@ -1,10 +1,15 @@
 """Offline regression tests for package identity and download-budget consistency."""
 
 import hashlib
+import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from tools import devskim_provenance as provenance
 
@@ -13,6 +18,42 @@ from tools import devskim_provenance as provenance
 # Inputs: Tiny temporary packages and copied canonical metadata.
 # Outputs: unittest assertions; no downloaded or executable files are needed.
 class ProvenanceTests(unittest.TestCase):
+    # Purpose: Qualify the hosted environment-output entry point against its reviewed canonical package pin.
+    # Inputs: Real CLI with --emit-env and the repository manifest; no download or scanner execution occurs.
+    # Outputs: The exact four-line environment contract is emitted successfully without additional text.
+    def test_real_cli_emits_reviewed_environment(self):
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [sys.executable, "-m", "tools.devskim_provenance", "--emit-env"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, provenance.environment_lines(provenance.read_manifest()))
+
+    # Purpose: Require actual package hashing before the CLI can report successful artifact verification.
+    # Inputs: A tiny owned package, matching test pin and a subsequently substituted byte.
+    # Outputs: The admitted package produces success; replacement bytes fail through the same verifier.
+    def test_package_cli_checks_bytes_before_success(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / "fixture.nupkg"
+            payload = b"owned nonexecutable provenance fixture"
+            package.write_bytes(payload)
+            pin = {"nupkg_bytes": len(payload), "nupkg_sha256": hashlib.sha256(payload).hexdigest().upper()}
+            output = io.StringIO()
+            with (
+                patch.object(provenance, "read_manifest", return_value=pin),
+                patch.object(sys, "argv", ["devskim_provenance", "--package", str(package)]),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(provenance.main(), 0)
+                self.assertIn("size and SHA-256 verified", output.getvalue())
+                package.write_bytes(payload[:-1] + b"!")
+                with self.assertRaises(ValueError):
+                    provenance.main()
+
     # Purpose: Reject malformed/injectable versions, digests, sizes, schemas, and extra fields.
     # Inputs: One mutated canonical field per case. Outputs: ValueError for each invalid pin.
     def test_invalid_manifest(self):

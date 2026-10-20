@@ -68,12 +68,15 @@ def wheel_files(path: Path) -> dict[str, bytes]:
 
 
 def canonical_wheel(built: Path, destination: Path, data: dict, *, project: str) -> None:
-    """Purpose: Make pure wheels reproducible. Inputs: Standard wheel/recipe. Outputs: Canonical standard wheel."""
+    """Purpose: Make pure wheels reproducible without accepting ambiguous package identities.
+    Inputs: Standard wheel and recipe. Outputs: Canonical wheel; missing or repeated identity headers fail first.
+    """
     files = wheel_files(built)
     info = f"{project}-{data['version']}.dist-info/"
     metadata_path = info + "METADATA"
     metadata = BytesParser().parsebytes(files[metadata_path])
-    if metadata["Name"].casefold() != project or metadata["Version"] != data["version"]:
+    names = metadata.get_all("Name", [])
+    if len(names) != 1 or names[0].casefold() != project or metadata.get_all("Version") != [data["version"]]:
         raise ValueError(f"{project} wheel identity mismatch")
     # Setuptools writes platform line endings; normalize generated metadata only.
     files[metadata_path] = files[metadata_path].replace(b"\r\n", b"\n")
