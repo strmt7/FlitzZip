@@ -60,8 +60,8 @@ Assert-CiContractPlan -Path '.github/workflows/security-code-scanning.yml' -Requ
 
 # Load the actual production comparison helper without executing any selected command.
 . $runner -ChangedPath 'README.md' -PlanOnly | Out-Null
-foreach ($path in @('tools/requirements/crawl4ai.txt', 'tools/requirements/nltk-build.txt',
-        'tools/crawl4ai_tool.py', 'tools/crawl4ai_source_build.py', 'tools/nltk_security_build.py',
+foreach ($path in @('tools/requirements/crawl4ai.txt', 'tools/requirements/python-build.txt',
+        'tools/crawl4ai_tool.py', 'tools/crawl4ai_source_build.py', 'tools/nltk_distribution.py', 'tools/python_wheel.py',
         'tools/crawl4ai_download_opener.py', 'third_party/upstream/crawl4ai/0.9.4/build.json',
         'third_party/upstream/nltk/source.zip', '.github/workflows/component-contracts.yml')) {
     if (-not (Test-FlitzZipResearchLockChange -Paths @('README.md', $path))) {

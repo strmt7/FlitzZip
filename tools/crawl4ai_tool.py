@@ -57,10 +57,10 @@ def cache_home(override: str | None = None) -> Path:
 
 def environment_paths(home: Path) -> tuple[Path, Path, str]:
     """Purpose: Isolate dependency revisions. Inputs: Cache root. Outputs: Environment, Python and lock identity."""
-    from tools import crawl4ai_source_build, nltk_security_build
+    from tools import crawl4ai_source_build, nltk_distribution
 
     identity = hashlib.sha256(
-        (text_identity(LOCK) + nltk_security_build.identity() + crawl4ai_source_build.identity()).encode("ascii")
+        (text_identity(LOCK) + nltk_distribution.identity() + crawl4ai_source_build.identity()).encode("ascii")
     ).hexdigest()
     name = f"{VERSION}-py{sys.version_info.major}{sys.version_info.minor}-{identity[:16]}"
     directory = home / name
@@ -195,7 +195,7 @@ def run(command: list[str], env: dict[str, str], timeout: int = 900, *, source_o
 
 def verify_versions(python: Path, env: dict[str, str]) -> None:
     """Purpose: Verify dependency/repair bytes. Inputs: Isolated runtime/environment. Outputs: Exact pins or error."""
-    from tools import crawl4ai_source_build, nltk_security_build
+    from tools import crawl4ai_source_build, nltk_distribution
 
     pins = dict(re.findall(r"^([\w-]+)==([^\s]+)", LOCK.read_text(encoding="utf-8"), re.M))
     script = (
@@ -205,7 +205,7 @@ def verify_versions(python: Path, env: dict[str, str]) -> None:
         "bad.extend(n for n,h in expected.items() if "
         "hashlib.sha256(dist.locate_file(n).read_bytes().replace(b'\\r\\n',b'\\n')).hexdigest()!=h); "
         "sys.exit('Locked dependency or crawler repair bytes changed: '+','.join(bad)) if bad else None; "
-        "from tools.nltk_security_build import verify_installed_runtime; verify_installed_runtime(sys.argv[3])"
+        "from tools.nltk_distribution import verify_installed_runtime; verify_installed_runtime(sys.argv[3])"
     )
     run(
         [
@@ -214,7 +214,7 @@ def verify_versions(python: Path, env: dict[str, str]) -> None:
             script,
             json.dumps(pins),
             json.dumps(crawl4ai_source_build.runtime_hashes()),
-            nltk_security_build.runtime_source_sha256(),
+            nltk_distribution.runtime_source_sha256(),
         ],
         env,
         60,
@@ -289,9 +289,9 @@ def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
             return python
     if not python.exists():
         venv.EnvBuilder(with_pip=True).create(directory)
-    from tools import crawl4ai_source_build, nltk_security_build
+    from tools import crawl4ai_source_build, nltk_distribution
 
-    repaired_wheel = nltk_security_build.ensure_wheel(home)
+    nltk_wheel = nltk_distribution.wheel_path()
     crawler_wheel = crawl4ai_source_build.ensure_wheel(home)
     run(
         [
@@ -303,7 +303,7 @@ def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
             "--require-hashes",
             "--only-binary=:all:",
             "--find-links",
-            str(repaired_wheel.parent),
+            str(nltk_wheel.parent),
             "--find-links",
             str(crawler_wheel.parent),
             "-r",
@@ -341,12 +341,12 @@ def install(home: Path) -> Path:
 
 def check_lock(home: Path, requirements: Path = LOCK) -> None:
     """Purpose: Reject incompatible dependencies. Inputs: Cache/lock. Outputs: Resolver result; no runtime install."""
-    from tools import crawl4ai_source_build, nltk_security_build
+    from tools import crawl4ai_source_build, nltk_distribution
 
     if not (3, 13) <= sys.version_info[:2] <= (3, 14):
         raise ValueError("Use CPython 3.13 or 3.14; this lock has not qualified other Python versions")
     home.mkdir(parents=True, exist_ok=True)
-    repaired = nltk_security_build.ensure_wheel(home)
+    nltk_wheel = nltk_distribution.wheel_path()
     crawler = crawl4ai_source_build.ensure_wheel(home)
     with tempfile.TemporaryDirectory(prefix="lock-validation-", dir=home) as owned:
         directory = Path(owned)
@@ -363,7 +363,7 @@ def check_lock(home: Path, requirements: Path = LOCK) -> None:
                 "--require-hashes",
                 "--only-binary=:all:",
                 "--find-links",
-                str(repaired.parent),
+                str(nltk_wheel.parent),
                 "--find-links",
                 str(crawler.parent),
                 "-r",

@@ -64,12 +64,14 @@ override is available through `FLITZZIP_CRAWL4AI_HOME` or `--home <absolute-path
 it must stay outside the source checkout. Browser downloads, package files and
 local Crawl4AI caches are installation data and are not committed or packaged.
 The environment identity includes Python's version, the complete lock hash and
-both pinned source/build identities. The repaired pure-Python wheels are built
-with pinned setuptools tooling in a separate external environment and admitted
-by their exact digests before normal dependency installation. A modified API
-regression also covers the source-built crawler's real HTTP download consumer.
+the pinned Crawl4AI build and official NLTK distribution identities. Crawl4AI's
+repaired pure-Python wheel is built with pinned setuptools tooling in a separate
+external environment. NLTK uses its unmodified official release-candidate wheel;
+see [distribution provenance](../third_party/upstream/nltk/README.md).
+Both wheels are admitted by exact digests before normal dependency installation.
+An API regression covers the source-built crawler's real HTTP download consumer.
 Its original published source archive, complete license and attribution remain
-unchanged. Both repaired wheels use normal hash-locked dependency resolution;
+unchanged. Both wheels use normal hash-locked dependency resolution;
 the installer verifies the installed crawler repair bytes even when reusing a
 qualified environment. No installed source is edited or monkey-patched.
 Crawler runtime commands use Python's standard `-X pycache_prefix` with a
@@ -92,12 +94,14 @@ passes. Setup progress stays hidden; failures retain bounded diagnostics.
 Neither installation nor crawling requires a change to the archive application.
 
 OSV is given explicit parser/path arguments for both development dependency
-locks. Dependabot covers their directory. The pinned revision passed a
+locks. Dependabot covers their directory. An earlier dependency cohort passed a
 [one-time fresh-install qualification](https://github.com/strmt7/FlitzZip/actions/runs/37342384453)
 on Windows and macOS with Python 3.13, and Linux with Python 3.13 and 3.14.
-That run built and admitted both repaired wheels, resolved dependencies normally,
+That historical run built and admitted both repaired wheels, resolved dependencies normally,
 ran `pip check`, and passed the model and download consumers. The dedicated
-qualification workflow was then retired at the maintainer's request.
+qualification workflow was then retired at the maintainer's request. It does not
+qualify later dependency bytes; each changed cohort needs affected-host and
+installed-consumer evidence.
 
 Dependency updates must still resolve as a complete graph. Run
 `python -B tools/crawl4ai_tool.py check-lock` before admitting a changed lock.
@@ -127,8 +131,8 @@ normal administrator or container-image process. The documented upstream command
 is `<environment-python> -m playwright install-deps chromium`; do not silently
 escalate privileges. The Python tool is portable; FlitzZip's native application
 still has its separate Windows-only build requirements. Linux/macOS package
-installation and API execution were validated by the hosted qualification above;
-public browser extraction was qualified on Windows.
+installation and API execution for the earlier cohort were validated by the
+hosted qualification above; current qualification must bind the current lock.
 
 ## Headless Operation And Host Policy
 

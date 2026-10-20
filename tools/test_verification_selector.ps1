@@ -554,8 +554,8 @@ foreach ($corpusPath in @('tools/neutron_corpus_benchmark.py', 'tools/neutron_co
 foreach ($crawlerPath in @('tools/crawl4ai_tool.py', 'tools/crawl4ai_research.py', 'tools/test_crawl4ai_tool.py',
         'tools/crawl4ai_source_build.py', 'tools/test_crawl4ai_source_build.py',
         'tools/crawl4ai_download_opener.py', 'tools/test_crawl4ai_downloads.py', 'third_party/upstream/crawl4ai/0.9.4/build.json',
-        'tools/nltk_security_build.py', 'tools/test_nltk_security_build.py', 'tools/test_nltk_model_security.py',
-        'third_party/upstream/nltk/README.md', 'tools/requirements/nltk-build.txt',
+        'tools/nltk_distribution.py', 'tools/python_wheel.py', 'tools/test_nltk_distribution.py', 'tools/test_nltk_model_security.py',
+        'third_party/upstream/nltk/README.md', 'tools/requirements/python-build.txt',
         'tools/crawl4ai_sites.json', 'tools/requirements/crawl4ai.txt', 'docs/crawl4ai.md')) {
     $crawlerPlan = Get-FlitzZipVerificationPlan -ChangedPath @($crawlerPath)
     Assert-Selector (Test-RequiredCommand -Plan $crawlerPlan -Id 'crawl4ai-contracts') "crawler inputs require offline contracts: $crawlerPath"
@@ -571,10 +571,10 @@ foreach ($crawlerSourcePath in @('tools/crawl4ai_source_build.py', 'tools/test_c
     Assert-Selector (-not (Test-Workflow -Plan $sourcePlan -Name 'crawl4ai-security')) 'qualified research setup must not select a retired continuous workflow'
     Assert-Selector (-not (Test-RequiredCommand -Plan $sourcePlan -Id 'release-build')) 'crawler source changes do not build the archive application'
 }
-foreach ($nltkPath in @('tools/nltk_security_build.py', 'tools/test_nltk_security_build.py', 'tools/test_nltk_model_security.py',
-        'tools/requirements/nltk-build.txt', 'tools/requirements/crawl4ai.txt', 'third_party/upstream/nltk/README.md')) {
+foreach ($nltkPath in @('tools/nltk_distribution.py', 'tools/python_wheel.py', 'tools/test_nltk_distribution.py', 'tools/test_nltk_model_security.py',
+        'tools/requirements/python-build.txt', 'tools/requirements/crawl4ai.txt', 'third_party/upstream/nltk/README.md')) {
     $nltkPlan = Get-FlitzZipVerificationPlan -ChangedPath @($nltkPath)
-    Assert-Selector (Test-RequiredCommand -Plan $nltkPlan -Id 'nltk-source-contracts') "NLTK source admission requires offline contracts: $nltkPath"
+    Assert-Selector (Test-RequiredCommand -Plan $nltkPlan -Id 'nltk-distribution-contracts') "NLTK source admission requires offline contracts: $nltkPath"
     Assert-Selector (-not (Test-Workflow -Plan $nltkPlan -Name 'crawl4ai-security')) "NLTK installation admission must not select a retired continuous workflow: $nltkPath"
     foreach ($productId in @('release-build', 'unit-tests', 'gui-smoke', 'package-smoke')) {
         Assert-Selector (-not (Test-RequiredCommand -Plan $nltkPlan -Id $productId)) "NLTK tooling changes must not invoke unrelated product work: $productId"

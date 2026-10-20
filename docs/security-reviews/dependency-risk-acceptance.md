@@ -1,25 +1,32 @@
-# Current Development Dependency Acceptance
+# Development Dependency Remediation
 
-On 2026-10-06 the maintainer explicitly accepted the currently open high-severity
-NLTK advisory for this development round: "the high-severity is acceptable for
-now since it cannot be solved."
+The earlier temporary acceptance of
+[NLTK advisory GHSA-8mgp-746c-j5xp](https://github.com/advisories/GHSA-8mgp-746c-j5xp)
+applied to the isolated development crawler's previous dependency pin. The
+crawler now uses the unmodified official wheel from
+[v3.10.4-rc1](https://github.com/nltk/nltk/releases/tag/v3.10.4-rc1), whose package
+metadata reports version `3.10.4`. This release candidate was specifically
+authorized by the maintainer after qualification; it does not establish a
+general policy of adopting prereleases or overriding dependency constraints.
 
-This acceptance covers only [Dependabot alert 23](https://github.com/strmt7/FlitzZip/security/dependabot/23),
-[GHSA-8mgp-746c-j5xp](https://github.com/advisories/GHSA-8mgp-746c-j5xp), in the
-isolated development crawler. It does not cover another dependency, advisory,
-runtime component or later source revision. The alert remains visible.
+The [upstream distribution record](../../third_party/upstream/nltk/3.10.4-rc1/distribution.json)
+binds exact asset bytes and original notices. Installed-source admission,
+model-artifact failure and positive-flow regressions, selected upstream
+path-security suites and real crawler consumers qualify the candidate.
+Platform and optional-feature skips remain explicit. The locally retained
+upstream wheel/source comparison and test receipts are evidence for that exact
+candidate, not a claim that every optional NLTK feature has been tested.
 
-The crawler uses `3.10.3+flitzzip.security1.g1bd574cfd`, built from official NLTK
-GitHub source using the [pinned build record](../../third_party/upstream/nltk/1bd574cfd4e3bca82c6b145d9271a646df410707/build.json).
-The pin includes merged upstream repairs beyond the published 3.10.3 release.
-The downstream version distinguishes that source build; it does not pretend
-that an official fixed release exists. The latest-release and advisory metadata
-checked for this review still list 3.10.3 and no first patched version.
+Aiohttp is pinned to `3.14.4`, the patched version for
+[GHSA-5wr8-gcqf-gqf3](https://github.com/advisories/GHSA-5wr8-gcqf-gqf3),
+[GHSA-494j-54xm-rwp3](https://github.com/advisories/GHSA-494j-54xm-rwp3) and
+[GHSA-2g87-pp6c-29x5](https://github.com/advisories/GHSA-2g87-pp6c-29x5).
+The complete crawler graph resolves normally. The upstream security regressions
+exercise initial-connection deadlines, Secure cookies and bounded parser,
+WebSocket, cookie and decompression behavior.
 
-Retain the existing source-integrity, original-failure, installed-consumer and
-crawler qualification evidence. Successful crawling alone does not prove an
-advisory fixed. Reassess this acceptance when upstream publishes a fixed release,
-updates the advisory, or the pinned source/build/dependency environment changes.
-Prefer the compatible fixed official release after verifying the real consumer.
-Do not generalize the earlier exceptional dependency-version override into
-routine installation behavior.
+Retain raw reports and verify the exact pushed revision's dependency alerts and
+workflows. A changed lock, successful package install or version string alone
+does not close a finding. New source, environment or advisory information
+requires reviewing the affected boundary; the old acceptance never transfers
+to another dependency or source revision.

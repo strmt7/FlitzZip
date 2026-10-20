@@ -114,6 +114,7 @@ class ScannerMetadataReviewTests(unittest.TestCase):
             ".github/scanner-secret-reviews-crawl4ai.json",
             ".github/scanner-secret-reviews-crawl4ai-tests.json",
             ".github/requirements/semgrep-distribution.json",
+            "third_party/upstream/nltk/3.10.4-rc1/distribution.json",
         ):
             self.name = name
             self.path = self.root / name

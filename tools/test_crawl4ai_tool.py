@@ -45,7 +45,7 @@ class CrawlerContracts(unittest.TestCase):
                         raise subprocess.CalledProcessError(1, command)
 
                 with (
-                    patch("tools.nltk_security_build.ensure_wheel", return_value=home / "nltk/a.whl"),
+                    patch("tools.nltk_distribution.wheel_path", return_value=home / "nltk/a.whl"),
                     patch("tools.crawl4ai_source_build.ensure_wheel", return_value=home / "crawler/b.whl"),
                     patch.object(tool.venv, "EnvBuilder") as builder,
                     patch.object(tool, "run", side_effect=resolve),
@@ -143,7 +143,7 @@ class CrawlerContracts(unittest.TestCase):
 
     def test_source_only_runtime_ignores_unchecked_bytecode_and_preserves_cache(self):
         """Purpose: Refuse stale execution. Inputs: Sentinel cache. Outputs: Reviewed source and unchanged old cache."""
-        from tools import nltk_security_build as build
+        from tools import nltk_distribution as build
 
         temporary_root = Path(tempfile.gettempdir()).resolve()
         with tempfile.TemporaryDirectory(dir=temporary_root) as temporary:
@@ -221,15 +221,16 @@ class CrawlerContracts(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_provision_resolves_repaired_wheel_normally_before_admission(self):
+    def test_provision_resolves_upstream_wheel_normally_before_admission(self):
         """Purpose: Keep dependency/security gates mandatory. Inputs: Mocked setup. Outputs: Exact install order."""
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
             python = directory / "python"
             python.touch()
-            wheel = directory / "reviewed/nltk-security.whl"
+            from tools.nltk_distribution import wheel_path
+
+            wheel = wheel_path()
             with (
-                patch("tools.nltk_security_build.ensure_wheel", return_value=wheel),
                 patch("tools.crawl4ai_source_build.ensure_wheel", return_value=wheel),
                 patch.object(tool, "run") as run,
             ):
@@ -269,7 +270,6 @@ class CrawlerContracts(unittest.TestCase):
                         raise subprocess.CalledProcessError(1, command)
 
                 with (
-                    patch("tools.nltk_security_build.ensure_wheel", return_value=directory / "nltk.whl"),
                     patch("tools.crawl4ai_source_build.ensure_wheel", return_value=directory / "crawl4ai.whl"),
                     patch.object(tool, "run", side_effect=admit),
                     self.assertRaises(subprocess.CalledProcessError),
@@ -289,7 +289,7 @@ class CrawlerContracts(unittest.TestCase):
             tool.write_install_receipt(receipt, original)
             with (
                 patch.object(tool, "verify_versions"),
-                patch("tools.nltk_security_build.ensure_wheel") as builder,
+                patch("tools.nltk_distribution.wheel_path") as builder,
                 patch.object(tool, "run", side_effect=ValueError("security contract failed")),
                 self.assertRaisesRegex(ValueError, "security contract failed"),
             ):
@@ -368,7 +368,7 @@ class CrawlerContracts(unittest.TestCase):
             receipt.unlink()
             with (
                 patch.object(tool, "verify_versions"),
-                patch("tools.nltk_security_build.ensure_wheel", return_value=home / "fixture.whl"),
+                patch("tools.nltk_distribution.wheel_path", return_value=home / "fixture.whl"),
                 patch("tools.crawl4ai_source_build.ensure_wheel", return_value=home / "fixture.whl"),
                 patch.object(tool, "tool_environment", return_value={"PYTHONUTF8": "1"}),
                 patch.object(

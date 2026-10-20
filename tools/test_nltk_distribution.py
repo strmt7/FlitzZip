@@ -1,0 +1,224 @@
+"""Official NLTK distribution and shared pure-wheel artifact contracts."""
+
+from __future__ import annotations
+
+import base64
+import csv
+import hashlib
+import io
+import json
+import shutil
+import tempfile
+import unittest
+import warnings
+import zipfile
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from tools import nltk_distribution as build
+from tools import python_wheel as packaging
+
+
+class DistributionTests(unittest.TestCase):
+    """Preserve upstream identity, complete source admission and portable standard packaging."""
+
+    def test_official_wheel_retains_version_license_and_authors(self):
+        """Purpose: Avoid fabricated release identities. Inputs: Pinned official asset. Outputs: Exact provenance."""
+        data = build.distribution()
+        self.assertEqual(data["version"], "3.10.4")
+        self.assertEqual(data["tag"], "v3.10.4-rc1")
+        self.assertEqual(data["release_kind"], "release_candidate")
+        self.assertIn("GHSA-8mgp-746c-j5xp", data["advisories"])
+        files = packaging.wheel_files(build.wheel_path())
+        self.assertEqual(files["nltk/VERSION"].decode().strip(), data["version"])
+        self.assertEqual(
+            files["nltk-3.10.4.dist-info/licenses/LICENSE.txt"],
+            (build.ROOT / "docs/licenses/NLTK-3.10.4.txt").read_bytes(),
+        )
+        self.assertGreater(len(files["nltk-3.10.4.dist-info/licenses/AUTHORS.md"]), 100)
+        self.assertFalse(any("FLITZZIP_BUILD_NOTICE" in name for name in files))
+
+    def test_provenance_and_wheel_tampering_refuse_installation(self):
+        """Purpose: Refuse substituted packages. Inputs: Changed metadata/bytes. Outputs: Installation refusal."""
+        data = build.distribution()
+        wheel = build.wheel_path()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            shutil.copyfile(wheel, root / wheel.name)
+            record = root / "distribution.json"
+            with patch.object(build, "SOURCE_ROOT", root):
+                for changes in (
+                    {"schema": True},
+                    {"project": "another"},
+                    {"version": None},
+                    {"tag": None},
+                    {"filename": "../wheel.whl"},
+                    {"version": "3.10.3"},
+                    {"url": "https://example.invalid/wheel.whl"},
+                    {"release_kind": "stable"},
+                    {"size": True},
+                    {"sha256": "not a digest"},
+                    {"sha256": None},
+                    {"size": data["size"] + 1},
+                    {"sha256": hashlib.sha256(b"substituted").hexdigest()},
+                ):
+                    record.write_text(json.dumps(data | changes), encoding="utf-8")
+                    with self.subTest(changes=changes), self.assertRaises(ValueError):
+                        build.wheel_path()
+                record.write_text(json.dumps(data), encoding="utf-8")
+                self.assertEqual(build.wheel_path(), root / wheel.name)
+                (root / wheel.name).write_bytes(b"substituted")
+                with self.assertRaisesRegex(ValueError, "digest or size"):
+                    build.wheel_path()
+
+    def test_wheel_metadata_rejects_escapes_aliases_and_special_members(self):
+        """Purpose: Validate complete archives before use. Inputs: Malformed owned wheels. Outputs: Refusals."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cases = (
+                ["../escape"],
+                ["/absolute"],
+                ["drive:stream"],
+                ["a.py", "A.py"],
+                ["first.py", "folder//second.py"],
+                ["trailing./file.py"],
+                ["a.py", "a.py"],
+            )
+            for index, names in enumerate(cases):
+                archive = root / f"bad-{index}.whl"
+                with zipfile.ZipFile(archive, "w") as wheel, warnings.catch_warnings():
+                    warnings.simplefilter("ignore", UserWarning)
+                    for name in names:
+                        wheel.writestr(name, b"# owned inert fixture\n")
+                with self.subTest(names=names), self.assertRaisesRegex(ValueError, "Unsafe or duplicate"):
+                    packaging.wheel_files(archive)
+            for kind in (0o120777, 0o010000, 0o020000, 0o060000, 0o040000):
+                archive = root / f"special-{kind}.whl"
+                with zipfile.ZipFile(archive, "w") as wheel:
+                    member = zipfile.ZipInfo("model.py")
+                    member.external_attr = kind << 16
+                    wheel.writestr(member, b"owned inert fixture")
+                with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, "Unsafe or duplicate"):
+                    packaging.wheel_files(archive)
+            with patch.object(packaging, "MAX_SOURCE_BYTES", 1), self.assertRaisesRegex(ValueError, "extent"):
+                packaging.wheel_files(archive)
+            self.assertFalse((root / "escape").exists())
+
+    def test_digest_sidecar_requires_one_complete_identity(self):
+        """Purpose: Reject incomplete builder admission. Inputs: Malformed sidecars. Outputs: Errors."""
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "wheel.sha256"
+            for content in ("", "garbage file.whl", hashlib.sha256(b"fixture").hexdigest()):
+                path.write_text(content, encoding="ascii")
+                with self.assertRaises(ValueError):
+                    packaging.expected_digest(path)
+
+    def test_installed_runtime_binds_original_sources_without_import_or_version_fallback(self):
+        """Purpose: Reject installed source drift. Inputs: Original owned tree and mutations. Outputs: Exact refusal."""
+        expected = build.runtime_source_sha256()
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp)
+            for name, contents in packaging.wheel_files(build.wheel_path()).items():
+                path = source.joinpath(*name.split("/"))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(contents)
+            root = source / "nltk"
+            distribution = SimpleNamespace(locate_file=lambda name: source / name)
+            with patch("importlib.metadata.distribution", return_value=distribution):
+                build.verify_installed_runtime(expected)
+                for name in (
+                    "pathsec.py",
+                    "picklesec.py",
+                    "data.py",
+                    "tag/perceptron.py",
+                    "parse/transitionparser.py",
+                    "classify/maxent.py",
+                    "VERSION",
+                    "__init__.py",
+                ):
+                    path = root / name
+                    original = path.read_bytes()
+                    path.write_bytes(b"raise RuntimeError('integrity probe must never import package code')\n")
+                    with self.assertRaisesRegex(ValueError, "runtime source changed"):
+                        build.verify_installed_runtime(expected)
+                    path.write_bytes(original)
+                for name in ("unexpected.py", "unexpected.PY"):
+                    extra = root / name
+                    extra.write_text("# unexpected installed source\n", encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "runtime source changed"):
+                        build.verify_installed_runtime(expected)
+                    extra.unlink()
+                for suffix in (".pyd", ".so", ".dll", ".dylib"):
+                    extra = root / ("unexpected" + suffix)
+                    extra.write_bytes(b"inert native file fixture")
+                    with self.assertRaisesRegex(ValueError, "native executable file"):
+                        build.verify_installed_runtime(expected)
+                    extra.unlink()
+                for name in ("unexpected.pyc", "unexpected.PYC", "unexpected.pyo", "tag/unexpected.pyc"):
+                    extra = root / name
+                    extra.write_bytes(b"inert sourceless file fixture")
+                    with self.assertRaisesRegex(ValueError, "sourceless bytecode"):
+                        build.verify_installed_runtime(expected)
+                    extra.unlink()
+                cache = root / "__pycache__"
+                cache.mkdir()
+                (cache / "__init__.cpython-313.pyc").write_bytes(b"preserved cache fixture")
+                build.verify_installed_runtime(expected)
+                missing = root / "tag/perceptron.py"
+                original = missing.read_bytes()
+                missing.unlink()
+                with self.assertRaisesRegex(ValueError, "runtime source changed"):
+                    build.verify_installed_runtime(expected)
+                missing.write_bytes(original)
+                build.verify_installed_runtime(expected)
+                with self.assertRaisesRegex(ValueError, "Malformed NLTK runtime"):
+                    build.verify_installed_runtime("unreviewed")
+                with patch.object(build, "MAX_SOURCE_BYTES", 1), self.assertRaisesRegex(ValueError, "byte budget"):
+                    build.verify_installed_runtime(expected)
+
+    def test_canonical_wheel_is_host_independent_and_record_valid(self):
+        """Purpose: Preserve standard wheel integrity. Inputs: Equivalent platform ZIPs. Outputs: Equal valid wheels."""
+        data = {"version": "1.0.0", "source_date_epoch": 1704067200}
+        info = f"nltk-{data['version']}.dist-info/"
+        payloads = {
+            "nltk/model.py": b"# Original runtime bytes\nvalue = 1\n",
+            info + "METADATA": f"Name: nltk\nVersion: {data['version']}\n\n".encode(),
+            info + "RECORD": b"upstream-generated-placeholder\n",
+            info + "licenses/LICENSE.txt": b"original license fixture\n",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            outputs = []
+            for index in (0, 1):
+                original = directory / f"built-{index}.whl"
+                with zipfile.ZipFile(original, "w") as wheel:
+                    for name, contents in payloads.items() if index == 0 else reversed(list(payloads.items())):
+                        member = zipfile.ZipInfo(name, (2020 + index, 1, 1, 0, 0, 0))
+                        member.create_system = index
+                        if index and name.endswith("METADATA"):
+                            contents = contents.replace(b"\n", b"\r\n")
+                        wheel.writestr(member, contents)
+                output = directory / f"canonical-{index}.whl"
+                packaging.canonical_wheel(original, output, data, project="nltk")
+                outputs.append(output)
+            self.assertEqual(outputs[0].read_bytes(), outputs[1].read_bytes())
+            with zipfile.ZipFile(outputs[0]) as wheel:
+                self.assertEqual(wheel.read("nltk/model.py"), payloads["nltk/model.py"])
+                rows = csv.reader(io.StringIO(wheel.read(info + "RECORD").decode()))
+                for name, value, size in rows:
+                    if name.endswith("/RECORD"):
+                        self.assertEqual((value, size), ("", ""))
+                        continue
+                    contents = wheel.read(name)
+                    expected = base64.urlsafe_b64encode(hashlib.sha256(contents).digest()).rstrip(b"=").decode()
+                    self.assertEqual(value, "sha256=" + expected)
+                    self.assertEqual(int(size), len(contents))
+
+    def test_hosted_scanners_discover_nonstandard_manifest_names(self):
+        """Purpose: Prevent false empty dependency scans. Inputs: Owned scanners. Outputs: Explicit graph discovery."""
+        scanner = (build.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
+        for name in ("crawl4ai", "python-build"):
+            self.assertIn(f"--lockfile=requirements.txt:tools/requirements/{name}.txt", scanner)
+        dependabot = (build.ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
+        self.assertIn("directory: /tools/requirements", dependabot)
