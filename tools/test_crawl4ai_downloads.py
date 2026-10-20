@@ -1,9 +1,11 @@
-"""Exercise installed download and research-result consumers without public network access."""
+"""Exercise installed download, image and research-result consumers without public network access."""
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import importlib.metadata
+import io
 import ipaddress
 import json
 import os
@@ -12,7 +14,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 
 class DownloadContracts(unittest.TestCase):
@@ -25,10 +28,94 @@ class DownloadContracts(unittest.TestCase):
 
         if importlib.metadata.version("crawl4ai") != VERSION:
             raise AssertionError("Download regression requires the exact source-admitted Crawl4AI runtime")
+        from packaging.version import Version
+
+        if Version(importlib.metadata.version("pillow")) < Version("13.0.0"):
+            raise AssertionError("Image-consumer regressions require the fixed Pillow release")
         from crawl4ai.async_crawler_strategy import _nofollow_opener, _safe_download_filepath
 
         cls.opener = staticmethod(_nofollow_opener)
         cls.destination = staticmethod(_safe_download_filepath)
+
+    # Purpose: Qualify patched image decoding and JPEG draft/thumbnail behavior used by research image consumers.
+    # Inputs: Installed Pillow, tiny in-memory PNG/JPEG controls and truncated headers; no external images are opened.
+    # Outputs: The fixed version decodes/resizes expected pixels and refuses incomplete images without disk writes.
+    def test_pillow_security_floor_and_image_decoding(self):
+        from PIL import Image
+
+        for format_name in ("PNG", "JPEG"):
+            encoded = io.BytesIO()
+            with Image.new("RGB", (32, 24), (220, 30, 40)) as original:
+                original.save(encoded, format=format_name)
+            payload = encoded.getvalue()
+            with self.subTest(format=format_name), Image.open(io.BytesIO(payload)) as decoded:
+                self.assertEqual(decoded.size, (32, 24))
+                decoded.thumbnail((8, 8), Image.Resampling.LANCZOS)
+                self.assertEqual(decoded.size, (8, 6))
+                pixel = decoded.getpixel((0, 0))
+                self.assertGreater(pixel[0], pixel[1] + 100)
+                self.assertGreater(pixel[0], pixel[2] + 100)
+            with self.assertRaises(OSError):
+                Image.open(io.BytesIO(payload[:8]))
+
+    # Purpose: Verify the patched JPEG decoder checks actual output against its allocated tile extent.
+    # Inputs: A locally generated tiny JPEG with deliberately undersized decoder metadata, then an intact control.
+    # Outputs: The decoder refuses the inconsistent layout and remains usable for a subsequent valid image.
+    def test_jpeg_decoder_rejects_output_larger_than_declared_tile(self):
+        from PIL import Image
+
+        source = io.BytesIO()
+        with Image.new("RGB", (32, 24), (220, 30, 40)) as original:
+            original.save(source, format="JPEG")
+        with Image.open(io.BytesIO(source.getvalue())) as inconsistent:
+            inconsistent.tile = [inconsistent.tile[0]._replace(extents=(0, 0, 8, 8))]
+            with self.assertRaisesRegex(OSError, "broken data stream"):
+                inconsistent.load()
+        with Image.open(io.BytesIO(source.getvalue())) as control:
+            control.load()
+            self.assertEqual(control.size, (32, 24))
+            self.assertGreater(control.getpixel((0, 0))[0], 200)
+
+    # Purpose: Qualify the real crawler's JPEG-to-PNG screenshot stitching through the installed image library.
+    # Inputs: Browser-I/O doubles supplying two tiny JPEG segments; real upstream strategy and image operations.
+    # Outputs: Correct image extent/color order and restored viewport, rejecting the strategy's error placeholder.
+    def test_installed_screenshot_image_consumer(self):
+        from crawl4ai import BrowserConfig
+        from crawl4ai.async_crawler_strategy import AsyncPlaywrightCrawlerStrategy
+        from crawl4ai.async_logger import AsyncLogger
+        from PIL import Image
+
+        async def capture():
+            """Purpose: Exercise actual image operations. Inputs: Owned JPEG segments. Outputs: Captured PNG bytes."""
+            frames = []
+            for height, color in ((4, (240, 0, 0)), (3, (0, 0, 240))):
+                encoded = io.BytesIO()
+                with Image.new("RGB", (32, height), color) as image:
+                    image.save(encoded, format="JPEG")
+                frames.append(encoded.getvalue())
+            page = SimpleNamespace(
+                viewport_size={"width": 32, "height": 4}, evaluate=AsyncMock(), screenshot=AsyncMock(side_effect=frames)
+            )
+
+            async def resize(viewport):
+                """Purpose: Model viewport state. Inputs: Requested extent. Outputs: Updated page-owned state."""
+                page.viewport_size = dict(viewport)
+
+            page.set_viewport_size = AsyncMock(side_effect=resize)
+            strategy = AsyncPlaywrightCrawlerStrategy(
+                browser_config=BrowserConfig(headless=True), logger=AsyncLogger(verbose=False)
+            )
+            with patch.object(strategy, "get_page_dimensions", AsyncMock(return_value={"width": 32, "height": 7})):
+                encoded = await strategy.take_screenshot_scroller(page, screenshot_height_threshold=4, scroll_delay=0)
+            self.assertEqual(page.screenshot.await_count, 2)
+            self.assertEqual(page.viewport_size, {"width": 32, "height": 4})
+            return base64.b64decode(encoded, validate=True)
+
+        with Image.open(io.BytesIO(asyncio.run(capture()))) as image:
+            self.assertEqual(image.size, (32, 7))
+            top, bottom = image.getpixel((16, 1)), image.getpixel((16, 5))
+            self.assertGreater(top[0], top[2] + 100)
+            self.assertGreater(bottom[2], bottom[0] + 100)
 
     def test_research_capture_handles_native_failure_and_redirected_content(self):
         """Purpose: Preserve provider results. Inputs: Error and redirected CrawlResult. Outputs: Exact evidence."""

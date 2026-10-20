@@ -23,6 +23,16 @@ from tools import crawl4ai_tool as tool
 class CrawlerContracts(unittest.TestCase):
     """Test repository integration without installing packages or making network requests."""
 
+    # Purpose: Prevent known vulnerable image decoders from returning during ordinary crawler lock refreshes.
+    # Inputs: The active exact Pillow pin; the installed-consumer suite verifies actual decoding separately.
+    # Outputs: Requires the fixed release floor without changing parent dependency constraints or scanner coverage.
+    def test_pillow_decoder_advisory_floor(self):
+        versions = re.findall(
+            r"(?m)^pillow==([0-9]+)\.([0-9]+)\.([0-9]+)(?=\s|$)", tool.LOCK.read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(versions), 1)
+        self.assertGreaterEqual(tuple(map(int, versions[0])), (13, 0, 0))
+
     def test_lock_resolution_uses_an_empty_environment_and_preserves_failures(self):
         """Purpose: Detect masked dependency conflicts. Inputs: Resolver outcomes. Outputs: Isolation checks."""
         for failure in (False, True):

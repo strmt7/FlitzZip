@@ -28,11 +28,29 @@ The complete crawler graph resolves normally. The upstream security regressions
 exercise initial-connection deadlines, Secure cookies and bounded parser,
 WebSocket, cookie and decompression behavior.
 
-The updated graph passed clean installation, installed API contracts, browser
+That NLTK/aiohttp graph passed clean installation, installed API contracts, browser
 extraction and cache reuse on Windows, macOS and Linux. Website qualification
 retains both successful extraction and access failures; a timeout or a site
 challenge is not reported as a successful crawl. The exact pushed dependency
 audit reports the preceding alerts fixed, without manual dismissal.
+
+Pillow is pinned to `13.0.0`, the patched release for the decoder advisories
+including [GHSA-8g5g-8vmr-9782](https://github.com/advisories/GHSA-8g5g-8vmr-9782).
+Its JPEG decoder rejects output dimensions that exceed the declared tile before
+writing image data. The update satisfies Crawl4AI's published `pillow>=10.4`
+constraint normally; it introduces no dependency override or metadata patch.
+All admitted wheels retain official PyPI hashes. The complete graph resolves
+for Windows x64 CPython 3.13, Linux x64 CPython 3.14 and macOS arm64 CPython 3.13,
+with every other package version unchanged.
+
+The Pillow update has actual clean-install and installed-consumer qualification
+on Windows: valid PNG/JPEG decoding, malformed input rejection, a JPEG tile-size
+regression, recovery after rejection and Crawl4AI's screenshot-stitching consumer.
+The screenshot test replaces browser I/O with explicit doubles while executing
+the installed image-processing implementation. These checks do not establish
+fresh Linux or macOS runtime qualification for the changed Pillow wheel; those
+platforms currently have dependency-resolution evidence only. The earlier
+three-platform qualification does not transfer to new wheel bytes.
 
 Retain raw reports and verify the exact pushed revision's dependency alerts and
 workflows. A changed lock, successful package install or version string alone

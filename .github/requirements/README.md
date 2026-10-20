@@ -3,18 +3,36 @@
 The `.in` files declare direct tools and advisory minimum versions. The `.txt`
 files contain the complete, hash-locked dependency graph used by CI. Update the
 inputs and resolve the graph together. Do not silently force a transitive version
-outside its parent's declared requirements. All installed tools and dependencies
-are pinned to official PyPI artifacts; no downstream wheel transformation is
-needed for the current graph.
+outside its parent's declared requirements. Ordinary dependencies use pinned
+official artifacts. The current Semgrep lock has one explicitly identified
+packaging exception, described below; it does not authorize further overrides.
+The crawler has its own [portable installation and qualification](../../docs/crawl4ai.md).
 
 ## Refresh
 
-The October 2, 2026 Semgrep refresh used uv 0.12.18. Resolve Linux tools for the Ubuntu
-24.04 x64 / CPython 3.14 runner, and Windows linters for the oldest supported
-local interpreter, CPython 3.12. Also validate the Windows lock against CI's
-CPython 3.14. Run from the repository root:
+Use a reviewed uv installation at version 0.13.4 or newer. Earlier versions
+are affected by [the bundled CA-store advisory](https://github.com/advisories/GHSA-hq85-5cpj-mr62).
+Verify the selected executable's version and provenance before resolution.
+The certifi advisory floor in the Linux inputs and exact crawler lock must
+also remain in place when refreshing dependencies.
+
+Resolve Linux tools for the Ubuntu 24.04 x64 / CPython 3.14 runner, and Windows
+linters for the oldest supported local interpreter, CPython 3.12. Also validate
+the Windows lock against CI's CPython 3.14. Select a compatible Python
+interpreter before running the following PowerShell example from the repository
+root. On Windows it may be `py -3`; other hosts can use their selected `python3`.
+The example uses `python` for that selected interpreter.
+
+Build the exact reviewed Semgrep wheel into a new owned directory before
+resolving its local distribution version. The builder verifies both upstream
+and derived artifact identities and refuses an existing output directory.
 
 ```powershell
+$semgrepWheelDirectory = Join-Path (Get-Location).Path (
+    'out/semgrep-lock-' + [Guid]::NewGuid().ToString('N'))
+python -B -m tools.semgrep_distribution --target linux --output $semgrepWheelDirectory
+if ($LASTEXITCODE -ne 0) { throw 'Semgrep artifact admission failed.' }
+
 foreach ($lane in 'semgrep', 'gvm-tools', 'zizmor', 'lint') {
     $platform = 'x86_64-manylinux_2_39'
     $python = '3.14'
@@ -25,53 +43,50 @@ foreach ($lane in 'semgrep', 'gvm-tools', 'zizmor', 'lint') {
         $suffix = 'windows'
     }
     $stem = ".github/requirements/requirements-$lane-$suffix"
-    uv pip compile "$stem.in" --output-file "$stem.txt" `
-        --python-version $python --python-platform $platform `
-        --generate-hashes --emit-index-url --emit-build-options `
-        --no-annotate --no-header --upgrade --no-python-downloads
+    $resolverArguments = @(
+        'pip', 'compile', "$stem.in", '--output-file', "$stem.txt",
+        '--python-version', $python, '--python-platform', $platform,
+        '--generate-hashes', '--emit-index-url', '--emit-build-options',
+        '--no-annotate', '--no-header', '--no-python-downloads')
+    if ($lane -eq 'semgrep') {
+        $resolverArguments += @('--find-links', $semgrepWheelDirectory)
+    }
+    uv @resolverArguments
     if ($LASTEXITCODE -ne 0) { throw "Resolution failed: $lane" }
 }
 ```
+
+For a targeted update, add `--upgrade-package <package>` to the affected
+resolution. A broader `--upgrade` refresh needs compatibility review for every
+changed consumer. Review the resulting diff and retain advisory floors; do not
+remove parent constraints merely to make resolution succeed.
 
 Validate installation with `pip --require-hashes --only-binary=:all:` on the
 target OS, run `pip check`, and exercise each tool before publishing. Cross-OS
 `pip download` checks wheel availability and hashes only when used with
 `--no-deps`: pip still evaluates dependency environment markers against the
 host. Use uv's explicit target platform for dependency resolution, and hosted
-Linux execution for the final runtime check. Never count a Windows-only marker
+Linux execution for the final runtime check. Semgrep installation also needs
+`--find-links` pointing to the exact admitted derived wheel, as CI does.
+Never count a Windows-only marker
 failure as evidence that the Linux dependency graph is broken.
 
 ## Compatibility Review
 
-Semgrep 1.179.0's official `pyjwt[crypto]>=2.15.0,<3` declaration supports patched
-PyJWT 2.15.1. The complete graph resolves for the Linux CPython 3.14 target.
-Normal wheel-only hash-locked installation, `pip check` and all five runtime
-tests pass on Linux CPython 3.14.7, including the actual MCP JWT verifier,
-signed/invalid token controls, the pre-verification parser regression and
-CLI/SARIF controls. The previous reviewed local metadata revision is retired:
-its wheel builder, manifest, local version and `--find-links` are removed.
+The current [Semgrep artifact manifest](semgrep-distribution.json) identifies
+the exact upstream wheels, downstream distribution version and narrowly
+authorized MCP requirement change. The builder preserves scanner source,
+executables, every other requirement and original notices. This packaging
+revision is not an official Semgrep release. Its provenance and rationale
+remain in [the scanning guide](../../docs/security-code-scanning.md#scanner-dependency-remediation).
 
-Offline tests enforce official input/lock parity, every dependency's SHA-256
-pin and the actual workflow's normal installation and coverage controls. CI
-retains the runtime tests, full scanner and coverage audit. See
-[the scanning guide](../../docs/security-code-scanning.md#scanner-dependency-remediation)
-for the earlier compatibility evidence and remaining coverage limits. Dependabot
-can monitor the official Semgrep pin normally again. Local success is not evidence
-that a newly pushed workflow or GitHub alert has passed its acceptance gate.
+CI installs the hash-locked graph through normal dependency resolution and runs
+`pip check`, the actual MCP/JWT consumer regressions, CLI/SARIF checks and the
+full scanner with its tracked-path coverage audit. Keep those consumers intact.
+These dependencies belong to development tooling, not the native application.
 
-Semgrep 1.179.0 still requires MCP exactly 1.29.0. This is above the
-patched minimum for the three MCP Dependabot advisories; upgrading to MCP 2.x
-would violate Semgrep's contract. The SDK belongs to scanner tooling, not
-FlitzZip's native application runtime.
-
-This release also requires `exceptiongroup~=1.2.0`,
-`jsonschema~=4.25.1`, `wcmatch~=8.3`, OpenTelemetry 1.37 / 0.58b0, and indirectly
-`wrapt<2` and `importlib-metadata<8.8.0`. Consequently PRs 26, 29, 30, 31,
-32, 33, and 34 cannot be applied independently. Keep these constraints until
-the parent packages support newer versions; do not remove scans or override
-dependency metadata to make an update appear successful.
-
-The refreshed locks supersede the versions proposed in PRs 27, 28, 35, and
-46. GitHub alert closure and PR disposition require a verified push; resolving
-a local lock is not remote remediation evidence. Grouped version-update PRs
-keep related actions and Python requirements reviewable as coherent sets.
+An update must preserve exact artifact provenance, resolve within the reviewed
+parent requirements and pass its affected runtime consumers. Group related
+dependency changes when they need coordinated validation. A local resolver or
+unit-test pass is not evidence of GitHub alert closure; verify the pushed
+revision's workflows and dependency inventory before claiming remediation.
