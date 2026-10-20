@@ -698,12 +698,14 @@ class NativeBuildReceiptTests(unittest.TestCase):
         bitcode.mkdir(parents=True)
         (bitcode / "ocml.bc").write_bytes(b"nonexecutable")
         cache_values = {**self.cache, "FLITZZIP_ENABLE_HIP": "ON", "FLITZZIP_HIP_PATH": str(sdk)}
-        entries = [bitcode / f"runtime-{i}.bc" for i in range(1001)]
+        enumerated_root = bitcode.resolve(strict=True)
+        entries = [enumerated_root / f"runtime-{i}.bc" for i in range(1001)]
         with (
-            patch.object(Path, "glob", return_value=iter(entries)),
+            patch.object(Path, "glob", autospec=True, return_value=iter(entries)) as listing,
             self.assertRaisesRegex(ValueError, "critical SDK inventory exceeds"),
         ):
             receipt.observe_toolchain(self.root, cache_values, self.cmake)
+        listing.assert_called_once_with(enumerated_root, "*.bc")
 
     # Purpose: Exercise the real command entry points and direct-script import boundary without running a compiler.
     # Inputs: Private fixture checkout and explicit transaction arguments.
