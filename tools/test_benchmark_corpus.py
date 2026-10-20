@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import runpy
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from tools import benchmark_comparators as comparators
 from tools import benchmark_corpus as corpus
 from tools import run_archive_comparison as comparison
 
@@ -65,6 +69,26 @@ class CorpusAdmissionTests(unittest.TestCase):
                 self.assertEqual(record["source_sha256"], entry["sha256"])
                 self.assertEqual(record["provenance"]["file"], entry)
                 self.assertNotIn(str(root), json.dumps(record["provenance"]))
+                with (
+                    patch.object(comparators, "PERMISSIONS_PATH", catalog),
+                    patch(
+                        "sys.argv",
+                        [
+                            "benchmark_corpus",
+                            "--manifest",
+                            str(manifest),
+                            "--root",
+                            str(root),
+                            "--file",
+                            entry["name"],
+                        ],
+                    ),
+                    redirect_stdout(io.StringIO()) as output,
+                ):
+                    runpy.run_path(str(Path(corpus.__file__).resolve()), run_name="__main__")
+                emitted = json.loads(output.getvalue())
+                self.assertEqual(emitted["source_sha256"], entry["sha256"])
+                self.assertEqual(emitted["input_bytes"], len(payload))
                 for target in (manifest, catalog):
                     original = target.read_bytes()
                     verify = corpus.verify_manifest
