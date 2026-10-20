@@ -16,10 +16,78 @@ from urllib.parse import urlsplit
 from urllib.request import Request
 
 from tools import native_coverage as collector
+from tools import native_coverage_report as reports
 from tools.native_coverage_report import normalize_report, read_report, source_path
 
 
 class CoverageTests(unittest.TestCase):
+    # Purpose: Enforce the coverage XML byte boundary on the opened stream with small real files.
+    # Inputs: A complete document exactly at a reduced test budget, followed by one excess byte.
+    # Outputs: Exact-boundary XML parses; excess input fails without publishing a normalized report.
+    def test_xml_exact_stream_budget(self):
+        payload = b"<coverage/>".ljust(64, b" ")
+        with patch.object(reports, "MAX_REPORT_BYTES", len(payload)):
+            self.raw.write_bytes(payload)
+            self.assertEqual(read_report(self.raw).tag, "coverage")
+            self.raw.write_bytes(payload + b" ")
+            with self.assertRaisesRegex(ValueError, "report contract"):
+                read_report(self.raw)
+        self.assertFalse(self.output.exists())
+
+    # Purpose: Preserve valid Cobertura default roots while rejecting classes without executable evidence.
+    # Inputs: A source-root-free report with an exact repository-relative filename and a class lacking lines.
+    # Outputs: Real source line hits normalize unchanged; an empty class never publishes a report.
+    def test_default_roots_and_empty_class_evidence(self):
+        xml = self.xml.replace("<sources><source>src</source></sources>", "")
+        xml = xml.replace('filename="example.cpp"', 'filename="src/example.cpp"')
+        self.raw.write_text(xml, encoding="utf-8")
+        summary = normalize_report(self.raw, self.output, self.root)
+        self.assertEqual(summary["lines_valid"], 2)
+        self.assertEqual(summary["lines_covered"], 1)
+        self.assertEqual(summary["uncovered_lines"], {"src/example.cpp": [2]})
+        self.output.unlink()
+        document = ET.fromstring(xml)
+        document.find("./packages/package/classes/class").remove(document.find(".//lines"))
+        self.raw.write_bytes(ET.tostring(document))
+        with self.assertRaisesRegex(ValueError, "executable line evidence"):
+            normalize_report(self.raw, self.output, self.root)
+        self.assertFalse(self.output.exists())
+
+    # Purpose: Reject an authentic-sized collector download whose final EOF crosses the transport deadline.
+    # Inputs: Inert installer bytes, an offline response, owned output paths and an installer-execution double.
+    # Outputs: Late EOF prevents installer execution; the same timely bytes reach normal installer admission.
+    def test_collector_download_deadline_includes_eof(self):
+        version = "0.9.9.0"
+        payload = b"inert collector transport fixture"
+        lock = {
+            "version": version,
+            "url": f"https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-{version}/"
+            f"OpenCppCoverageSetup-x64-{version}.exe",
+            "installer_bytes": len(payload),
+            "installer_sha256": hashlib.sha256(payload).hexdigest(),
+            "files": {},
+        }
+        output = self.root / "out/acquisition"
+        output.mkdir(parents=True)
+        for elapsed, accepted in ((2, True), (121, False)):
+            response = io.BytesIO(payload)
+            with (
+                self.subTest(elapsed=elapsed),
+                patch.object(collector, "ROOT", self.root),
+                patch.object(collector, "build_opener") as opener,
+                patch.object(collector.time, "monotonic", side_effect=[0, 1, elapsed]),
+                patch.object(collector, "run_checked") as install,
+                patch.object(collector, "verify_collector", return_value=self.root / "inert-collector.exe"),
+            ):
+                opener.return_value.open.return_value = response
+                if accepted:
+                    self.assertEqual(collector.provision(lock, output), self.root / "inert-collector.exe")
+                    install.assert_called_once()
+                else:
+                    with self.assertRaisesRegex(TimeoutError, "deadline"):
+                        collector.provision(lock, output)
+                    install.assert_not_called()
+
     # Purpose: Own small source and binary fixtures. Inputs: None. Outputs: Cleanup-bound test directory.
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
