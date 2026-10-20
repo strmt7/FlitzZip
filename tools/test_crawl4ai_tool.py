@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import os
 import py_compile
@@ -12,7 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from tools import crawl4ai_research as research
 from tools import crawl4ai_tool as tool
@@ -430,6 +432,7 @@ class CrawlerContracts(unittest.TestCase):
             status_code=200,
             markdown=SimpleNamespace(raw_markdown="Python documentation " * 30),
             error_message="",
+            response_headers={},
         )
         row = research.inspect_result(result, "Python")
         self.assertTrue(row["success"])
@@ -439,11 +442,85 @@ class CrawlerContracts(unittest.TestCase):
         self.assertFalse(research.inspect_result(result)["success"])
         result.status_code = 200
         result.markdown.raw_markdown = "Verify you are human " * 20
+        result.error_message = "Blocked by anti-bot protection: interactive challenge"
         self.assertFalse(research.inspect_result(result)["success"])
+        result.error_message = ""
         result.markdown.raw_markdown = ""
         self.assertFalse(research.inspect_result(result)["success"])
         result.markdown.raw_markdown = "x" * (research.MAX_MARKDOWN_BYTES + 1)
         self.assertFalse(research.inspect_result(result)["success"])
+
+    def test_native_access_evidence_is_distinct_from_article_words(self):
+        """Purpose: Distinguish restrictions from articles. Inputs: Native fields. Outputs: Verified causes."""
+        result = SimpleNamespace(
+            success=True,
+            status_code=200,
+            redirected_status_code=None,
+            response_headers={},
+            error_message="",
+            markdown=SimpleNamespace(raw_markdown="Documentation: verify you are human; checking your browser. " * 10),
+        )
+        self.assertTrue(research.inspect_result(result, "Documentation")["success"])
+        for status, final, success, headers, error, category in (
+            (307, 200, True, {}, "", ""),
+            (200, 403, False, {}, "", "access_denied"),
+            (403, None, False, {}, "Access denied by robots.txt", "robots_denied"),
+            (403, None, False, {"X-Robots-Status": "Blocked by robots.txt"}, "", "robots_denied"),
+            (307, 403, False, {}, "Blocked by anti-bot protection: Cloudflare JS challenge", "access_challenge"),
+            (200, None, True, {"Cf-Mitigated": "challenge"}, "", "access_challenge"),
+            (429, None, False, {}, "", "rate_limited"),
+            (503, None, False, {}, "Service unavailable", "http_error"),
+            (0, None, False, {}, "Browser closed", "native_failure"),
+            (200, None, False, {}, "Extraction failed", "native_failure"),
+        ):
+            with self.subTest(category=category, status=status, final=final):
+                result.status_code, result.redirected_status_code, result.success = status, final, success
+                result.response_headers, result.error_message = headers, error
+                row = research.inspect_result(result, "Documentation")
+                self.assertEqual(row["failure_category"], category)
+                self.assertEqual(row["success"], not category)
+                self.assertEqual(row["http_status"], status)
+                self.assertEqual(row["final_http_status"], final or status)
+                self.assertEqual(row["error"], error)
+
+    def test_capture_preserves_native_text_and_rejects_overwrite_or_oversize(self):
+        """Purpose: Preserve inspectable evidence. Inputs: Native serialization. Outputs: Exact immutable capture."""
+        native = {"url": "https://example.invalid/doc", "markdown": {"raw_markdown": "Prüfung"}, "success": True}
+        result = SimpleNamespace(model_dump=Mock(return_value=native))
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(research.importlib.metadata, "version", return_value=tool.VERSION),
+        ):
+            path = Path(directory) / "capture.json"
+            identity = research.retain_capture(path, native["url"], result, {"success": True})
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["native_result"], native)
+            self.assertEqual(payload["provider_version"], tool.VERSION)
+            self.assertEqual(identity["capture_sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+            result.model_dump.assert_called_once_with(mode="json", include=research.CAPTURE_FIELDS)
+            with self.assertRaises(FileExistsError):
+                research.retain_capture(path, native["url"], result, {"success": False})
+            self.assertEqual(payload, json.loads(path.read_text(encoding="utf-8")))
+            with patch.object(research, "MAX_CAPTURE_BYTES", 10), self.assertRaisesRegex(ValueError, "byte budget"):
+                research.retain_capture(Path(directory) / "too-large.json", native["url"], result, {})
+            self.assertFalse((Path(directory) / "too-large.json").exists())
+
+    def test_timeout_retains_actionable_failure_without_guessing_bot_restriction(self):
+        """Purpose: Separate deadlines from access denials. Inputs: Expired request. Outputs: Cause/evidence."""
+        owner = SimpleNamespace(arun=AsyncMock(side_effect=TimeoutError))
+        module = SimpleNamespace(CacheMode=SimpleNamespace(BYPASS="bypass"), CrawlerRunConfig=Mock())
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(sys.modules, {"crawl4ai": module}),
+            patch.object(research.importlib.metadata, "version", return_value=tool.VERSION),
+        ):
+            path = Path(directory) / "timeout.json"
+            row = asyncio.run(research.fetch(owner, "https://example.invalid/doc", capture=path))
+            self.assertFalse(row["success"])
+            self.assertEqual(row["failure_category"], "timeout")
+            self.assertIn("45-second", row["error"])
+            self.assertIsNone(json.loads(path.read_text(encoding="utf-8"))["native_result"])
+            module.CrawlerRunConfig.assert_called_once_with(cache_mode="bypass", check_robots_txt=True)
 
     def test_qualification_diversity_and_license_notice(self):
         """Purpose: Preserve sites and attribution. Inputs: Tracked manifest/notices. Outputs: Assertions."""

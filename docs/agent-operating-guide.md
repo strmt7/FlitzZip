@@ -1073,7 +1073,7 @@ an article. Search/image previews are discovery aids, not evidence of having
 read a paper or permission to republish its figures.
 
 Use the repository's self-hosted [Crawl4AI integration](crawl4ai.md) for reading
-web pages and crawling during development. Search tools may discover URLs;
+web pages and crawling first during development. Search tools may discover URLs;
 the crawler supplies their source content. Invoke `tools/crawl4ai_tool.py crawl`
 using a compatible interpreter; the portable launcher provisions its external
 cache automatically and reuses it. Pass the documented
@@ -1087,6 +1087,26 @@ record that limitation rather than weakening host policy or promising invisibili
 On a new host, validate installation and the intended target. Reuse qualification
 only for unchanged integration, dependency and configuration identities; do not
 reinstall or crawl the entire qualification matrix at every unchanged checkpoint.
+
+Mandatory use is a first-provider requirement, not a prohibition on justified
+alternatives. Preserve the failed Crawl4AI result and distinguish a native
+robots denial, challenge, HTTP refusal or rate limit from a timeout, extraction
+failure or installation defect. HTTP 403 alone does not prove an anti-bot
+challenge; a timeout does not identify its cause. For a confirmed restriction
+or unsupported content type, use judgment to select a permitted reader,
+documented API, official mirror, publisher PDF or author copy. Record the reason,
+alternative URL/provider and actual retrieved content. Respect each source's
+access rules; changing a user agent, disabling robots checks or retrying with
+another tool to evade the same restriction is not an acceptable alternative.
+Search snippets never substitute for reading the source.
+
+Diagnose tool defects using a small local extraction or search contract and a
+known accessible source. Repair reproducible integration failures with regression
+tests before relying on that integration again. A website restriction does not
+justify reinstalling, rewriting or updating an otherwise qualified provider.
+Likewise, CocoIndex refresh after source changes is normal index maintenance,
+not a code defect; retain its stale-source rejection and actual-search receipt.
+Do not weaken these distinctions to report universal access or flawless behavior.
 
 Treat a qualified, pinned research tool as stable development infrastructure.
 Ordinary product work must not modify, reinstall or repeatedly requalify it.
