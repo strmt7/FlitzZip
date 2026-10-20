@@ -168,6 +168,7 @@ PATH_SAFETY_OBJECT="${CORE_OBJECTS[0]}"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/cab_header_fuzzer.cpp \
   src/cab/cab_format.cpp \
+  src/core/archive_name_encoding.cpp \
   "$PATH_SAFETY_OBJECT" \
   -o "$OUT/flitzzip_cab_header_fuzzer" \
   "$LIB_FUZZING_ENGINE"

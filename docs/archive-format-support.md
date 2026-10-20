@@ -406,7 +406,10 @@ CAB support is intentionally extract-only. FlitzZip parses the cabinet header,
 folder table, file records, and declared data-block extents before invoking the
 Windows Cabinet FDI engine. Spanned cabinet sets are rejected, every CAB member
 path is normalized and validated before output, and FDI may only publish files
-whose names and sizes match the prevalidated metadata table.
+whose names, declared encodings and sizes match the prevalidated metadata table.
+The CAB UTF-8 attribute controls filename decoding; unmarked names retain Windows
+legacy code-page semantics. Invalid UTF-8 and collisions between decoded names
+are rejected before publication.
 
 7z support is intentionally extract-only. FlitzZip embeds the public-domain
 LZMA SDK 26.03 ANSI-C decoder and does not call `7z.exe`, PowerShell,
@@ -674,7 +677,7 @@ decompression:
 3. Run a validation decompression pass to `NUL` so corrupt compressed data fails
    before destination files are created.
 4. Run the extraction pass only for FDI callbacks whose normalized names and
-   sizes match the scanner-approved table.
+   declared encodings and sizes match the scanner-approved table.
 5. Publish each output through the standard private temporary file and atomic
    overwrite-safe commit path.
 
@@ -1026,8 +1029,10 @@ follows the same publication rules as other single-file stream adapters:
 3. Dictionary declarations above 512 MiB and decoded output above the FlitzZip
    pipeline limit are rejected before final publication.
 4. SDK allocations are routed through a bounded allocator.
-5. Unknown-size streams must reach an LZMA end marker; known-size streams must
-   produce exactly the declared byte count.
+5. Unknown-size streams must reach an LZMA end marker. Known-size streams must
+   produce exactly the declared byte count and finish the range coder correctly,
+   with or without the optional end marker. A byte count alone is insufficient;
+   incomplete termination and trailing compressed data are rejected in both modes.
 6. Output is written to a private temporary file and committed only after the
    stream finishes according to the supported LZMA-Alone rules.
 

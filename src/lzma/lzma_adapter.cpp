@@ -204,7 +204,7 @@ bool refill_lzma_input(std::ifstream& input, std::array<Byte, kLzmaInputBufferBy
 
 // Purpose: Return whether unread compressed bytes remain after an end marker.
 // Inputs: `input` is the archive stream and buffer state describes already-read data.
-// Outputs: Returns true when the archive has trailing bytes after decoder completion.
+// Outputs: Returns true for trailing bytes after decoder completion; throws on a failed end-of-input probe.
 bool has_lzma_trailing_bytes(std::ifstream& input, std::size_t position, std::size_t size, bool eof) {
     if (position < size) {
         return true;
@@ -212,7 +212,11 @@ bool has_lzma_trailing_bytes(std::ifstream& input, std::size_t position, std::si
     if (eof) {
         return false;
     }
-    return input.peek() != std::char_traits<char>::eof();
+    const auto next = input.peek();
+    if (input.bad() || (input.fail() && !input.eof())) {
+        throw ArchiveError("failed to read LZMA stream ending");
+    }
+    return next != std::char_traits<char>::eof();
 }
 
 // Purpose: Decode the LZMA-Alone payload into one private temporary output file.
@@ -237,13 +241,7 @@ std::uint64_t decode_lzma_stream_to_file(std::ifstream& input, const LzmaAloneHe
     bool finished = false;
 
     while (!finished) {
-        const bool has_input = refill_lzma_input(input, input_buffer, input_position, input_size, input_eof);
-        if (!has_input) {
-            if (header.declared_size != kUnknownLzmaUncompressedSize && output_size == header.declared_size) {
-                break;
-            }
-            throw ArchiveError("LZMA stream ended before decoder completion");
-        }
+        (void)refill_lzma_input(input, input_buffer, input_position, input_size, input_eof);
 
         std::uint64_t remaining_declared = static_cast<std::uint64_t>(output_buffer.size());
         if (header.declared_size != kUnknownLzmaUncompressedSize) {
@@ -251,18 +249,19 @@ std::uint64_t decode_lzma_stream_to_file(std::ifstream& input, const LzmaAloneHe
                 throw ArchiveError("LZMA stream produced more bytes than declared");
             }
             remaining_declared = header.declared_size - output_size;
-            if (remaining_declared == 0U) {
-                break;
-            }
         }
 
         SizeT destination_length =
             static_cast<SizeT>(std::min<std::uint64_t>(output_buffer.size(), remaining_declared));
         SizeT source_length = static_cast<SizeT>(input_size - input_position);
         ELzmaStatus status = LZMA_STATUS_NOT_SPECIFIED;
+        const auto finish_mode =
+            header.declared_size != kUnknownLzmaUncompressedSize && remaining_declared <= output_buffer.size()
+                ? LZMA_FINISH_END
+                : LZMA_FINISH_ANY;
         const SRes result =
             LzmaDec_DecodeToBuf(&decoder.get(), output_buffer.data(), &destination_length,
-                                input_buffer.data() + input_position, &source_length, LZMA_FINISH_ANY, &status);
+                                input_buffer.data() + input_position, &source_length, finish_mode, &status);
         throw_on_lzma_error(result, "LZMA decode failed");
         input_position += static_cast<std::size_t>(source_length);
 
@@ -278,18 +277,20 @@ std::uint64_t decode_lzma_stream_to_file(std::ifstream& input, const LzmaAloneHe
             }
         }
 
-        if (status == LZMA_STATUS_FINISHED_WITH_MARK) {
+        const bool ended_without_marker = header.declared_size != kUnknownLzmaUncompressedSize &&
+                                          output_size == header.declared_size &&
+                                          status == LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK;
+        if (status == LZMA_STATUS_FINISHED_WITH_MARK || ended_without_marker) {
             if (header.declared_size != kUnknownLzmaUncompressedSize && output_size != header.declared_size) {
                 throw ArchiveError("LZMA end marker appeared before declared output size");
             }
             if (has_lzma_trailing_bytes(input, input_position, input_size, input_eof)) {
-                throw ArchiveError("LZMA stream contains trailing data after end marker");
+                throw ArchiveError("LZMA stream contains trailing data after decoder completion");
             }
             finished = true;
         } else if (destination_length == 0U && source_length == 0U) {
-            throw ArchiveError("LZMA decoder made no forward progress");
-        } else if (header.declared_size != kUnknownLzmaUncompressedSize && output_size == header.declared_size) {
-            finished = true;
+            throw ArchiveError(input_eof ? "LZMA stream ended before decoder completion"
+                                         : "LZMA decoder made no forward progress");
         }
     }
 

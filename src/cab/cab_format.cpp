@@ -1,5 +1,6 @@
 #include "cab/cab_format.hpp"
 
+#include "core/archive_name_encoding.hpp"
 #include "core/path_safety.hpp"
 #include "core/path_text.hpp"
 #include "core/resource_limits.hpp"
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace flitzzip {
@@ -330,14 +332,21 @@ CabMetadata scan_cab_files(std::ifstream& input, const CabHeader& header, std::u
             throw ArchiveError("CAB file folder offset overflows");
         }
 
-        const auto normalized = normalize_cab_entry_path(read_cab_name(input, archive_limit));
+        const auto encoding = cab_entry_path_encoding(read_le16(file.data() + 14U));
+        auto name = read_cab_name(input, archive_limit);
+        if (encoding == ArchivePathEncoding::Utf8) {
+            name = decode_archive_name(name, encoding);
+        }
+        const auto normalized = normalize_cab_entry_path(std::move(name));
         validation_entries.push_back(ArchivePathValidationEntry{
             .path = normalized,
             .directory = false,
+            .encoding = encoding,
         });
         result.entries.push_back(CabEntryInfo{
             .path = normalized,
             .size = file_size,
+            .encoding = encoding,
         });
         result.total_file_bytes =
             checked_add_cab_bytes(result.total_file_bytes, file_size, "CAB uncompressed payload byte count overflow");
