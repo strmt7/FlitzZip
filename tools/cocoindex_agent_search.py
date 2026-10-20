@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -312,6 +313,44 @@ def record_search_use(base: Path, repo: Path, digest: str, query: str, hit_count
             temporary.unlink(missing_ok=True)
 
 
+def validate_search_results(payload: object, maximum: int) -> list[dict]:
+    """Purpose: Admit bounded provider output. Inputs: Parsed JSON/fetch limit. Outputs: Typed safe search hits."""
+    if not isinstance(payload, dict):
+        raise RuntimeError("CocoIndex search returned a non-object response")
+    if payload.get("success") is not True:
+        raise RuntimeError(f"CocoIndex search failed: {str(payload.get('message', 'unknown error'))[:500]}")
+    hits = payload.get("results")
+    if not isinstance(hits, list) or len(hits) > maximum:
+        raise RuntimeError("CocoIndex search returned an invalid result collection")
+    admitted = []
+    for hit in hits:
+        if not isinstance(hit, dict):
+            raise RuntimeError("CocoIndex search returned a malformed result")
+        file_path = hit.get("file_path")
+        start, end, score, content = (
+            hit.get("start_line"),
+            hit.get("end_line"),
+            hit.get("score"),
+            hit.get("content"),
+        )
+        if (
+            not isinstance(file_path, str)
+            or relative_source_path(file_path).as_posix() != file_path
+            or type(start) is not int
+            or type(end) is not int
+            or start < 1
+            or end < start
+            or isinstance(score, bool)
+            or not isinstance(score, (int, float))
+            or not math.isfinite(score)
+            or not isinstance(content, str)
+            or len(content.encode("utf-8")) > 1024 * 1024
+        ):
+            raise RuntimeError("CocoIndex search returned an invalid result field")
+        admitted.append(hit)
+    return admitted
+
+
 def search(base: Path, query: str, limit: int, repo: Path = ROOT, path: str | None = None) -> None:
     """Purpose: Route a conceptual query. Inputs: fresh index/query/limit/path. Outputs: bounded hints."""
     if path and any(mark in path for mark in "*?["):
@@ -337,9 +376,7 @@ def search(base: Path, query: str, limit: int, repo: Path = ROOT, path: str | No
         args += ["--path", path]
     output = _run(args + [query], cwd=mirror, timeout=180, env=_environment(base, config, runtime)).stdout
     payload = json.loads(output)
-    if not payload.get("success"):
-        raise RuntimeError(f"CocoIndex search failed: {payload.get('message')}")
-    hits = payload.get("results", [])
+    hits = validate_search_results(payload, fetch)
     distinct = []
     seen = set()
     for hit in hits:

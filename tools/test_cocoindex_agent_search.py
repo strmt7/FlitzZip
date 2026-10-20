@@ -6,12 +6,19 @@ Adapted from strmt7/VulnerabilityScreener tests/test_cocoindex_agent_search.py (
 import contextlib
 import io
 import json
+import math
+import os
+import runpy
+import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from tools import cocoindex_agent_search as agent_search
 from tools.cocoindex_agent_search import (
     CONFIG_DIGEST,
     ROOT,
@@ -21,6 +28,7 @@ from tools.cocoindex_agent_search import (
     search,
     source_digest,
     tracked_files,
+    validate_search_results,
 )
 
 
@@ -47,11 +55,12 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             query = "private conceptual question"
             with (
                 patch("tools.cocoindex_agent_search.tracked_files", return_value=entries),
-                patch("tools.cocoindex_agent_search._run", return_value=result),
+                patch("tools.cocoindex_agent_search._run", return_value=result) as package,
                 contextlib.redirect_stdout(io.StringIO()) as output,
             ):
-                search(base, query, 5, repo=base)
+                search(base, query, 1, repo=base, path="source.py")
             self.assertIn("results=1", output.getvalue())
+            self.assertIn("--path", package.call_args.args[0])
             receipt = marker.with_name(mirror.name + ".usage.json").read_text()
             self.assertNotIn(query, receipt)
             self.assertEqual(json.loads(receipt)["source_digest"], digest)
@@ -103,6 +112,14 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
     def test_home_requires_absolute_override(self):
         with patch.dict("os.environ", {"AGENT_CODE_HOME": "relative"}), self.assertRaisesRegex(ValueError, "absolute"):
             home()
+
+    def test_home_uses_external_platform_default(self):
+        """Purpose: Route default state. Inputs: Owned data root. Outputs: External FlitzZip path."""
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.dict(os.environ, {"LOCALAPPDATA": temporary}, clear=True),
+        ):
+            self.assertEqual(home(), (Path(temporary) / "FlitzZip/agent-code").resolve())
 
     def test_home_rejects_checkout_state(self):
         with (
@@ -272,6 +289,261 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             self.assertEqual(original_digest, source_digest(after))
             (repo / "z.py").write_text("z = 2\n", encoding="utf-8")
             self.assertNotEqual(original_digest, source_digest(tracked_files(repo)))
+
+    # Purpose: Exercise pinned installation reuse, both installers and post-install version admission without network.
+    # Inputs: Owned external homes, inert CLI fixtures and bounded process results for uv and pip.
+    # Outputs: Exact versions reuse/install; stale existing and mismatched new installations fail explicitly.
+    def test_install_routes_and_verifies_exact_version(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cached = root / "cached"
+            command = agent_search.ccc_path(paths(cached)[0])
+            command.parent.mkdir(parents=True)
+            command.write_bytes(b"inert CLI fixture")
+            exact = subprocess.CompletedProcess([], 0, stdout=agent_search.VERSION + "\n")
+            with (
+                patch.object(agent_search, "_run", return_value=exact) as run,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                agent_search.install(cached)
+            run.assert_called_once_with([str(command), "version"], timeout=30)
+            stale = subprocess.CompletedProcess([], 0, stdout="0.0.0\n")
+            with (
+                patch.object(agent_search, "_run", return_value=stale),
+                self.assertRaisesRegex(RuntimeError, "existing CocoIndex version"),
+            ):
+                agent_search.install(cached)
+
+            for label, uv in (("uv", str(root / "uv.exe")), ("pip", None)):
+                base = root / label
+                responses = [
+                    subprocess.CompletedProcess([], 0, stdout=""),
+                    subprocess.CompletedProcess([], 0, stdout=""),
+                    exact,
+                ]
+                with (
+                    self.subTest(installer=label),
+                    patch.object(agent_search.shutil, "which", return_value=uv),
+                    patch.object(agent_search, "_run", side_effect=responses) as run,
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    agent_search.install(base)
+                install_command = run.call_args_list[1].args[0]
+                if uv:
+                    self.assertEqual(install_command[:3], [uv, "pip", "install"])
+                else:
+                    self.assertEqual(install_command[1:4], ["-m", "pip", "install"])
+                self.assertIn(f"cocoindex-code[full]=={agent_search.VERSION}", install_command)
+            base = root / "mismatch"
+            responses = [
+                subprocess.CompletedProcess([], 0, stdout=""),
+                subprocess.CompletedProcess([], 0, stdout=""),
+                stale,
+            ]
+            with (
+                patch.object(agent_search.shutil, "which", return_value=None),
+                patch.object(agent_search, "_run", side_effect=responses),
+                self.assertRaisesRegex(RuntimeError, "version verification failed"),
+            ):
+                agent_search.install(base)
+
+    # Purpose: Reject malformed provider output before receipts, paths or snippets become trusted agent evidence.
+    # Inputs: One exact hit plus independent response, collection, path, range, score and content mutations.
+    # Outputs: The exact hit passes; every ambiguous or unbounded shape raises a controlled RuntimeError/ValueError.
+    def test_search_result_schema_and_resource_admission(self):
+        hit = {"file_path": "source.py", "start_line": 1, "end_line": 2, "score": 0.5, "content": "source"}
+        self.assertEqual(validate_search_results({"success": True, "results": [hit]}, 5), [hit])
+        failures = (
+            None,
+            {"success": "true", "results": []},
+            {"success": False, "message": "provider failure"},
+            {"success": True, "results": None},
+            {"success": True, "results": [hit] * 6},
+            {"success": True, "results": [None]},
+        )
+        for payload in failures:
+            with self.subTest(payload=payload), self.assertRaises(RuntimeError):
+                validate_search_results(payload, 5)
+        mutations = (
+            ("file_path", "../outside.py"),
+            ("start_line", True),
+            ("start_line", 0),
+            ("end_line", 0),
+            ("score", True),
+            ("score", math.inf),
+            ("content", None),
+            ("content", "x" * (1024 * 1024 + 1)),
+        )
+        for field, value in mutations:
+            changed = dict(hit)
+            changed[field] = value
+            with self.subTest(field=field, value=type(value).__name__), self.assertRaises((RuntimeError, ValueError)):
+                validate_search_results({"success": True, "results": [changed]}, 5)
+
+    # Purpose: Validate index settings, v1 migration, stable-source success and error output without package execution.
+    # Inputs: Owned external state, one source file, inert CLI and controlled index process output.
+    # Outputs: Missing tools/changed settings/errors fail; v1 state stops its daemon and publishes a fresh marker.
+    def test_index_admission_migration_and_publication(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo = root / "repo"
+            repo.mkdir()
+            source = repo / "source.py"
+            source.write_text("value = 1\n", encoding="utf-8")
+            entries = [("source.py", source)]
+            missing = root / "missing"
+            with self.assertRaisesRegex(RuntimeError, "run install"):
+                agent_search.index(missing, repo)
+
+            changed_global = root / "changed-global"
+            venv, _mirror, config, _runtime = paths(changed_global, repo)
+            command = agent_search.ccc_path(venv)
+            command.parent.mkdir(parents=True)
+            command.write_bytes(b"CLI")
+            (config / "global_settings.yml").parent.mkdir(parents=True)
+            (config / "global_settings.yml").write_text("changed", encoding="utf-8")
+            with (
+                patch.object(agent_search, "tracked_files", return_value=entries),
+                self.assertRaisesRegex(RuntimeError, "settings changed"),
+            ):
+                agent_search.index(changed_global, repo)
+
+            changed_project = root / "changed-project"
+            venv, mirror, _config, _runtime = paths(changed_project, repo)
+            command = agent_search.ccc_path(venv)
+            command.parent.mkdir(parents=True)
+            command.write_bytes(b"CLI")
+            project = mirror / ".cocoindex_code/settings.yml"
+            project.parent.mkdir(parents=True)
+            project.write_text("changed", encoding="utf-8")
+            with (
+                patch.object(agent_search, "tracked_files", return_value=entries),
+                self.assertRaisesRegex(RuntimeError, "project settings changed"),
+            ):
+                agent_search.index(changed_project, repo)
+
+            migrated = root / "migrated"
+            venv, mirror, _config, _runtime = paths(migrated, repo)
+            command = agent_search.ccc_path(venv)
+            command.parent.mkdir(parents=True)
+            command.write_bytes(b"CLI")
+            project = mirror / ".cocoindex_code/settings.yml"
+            project.parent.mkdir(parents=True)
+            project.write_text(agent_search.PROJECT_SETTINGS_V1, encoding="utf-8")
+            responses = (
+                subprocess.CompletedProcess([], 0, stdout="stopped"),
+                subprocess.CompletedProcess([], 0, stdout="Indexing: complete error: 0"),
+            )
+            with (
+                patch.object(agent_search, "tracked_files", return_value=entries),
+                patch.object(agent_search, "_run", side_effect=responses) as run,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                agent_search.index(migrated, repo)
+            self.assertEqual(run.call_args_list[0].args[0][-2:], ["daemon", "stop"])
+            marker = migrated / "active" / (mirror.name + ".json")
+            self.assertEqual(json.loads(marker.read_text())["source_digest"], source_digest(entries))
+
+            failed = root / "failed"
+            venv, mirror, _config, _runtime = paths(failed, repo)
+            command = agent_search.ccc_path(venv)
+            command.parent.mkdir(parents=True)
+            command.write_bytes(b"CLI")
+            result = subprocess.CompletedProcess([], 0, stdout="Indexing: complete error: 1")
+            with (
+                patch.object(agent_search, "tracked_files", return_value=entries),
+                patch.object(agent_search, "_run", return_value=result),
+                self.assertRaisesRegex(RuntimeError, "index errors"),
+            ):
+                agent_search.index(failed, repo)
+            self.assertFalse((failed / "active" / (mirror.name + ".json")).exists())
+
+    # Purpose: Exercise mirror escape/link checks and the tracked-file logical size ceiling without large disk writes.
+    # Inputs: Owned source/stale files plus narrowly scoped path-method doubles for hostile filesystem states.
+    # Outputs: Escaping names, redirected targets/stale files and oversized source metadata fail before copying.
+    def test_mirror_and_source_resource_boundaries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            mirror = root / "mirror"
+            source = root / "source.py"
+            source.write_text("pass\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "escapes target"):
+                prepare_mirror(mirror, [("../outside.py", source)])
+            target = mirror / "source.py"
+            original_is_symlink = Path.is_symlink
+
+            def redirected(path):
+                return path == target or original_is_symlink(path)
+
+            with (
+                patch.object(Path, "is_symlink", autospec=True, side_effect=redirected),
+                self.assertRaisesRegex(ValueError, "mirror path is a link"),
+            ):
+                prepare_mirror(mirror, [("source.py", source)])
+            stale = mirror / "stale.py"
+            stale.write_text("stale", encoding="utf-8")
+            original_resolve = Path.resolve
+
+            def escaped(path, *args, **kwargs):
+                if path == stale:
+                    return root.parent / "outside.py"
+                return original_resolve(path, *args, **kwargs)
+
+            with (
+                patch.object(Path, "resolve", autospec=True, side_effect=escaped),
+                self.assertRaisesRegex(ValueError, "stale mirror path escapes"),
+            ):
+                prepare_mirror(mirror, [])
+            repo = root / "repo"
+            repo.mkdir()
+            oversized = repo / "large.py"
+            oversized.write_text("pass\n", encoding="utf-8")
+            original_stat = Path.stat
+
+            def large_stat(path, *args, **kwargs):
+                if path == oversized:
+                    return SimpleNamespace(st_mode=stat.S_IFREG, st_size=32 * 1024 * 1024 + 1)
+                return original_stat(path, *args, **kwargs)
+
+            with (
+                patch.object(agent_search.subprocess, "run") as run,
+                patch.object(Path, "stat", autospec=True, side_effect=large_stat),
+                self.assertRaisesRegex(ValueError, "exceeds 32 MiB"),
+            ):
+                run.return_value.stdout = b"large.py\0"
+                tracked_files(repo)
+
+    # Purpose: Route each public action and retain bounded child diagnostics at the script error boundary.
+    # Inputs: Direct parser calls plus a module run whose installer child raises CalledProcessError with output.
+    # Outputs: Actions dispatch exactly; invalid search is parser-visible; script failures exit three with diagnostics.
+    def test_main_routing_and_script_failure_boundary(self):
+        base = Path(tempfile.gettempdir()) / "cocoindex-agent-test-home"
+        with patch.object(agent_search, "home", return_value=base), patch.object(agent_search, "install") as install:
+            self.assertEqual(agent_search.main(["install"]), 0)
+        install.assert_called_once_with(base)
+        with patch.object(agent_search, "home", return_value=base), patch.object(agent_search, "index") as index:
+            self.assertEqual(agent_search.main(["index"]), 0)
+        index.assert_called_once_with(base)
+        with patch.object(agent_search, "home", return_value=base), patch.object(agent_search, "search") as search_call:
+            self.assertEqual(agent_search.main(["search", "conceptual query", "--limit", "2"]), 0)
+        search_call.assert_called_once_with(base, "conceptual query", 2, path=None)
+        with patch.object(agent_search, "home", return_value=base), self.assertRaises(SystemExit) as invalid:
+            agent_search.main(["search", " ", "--limit", "0"])
+        self.assertEqual(invalid.exception.code, 2)
+        with tempfile.TemporaryDirectory() as temporary:
+            failure = subprocess.CalledProcessError(7, ["owned child"], output="retained child output")
+            with (
+                patch.dict(os.environ, {"AGENT_CODE_HOME": str(Path(temporary).resolve())}),
+                patch.object(subprocess, "run", side_effect=failure),
+                patch("sys.argv", ["cocoindex_agent_search", "install"]),
+                patch.object(sys, "path", [str(agent_search.ROOT / "tools"), *sys.path]),
+                contextlib.redirect_stderr(io.StringIO()) as errors,
+                self.assertRaises(SystemExit) as stopped,
+            ):
+                runpy.run_path(str(Path(agent_search.__file__).resolve()), run_name="__main__")
+        self.assertEqual(stopped.exception.code, 3)
+        self.assertIn("retained child output", errors.getvalue())
+        self.assertIn("error: CocoIndex agent search", errors.getvalue())
 
 
 if __name__ == "__main__":
