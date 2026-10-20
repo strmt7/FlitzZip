@@ -79,6 +79,21 @@ void write_ar_member(std::ofstream& output, std::string_view name, std::string_v
     }
 }
 
+// Purpose: Write one AR member whose size field is supplied as exact fixture bytes.
+// Inputs: `output` is the archive, `name`/`payload` form the member, and `size_field` must contain ten bytes.
+// Outputs: Appends the independently framed member and payload padding.
+void write_ar_member_with_size_field(std::ofstream& output, std::string_view name, std::string_view size_field,
+                                     std::string_view payload) {
+    REQUIRE_EQ(size_field.size(), 10U);
+    auto header = make_ar_header(name, payload.size());
+    std::copy(size_field.begin(), size_field.end(), header.begin() + 48);
+    output.write(header.data(), static_cast<std::streamsize>(header.size()));
+    output.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    if ((payload.size() % 2U) != 0) {
+        output.put('\n');
+    }
+}
+
 // Purpose: Write one BSD long-name AR member for parser-security tests.
 // Inputs: `output` is the archive stream, `path` is the embedded filename, and `payload` is the file data.
 // Outputs: Appends a complete `#1/<len>` member.
@@ -110,6 +125,21 @@ void write_gnu_long_name_ar_archive(const std::filesystem::path& archive) {
     const std::string table = "dir/gnu-long-name.txt/\n";
     write_ar_member(output, "//", table);
     write_ar_member(output, "/0", "gnu payload");
+}
+
+// Purpose: Require an AR archive to fail during preflight without publishing an extraction directory.
+// Inputs: `archive` is malformed, `output` is its unused destination, and `diagnostic` is required error text.
+// Outputs: Fails the test unless `ArchiveError` contains the diagnostic and the destination remains absent.
+void require_ar_rejection_before_output(const std::filesystem::path& archive, const std::filesystem::path& output,
+                                        std::string_view diagnostic) {
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_ar(archive, output, false);
+    } catch (const flitzzip::ArchiveError& error) {
+        rejected = std::string_view(error.what()).find(diagnostic) != std::string_view::npos;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(output));
 }
 
 }  // namespace
@@ -291,6 +321,81 @@ TEST_CASE(ar_extraction_rejects_truncated_member_before_output) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
+}
+
+// Purpose: Reject ambiguous, signed, empty, control-containing, and non-ASCII AR member sizes.
+// Inputs: A valid first member followed by malformed exact-width size fields and a twelve-byte payload.
+// Outputs: Requires strict decimal diagnostics before any destination or earlier member is published.
+TEST_CASE(ar_decimal_size_fields_require_contiguous_ascii_digits) {
+    const auto root = test_temp_dir("ar-malformed-size-fields");
+    const std::array<std::string, 7> invalid_fields = {
+        "1 2       ",
+        "+12       ",
+        "-12       ",
+        "12\t       ",
+        "12\n       ",
+        "          ",
+        std::string("\xff") + "         ",
+    };
+    for (std::size_t index = 0; index < invalid_fields.size(); ++index) {
+        const auto archive = root / (std::to_string(index) + ".ar");
+        {
+            std::ofstream stream(archive, std::ios::binary);
+            stream.write("!<arch>\n", 8);
+            write_ar_member(stream, "valid.txt/", "prefix");
+            write_ar_member_with_size_field(stream, "invalid.txt/", invalid_fields[index], "abcdefghijkl");
+        }
+        const auto output = root / ("output-" + std::to_string(index));
+        const auto diagnostic =
+            invalid_fields[index] == "          " ? "empty AR decimal field: size" : "malformed AR decimal field: size";
+        require_ar_rejection_before_output(archive, output, diagnostic);
+    }
+}
+
+// Purpose: Preserve valid outer-space padding, zero padding, and zero-length AR members.
+// Inputs: Handcrafted members using leading/trailing spaces, ten decimal digits, and a padded zero.
+// Outputs: Requires exact payloads, an empty file, and complete extraction statistics.
+TEST_CASE(ar_decimal_size_fields_accept_canonical_padding_and_zero) {
+    const auto root = test_temp_dir("ar-valid-size-fields");
+    const auto archive = root / "valid.ar";
+    {
+        std::ofstream stream(archive, std::ios::binary);
+        stream.write("!<arch>\n", 8);
+        write_ar_member_with_size_field(stream, "outer.txt/", "  6       ", "outer!");
+        write_ar_member_with_size_field(stream, "zeroes.txt/", "0000000006", "digits");
+        write_ar_member_with_size_field(stream, "empty.txt/", "0         ", "");
+    }
+    const auto output = root / "output";
+    const auto stats = flitzzip::extract_ar(archive, output, false);
+    REQUIRE_EQ(stats.entries, 3U);
+    REQUIRE_EQ(stats.output_bytes, 12U);
+    REQUIRE_EQ(read_text_file(output / "outer.txt"), "outer!");
+    REQUIRE_EQ(read_text_file(output / "zeroes.txt"), "digits");
+    REQUIRE_TRUE(std::filesystem::is_regular_file(output / "empty.txt"));
+    REQUIRE_EQ(std::filesystem::file_size(output / "empty.txt"), 0U);
+}
+
+// Purpose: Reject non-decimal bytes in BSD name lengths and GNU string-table offsets.
+// Inputs: A valid first member followed by long-name metadata containing spaces, controls, or non-ASCII bytes.
+// Outputs: Requires malformed-metadata rejection before any extraction directory is published.
+TEST_CASE(ar_long_name_numeric_fields_require_ascii_digits) {
+    const auto root = test_temp_dir("ar-malformed-long-name-numbers");
+    const std::array<std::string, 4> invalid_names = {
+        "#1/1 2",
+        "#1/\t1",
+        "/1 2",
+        std::string("/") + "\xff",
+    };
+    for (std::size_t index = 0; index < invalid_names.size(); ++index) {
+        const auto archive = root / (std::to_string(index) + ".ar");
+        {
+            std::ofstream stream(archive, std::ios::binary);
+            stream.write("!<arch>\n", 8);
+            write_ar_member(stream, "valid.txt/", "prefix");
+            write_ar_member(stream, invalid_names[index], "abcdefghijkl");
+        }
+        require_ar_rejection_before_output(archive, root / ("output-" + std::to_string(index)), "malformed AR");
+    }
 }
 
 // Purpose: Verify AR extraction refuses overwriting existing files unless explicitly allowed.
