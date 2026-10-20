@@ -166,8 +166,11 @@ download paths to the repository.
   maintainer approves publication. Validation has read permission; the separate
   dependent publisher alone receives release write permission.
 
-- `release_version`: SemVer product version without a `v` prefix. Leave it
-  empty to use the version declared in `CMakeLists.txt`.
+- `release_version`: SemVer product version without a `v` prefix or build
+  metadata. Leave it empty to use the version declared in `CMakeLists.txt`.
+  Prerelease identifiers follow the [SemVer identifier rules](https://semver.org/#spec-item-9):
+  mixed identifiers such as `1beta` are valid; numeric identifiers such as
+  `01` are not.
 - `replace_existing`: replaces the existing release/tag when set to `true`.
   This is exceptional and must be used only when the current maintainer/user
   request explicitly asks to replace that specific version. The workflow builds,
