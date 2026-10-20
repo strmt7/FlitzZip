@@ -47,7 +47,16 @@ def tracked_paths(root: Path) -> list[str]:
     return sorted(paths)
 
 
-# Purpose: Read bounded structured evidence, never execute or interpret source snippets.
+# Purpose: Refuse contradictory properties at every depth of a scanner coverage capture.
+# Inputs: One JSON object's decoded key/value pairs. Outputs: Unique fields or a value-free ambiguity error.
+def unique_report_fields(pairs: list[tuple[str, object]]) -> dict:
+    fields = dict(pairs)
+    if len(fields) != len(pairs):
+        raise ValueError("Semgrep coverage report contains duplicate fields")
+    return fields
+
+
+# Purpose: Read bounded, unambiguous finite evidence, never execute or interpret source snippets.
 # Inputs: UTF-8 Semgrep JSON output from the same scan that produced the uploaded SARIF.
 # Outputs: A JSON object; missing, truncated, oversized, or malformed reports fail closed.
 def read_report(path: Path) -> dict:
@@ -55,9 +64,10 @@ def read_report(path: Path) -> dict:
         payload = stream.read(MAX_REPORT_BYTES + 1)
     if len(payload) > MAX_REPORT_BYTES:
         raise ValueError("Semgrep coverage report exceeds its size budget")
-    report = json.loads(payload)
+    report = json.loads(payload, object_pairs_hook=unique_report_fields)
     if not isinstance(report, dict):
         raise ValueError("Semgrep coverage report is not an object")
+    json.dumps(report, allow_nan=False)
     return report
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +14,64 @@ from tools import semgrep_coverage as coverage
 
 
 class CoverageTests(unittest.TestCase):
+    # Purpose: Verify the real CLI derives its exit status from a real Git inventory and same-run JSON capture.
+    # Inputs: An owned Git repository with one staged source and complete versus omitted scan admission.
+    # Outputs: Both commands retain metadata; only the omitted source fails the coverage gate.
+    def test_real_cli_inventory_and_gate(self) -> None:
+        checkout = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
+            (root / "a.cpp").write_text("// owned scanner inventory fixture\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "a.cpp"], check=True, capture_output=True)
+            report = root / "report.json"
+            for admitted, expected in ((["a.cpp"], 0), ([], 1)):
+                report.write_text(
+                    json.dumps({"version": "fixture", "paths": {"scanned": admitted}, "errors": []}), encoding="utf-8"
+                )
+                result = subprocess.run(
+                    [sys.executable, "-m", "tools.semgrep_coverage", "--root", str(root), "--report", str(report)],
+                    cwd=checkout,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
+                metadata = json.loads(result.stdout)
+                self.assertEqual(metadata["tracked_files"], ["a.cpp"])
+                self.assertEqual(metadata["unscanned_source_files"], [] if admitted else ["a.cpp"])
+
+    # Purpose: Prevent contradictory report properties from discarding scanner diagnostics or scan-admission gaps.
+    # Inputs: Root and nested duplicate fields plus nonfinite constants and exponent overflow in bounded files.
+    # Outputs: Ambiguous captures are rejected; none can be rendered as a clean coverage inventory.
+    def test_ambiguous_json_is_rejected(self) -> None:
+        payloads = (
+            '{"errors":[{"type":"Timeout"}],"errors":[]}',
+            '{"paths":{"scanned":[],"scanned":["src/a.cpp"]}}',
+            '{"version":"fixture","extra":NaN}',
+            '{"version":"fixture","extra":1e999}',
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.json"
+            for payload in payloads:
+                path.write_text(payload, encoding="utf-8")
+                with self.subTest(payload=payload), self.assertRaises(ValueError):
+                    coverage.read_report(path)
+
+    # Purpose: Reject incomplete Git inventory transports instead of reporting a truncated or duplicate file set.
+    # Inputs: Bounded subprocess records for missing terminal NUL, empty/duplicate index and malformed UTF-8.
+    # Outputs: Each malformed inventory fails; ordinary valid inventory remains covered by the real-Git test.
+    def test_inventory_transport_failures(self) -> None:
+        for payload in (b"src/a.cpp", b"", b"src/a.cpp\0src/a.cpp\0", b"\xff\0"):
+            with (
+                self.subTest(payload=payload),
+                patch.object(
+                    coverage.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=payload)
+                ),
+                self.assertRaises((ValueError, UnicodeDecodeError)),
+            ):
+                coverage.tracked_paths(Path.cwd())
+
     # Purpose: Canonicalize scanner paths without accepting traversal or host identities.
     # Inputs: Equivalent relative spellings and unsafe absolute/control-character paths.
     # Outputs: Valid paths agree; all unsafe spellings are rejected.
@@ -68,6 +127,7 @@ class CoverageTests(unittest.TestCase):
             {**valid, "paths": []},
             {**valid, "version": None},
             {**valid, "errors": None},
+            {**valid, "errors": [None]},
             {**valid, "errors": [{}]},
             {**valid, "errors": [{"type": []}]},
             {**valid, "errors": [{"type": ["PartialParsing"]}]},
