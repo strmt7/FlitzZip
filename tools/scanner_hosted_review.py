@@ -431,15 +431,14 @@ def committed_context_matches(root: Path, commit: str) -> bool:
 
 # Purpose: Identify exact historical review matches while preserving their source and analysis provenance.
 # Inputs: Complete alerts, full analysis commit and historical ledger. Outputs: Informational IDs, never acceptance.
+# Exact report candidates require full generated-source context; unrelated inventories need no native build.
 def match_historical_hosted_alerts(
     root: Path, alerts: list[dict], commit: str, rows: list[dict[str, str]]
 ) -> list[int]:
     if re.fullmatch(r"[0-9a-f]{40}", commit) is None or len(alerts) > 20000:
         raise ValueError("Hosted review requires a full analysis commit and bounded inventory")
-    if context_digest(root) != rows[0]["context_sha256"] or not committed_context_matches(root, commit):
-        return []
     reviews = {int(row["alert"]): row for row in rows}
-    digests, accepted = {}, []
+    candidates = []
     for alert in alerts:
         number = alert.get("number")
         row = reviews.get(number) if type(number) is int else None
@@ -461,6 +460,13 @@ def match_historical_hosted_alerts(
             for key, field in zip(region_keys, FIELDS[7:11], strict=True)
         ):
             continue
+        candidates.append((number, row))
+    if not candidates:
+        return []
+    if context_digest(root) != rows[0]["context_sha256"] or not committed_context_matches(root, commit):
+        return []
+    digests, accepted = {}, []
+    for number, row in candidates:
         if row["path"] not in digests:
             digests[row["path"]] = source_digest(root, row["path"])
         if digests[row["path"]] == row["input_sha256"]:

@@ -423,7 +423,9 @@ def observe_toolchain(root: Path, cache: dict, cmake: Path) -> dict:
         "host_compiler_files_sha256": host_files,
     }
     if cache["FLITZZIP_ENABLE_HIP"] == "ON":
-        sdk = Path(cache["FLITZZIP_HIP_PATH"])
+        # input_path canonicalizes its root. Keep enumeration relative to that
+        # same root when the installation uses a Windows short name or '..'.
+        sdk = Path(cache["FLITZZIP_HIP_PATH"]).resolve(strict=True)
         names = ("bin/hipcc.exe", "lib/llvm/bin/clang.exe", "lib/amdhip64.lib", "include/hip/hip_version.h")
         bitcode = input_path(sdk, "lib/llvm/amdgcn/bitcode/ocml.bc").parent
         names = sorted(set(names) | {path.relative_to(sdk).as_posix() for path in bitcode.glob("*.bc")})

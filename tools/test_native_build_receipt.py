@@ -614,6 +614,13 @@ class NativeBuildReceiptTests(unittest.TestCase):
         )
         self.assertEqual(actual["lock_sha256"], hashlib.sha256(lock.read_bytes()).hexdigest())
         receipt.validate_current(self.root, "Release", True)
+        alias_parent = self.root / "alias parent"
+        alias_parent.mkdir()
+        aliased_cache = {**self.cache, "FLITZZIP_HIP_PATH": str(alias_parent / ".." / sdk.name)}
+        self.assertEqual(
+            receipt.observe_toolchain(self.root, aliased_cache, self.cmake),
+            receipt.observe_toolchain(self.root, self.cache, self.cmake),
+        )
         for replacement in (
             None,
             {},
