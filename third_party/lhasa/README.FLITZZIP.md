@@ -45,6 +45,9 @@ Local hardening changes in the production copy:
   errors. Skips consume buffered lead-in bytes first. FlitzZip uses checked read
   consumption for skipped extents, because seeking past EOF does not establish
   that compressed bytes exist.
+- Each input stream owns a snapshot of its callback table. Caller table lifetime
+  and subsequent changes cannot alter active read, skip or close behavior.
+  The separate callback context remains explicitly caller-owned.
 - Removal of Lhasa's unused filesystem extraction helpers and platform write
   abstraction from the production copy. FlitzZip retains only header parsing,
   decompression, and CRC validation.
