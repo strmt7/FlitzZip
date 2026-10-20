@@ -15,6 +15,29 @@ from tools import scanner_hosted_review as review
 
 
 class HostedReviewTests(unittest.TestCase):
+    def test_irrelevant_historical_alerts_do_not_require_generated_native_sources(self):
+        """Purpose: Avoid build prerequisites when no exact historical review can match.
+        Inputs: Empty, unknown-ID, closed and wrong-tool inventories. Outputs: No context lookup or source admission.
+        """
+        row = self.rows[0]
+        valid = self.alert(row)
+        for alerts in (
+            [],
+            [{"number": -1, "state": "open"}],
+            [{**valid, "state": "closed"}],
+            [{**valid, "tool": {"name": "different"}}],
+        ):
+            with (
+                self.subTest(alerts=alerts),
+                patch.object(review, "context_digest", side_effect=AssertionError("unrelated alert required a build")),
+            ):
+                self.assertEqual(review.match_historical_hosted_alerts(self.root, alerts, self.commit, [row]), [])
+        with (
+            patch.object(review, "context_digest", side_effect=ValueError("required exact source context")),
+            self.assertRaisesRegex(ValueError, "required exact source context"),
+        ):
+            review.match_historical_hosted_alerts(self.root, [valid], self.commit, [row])
+
     # Purpose: Create independent source/configuration fixtures without a build, scanner or network request.
     # Inputs: Approved schema and records, with synthetic bytes. Outputs: Owned isolated checkout-like fixture.
     def setUp(self):
