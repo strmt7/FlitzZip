@@ -411,7 +411,12 @@ flowchart TD
 `--tune` sweeps the production block sizes: 256 KiB, 512 KiB, 1 MiB, 2 MiB,
 4 MiB, 8 MiB, and 16 MiB. `--tune-levels` additionally sweeps levels 1, 3, 5, 7, and 9, but the
 recommendation refuses candidates whose compression ratio is more than 2%
-worse than the balanced level-5 default candidate. That prevents the autotuner
+worse than the balanced level-5 candidate at the default block size. A fixed
+nondefault block-size sweep uses its measured level-5 candidate instead. If
+several nondefault balanced cases exist without a default-block case, the
+smallest measured ratio supplies the guard. Level tuning requires that balanced
+evidence; missing, negative or nonfinite measurements fail rather than silently
+using level 1. Equal scores retain the first eligible observation. That prevents the autotuner
 from simply selecting weaker compression to inflate speed.
 
 The Mixed benchmark profile must include fill-like bytes, repeated text,
