@@ -26,6 +26,24 @@ REVIEW_EVIDENCE_PATHS = {
 }
 
 
+# Purpose: Reject contradictory declarations in scanner records and exact-source approval ledgers.
+# Inputs: One object's decoded JSON pairs. Outputs: Unique fields or a value-free ambiguity error.
+def unique_record_fields(pairs: list[tuple[str, object]]) -> dict:
+    fields = dict(pairs)
+    if len(fields) != len(pairs):
+        raise ValueError("Secret-report JSON contains duplicate fields")
+    return fields
+
+
+# Purpose: Decode bounded raw records without silently selecting fields or accepting nonfinite auxiliary values.
+# Inputs: JSON text/bytes already bounded by the owning report or ledger transport.
+# Outputs: Parsed value for the owning schema validator; malformed, ambiguous or nonfinite JSON fails first.
+def decode_record(payload: str | bytes) -> object:
+    value = json.loads(payload, object_pairs_hook=unique_record_fields)
+    json.dumps(value, allow_nan=False)
+    return value
+
+
 # Purpose: Read one exact approved member without extracting files or accepting ambiguous archive names.
 # Inputs: Authenticated bounded archive bytes and an exact review; TAR expansion is separately bounded.
 # Outputs: Complete bounded member bytes; malformed, duplicate, linked or oversized inputs fail closed.
@@ -107,7 +125,7 @@ class PublicFixtureReview:
             if name != ".github/scanner-secret-reviews.json" and not (self.root / name).exists():
                 continue
             raw = review_bytes(self.root, name, 65536)
-            self.load_ledger(json.loads(raw))
+            self.load_ledger(decode_record(raw))
             self.ledger_hashes[name] = hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
         self.ledger_sha256 = self.ledger_hashes[".github/scanner-secret-reviews.json"]
         self.total = self.reviewed = 0
@@ -294,7 +312,7 @@ def redact_stream(source: BinaryIO, destination: TextIO, review: PublicFixtureRe
             raise ValueError("Finding record exceeds the publication limit")
         if not raw.strip():
             continue
-        record = json.loads(raw.decode("utf-8"))
+        record = decode_record(raw.decode("utf-8"))
         safe = redact_finding(record)
         destination.write(json.dumps(safe, ensure_ascii=True, separators=(",", ":")) + "\n")
         if review is not None:
