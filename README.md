@@ -67,6 +67,11 @@ AMD documents the HIP runtime as part of the AMD GPU driver, not something an
 application should redistribute. FlitzZip therefore delay-loads the HIP runtime,
 reports missing prerequisites clearly, and records the expected runtime DLL in
 `flitzzip-runtime-dependencies.json` inside each HIP-enabled package.
+The loader checks Windows System32 first, then numeric-version installations
+under the Windows Program Files `AMD\ROCm\<version>\bin` directory. Candidates
+must match the required DLL name and pass the file-chain, Windows signature,
+restricted-load and loaded-path checks. The app does not search the current
+directory or arbitrary `PATH` entries for the HIP runtime.
 Device-kernel registration also loads explicitly after trusted runtime/device
 admission. Missing AMD components leave capability reporting and CPU functions
 usable; Neutron remains unavailable. The packaged kernel DLL must match the
