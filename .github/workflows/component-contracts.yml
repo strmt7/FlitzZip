@@ -12,6 +12,8 @@ on:
       - tests/cmake/test_zstd*.cmake
       - mcp/**
       - .agents/skills/**
+      - .clusterfuzzlite/**
+      - .semgrepignore
       - AGENTS.md
       - docs/benchmarks/**
       - docs/benchmark-permissions.md

@@ -221,6 +221,7 @@ function Get-FlitzZipVerificationPathPolicy {
             '^AGENTS\.md$',
             '^SECURITY\.md$',
             '^README\.md$',
+            '^CONTRIBUTING\.md$',
             '^IMPLEMENTATION_PLAN\.md$',
             '^docs/',
             '^resources/design/.*\.(png|jpe?g|svg)$',
@@ -231,6 +232,7 @@ function Get-FlitzZipVerificationPathPolicy {
             '^AGENTS\.md$',
             '^SECURITY\.md$',
             '^README\.md$',
+            '^CONTRIBUTING\.md$',
             '^IMPLEMENTATION_PLAN\.md$',
             '^LICENSE(\.md)?$',
             '^CMakeLists\.txt$',
@@ -246,6 +248,7 @@ function Get-FlitzZipVerificationPathPolicy {
             '^\.clang-format$',
             '^\.pymarkdown\.json$',
             '^\.ruff\.toml$',
+            '^\.semgrepignore$',
             '^\.yamllint$',
             '^\.git(ignore|attributes)$',
             '^\.clusterfuzzlite/',
@@ -336,6 +339,7 @@ function Get-FlitzZipVerificationScope {
         '^fuzz/'
     )
     $touchesSecurityBoundary = $touchesArchiveParser -or (Test-FlitzZipAnyPath -Path $paths -Pattern @(
+        '^\.semgrepignore$',
         '^src/core/(defender_scan|integrity|path_safety|file_publish)\.',
         '^tools/(security_scan|github_post_push_audit|verify_change_hygiene|wait_relevant_workflows|release_workflow_policy|test_release_workflow_policy)\.ps1$',
         '^tools/native_component_tests\.ps1$',
@@ -457,7 +461,7 @@ function Get-FlitzZipToolVerificationCommand {
            Command = (Get-FlitzZipVerificationCommand -Id 'binary-corpus-transport-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_binary_corpus_transport.ps1', '-AllRuntimes') -Reason 'binary corpus pipes must preserve exact bytes and restore ambient encoding under Windows PowerShell and PowerShell 7; this offline contract never builds or benchmarks') }
         @{ Pattern = @('^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^tools/(test_semgrep_installation|test_semgrep_runtime|semgrep_distribution|test_semgrep_distribution)\.py$')
            Command = (Get-FlitzZipVerificationCommand -Id "scanner-installation-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_semgrep_installation", "tools.test_semgrep_distribution") -Reason "scanner provenance, packaging integrity, complete dependency hashes and the normal production install must remain aligned; real Linux runtime and coverage checks remain mandatory in the security workflow") }
-        @{ Pattern = @('^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^tools/(semgrep_coverage|test_semgrep_coverage)\.py$')
+        @{ Pattern = @('^\.semgrepignore$', '^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^tools/(semgrep_coverage|test_semgrep_coverage)\.py$')
            Command = (Get-FlitzZipVerificationCommand -Id "scanner-coverage-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_semgrep_coverage") -Reason "scanner admission must be compared with complete tracked inventory without hiding diagnostics or publishing source snippets") }
         @{ Pattern = @('^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^tools/(devskim_provenance|test_devskim_provenance)\.py$')
            Command = (Get-FlitzZipVerificationCommand -Id "devskim-provenance-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_devskim_provenance") -Reason "scanner download limits and exact size/hash verification must use one canonical provenance record") }
