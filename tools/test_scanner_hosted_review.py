@@ -9,12 +9,95 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from tools import scanner_hosted_review as review
 
 
 class HostedReviewTests(unittest.TestCase):
+    def test_source_digest_budget_and_mid_read_replacement(self):
+        """Purpose: Refuse oversized or concurrently replaced review inputs. Inputs: Private regular source bytes.
+        Outputs: No stale/mixed digest is returned and a complete stable retry succeeds.
+        """
+        name = self.rows[0]["path"]
+        path = (self.root / name).resolve()
+        original = path.read_bytes()
+        path.write_bytes(b"x" * (2 * 1024**2 + 1))
+        with self.assertRaisesRegex(ValueError, "exceeds its byte budget"):
+            review.source_digest(self.root, name)
+        path.write_bytes(original)
+        read_bytes = Path.read_bytes
+
+        # Purpose: Replace real bytes after read completion but before the reader's final identity observation.
+        # Inputs: Actual canonical reader path. Outputs: Original payload followed by one owned source mutation.
+        def replaced(selected):
+            payload = read_bytes(selected)
+            if selected == path:
+                selected.write_bytes(payload + b"changed during read")
+            return payload
+
+        with patch.object(Path, "read_bytes", replaced), self.assertRaisesRegex(ValueError, "changed while hashing"):
+            review.source_digest(self.root, name)
+        path.write_bytes(original)
+        self.assertEqual(
+            review.source_digest(self.root, name), hashlib.sha256(original.replace(b"\r\n", b"\n")).hexdigest()
+        )
+
+    def test_generated_inventory_ignores_data_and_bounds_source_count(self):
+        """Purpose: Bound generated caller inspection without allowing data files to redefine source context.
+        Inputs: Actual ignored data file and controlled over-budget filesystem enumeration.
+        Outputs: Stable source map for data-only changes and refusal before hashing an excess source.
+        """
+        original = review.derived_sources(self.root)
+        (self.root / review.DERIVED_ROOT / "metadata.fixture").write_bytes(b"nonexecutable data")
+        self.assertEqual(review.derived_sources(self.root), original)
+        walk = [(str(self.root / review.DERIVED_ROOT), [], [f"source-{index}.c" for index in range(513)])]
+        with (
+            patch.object(review.os, "walk", return_value=iter(walk)),
+            patch.object(review, "source_digest", return_value="a" * 64) as hash_source,
+            self.assertRaisesRegex(ValueError, "source inventory budget"),
+        ):
+            review.derived_sources(self.root)
+        self.assertEqual(hash_source.call_count, 512)
+
+    def test_legacy_ledger_budget_schema_and_scope_are_explicit(self):
+        """Purpose: Keep historical records within their exact approved schema and source scope.
+        Inputs: Oversized data, wrong header, invalid digest and an allocation review moved to a different source.
+        Outputs: Each malformed record fails before any context or acceptance lookup.
+        """
+        path = self.root / review.POLICY
+        for payload, message in (
+            (b"x" * (review.MAX_POLICY + 1), "exceeds its byte budget"),
+            (b"unknown\nvalue\n", "unknown schema"),
+        ):
+            path.write_bytes(payload)
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                review.read_hosted_policy(self.root)
+        row = dict(self.rows[0])
+        row["input_sha256"] = "g" * 64
+        self.write_policy([row])
+        with self.assertRaisesRegex(ValueError, "exact source and caller-context digests"):
+            review.read_hosted_policy(self.root)
+        row = dict(next(item for item in self.rows if item["tool"] == "devskim"))
+        row["path"] = self.rows[0]["path"]
+        self.write_policy([row])
+        with self.assertRaisesRegex(ValueError, "approved serial fixture"):
+            review.read_hosted_policy(self.root)
+
+    def test_committed_context_transport_status_is_not_assumed_successful(self):
+        """Purpose: Preserve Git's changed-versus-unavailable distinction. Inputs: Actual subprocess status protocol.
+        Outputs: Only exact success returns true; changed and failed context remain unaccepted.
+        """
+        for code in (0, 1, 2):
+            with self.subTest(code=code), patch.object(review.subprocess, "run") as git:
+                git.return_value.returncode = code
+                if code == 2:
+                    with self.assertRaisesRegex(ValueError, "cannot be verified"):
+                        review.committed_context_matches(self.root, self.commit)
+                else:
+                    self.assertEqual(review.committed_context_matches(self.root, self.commit), code == 0)
+
     def test_irrelevant_historical_alerts_do_not_require_generated_native_sources(self):
         """Purpose: Avoid build prerequisites when no exact historical review can match.
         Inputs: Empty, unknown-ID, closed and wrong-tool inventories. Outputs: No context lookup or source admission.
@@ -233,6 +316,69 @@ class HostedReviewTests(unittest.TestCase):
 
 
 class CurrentFalsePositiveTests(unittest.TestCase):
+    def test_current_policy_type_geometry_and_scope_boundaries(self):
+        """Purpose: Reject malformed individual decisions before any source lookup.
+        Inputs: Independent identity, producer, digest, path, coordinate and caller-list mutations.
+        Outputs: Explicit structural errors; the original valid policy remains unchanged.
+        """
+        mutations = (
+            ("version", "", "record"),
+            ("repository", "owner/../repository", "repository"),
+            ("alert", "0", "alert or location"),
+            ("start_column", "-1", "alert or location"),
+            ("end_column", "0", "Reversed"),
+            ("input_sha256", "g" * 64, "scanner or digest"),
+            ("tool", "unreviewed", "scanner or digest"),
+            ("path", "../outside.c", "review path"),
+            ("path", "file:///outside.c", "review path"),
+            ("context_paths", "|".join(reversed(self.context)), "caller context"),
+        )
+        original = (self.root / review.CURRENT_POLICY).read_bytes()
+        for field, value, message in mutations:
+            stream = io.StringIO()
+            writer = csv.DictWriter(stream, fieldnames=review.CURRENT_FIELDS)
+            writer.writeheader()
+            writer.writerow({**self.row, field: value})
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, message):
+                review.read_current_reviews(stream.getvalue().encode())
+        self.assertEqual((self.root / review.CURRENT_POLICY).read_bytes(), original)
+
+    def test_committed_blob_requires_full_revision_and_consistent_native_size(self):
+        """Purpose: Reject ambiguous revisions and truncated Git blob transport.
+        Inputs: A ref spelling and independently framed regular-file metadata with a shorter body.
+        Outputs: No unverified bytes can enter source matching; raw protocol failure remains explicit.
+        """
+        with patch.object(review.subprocess, "run") as git:
+            with self.assertRaisesRegex(ValueError, "full commit"):
+                review.committed_review_blob(self.root, "HEAD", "src/example.c")
+            git.assert_not_called()
+            git.side_effect = [
+                SimpleNamespace(stdout=b"100644 blob " + b"a" * 40 + b" 100\tsrc/example.c\0"),
+                SimpleNamespace(stdout=b"short"),
+            ]
+            with self.assertRaisesRegex(ValueError, "blob size changed"):
+                review.committed_review_blob(self.root, self.commit, "src/example.c")
+            self.assertEqual(git.call_count, 2)
+
+    def test_unknown_category_and_malformed_locations_cannot_use_a_review(self):
+        """Purpose: Keep incomplete raw scanner evidence blocking without looking up unrelated source context.
+        Inputs: Missing category, malformed SARIF locations and invalid inventory/revision declarations.
+        Outputs: No accepted report or source read; invalid bounded-inventory declarations are rejected.
+        """
+        alert = copy.deepcopy(self.alert)
+        del alert["most_recent_instance"]["category"]
+        self.assertEqual(self.match([alert]), [])
+        report = {"runs": [{"results": [{"locations": []}, {"locations": [{}, {}]}]}]}
+        reader = Mock(side_effect=AssertionError("malformed report reached source lookup"))
+        self.assertEqual(review.match_snapshot_false_positives([], report, "fixture/repository", reader), [])
+        reader.assert_not_called()
+        for alerts, commit in (([], "HEAD"), ([self.alert] * 20001, self.commit)):
+            with (
+                self.subTest(commit=commit, count=len(alerts)),
+                self.assertRaisesRegex(ValueError, "bounded inventory"),
+            ):
+                review.match_current_false_positives(self.root, alerts, commit, "fixture/repository")
+
     # Purpose: Exercise committed review identity using an isolated real Git repository.
     # Inputs: Independent source, caller, configuration and reviewed incident fixtures.
     # Outputs: A complete valid decision with no network access or scanner/build invocation.
