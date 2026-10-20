@@ -159,7 +159,13 @@ def finding_count(path: Path, tool: str) -> int:
         if not isinstance(runs, list) or not runs:
             raise ValueError("DevSkim report has no scanner runs")
         for run in runs:
-            if run["tool"]["driver"]["name"] != "devskim" or not isinstance(run.get("results"), list):
+            tool = run.get("tool") if isinstance(run, dict) else None
+            driver = tool.get("driver") if isinstance(tool, dict) else None
+            if (
+                not isinstance(driver, dict)
+                or driver.get("name") != "devskim"
+                or not isinstance(run.get("results"), list)
+            ):
                 raise ValueError("DevSkim report has an unexpected producer or result shape")
         return sum(len(run["results"]) for run in runs)
     raise ValueError("Unexpected scanner report shape")
