@@ -50,7 +50,11 @@ def capture_metadata(command: list[str], label: str) -> bytes:
                 try:
                     metadata = output.result(timeout=35)
                     error = errors.result(timeout=5)
-                    if process.wait(timeout=5) != 0:
+                    try:
+                        exit_code = process.wait(timeout=5)
+                    except subprocess.TimeoutExpired as exception:
+                        raise ValueError(f"C++ security {label} timed out") from exception
+                    if exit_code != 0:
                         raise ValueError(
                             f"C++ security {label} failed: " + error.decode("utf-8", errors="replace")[:2048]
                         )
