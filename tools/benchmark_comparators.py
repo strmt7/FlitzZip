@@ -29,6 +29,27 @@ MIN_SERIES_SECONDS = 10.0
 PERMISSIONS_PATH = Path(__file__).with_name("benchmark_permissions.json")
 
 
+# Purpose: Reject conflicting JSON declarations at every metadata depth rather than selecting the last value.
+# Inputs: One object's decoded property pairs. Outputs: Unique dictionary or an explicit ambiguity error.
+def unique_metadata_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate comparator metadata property")
+        result[key] = value
+    return result
+
+
+# Purpose: Read one unambiguous finite metadata object shared by release, permission and measurement consumers.
+# Inputs: JSON text/bytes already bounded by the owning transport. Outputs: Dictionary or malformed-data refusal.
+def parse_metadata(payload: str | bytes) -> dict:
+    value = json.loads(payload, object_pairs_hook=unique_metadata_object)
+    if not isinstance(value, dict):
+        raise ValueError("comparator metadata must be an object")
+    json.dumps(value, allow_nan=False)
+    return value
+
+
 # Purpose: Reject release-endpoint redirects before any second request can occur.
 # Inputs: Standard urllib redirect callback arguments from the fixed official endpoint.
 # Outputs: Raises ValueError; neither another origin nor a protocol downgrade is contacted.
@@ -94,7 +115,7 @@ def fetch_release_source(tool: str) -> str:
 # Outputs: Numeric release label; changed or ambiguous source structure raises ValueError.
 def parse_release(tool: str, source: str) -> str:
     if RELEASE_SOURCES[tool].startswith("https://api.github.com/"):
-        release = json.loads(source)
+        release = parse_metadata(source)
         if not isinstance(release, dict) or not isinstance(release.get("tag_name"), str):
             raise ValueError(f"official release object is malformed: {tool}")
         version = release["tag_name"].removeprefix("v")
@@ -147,8 +168,8 @@ def require_permission(
 ) -> dict:
     if action not in ("execute", "publish_results", "redistribute"):
         raise ValueError(f"unsupported permission action: {action}")
-    catalog = json.loads(PERMISSIONS_PATH.read_text(encoding="utf-8"))
-    if catalog.get("schema_version") != 1:
+    catalog = parse_metadata(PERMISSIONS_PATH.read_text(encoding="utf-8"))
+    if type(catalog.get("schema_version")) is not int or catalog["schema_version"] != 1:
         raise ValueError("unsupported benchmark permission schema")
     reviewed = datetime.strptime(catalog["reviewed_on"], "%Y-%m-%d").date()
     age = (datetime.now(UTC).date() - reviewed).days
@@ -181,7 +202,7 @@ def require_permission(
 # Inputs: Reviewed catalog subject and path to the original pinned executable.
 # Outputs: Exact SHA-256 evidence; missing, linked, renamed, or unreviewed binaries fail closed.
 def require_binary_identity(tool: str, executable: Path) -> dict:
-    catalog = json.loads(PERMISSIONS_PATH.read_text(encoding="utf-8"))
+    catalog = parse_metadata(PERMISSIONS_PATH.read_text(encoding="utf-8"))
     pins = catalog["subjects"].get(tool, {}).get("binaries", {})
     if executable.name not in pins:
         raise ValueError(f"{tool} executable has no reviewed official binary pin")

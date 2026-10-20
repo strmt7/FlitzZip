@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import UTC, datetime
@@ -19,6 +23,83 @@ from tools import run_archive_comparison as comparison
 
 
 class ComparatorPreflightTests(unittest.TestCase):
+    # Purpose: Refuse ambiguous or nonfinite comparator metadata across release and permission consumers.
+    # Inputs: Malformed scalar, duplicate and nonfinite objects; no external discovery occurs.
+    # Outputs: All readers reject conflicting evidence and retain explicit caller-visible errors.
+    def test_metadata_is_an_unambiguous_finite_object(self) -> None:
+        for payload in (
+            "[]",
+            "null",
+            '{"x":NaN}',
+            '{"x":Infinity}',
+            '{"x":1,"x":2}',
+            '{"nested":{"allowed":false,"allowed":true}}',
+        ):
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                comparators.parse_metadata(payload)
+        stable = '{"tag_name":"v1.5.6","tag_name":"v1.5.7","draft":false,"prerelease":false}'
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            comparators.parse_release("Zstd", stable)
+        original = json.loads(comparators.PERMISSIONS_PATH.read_text())
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "permissions.json"
+            for schema in (True, "1", None, 0, 2):
+                path.write_text(json.dumps({**original, "schema_version": schema}))
+                with (
+                    self.subTest(schema=schema),
+                    patch.object(comparators, "PERMISSIONS_PATH", path),
+                    self.assertRaisesRegex(ValueError, "permission schema"),
+                ):
+                    comparators.require_permission("HIGGS", "execute")
+            path.write_text('{"subjects":{"Fixture":{"binaries":{},"binaries":{}}}}')
+            with patch.object(comparators, "PERMISSIONS_PATH", path), self.assertRaisesRegex(ValueError, "duplicate"):
+                comparators.require_binary_identity("Fixture", Path(temporary) / "fixture.exe")
+
+    # Purpose: Exercise the command handler with official-shaped release metadata and deduplicated explicit tools.
+    # Inputs: Controlled discovery observations and a fixed UTC clock.
+    # Outputs: Exact stable versions and one fetch per tool.
+    def test_command_line_reports_deduplicated_stable_releases(self) -> None:
+        output = io.StringIO()
+        stable = json.dumps({"tag_name": "v1.5.7", "draft": False, "prerelease": False})
+        with (
+            patch.object(comparators.sys, "argv", ["versions", "--tool", "Zstd", "--tool", "Zstd"]),
+            patch.object(comparators, "fetch_release_source", return_value=stable) as fetch,
+            patch.object(comparators, "datetime", wraps=datetime) as clock,
+            contextlib.redirect_stdout(output),
+        ):
+            clock.now.return_value = datetime(2026, 10, 20, tzinfo=UTC)
+            self.assertEqual(comparators.main(), 0)
+        fetch.assert_called_once_with("Zstd")
+        self.assertEqual(
+            json.loads(output.getvalue()),
+            {
+                "checked_at_utc": "2026-10-20T00:00:00+00:00",
+                "channel": "stable",
+                "tools": {"Zstd": {"version": "1.5.7", "source_url": comparators.RELEASE_SOURCES["Zstd"]}},
+            },
+        )
+
+    # Purpose: Preserve a discovery failure at the actual process entry point rather than publishing partial versions.
+    # Inputs: A controlled OS error at urllib's network boundary in a separate interpreter.
+    # Outputs: Nonzero status, no JSON success and actionable stderr; no connection is attempted.
+    def test_command_line_transport_error_returns_failure(self) -> None:
+        program = (
+            "import runpy,sys\nfrom unittest.mock import patch\n"
+            "sys.argv=['comparators','--tool','Zstd']\n"
+            "with patch('urllib.request.OpenerDirector.open',side_effect=OSError('owned transport failure')):\n"
+            " runpy.run_module('tools.benchmark_comparators',run_name='__main__')\n"
+        )
+        process = subprocess.run(
+            [sys.executable, "-B", "-c", program],
+            cwd=Path(comparators.__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(process.returncode, 1)
+        self.assertEqual(process.stdout, "")
+        self.assertIn("comparator preflight failed: owned transport failure", process.stderr)
+
     # Purpose: Reject redirects before issuing requests to a changed origin or scheme.
     # Inputs: Offline redirect targets; no network request or browser action occurs.
     # Outputs: All redirect responses fail, including an HTTPS-to-HTTP downgrade.
@@ -52,6 +133,37 @@ class ComparatorPreflightTests(unittest.TestCase):
                 comparators.parse_release("Zstd", source)
         with self.assertRaisesRegex(ValueError, "ambiguous"):
             comparators.parse_release("WinRAR", page + "<a>WinRAR x64 7.22</a>")
+        for tool, source in (
+            ("Bandizip", "no release label"),
+            ("Zstd", json.dumps({**stable, "tag_name": "v1.5.7-rc1"})),
+        ):
+            with self.subTest(tool=tool), self.assertRaisesRegex(ValueError, "could not be parsed"):
+                comparators.parse_release(tool, source)
+
+    # Purpose: Bound successful and oversized official responses at the native transport boundary.
+    # Inputs: Independent in-memory HTTP body streams; no browser or network request runs.
+    # Outputs: Exact text or explicit refusal, fixed official URI/deadline, and closed response ownership.
+    def test_release_transport_enforces_complete_response_bound_and_closes_stream(self) -> None:
+        for size in (comparators.MAX_RESPONSE_BYTES, comparators.MAX_RESPONSE_BYTES + 1):
+            payload = b" " * size
+            response = io.BytesIO(payload)
+            with self.subTest(size=size), patch.object(comparators, "build_opener") as opener:
+                opener.return_value.open.return_value = response
+                if size > comparators.MAX_RESPONSE_BYTES:
+                    with self.assertRaisesRegex(ValueError, "exceeds the bound"):
+                        comparators.fetch_release_source("Zstd")
+                else:
+                    self.assertEqual(comparators.fetch_release_source("Zstd"), payload.decode())
+                request = opener.return_value.open.call_args.args[0]
+                self.assertEqual(request.full_url, comparators.RELEASE_SOURCES["Zstd"])
+                self.assertEqual(opener.return_value.open.call_args.kwargs, {"timeout": 20})
+                self.assertTrue(response.closed)
+        response = io.BytesIO(b"\xff")
+        with patch.object(comparators, "build_opener") as opener:
+            opener.return_value.open.return_value = response
+            with self.assertRaises(UnicodeDecodeError):
+                comparators.fetch_release_source("Zstd")
+        self.assertTrue(response.closed)
 
     # Purpose: Reject stale actual version banners even when a newer version appears elsewhere.
     # Inputs: Mocked official versions, current/stale banners, and a Bandizip build revision.
@@ -70,6 +182,8 @@ class ComparatorPreflightTests(unittest.TestCase):
     # Inputs: The reviewed catalog with a fixed review-date clock; no commercial tool is executed.
     # Outputs: Eligible scopes pass and every unsupported action or scope fails closed.
     def test_permission_scopes(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported permission action"):
+            comparators.require_permission("HIGGS", "unreviewed action")
         with patch.object(comparators, "datetime", wraps=datetime) as clock:
             clock.now.return_value = datetime(2026, 10, 1, tzinfo=UTC)
             comparators.require_permission("7-Zip", "execute", version="26.03")
@@ -111,6 +225,9 @@ class ComparatorPreflightTests(unittest.TestCase):
                 self.assertEqual(comparators.require_binary_identity("Fixture", binary)[binary.name], expected)
                 binary.write_bytes(b"modified")
                 with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                    comparators.require_binary_identity("Fixture", binary)
+                binary.unlink()
+                with self.assertRaisesRegex(ValueError, "missing or linked"):
                     comparators.require_binary_identity("Fixture", binary)
                 with self.assertRaisesRegex(ValueError, "no reviewed"):
                     comparators.require_binary_identity("Fixture", root / "unreviewed.exe")

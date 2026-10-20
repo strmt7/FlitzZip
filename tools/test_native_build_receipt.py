@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import sys
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tools import native_build_receipt as receipt
 from tools import test_native_build_provenance as input_fixtures
@@ -424,6 +426,316 @@ class NativeBuildReceiptTests(unittest.TestCase):
         self.write_cache()
         with self.assertRaises(ValueError):
             receipt.configured_recipe(self.root, "Release")
+
+    # Purpose: Prevent malformed portable evidence from qualifying missing, differently scoped or private artifacts.
+    # Inputs: A real successful fixture receipt with independent schema, value and path substitutions.
+    # Outputs: Every invalid receipt is rejected without changing the accepted receipt or transaction.
+    def test_exported_receipt_rejects_schema_scope_and_identity_substitution(self):
+        self.successful()
+        path = self.build / receipt.RECEIPT
+        original = path.read_bytes()
+        valid = json.loads(original)
+        changes = [
+            (("schema_version",), True),
+            (("schema_version",), 2),
+            (("kind",), "configure-only"),
+            (("status",), "failed"),
+            (("transaction_id",), "F" * 32),
+            (("clean_first",), 1),
+            (("inputs",), []),
+            (("inputs", "schema_version"), True),
+            (("inputs", "projection"), "all-host-files"),
+            (("inputs", "inputs_sha256"), "0" * 64),
+            (("inputs", "files"), {}),
+            (("inputs", "files"), {"../outside": "a" * 64}),
+            (("inputs", "files"), {"C:/private/file": "a" * 64}),
+            (("inputs", "files"), {"src/./file.cpp": "a" * 64}),
+            (("inputs", "files"), {"src/file.cpp": "G" * 64}),
+            (("inputs", "files"), {"unrelated/file.cpp": "a" * 64}),
+            (("recipe",), []),
+            (("recipe", "configuration"), "Other"),
+            (("recipe", "FLITZZIP_BUILD_GUI"), "OFF"),
+            (("recipe", "FLITZZIP_HIP_ARCH"), "native"),
+            (("recipe", "FLITZZIP_VCVARS_VERSION"), "C:/private/toolchain"),
+            (("recipe", "CMAKE_GENERATOR_PLATFORM"), "arm64"),
+            (("outputs_sha256",), {"build/Release/FlitzZip.exe": "a" * 64}),
+        ]
+        for keys, replacement in changes:
+            value = copy.deepcopy(valid)
+            target = value
+            for key in keys[:-1]:
+                target = target[key]
+            target[keys[-1]] = replacement
+            with self.subTest(keys=keys, replacement=replacement), self.assertRaises(ValueError):
+                receipt.validate_receipt(value)
+        for keys in (("recipe",), ("inputs",), ("toolchain",), ("outputs_sha256",)):
+            value = copy.deepcopy(valid)
+            value[keys[0]]["unexpected"] = "unreviewed"
+            with self.subTest(keys=keys), self.assertRaises(ValueError):
+                receipt.validate_receipt(value)
+        value = copy.deepcopy(valid)
+        value["outputs_sha256"]["build/Release/outside.exe"] = "a" * 64
+        with self.assertRaisesRegex(ValueError, "app-local"):
+            receipt.validate_receipt(value)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(
+            receipt.validate_current(self.root, "Release", False)["receipt_sha256"],
+            hashlib.sha256(canonical(valid)).hexdigest(),
+        )
+
+    # Purpose: Bound metadata readers and publishers without sacrificing an existing accepted generation.
+    # Inputs: Oversized regular files and scalar/nonfinite JSON; bounded fixture payloads never execute.
+    # Outputs: Rejection preserves the destination and creates no temporary or misleading accepted metadata.
+    def test_metadata_bounds_and_invalid_json_preserve_existing_generation(self):
+        destination = self.build / "bound.json"
+        destination.write_bytes(b'{"generation":"old"}\n')
+        old = destination.read_bytes()
+        with self.assertRaisesRegex(ValueError, "exceeds its bound"):
+            receipt.publish(self.root, "bound.json", {"payload": "x" * receipt.MAX_METADATA})
+        self.assertEqual(destination.read_bytes(), old)
+        oversized = b" " * (receipt.MAX_METADATA + 1)
+        destination.write_bytes(oversized)
+        with self.assertRaisesRegex(ValueError, "exceeds its bound"):
+            receipt.read_metadata(self.root, "build/bound.json")
+        with self.assertRaisesRegex(ValueError, "previous native build metadata exceeds"):
+            receipt.publish(self.root, "bound.json", {"generation": "new"})
+        self.assertEqual(destination.read_bytes(), oversized)
+        for payload in (b"[]", b"42", b'{"bad":NaN}', b'{"bad":Infinity}', b'{"nested":{"x":1,"x":2}}'):
+            destination.write_bytes(payload)
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                receipt.read_metadata(self.root, "build/bound.json")
+        self.assertEqual(list(self.build.glob(".native-build-*.tmp")), [])
+
+    # Purpose: Require explicit complete native build settings before observing or exporting compiler identities.
+    # Inputs: Private CMake cache and compiler probe mutations. Outputs: No unrecognized or private recipe qualifies.
+    def test_configured_recipe_and_compiler_probe_fail_closed(self):
+        original = dict(self.cache)
+        for key, value, message in (
+            ("CMAKE_GENERATOR", "Ninja", "Windows generator"),
+            ("CMAKE_GENERATOR_PLATFORM", "Win32", "platform or HIP"),
+            ("FLITZZIP_ENABLE_HIP", "unknown", "platform or HIP"),
+            ("FLITZZIP_BUILD_GUI", "OFF", "complete app"),
+            ("FLITZZIP_BUILD_TESTS", "OFF", "complete app"),
+            ("FLITZZIP_VCVARS_VERSION", "private/tool/path", "installation paths"),
+        ):
+            self.cache = {**original, key: value}
+            self.write_cache()
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, message):
+                receipt.configured_recipe(self.root, "Release")
+        self.cache = {key: value for key, value in original.items() if key != "FLITZZIP_HIP_ARCH"}
+        self.write_cache()
+        with self.assertRaisesRegex(ValueError, "lacks required"):
+            receipt.configured_recipe(self.root, "Release")
+        self.cache = original
+        self.write_cache()
+        probe = self.build / "CMakeFiles/4.4.3/CMakeCXXCompiler.cmake"
+        text = probe.read_text()
+        for value, message in (
+            ("", "lacks required"),
+            (text.replace('"MSVC"', '"Clang"'), "observed MSVC"),
+            (text.replace('"19.51.36260.0"', '"invalid"'), "observed MSVC"),
+        ):
+            probe.write_text(value)
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                receipt.observe_toolchain(self.root, self.cache, self.cmake)
+        probe.write_text(text)
+        self.cache["CMAKE_CACHE_MAJOR_VERSION"] = "../../outside"
+        with self.assertRaisesRegex(ValueError, "invalid CMake probe version"):
+            receipt.observe_toolchain(self.root, self.cache, self.cmake)
+
+    # Purpose: Detect interrupted, forged and reused transactions independently from their final binary content.
+    # Inputs: Actual state transitions and source mutation after prepare. Outputs: No stale or partial success.
+    def test_transaction_replay_and_completion_identity(self):
+        token, _ = self.successful()
+        for candidate in ("", "0" * 32, token):
+            with self.subTest(token=candidate), self.assertRaisesRegex(ValueError, "no longer incomplete"):
+                receipt.pending(self.root, candidate)
+        original = (self.build / receipt.RECEIPT).read_bytes()
+        state = receipt.read_metadata(self.root, f"build/{receipt.TRANSACTION}")
+        for key, value in (("transaction_id", "0" * 32), ("receipt_sha256", "0" * 64)):
+            receipt.publish(self.root, receipt.TRANSACTION, {**state, key: value})
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "completed transaction"):
+                receipt.validate_current(self.root, "Release", False)
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        receipt.prepare(self.root, token, self.cmake)
+        (self.root / "src/main.cpp").write_text("source replacement after compilation began")
+        with self.assertRaisesRegex(ValueError, "during build"):
+            receipt.finish(self.root, token, self.cmake, False)
+        self.assertEqual((self.build / receipt.RECEIPT).read_bytes(), original)
+        with self.assertRaisesRegex(ValueError, "unsupported incomplete"):
+            receipt.end_incomplete(self.root, token, "successful")
+
+    # Purpose: Refuse missing or foreign runtime outputs and force clean reconstruction after lost artifacts.
+    # Inputs: Private manifest substitutions and one deleted declared dependency.
+    # Outputs: Output capture fails closed and preparation requests a fresh build without reusing a stale receipt.
+    def test_runtime_inventory_is_bounded_and_requires_real_files(self):
+        self.successful()
+        manifest = self.build / "Release/flitzzip-runtime-dependencies.json"
+        original = manifest.read_bytes()
+        for value in (None, [], [None], [{"name": "../outside.dll"}], [{"name": "FlitzZip.exe"}]):
+            manifest.write_text(json.dumps({"packaged_runtime_files": value}))
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                receipt.capture_outputs(self.root, "Release")
+        manifest.write_bytes(original)
+        (self.build / "Release/fixture.dll").unlink()
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        self.assertTrue(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+        with self.assertRaises(FileNotFoundError):
+            receipt.finish(self.root, token, self.cmake, True)
+
+    # Purpose: Bind the full documented HIP compiler scope without touching an installed SDK or executing kernels.
+    # Inputs: Small private tool, header and bitcode bytes plus independent scope/digest/inventory substitutions.
+    # Outputs: Exact observed hashes, a valid required-HIP receipt and rejection of every incomplete SDK identity.
+    def test_hip_toolchain_receipt_binds_critical_files_and_device_bitcode(self):
+        sdk = self.root / "private sdk"
+        names = (
+            "bin/hipcc.exe",
+            "lib/llvm/bin/clang.exe",
+            "lib/amdhip64.lib",
+            "include/hip/hip_version.h",
+            "lib/llvm/amdgcn/bitcode/ocml.bc",
+            "lib/llvm/amdgcn/bitcode/ockl.bc",
+        )
+        for name in names:
+            path = sdk / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(("Nonexecutable SDK fixture: " + name).encode())
+        self.cache.update(FLITZZIP_ENABLE_HIP="ON", FLITZZIP_HIP_PATH=str(sdk))
+        lock = self.root / "tools/rocm-sdk-lock.json"
+        lock.parent.mkdir(exist_ok=True)
+        lock.write_bytes(b'{"fixture":"nonexecutable SDK identity"}\n')
+        self.write_cache()
+        self.successful()
+        data = receipt.read_metadata(self.root, f"build/{receipt.RECEIPT}")
+        actual = data["toolchain"]["hip_sdk"]
+        self.assertEqual(
+            actual["critical_files_sha256"],
+            {name: hashlib.sha256((sdk / name).read_bytes()).hexdigest() for name in names},
+        )
+        self.assertEqual(actual["lock_sha256"], hashlib.sha256(lock.read_bytes()).hexdigest())
+        receipt.validate_current(self.root, "Release", True)
+        for replacement in (
+            None,
+            {},
+            {**actual, "scope": "unreviewed"},
+            {**actual, "lock_sha256": "invalid"},
+            {**actual, "critical_files_sha256": {"bin/hipcc.exe": "a" * 64}},
+        ):
+            changed = copy.deepcopy(data)
+            changed["toolchain"]["hip_sdk"] = replacement
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                receipt.validate_receipt(changed)
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        self.assertFalse(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+        (sdk / "lib/llvm/amdgcn/bitcode/ockl.bc").write_bytes(b"changed device runtime")
+        with self.assertRaisesRegex(ValueError, "toolchain changed"):
+            receipt.finish(self.root, token, self.cmake, False)
+
+    # Purpose: Reject unsupported configurations before touching metadata and non-directory build destinations.
+    # Inputs: Invalid configuration names and an existing regular file standing in for the build directory.
+    # Outputs: Clear early refusal without acceptance or replacement of caller data.
+    def test_invalid_configuration_and_non_directory_refusal(self):
+        for operation in (receipt.begin, receipt.configured_recipe, receipt.capture_outputs):
+            for configuration in ("", "../Release", "release", "MinSizeRel"):
+                with (
+                    self.subTest(operation=operation.__name__, configuration=configuration),
+                    self.assertRaisesRegex(ValueError, "unsupported"),
+                ):
+                    operation(self.root, configuration)
+        file = self.root / "regular-file"
+        file.write_bytes(b"preserve")
+        with self.assertRaisesRegex(ValueError, "unlinked directory"):
+            receipt.reject_link(file)
+        self.assertEqual(file.read_bytes(), b"preserve")
+
+    # Purpose: Reject conflicting historical aliases rather than silently selecting one compiler policy.
+    # Inputs: An exported receipt containing both tested predecessor and current HIP keys.
+    # Outputs: Historical reading refuses ambiguity and leaves live qualification unchanged.
+    def test_historical_recipe_alias_collision_is_rejected(self):
+        self.successful()
+        data = receipt.read_metadata(self.root, f"build/{receipt.RECEIPT}")
+        data["recipe"]["SUPERZIP_ENABLE_HIP"] = "ON"
+        with self.assertRaisesRegex(ValueError, "ambiguous native configured recipe"):
+            receipt.validate_receipt(data, allow_historical_toolchain=True)
+        receipt.validate_current(self.root, "Release", False)
+
+    # Purpose: Keep corrupted tool metadata and runaway runtime inventories from allocating or hashing unbounded input.
+    # Inputs: Oversized real metadata, a bounded declared DLL list and a simulated SDK directory enumeration.
+    # Outputs: Every resource limit rejects before payload hashes or compiler execution; prior outputs survive.
+    def test_cache_probe_and_component_inventory_resource_bounds(self):
+        cache = self.build / "CMakeCache.txt"
+        probe = self.build / "CMakeFiles/4.4.3/CMakeCXXCompiler.cmake"
+        for path, operation, message in (
+            (cache, lambda: receipt.configured_recipe(self.root, "Release"), "cache exceeds"),
+            (probe, lambda: receipt.observe_toolchain(self.root, self.cache, self.cmake), "probe exceeds"),
+        ):
+            original = path.read_bytes()
+            path.write_bytes(b" " * 1025)
+            try:
+                with (
+                    self.subTest(path=path.name),
+                    patch.object(receipt, "MAX_METADATA", 1024),
+                    self.assertRaisesRegex(ValueError, message),
+                ):
+                    operation()
+            finally:
+                path.write_bytes(original)
+        manifest = self.build / "Release/flitzzip-runtime-dependencies.json"
+        original = manifest.read_bytes()
+        manifest.write_text(json.dumps({"packaged_runtime_files": [{"name": f"library-{i}.dll"} for i in range(254)]}))
+        with self.assertRaisesRegex(ValueError, "output inventory exceeds"):
+            receipt.capture_outputs(self.root, "Release")
+        manifest.write_bytes(original)
+        sdk = self.root / "private SDK"
+        bitcode = sdk / "lib/llvm/amdgcn/bitcode"
+        bitcode.mkdir(parents=True)
+        (bitcode / "ocml.bc").write_bytes(b"nonexecutable")
+        cache_values = {**self.cache, "FLITZZIP_ENABLE_HIP": "ON", "FLITZZIP_HIP_PATH": str(sdk)}
+        entries = [bitcode / f"runtime-{i}.bc" for i in range(1001)]
+        with (
+            patch.object(Path, "glob", return_value=iter(entries)),
+            self.assertRaisesRegex(ValueError, "critical SDK inventory exceeds"),
+        ):
+            receipt.observe_toolchain(self.root, cache_values, self.cmake)
+
+    # Purpose: Exercise the real command entry points and direct-script import boundary without running a compiler.
+    # Inputs: Private fixture checkout and explicit transaction arguments.
+    # Outputs: Exact JSON lifecycle or stable failure.
+    def test_command_line_lifecycle_and_diagnostics(self):
+        script = Path(receipt.__file__).resolve()
+
+        # Purpose: Run only the receipt CLI within a bounded private fixture.
+        # Inputs: Explicit operation/options and invocation spelling. Outputs: Captured, checked process result.
+        def invoke(*arguments, direct=False, expected=0):
+            prefix = (
+                [sys.executable, "-B", str(script)]
+                if direct
+                else [sys.executable, "-B", "-m", "tools.native_build_receipt"]
+            )
+            process = subprocess.run(
+                [*prefix, "--root", str(self.root), *arguments],
+                cwd=script.parents[1],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            self.assertEqual(process.returncode, expected, process.stderr)
+            return process
+
+        for direct in (False, True):
+            state = json.loads(invoke("begin", direct=direct).stdout)
+            options = ["--token", state["transaction_id"], "--cmake", str(self.cmake)]
+            prepared = json.loads(invoke("prepare", *options, direct=direct).stdout)
+            fresh = ["--clean-first"] if prepared["clean_first_required"] else []
+            result = json.loads(invoke("finish", *options, *fresh, direct=direct).stdout)
+            validated = json.loads(invoke("validate", direct=direct).stdout)
+            self.assertEqual(result["receipt_sha256"], validated["receipt_sha256"])
+        for terminal in ("failed", "configure-only"):
+            token = json.loads(invoke("begin").stdout)["transaction_id"]
+            self.assertEqual(json.loads(invoke(terminal, "--token", token).stdout), {"status": terminal})
+            self.assertIn("active, failed or incomplete", invoke("validate", expected=1).stderr)
+        self.assertIn("require --cmake", invoke("prepare", expected=2).stderr)
+        self.assertIn("FileNotFoundError", invoke("validate", "--root", str(self.root / "missing"), expected=1).stderr)
 
     # Purpose: Prove the actual Windows sharing lock excludes consumers without using PID or stale markers as liveness.
     # Inputs: A private PowerShell-owned exclusive file handle.
