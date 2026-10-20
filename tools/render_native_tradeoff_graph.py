@@ -11,7 +11,7 @@ from pathlib import Path
 
 from tools.benchmark_comparators import parse_metadata
 from tools.render_benchmark_graph import SVG, add_text, validate_record
-from tools.render_svg_graph import append_range_whisker, new_document
+from tools.render_svg_graph import append_range_whisker, format_seconds, new_document
 
 LEVELS = (1, 3, 5, 7, 9)
 COLORS = {"CPU": "#b15a22", "GPU": "#087e83"}
@@ -68,6 +68,24 @@ def collect(records: list[dict]) -> tuple[tuple, list[dict]]:
                 }
             )
     return identity, points
+
+
+# Purpose: Append native measurements independently of the plot coordinate system.
+# Inputs: Owned SVG root and validated points in their existing lane/effort order.
+# Outputs: Appends the exact-byte table, markers and compact timing ranges without reordering samples.
+def append_effort_table(root: ET.Element, points: list[dict]) -> None:
+    add_text(root, 700, 137, "Lane / effort", 12, "bold")
+    add_text(root, 837, 137, "Exact archive bytes", 12, "bold")
+    add_text(root, 1013, 137, "Compress s [min-max]", 12, "bold")
+    for index, point in enumerate(points):
+        y = 166 + index * 35
+        ET.SubElement(
+            root, f"{{{SVG}}}circle", {"cx": "709", "cy": str(y - 4), "r": "5", "fill": COLORS[point["lane"]]}
+        )
+        add_text(root, 723, y, f"{point['lane']} L{point['level']}", 12)
+        add_text(root, 837, y, f"{point['bytes']:,}", 12)
+        median, minimum, maximum = point["seconds"]
+        add_text(root, 1013, y, f"{format_seconds(median)} [{format_seconds(minimum)}-{format_seconds(maximum)}]", 12)
 
 
 # Purpose: Draw measured archive bytes against median compression time without hiding the narrow size range.
@@ -153,7 +171,11 @@ def render(identity: tuple, points: list[dict]) -> bytes:
             group = ET.SubElement(
                 root,
                 f"{{{SVG}}}g",
-                {"aria-label": f"{lane} level {point['level']}: {point['bytes']} bytes, {median:.3f} seconds"},
+                {
+                    "aria-label": (
+                        f"{lane} level {point['level']}: {point['bytes']} bytes, {format_seconds(median)} seconds"
+                    )
+                },
             )
             ET.SubElement(group, f"{{{SVG}}}title").text = group.attrib["aria-label"]
             append_range_whisker(group, (x, y_pos(minimum)), (x, y_pos(maximum)), COLORS[lane], axis="y")
@@ -170,18 +192,7 @@ def render(identity: tuple, points: list[dict]) -> bytes:
                 },
             )
 
-    add_text(root, 700, 137, "Lane / effort", 12, "bold")
-    add_text(root, 837, 137, "Exact archive bytes", 12, "bold")
-    add_text(root, 1013, 137, "Compress s [min-max]", 12, "bold")
-    for index, point in enumerate(points):
-        y = 166 + index * 35
-        ET.SubElement(
-            root, f"{{{SVG}}}circle", {"cx": "709", "cy": str(y - 4), "r": "5", "fill": COLORS[point["lane"]]}
-        )
-        add_text(root, 723, y, f"{point['lane']} L{point['level']}", 12)
-        add_text(root, 837, y, f"{point['bytes']:,}", 12)
-        median, minimum, maximum = point["seconds"]
-        add_text(root, 1013, y, f"{median:.3f} [{minimum:.3f}-{maximum:.3f}]", 12)
+    append_effort_table(root, points)
     add_text(
         root,
         35,

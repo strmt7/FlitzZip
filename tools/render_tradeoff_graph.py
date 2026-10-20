@@ -10,7 +10,7 @@ from pathlib import Path
 
 from tools.benchmark_comparators import parse_metadata
 from tools.render_comparison_graph import SVG, label, summarize
-from tools.render_svg_graph import append_range_whisker, new_document
+from tools.render_svg_graph import append_range_whisker, format_seconds, new_document
 
 LEVELS = (1, 3, 5, 7, 9)
 COLORS = {"FlitzZip": "#087e83", "7-Zip": "#b15a22", "Zstd": "#b15a22"}
@@ -117,7 +117,46 @@ def x_of(value: int, left: int, right: int, largest_bytes: int) -> float:
 # Inputs: Seconds, panel y bounds, and positive lower/upper time limits.
 # Outputs: Returns an SVG y coordinate.
 def y_of(value: float, bottom: int, plot_top: int, low: float, high: float) -> float:
-    return bottom - (bottom - plot_top) * math.log(value / low) / math.log(high / low)
+    return bottom - (bottom - plot_top) * (math.log(value) - math.log(low)) / (math.log(high) - math.log(low))
+
+
+# Purpose: Bound logarithmic time axes without overflowing powers or underflowing a positive lower limit.
+# Inputs: Validated nonempty point observations with finite positive timing ranges.
+# Outputs: Finite increasing bounds containing every range and at most seven representable decade ticks.
+def time_axis(points: list[dict]) -> tuple[float, float, range]:
+    minimum = min(point["seconds"][1] for point in points)
+    maximum = max(point["seconds"][2] for point in points)
+    smallest = math.nextafter(0.0, 1.0)
+    first_power = math.ceil(math.log10(smallest))
+    last_power = math.floor(math.log10(sys.float_info.max))
+    lower_power = math.floor(math.log10(minimum) - math.log10(1.2))
+    upper_power = math.ceil(math.log10(maximum) + math.log10(1.2))
+    low = 10.0**lower_power if lower_power >= first_power else smallest
+    high = 10.0**upper_power if upper_power <= last_power else sys.float_info.max
+    first = max(first_power, math.ceil(math.log10(low)))
+    last = min(last_power, math.ceil(math.log10(high)))
+    step = max(1, math.ceil((last - first) / 6))
+    return low, high, range(first, last + 1, step)
+
+
+# Purpose: Append one panel's measurements independently of logarithmic plot arithmetic.
+# Inputs: Owned SVG root, validated points and panel origin; ordering remains tool then effort.
+# Outputs: Appends the existing header, markers and compact observed timing ranges.
+def append_effort_table(root: ET.Element, points: list[dict], top: int) -> None:
+    label(root, 683, top + 67, "Tool / effort", 12, "bold")
+    label(root, 854, top + 67, "Archive bytes", 12, "bold")
+    label(root, 998, top + 67, "Create s [min-max]", 12, "bold")
+    ordered = sorted(points, key=lambda point: (point["tool"] != "FlitzZip", point["level"]))
+    for row_index, point in enumerate(ordered):
+        row_y = top + 92 + row_index * 23
+        ET.SubElement(
+            root, f"{{{SVG}}}circle", {"cx": "693", "cy": str(row_y - 4), "r": "5", "fill": COLORS[point["tool"]]}
+        )
+        label(root, 708, row_y, f"{point['tool']} L{point['level']}", 12)
+        label(root, 854, row_y, f"{point['bytes']:,}", 12)
+        median, minimum, maximum = point["seconds"]
+        label(root, 998, row_y, f"{format_seconds(median)} [{format_seconds(minimum)}-{format_seconds(maximum)}]", 12)
+    label(root, 684, top + 341, "Dark outline: measured non-dominated point within this case", 11)
 
 
 # Purpose: Plot exact archive size against median whole-command creation time.
@@ -151,10 +190,7 @@ def render(commit: str, panels: list[dict]) -> bytes:
         label(root, 36, top + 39, f"Input {panel['input_bytes']:,} bytes  |  exact archive size; create wall time", 12)
         left, right, bottom, plot_top = 72, 646, top + 304, top + 75
         largest_bytes = max(panel["input_bytes"], *(point["bytes"] for point in points))
-        low = 10 ** math.floor(math.log10(min(point["seconds"][1] for point in points) / 1.2))
-        high = 10 ** math.ceil(math.log10(max(point["seconds"][2] for point in points) * 1.2))
-        if high <= low:
-            high = low * 10
+        low, high, exponents = time_axis(points)
 
         for tick in (0, 0.25, 0.5, 0.75, 1):
             x = x_of(round(largest_bytes * tick), left, right, largest_bytes)
@@ -164,17 +200,16 @@ def render(commit: str, panels: list[dict]) -> bytes:
                 {"x1": f"{x:.1f}", "x2": f"{x:.1f}", "y1": str(plot_top), "y2": str(bottom), "stroke": "#e5e9ea"},
             )
             label(root, round(x) - 12, bottom + 19, f"{largest_bytes * tick / 1048576:.0f}", 11)
-        exponent = math.ceil(math.log10(low))
-        while 10**exponent <= high:
-            tick = 10**exponent
+        for exponent in exponents:
+            tick = 10.0**exponent
             y = y_of(tick, bottom, plot_top, low, high)
             ET.SubElement(
                 root,
                 f"{{{SVG}}}line",
                 {"x1": str(left), "x2": str(right), "y1": f"{y:.1f}", "y2": f"{y:.1f}", "stroke": "#e5e9ea"},
             )
-            label(root, 18, round(y) + 4, f"{tick:g}s", 11)
-            exponent += 1
+            text = f"1e{exponent}s" if exponent < math.floor(math.log10(sys.float_info.min)) else f"{tick:g}s"
+            label(root, 18, round(y) + 4, text, 11)
         ET.SubElement(
             root,
             f"{{{SVG}}}rect",
@@ -211,7 +246,9 @@ def render(commit: str, panels: list[dict]) -> bytes:
             x = x_of(point["bytes"], left, right, largest_bytes)
             median_time = point["seconds"][0]
             y = y_of(median_time, bottom, plot_top, low, high)
-            point_description = f"{point['tool']} L{point['level']}: {point['bytes']} bytes, {median_time:.3f} s"
+            point_description = (
+                f"{point['tool']} L{point['level']}: {point['bytes']} bytes, {format_seconds(median_time)} s"
+            )
             group = ET.SubElement(
                 root,
                 f"{{{SVG}}}g",
@@ -237,20 +274,7 @@ def render(commit: str, panels: list[dict]) -> bytes:
                     "stroke-width": "2",
                 },
             )
-        label(root, 683, top + 67, "Tool / effort", 12, "bold")
-        label(root, 854, top + 67, "Archive bytes", 12, "bold")
-        label(root, 998, top + 67, "Create s [min-max]", 12, "bold")
-        ordered = sorted(points, key=lambda point: (point["tool"] != "FlitzZip", point["level"]))
-        for row_index, point in enumerate(ordered):
-            row_y = top + 92 + row_index * 23
-            ET.SubElement(
-                root, f"{{{SVG}}}circle", {"cx": "693", "cy": str(row_y - 4), "r": "5", "fill": COLORS[point["tool"]]}
-            )
-            label(root, 708, row_y, f"{point['tool']} L{point['level']}", 12)
-            label(root, 854, row_y, f"{point['bytes']:,}", 12)
-            median, minimum, maximum = point["seconds"]
-            label(root, 998, row_y, f"{median:.3f} [{minimum:.3f}-{maximum:.3f}]", 12)
-        label(root, 684, top + 341, "Dark outline: measured non-dominated point within this case", 11)
+        append_effort_table(root, points, top)
     label(
         root, 36, height - 29, "Observed ranges are not confidence intervals; format/corpus panels are not pooled.", 12
     )

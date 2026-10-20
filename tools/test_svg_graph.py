@@ -16,6 +16,7 @@ from tools.render_svg_graph import (
     TEMPLATE_PATH,
     BoundedDocumentBuilder,
     append_range_whisker,
+    format_seconds,
     load_template,
     new_document,
     parse_bounded_document,
@@ -27,6 +28,25 @@ from tools.render_svg_graph import (
 # Inputs: The checked-in document and bounded temporary negative fixtures.
 # Outputs: Fails on active markup, resource-bound bypass or cross-render mutation.
 class SvgDocumentTests(unittest.TestCase):
+    # Purpose: Keep duration text nonzero and bounded across supported floating-point magnitudes.
+    # Inputs: Ordinary, sub-millisecond, subnormal and large positive values plus invalid type/range controls.
+    # Outputs: Accurate compact magnitude labels preserve ordinary formatting and refuse invalid observations.
+    def test_duration_labels_preserve_magnitude_and_width(self) -> None:
+        for seconds, text in (
+            (1, "1.000"),
+            (0.001, "0.001"),
+            (1e-6, "1e-06"),
+            (5e-324, "4.94e-324"),
+            (1e308, "1e+308"),
+        ):
+            with self.subTest(seconds=seconds):
+                self.assertEqual(format_seconds(seconds), text)
+                self.assertLessEqual(len(text), 9)
+                self.assertGreater(float(text), 0)
+        for invalid in (None, "1", True, 0, -1, float("nan"), float("inf"), 10**400):
+            with self.subTest(invalid_type=type(invalid).__name__), self.assertRaises(ValueError):
+                format_seconds(invalid)
+
     # Purpose: Preserve exact observed extrema and perpendicular caps on both axes, including identical samples.
     # Inputs: Independently specified plot coordinates and invalid diagonal/non-finite controls.
     # Outputs: The interval is unchanged and invalid coordinates fail before any lines are emitted.

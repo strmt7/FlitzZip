@@ -113,6 +113,46 @@ def fixture() -> dict:
 
 
 class ComparisonGraphTests(unittest.TestCase):
+    # Purpose: Qualify real renderer CLI publication and rejection through normal argument parsing and file I/O.
+    # Inputs: Owned generated records with spaces in paths, followed by ambiguous JSON at one input boundary.
+    # Outputs: Each CLI writes its canonical SVG and preserves those exact prior bytes when input admission fails.
+    def test_rendering_clis_preserve_output_when_metadata_is_rejected(self) -> None:
+        from tools import render_native_tradeoff_graph as native
+        from tools import render_tradeoff_graph as tradeoff
+        from tools.test_native_tradeoff_graph import sweep_fixture as native_fixture
+        from tools.test_tradeoff_graph import sweep_fixture as tradeoff_fixture
+
+        root = Path(__file__).resolve().parents[1]
+        for module, records, expected in (
+            (graph, [fixture()], graph.render(*graph.summarize(fixture()))),
+            (native, native_fixture(), native.render(*native.collect(native_fixture()))),
+            (tradeoff, tradeoff_fixture(), tradeoff.render(*tradeoff.collect(tradeoff_fixture()))),
+        ):
+            with (
+                self.subTest(renderer=module.__name__),
+                tempfile.TemporaryDirectory(prefix="renderer CLI ") as temporary,
+            ):
+                directory = Path(temporary)
+                command = [sys.executable, "-m", module.__name__]
+                sources = []
+                for index, record in enumerate(records):
+                    path = directory / f"owned record {index}.json"
+                    path.write_text(json.dumps(record), encoding="utf-8")
+                    sources.append(path)
+                    command.extend(("--input", str(path)))
+                output = directory / "owned chart.svg"
+                command.extend(("--output", str(output)))
+                accepted = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+                self.assertEqual((accepted.returncode, accepted.stdout, accepted.stderr), (0, "", ""))
+                self.assertEqual(output.read_bytes(), expected)
+                sources[0].write_text('{"schema":1,"schema":2}', encoding="utf-8")
+                rejected = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+                self.assertEqual(rejected.returncode, 1)
+                self.assertEqual(rejected.stdout, "")
+                self.assertIn("duplicate", rejected.stderr)
+                self.assertNotIn("Traceback", rejected.stderr)
+                self.assertEqual(output.read_bytes(), expected)
+
     # Purpose: Refuse missing or stale committed charts without silently creating or replacing them during --check.
     # Inputs: A valid comparison record with an absent output followed by an unrelated existing sentinel.
     # Outputs: The real entry point fails explicitly in both cases and preserves the destination's prior state.

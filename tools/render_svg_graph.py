@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import math
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -13,6 +14,15 @@ MAX_DOCUMENT_BYTES = 1024 * 1024
 MAX_DOCUMENT_DEPTH = 32
 MAX_DOCUMENT_NODES = 32768
 ROOT_ATTRIBUTES = {"viewBox", "width", "height", "font-family", "role", "aria-labelledby"}
+
+
+# Purpose: Keep positive duration labels readable without rounding a real observation to zero.
+# Inputs: Finite positive seconds from validated measurements; booleans and nonnumeric values are not durations.
+# Outputs: Compact fixed or scientific notation; invalid observations raise instead of producing misleading labels.
+def format_seconds(value: int | float) -> str:
+    if type(value) not in (int, float) or not 0 < value <= sys.float_info.max:
+        raise ValueError("duration labels require positive finite seconds")
+    return f"{value:.3f}" if 0.001 <= value < 10000 else f"{value:.3g}"
 
 
 # Purpose: Draw an exact observed range with endpoint caps, including a zero-width range.

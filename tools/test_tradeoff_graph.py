@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import copy
+import math
 import unittest
 
-from tools.render_svg_graph import parse_bounded_document
-from tools.render_tradeoff_graph import LEVELS, collect, frontier, render
+from tools.render_svg_graph import SVG, parse_bounded_document
+from tools.render_tradeoff_graph import LEVELS, collect, frontier, render, y_of
 from tools.run_archive_comparison import command_templates
 from tools.test_comparison_graph import fixture
 
@@ -36,6 +37,63 @@ def sweep_fixture() -> list[dict]:
 
 
 class TradeoffGraphTests(unittest.TestCase):
+    # Purpose: Preserve logarithmic geometry when a valid time ratio overflows ordinary floating-point division.
+    # Inputs: Positive finite bounds separated by six hundred decades and their geometric midpoint.
+    # Outputs: The midpoint maps to the center instead of silently collapsing onto the lower plot edge.
+    def test_logarithmic_coordinate_does_not_form_overflowing_ratios(self) -> None:
+        self.assertAlmostEqual(y_of(1.0, 100, 0, 1e-300, 1e300), 50.0)
+        self.assertAlmostEqual(y_of(1e-300, 100, 0, 1e-300, 1e300), 100.0)
+        self.assertAlmostEqual(y_of(1e300, 100, 0, 1e-300, 1e300), 0.0)
+
+    # Purpose: Keep finite positive timings renderable without axis underflow, overflow or unbounded tick density.
+    # Inputs: Valid collected panels with subnormal, very large and widely separated timing observations.
+    # Outputs: Every point remains inside its plot, numeric geometry stays finite and tick counts stay bounded.
+    def test_extreme_finite_time_axes_preserve_point_geometry(self) -> None:
+        for observations in ((5e-324,), (1e308,), (5e-324, 1.0, 1e308)):
+            commit, panels = collect(sweep_fixture())
+            for panel in panels:
+                for index, point in enumerate(panel["points"]):
+                    time = observations[index % len(observations)]
+                    point["seconds"] = (time, time, time)
+            with self.subTest(observations=observations):
+                root = parse_bounded_document(render(commit, panels))
+                for node in root.iter():
+                    for name in ("x", "y", "cx", "cy", "x1", "x2", "y1", "y2", "r"):
+                        if name in node.attrib:
+                            self.assertTrue(math.isfinite(float(node.attrib[name])), (name, node.attrib[name]))
+                groups = root.findall(f".//{{{SVG}}}g")
+                self.assertEqual(len(groups), 30)
+                for index, group in enumerate(groups):
+                    point = group.find(f"{{{SVG}}}circle")
+                    top = 125 + (index // 10) * 375
+                    self.assertGreaterEqual(float(point.attrib["cy"]), top + 75 - 0.1)
+                    self.assertLessEqual(float(point.attrib["cy"]), top + 304 + 0.1)
+                horizontal = [
+                    node
+                    for node in root.findall(f".//{{{SVG}}}line")
+                    if node.attrib.get("x1") == "72" and node.attrib.get("x2") == "646"
+                ]
+                self.assertLessEqual(len(horizontal), 24)
+                table_values = [
+                    node.text
+                    for node in root.findall(f".//{{{SVG}}}text")
+                    if node.attrib.get("x") == "998" and "[" in (node.text or "")
+                ]
+                self.assertTrue(all(len(text) <= 40 for text in table_values))
+
+    # Purpose: Prevent positive sub-millisecond observations from being printed as zero-second timings.
+    # Inputs: Valid collected panels with small nonzero median/minimum/maximum values.
+    # Outputs: Labels retain their magnitude and never publish a false zero duration.
+    def test_small_positive_time_labels_are_not_zero(self) -> None:
+        commit, panels = collect(sweep_fixture())
+        for panel in panels:
+            for point in panel["points"]:
+                point["seconds"] = (5e-5, 5e-5, 5e-5)
+        root = parse_bounded_document(render(commit, panels))
+        text = " ".join(node.text or "" for node in root.iter())
+        self.assertNotRegex(text, r"(?<![\d.])0\.000(?!\d)")
+        self.assertIn("5e-05", text)
+
     # Purpose: Prove data collection and accessible SVG are deterministic and portable.
     # Inputs: A complete ten-run-per-point synthetic effort sweep.
     # Outputs: Valid three-case graph with CRLF bytes and explicit log-time disclosure.
