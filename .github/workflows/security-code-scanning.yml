@@ -103,7 +103,7 @@ jobs:
           $sdkRoot = Assert-RocmSdkRoot -Root ([string]$sdkRoot)
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "HIP_PATH=$sdkRoot"
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           languages: c-cpp
           build-mode: manual
@@ -120,13 +120,13 @@ jobs:
         run: tools/build.ps1 -Configuration Release -HipArch gfx1201 -HipPath $env:HIP_PATH
       - name: Analyze C++
         id: analyze_cpp
-        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           category: ${{ matrix.configuration == 'cpu' && '/language:c-cpp' || '/language:c-cpp/configuration:hip-host' }}
           output: out/codeql-cpp-sarif
       - name: Retain complete C++ analysis reports
         if: always() && steps.analyze_cpp.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codeql-cpp-raw-${{ matrix.configuration }}-${{ github.sha }}
           path: out/codeql-cpp-sarif/*.sarif
@@ -149,13 +149,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           languages: actions
           config-file: ./.github/codeql/codeql-config.yml
           queries: security-extended,security-and-quality
       - name: Analyze GitHub Actions
-        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           category: /language:actions
 
@@ -205,7 +205,7 @@ jobs:
           zizmor --format sarif --persona auditor .github/workflows > zizmor-results.sarif
       - name: Upload zizmor SARIF
         if: always() && hashFiles('zizmor-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           sarif_file: zizmor-results.sarif
           category: zizmor
@@ -252,7 +252,7 @@ jobs:
           exit-code: "1"
       - name: Upload Trivy SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           sarif_file: trivy-results.sarif
           category: trivy-fs
@@ -326,14 +326,14 @@ jobs:
             --report "$RUNNER_TEMP/semgrep-results.json" > "$RUNNER_TEMP/semgrep-coverage.json"
       - name: Preserve Semgrep coverage evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: semgrep-coverage
           path: ${{ runner.temp }}/semgrep-coverage.json
           if-no-files-found: error
       - name: Upload Semgrep SARIF
         if: always() && hashFiles('semgrep-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           sarif_file: semgrep-results.sarif
           category: semgrep
@@ -422,7 +422,7 @@ jobs:
           python -m tools.devskim_report "$RUNNER_TEMP/devskim-raw.sarif" devskim-results.sarif
       - name: Upload DevSkim SARIF
         if: always() && hashFiles('devskim-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           sarif_file: devskim-results.sarif
           category: devskim
@@ -434,7 +434,7 @@ jobs:
       actions: read # allow reusable scanner workflow metadata access
       contents: read # allow dependency manifest discovery
       security-events: write # allow OSV SARIF upload to code scanning
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
     with:
       scan-args: |-
         --recursive
@@ -465,7 +465,7 @@ jobs:
           output-file: grype-results.sarif
       - name: Upload Grype SARIF
         if: always() && hashFiles('grype-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           sarif_file: grype-results.sarif
           category: grype-fs
@@ -516,7 +516,7 @@ jobs:
         run: bash tools/scan_trufflehog.sh
       - name: Upload secret scan reports
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: secret-history-reports
           path: reports/secrets
