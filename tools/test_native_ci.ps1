@@ -112,6 +112,9 @@ $manual = Get-FlitzZipNativeCiEvent -EventName workflow_dispatch
 Assert-NativeCi $manual.full 'manual dispatch is explicit broad qualification'
 $initial = Get-FlitzZipNativeCiEvent -EventName push -PushBase ('0' * 40)
 Assert-NativeCi ('CMakeLists.txt' -in $initial.paths -and -not $initial.full) 'initial pushes classify all tracked inputs'
+$initialPlan = Get-FlitzZipHostedNativePlan -Paths $initial.paths
+Assert-NativeCi ($initialPlan.build -and $initialPlan.testMode -eq 'full' -and
+    $initialPlan.formatMatrix -and $initialPlan.securityPolicy) 'initial pushes must produce a complete executable plan for every tracked input'
 $base = git rev-parse HEAD~1
 if ($LASTEXITCODE -ne 0) { throw 'Event contract requires the checked-out comparison history.' }
 $push = Get-FlitzZipNativeCiEvent -EventName push -PushBase $base

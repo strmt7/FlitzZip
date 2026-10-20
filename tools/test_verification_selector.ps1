@@ -139,6 +139,10 @@ Assert-Selector ((Get-RequiredCommandId -Plan $docsPlan).Count -eq 3) "docs-only
 Assert-Selector (Test-RequiredCommand -Plan $docsPlan -Id 'scanner-preflight') 'documentation inputs must retain actual detector admission'
 Assert-Selector (Test-RequiredCommand -Plan $docsPlan -Id "language-lint") "docs-only changes must run markdown lint through the language linter"
 Assert-Selector (-not (Test-RequiredCommand -Plan $docsPlan -Id "lint-routing-tests")) "docs-only changes must not rerun unchanged routing implementation tests"
+$contributingPlan = Get-FlitzZipVerificationPlan -ChangedPath @('CONTRIBUTING.md')
+Assert-Selector ($contributingPlan.scope.docsOnly -and
+    ((Get-RequiredCommandId -Plan $contributingPlan) -join '|') -eq
+    ((Get-RequiredCommandId -Plan $docsPlan) -join '|')) 'contribution guidance must receive the complete documentation checks without native work'
 $lintPlan = Get-FlitzZipVerificationPlan -ChangedPath @("tools/lint.ps1")
 Assert-Selector (Test-RequiredCommand -Plan $lintPlan -Id "lint-routing-tests") "linter implementation changes must test production file routing"
 $base64Index = [Array]::IndexOf([object[]]$docsPlan.requiredLocalCommands[0].arguments, "-ChangedPathBase64")
@@ -273,6 +277,12 @@ $componentCases = @(
     @('tools/test_security_scan.ps1', 'security-scan-tests'),
     @('.github/scanner-governance-baseline.json', 'github-post-push-audit-tests')
 )
+foreach ($path in @('.clusterfuzzlite/build.sh', '.clusterfuzzlite/local_smoke.sh',
+        '.clusterfuzzlite/Dockerfile', '.clusterfuzzlite/project.yaml', '.semgrepignore')) {
+    $contractPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-Workflow -Plan $contractPlan -Name 'component-contracts') "mechanism changes must select hosted contracts: $path"
+    Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $path) "selected contracts must actually run on push and PR: $path"
+}
 foreach ($case in $componentCases) {
     $componentPlan = Get-FlitzZipVerificationPlan -ChangedPath @($case[0])
     Assert-Selector (-not $componentPlan.scope.fullEscalationRequired) "tool changes must select component contracts, not all product checks: $($case[0])"
@@ -374,10 +384,11 @@ Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "devskim-provenanc
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "devskim-report-tests") "workflow changes must test lossless scanner report publication"
 Assert-Selector (-not (Test-RequiredCommand -Plan $workflowPlan -Id "greenbone-config-tests")) "scanner workflow changes must not test an unrelated broker"
 
-foreach ($path in @("tools/semgrep_coverage.py", "tools/test_semgrep_coverage.py")) {
+foreach ($path in @(".semgrepignore", "tools/semgrep_coverage.py", "tools/test_semgrep_coverage.py")) {
     $coveragePlan = Get-FlitzZipVerificationPlan -ChangedPath @($path)
     Assert-Selector (Test-RequiredCommand -Plan $coveragePlan -Id "scanner-coverage-tests") "coverage changes must run their offline regressions: $path"
     Assert-Selector (Test-Workflow -Plan $coveragePlan -Name "security") "coverage changes must exercise the real scanner report: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $coveragePlan -Id "security-scan") "scanner coverage inputs must retain local security policy enforcement: $path"
     Assert-Selector (-not (Test-RequiredCommand -Plan $coveragePlan -Id "release-build")) "coverage metadata changes alone must not rebuild the product: $path"
 }
 
