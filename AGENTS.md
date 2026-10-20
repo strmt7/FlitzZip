@@ -91,95 +91,57 @@ means its rules do not apply.
 
 ## Change And Verification Loop
 
-Prevent recurrence using the current source and retained evidence. Never move
-code, templates, tests or configuration into a passive-data folder to avoid
-analysis, rename primitives to evade a rule, or inherit an old disposition after
-its source/location changes. Reuse a completed check only after matching its
-source, tool/configuration and relevant output identities; rerun the affected
-consumer when they change. Check the planner's actual command roles before
-execution: an offline tool contract must not silently rebuild native targets.
-The operating guide and executable scope/admission contracts enforce the
-specific boundaries; instructions alone are not proof of error prevention.
+Inspect `git status --short`, then select and execute the actual affected
+contracts with `tools\verification_plan.ps1 -IncludeUntracked` and
+`tools\verify_changes.ps1 -IncludeUntracked`. Inspect command roles before
+execution; an offline contract must not silently rebuild native targets.
+[Targeted verification](docs/targeted-verification.md) defines scope, commands,
+source/tool/output identity checks and intermediate/final acceptance.
 
-Inspect `git status --short`, then ask the verifier what the actual changed
-paths require before selecting tests, smoke runs, benchmarks, or workflow waits:
-
-```powershell
-tools\verification_plan.ps1 -IncludeUntracked
-tools\verify_changes.ps1 -IncludeUntracked
-```
-
-Batch related changes and run the affected component contracts and direct
-consumers. A tooling/skill edit, path count, or failed focused check does not
-justify unrelated product tests. Diagnose failures before widening coverage;
-classify unknown paths before execution. Use `-Full` only for explicitly
-selected broad coverage supported by cross-component impact. Do not replace
-required tests with a narrower passing check. Explicit maintainer
-deferrals must remain recorded as deferred, never passed; do not weaken the
-verifier or remove scanners to hide them.
-
-- Follow C++20/RAII, bounded resources, explicit ownership, and the existing
-  module patterns. Prefer behavior-preserving, reviewable changes unless a
-  behavior change was requested.
-- Every new or changed function needs a concise Purpose/Inputs/Outputs
-  contract, including locally edited vendor code. Run the changed-function
-  size/complexity/documentation gate before publication:
-
-  ```powershell
-  tools\refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
-  ```
-
-- Security repairs and failures discovered during rewrites require the existing
-  learning loop in `docs/engineering-learning-loop.md`: repair the production
-  boundary, retain the reproducer, review sibling versions/callers, and add the
-  narrowest executable recurrence guard. Read the guide's Engineering Quality
-  Baseline and Coding Standards before memory/ownership rewrites. Do not close a
-  finding through scanner suppression, primitive renaming, removed regression
-  coverage, or a passing check against older source bytes.
-  Historical approval ledgers are evidence only. Individually proven false
-  positives may use the maintainer-authorized exact-source review contract;
-  they are not production repairs or blanket rule exceptions. Follow
-  `docs/security-source-remediation-redesign.md` for closure and expiry requirements.
-
-- The ordinary local build is HIP-enabled:
-
-  ```powershell
-  tools\build.ps1 -Configuration Release
-  tools\test.ps1 -Configuration Release
-  tools\lint.ps1 -CppMode Changed -IncludeUntracked
-  ```
-
-  CPU-only validation is for hosted/static-analysis environments without HIP,
-  not product releases. Missing linters should be bootstrapped through
-  `tools\bootstrap_lint_env.ps1`, using the pinned repository toolchain.
-- Changed standard-format writers require independent interoperability smoke;
-  format routing or adapter contracts require the registry-driven format
-  matrix. GUI changes require all-page smoke and screenshot review. The
-  reading map and verifier define the exact commands.
-- Development benchmarks are RAM-only: `memory_only=true`,
-  `disk_write_bytes=0`. Filesystem smoke is capped at 64 MiB. Compare equal
-  compression levels and report sizes, ratio, block size, CPU/GPU mode, and
-  real HIP telemetry. Repeat small/noisy differences before drawing conclusions.
-- Choose checkpoint intent autonomously: when further development is planned,
-  pass `-Checkpoint intermediate` to the planner/verifier and sample the exact
+- Batch coherent changes and test their direct consumers. Unknown paths must
+  be classified first. A tooling edit, path count or failed focused test does
+  not justify unrelated native work. Use `-Full` only for established broad
+  impact; never replace required tests with narrower passing checks. Deferrals
+  remain deferred, never passed.
+- Follow the guide's Engineering Quality Baseline, Coding Standards and Required
+  Function Documentation, including C++20/RAII, bounded ownership and concise
+  Purpose/Inputs/Outputs contracts for every changed function, including vendor
+  edits. The changed-function size/complexity/documentation gate is mandatory.
+- Use the [learning loop](docs/engineering-learning-loop.md): repair the production
+  boundary, retain a reproducer, review sibling callers and add a recurrence guard.
+  Never evade analysis by relocating code, renaming primitives, suppressing rules,
+  removing regression coverage or reusing approval after source/location changes.
+  Historical ledgers are evidence only; individually proven false positives follow
+  the authorized [exact-source review](docs/security-source-remediation-redesign.md).
+- Local product builds and releases require HIP. Read Build And Test Commands
+  for the standard commands and pinned linter bootstrap. Changed format writers
+  require independent interoperability; routing/adapters require the format matrix;
+  GUI changes require all-page smoke and screenshot review.
+- Apply the guide's shared-host resource policy to all work. Development benchmarks
+  remain RAM-only (`memory_only=true`, `disk_write_bytes=0`); filesystem smoke is
+  capped at 64 MiB. Compare equal efforts, complete sizes and real HIP telemetry;
+  repeat noisy differences before making performance claims.
+- Use `-Checkpoint intermediate` while development continues. Sample the exact
   pushed SHA once with `tools\wait_relevant_workflows.ps1 -Commit <sha> -Mode
-  opportunistic -IncludeLongRunning`. This also applies to workflow, verifier,
-  MCP, skill, and full-escalation changes; it changes waiting, not test coverage.
-  Record pending checks and continue independent work without repeated unchanged
-  polling. Final review/handoff and release checkpoints use `-Checkpoint final`
-  and `-Mode final -FinalCommit`, including required post-push audits. Never
-  describe an intermediate snapshot as final acceptance.
-- Use the guide's shared-host resource policy for all local work. Preserve RAM
-  headroom, prefer below-normal priority for this task's heavy correctness or
-  analysis processes, and use available CPUs without arbitrary fixed caps.
-  Memory admission, bounded lifetime/output, and benchmark isolation still apply.
-- Follow the guide's post-push audit requirement after remediations. Never
-  treat a successful local test, push, PR closure, or unrelated green workflow
-  as proof that all hosted checks passed.
-- Releases remain x64, HIP-enabled, checksummed, and installer-smoke-tested.
-  A new release uses a new version by default. Replacement needs explicit
-  exact-version maintainer authorization and the workflow acknowledgement;
-  never delete an old release before its replacement has built and validated.
+  opportunistic -IncludeLongRunning`, retain pending results and continue independent
+  work. This applies to workflow, verifier, MCP, skill and full-escalation changes;
+  it changes waiting, not coverage. Final review/release uses `-Checkpoint final`
+  and `-Mode final -FinalCommit`, including required post-push audits. A local pass,
+  push or PR closure cannot establish hosted acceptance.
+- Follow [release qualification](docs/release.md): x64, HIP, checksums, exact-package
+  installer smoke and source obligations. New releases use new versions by default;
+  replacement requires exact-version authorization and workflow acknowledgement.
+  Never delete the previous release before its replacement validates.
+
+## Context And Token Efficiency
+
+Use [development context](docs/development-context.md) across source, documents,
+MCP, research and verification. Inspect outlines and selected report fields first;
+read the exact required source next. Retain complete logs locally and return bounded
+results with explicit omissions and continuations. Reuse only evidence whose
+relevant identities still match. Keep one current local continuation note; durable
+rules belong in their canonical guide and executable contracts. Never reduce code
+quality, required coverage, security checks or evidence to save tokens.
 
 ## Communication
 

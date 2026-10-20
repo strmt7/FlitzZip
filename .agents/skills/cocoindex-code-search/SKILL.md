@@ -6,43 +6,34 @@ origin: adapted from strmt7/VulnerabilityScreener .agents/skills/cocoindex-code-
 
 # CocoIndex Code Search
 
-This workflow is mandatory for broad or fuzzy repository code navigation, before
-opening many files. Keep direct `rg` first for exact symbols, strings,
-counts and small known scopes. CocoIndex is a development aid and never
-part of scanner runtime or training data.
+Use CocoIndex before broad or fuzzy code navigation. Exact symbols, strings,
+counts and known small scopes use `rg` directly. This is a development aid,
+never scanner runtime or training data.
 
-1. Use the `AGENTS.md` reading map to identify the likely domain. If the local
-   index is missing, run `<python> tools/cocoindex_agent_search.py install`,
-   then `<python> tools/cocoindex_agent_search.py index`.
-   The first index may download a local embedding
-   model and take several minutes. Installation and index data stay in a
-   computed user cache, outside the live checkout; `AGENT_CODE_HOME` may
-   override it with an absolute path.
-2. Run `<python> tools/cocoindex_agent_search.py search --limit 5
-   "conceptual question"`. Search rejects source changes until `index`
-   refreshes the code-only mirror. Successful searches record a local,
-   per-checkout receipt with the source/config digests and query hash; an
-   installation or index marker alone does not prove search use. This receipt
-   is development evidence, not a proof of complete source review. The wrapper disables usage telemetry
-   and uses CPU embeddings, preserving HIP capacity for FlitzZip work.
-3. Confirm each relevant candidate with `rg -n` and an exact source
-   read. The first-five ranking is a hint, not evidence of completeness
-   or correctness. If semantic results miss the target, use bounded
-   `rg -l` and refine once. Never change code based on a semantic hit
-   alone.
-4. Exact `--path` file filters work. CocoIndex Code 0.2.41 returned
-   empty results for wildcard filters on the reference Windows host;
-   this wrapper rejects them. Use unscoped semantic routing followed by
-   `rg` for path narrowing.
-5. If installation, indexing or search fails, retain and disclose the exact
-   error, then restore the tool before continuing broad conceptual navigation.
-   Do not substitute `rg` for the required semantic search. Continue independent
-   work and exact reads of already known files or symbols while restoring it.
+1. Follow the `AGENTS.md` reading map. Install only when absent with
+   `<python> tools/cocoindex_agent_search.py install`; create or refresh the
+   index with `index` when its inputs change. First indexing may download the
+   local embedding model and take minutes.
+2. Run `<python> tools/cocoindex_agent_search.py search --limit 5 "question"`.
+   Stale source/configuration is refused; refresh before searching. Success
+   records a per-checkout source/config/query-hash receipt. Installation and an
+   index marker never prove actual use or complete review.
+3. Confirm candidates with exact `rg -n` and source reads. Rankings are hints,
+   not proof of correctness or completeness. For a miss, use bounded `rg -l`
+   and refine once. Never edit from a semantic hit alone.
+4. Use exact `--path` filters; wildcard filters are rejected because the pinned
+   provider returned empty results for them on the reference Windows host.
+   Otherwise route semantically, then narrow paths with `rg`.
+5. Preserve and disclose exact failures. Restore the tool before dependent broad
+   navigation; do not substitute `rg` for semantic search. Independent work and
+   exact reads of known files/symbols may continue.
 
-Use `tools/agent_context.py startup` at a new context boundary to load both
-mandatory skills. The bounded document reader supplements code navigation;
-it does not replace semantic routing or the authoritative source reads.
+State stays in a computed external user cache; `AGENT_CODE_HOME` may specify an
+absolute override. The wrapper disables telemetry and uses CPU embeddings,
+preserving HIP capacity. Do not rebuild a large index without relevant changes.
 
-Do not register over an existing `cocoindex-code` MCP server bound to
-another repository. This repository's CLI workflow is independent of
-that host configuration and transfers through tracked files.
+Never overwrite another repository's `cocoindex-code` MCP registration or
+interfere with its state. The portable CLI is independent of shared registration.
+Load current skills with `tools/agent_context.py startup` at a new context
+boundary. Bounded document reads supplement, never replace, semantic routing
+and exact source confirmation.

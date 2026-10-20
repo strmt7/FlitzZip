@@ -6,27 +6,36 @@ origin: adapted from ZMB-UZH/omero-docker-extended .agents/skills/caveman/SKILL.
 
 # caveman
 
-Apply this skill in every task. Lower token usage is mandatory, not opt-in; use lite compression for internal AI communication only.
+Apply lite compression to internal AI communication in every task. Reduce input
+volume first; public prose remains normal.
 
 ## Route first
 
-- Keep `AGENTS.md` as the primary contract; use its reading map to load only relevant guidance. Do not load the entire skill catalog.
-- Reduce unnecessary input/context first and apply this skill second. This repo-local overlay does not require an upstream plugin or third-party runtime.
-- Use `tools/agent_context.py startup` once per new context to deliver the current mandatory skill instructions. Use its `outline` and bounded `read` operations for long documents; keep partial/unread ranges explicit. A read-cache session belongs to one retained model context: start a new session after compaction or use `--force`. See `docs/development-context.md` for source-backed notes and measured output limits.
-- `caveman` is for internal AI reply/prompting only. Never use caveman prose in persisted text for other people: docs, comments, docstrings, commits, issues, pull requests, defect reports, messages, and user-facing copy always use normal prose. It changes response style only and must not change context selection, tool choice, verification scope, or clarification decisions.
-- This repo does not import upstream hooks, plugin auto-loading, `.codex` hook config, natural-language auto-activation, `CAVEMAN_DEFAULT_MODE`, `off`, `caveman-help`, `/compress` rewriting, stats/statusline scripts, `caveman-shrink`, `caveman-init`, cavecrew subagents, or smart-installer side effects.
+- Follow the `AGENTS.md` reading map; do not load the whole skill catalog.
+- Run `tools/agent_context.py startup` once per new context, then use its bounded
+  `outline`, `read` and `json` operations. Follow
+  [development context](../../../docs/development-context.md) for exact scopes,
+  continuation notes and evidence reuse. After compaction or uncertain retention,
+  use a new read session or `--force`; caches cannot prove retained knowledge.
+- This skill changes internal style only: never alter tool selection,
+  verification, clarification, safety or correctness to save tokens. Docs,
+  comments, docstrings, commits, issues, PRs, reports and messages use normal prose.
+- This local overlay needs no third-party runtime. Do not import upstream hooks,
+  plugin auto-loading, `.codex` hook config, natural-language auto-activation,
+  `CAVEMAN_DEFAULT_MODE`, `off`, `caveman-help`, `/compress` rewriting,
+  stats/statusline scripts, `caveman-shrink`, `caveman-init`, cavecrew subagents
+  or smart-installer side effects.
 
 ## Compression rules
 
-- Compression never outranks correctness, safety, or precise dates. Start at lite compression; use heavier compression only when requested.
-- Never remove `not`, `never`, `no`, `only`, or `except`; preserve numbers and units exactly. Do not add words, damage grammar, or switch languages to imitate terseness; use normal prose when it is not shorter and clearer.
-- Keep code, commands, file references, exact errors, and verification results normal and lossless; never abbreviate code symbols, function names, API names, paths, URLs, Typst, or LaTeX.
-- Follow an explicit reply-language instruction first; otherwise preserve the user's dominant language. Compress the style, not the language. Do not invent prose abbreviations or causal arrows.
-- Do not narrate the mode, refer to the agent or style, add decorative tables or emoji, or dump long raw logs unless the user asks for them.
-- Required progress updates and host-application collaboration rules remain in force; output compression cannot suppress them.
-- If terse wording would hide uncertainty, name the uncertainty normally instead.
-- Drop compression and return to normal detail for destructive actions, security guidance, migrations, multi-step runbooks, incident analysis, unresolved ambiguity, or any case where compression itself makes ordering or meaning unclear.
-
-## Good outcome
-
-Lower token usage, same technical substance, no repo degradation.
+- Preserve every negation (`not`, `never`, `no`, `only`, `except`), exact date,
+  symbol, number, unit, error and uncertainty. Never abbreviate code, APIs, paths,
+  URLs, commands, verification results, Typst or LaTeX.
+- Follow the requested language, otherwise the user's dominant language. Do not
+  damage grammar, invent abbreviations/causal arrows or add words to sound terse.
+  Use heavier compression only when requested.
+- Do not narrate the mode or add decorative tables/emoji. Keep full logs out of
+  context unless requested or needed for diagnosis.
+- Preserve required progress updates and collaboration rules. Use normal detail
+  for destructive actions, security guidance, migrations, runbooks, incidents,
+  ambiguity or whenever compression would obscure meaning.
