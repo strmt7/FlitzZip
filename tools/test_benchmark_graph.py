@@ -5,6 +5,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,6 +16,88 @@ from tools import render_benchmark_graph as graph
 from tools.native_build_provenance import canonical
 from tools.native_build_receipt import RECIPE_KEYS, validate_receipt
 from tools.render_svg_graph import parse_bounded_document
+
+
+class GraphPublicationCommandTests(unittest.TestCase):
+    # Purpose: Test real graph entry points against ambiguous JSON and verify failed admission preserves output.
+    # Inputs: Small schema-correct fixtures for all four renderers; duplicated properties, nonfinite numbers and roots.
+    # Outputs: Valid commands emit accessible SVG; each malformed capture fails explicitly without replacing it.
+    def test_entry_points_reject_ambiguous_records(self) -> None:
+        from tools.test_comparison_graph import fixture
+        from tools.test_native_tradeoff_graph import sweep_fixture as native_sweep
+        from tools.test_tradeoff_graph import sweep_fixture as comparison_sweep
+
+        commands = (
+            ("tools.render_comparison_graph", [fixture()]),
+            ("tools.render_tradeoff_graph", comparison_sweep()),
+            ("tools.render_native_tradeoff_graph", native_sweep()),
+            ("tools.render_benchmark_graph", [fixture_record()]),
+        )
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for module, records in commands:
+                output = directory / "graph.svg"
+                arguments = []
+                for index, record in enumerate(records):
+                    source = directory / f"record-{index}.json"
+                    source.write_text(json.dumps(record), encoding="utf-8")
+                    arguments.extend(("--input", str(source)))
+                command = [sys.executable, "-m", module, *arguments, "--output", str(output)]
+                with self.subTest(module=module):
+                    completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    original = output.read_bytes()
+                    self.assertEqual(parse_bounded_document(original).attrib["role"], "img")
+                    first = Path(arguments[1])
+                    payload = first.read_text(encoding="utf-8")
+                    invalid = (
+                        '{"schema_version":0,' + payload[1:],
+                        '{"extra":{"repeated":0,"repeated":1},' + payload[1:],
+                        '{"extra":NaN,' + payload[1:],
+                        '{"extra":1e999,' + payload[1:],
+                        "[]",
+                    )
+                    for malformed in invalid:
+                        first.write_text(malformed, encoding="utf-8")
+                        completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+                        self.assertEqual(completed.returncode, 1, completed.stderr)
+                        self.assertIn("graph", completed.stderr)
+                        self.assertNotIn("Traceback", completed.stderr)
+                        self.assertEqual(output.read_bytes(), original)
+
+    # Purpose: Exercise the direct-script import path and byte-check failure modes used by automated publishing.
+    # Inputs: A valid native record, an absent chart, an unrelated sentinel and the generated exact chart.
+    # Outputs: Check refuses missing or stale output without modifying it; generation and exact check succeed.
+    def test_native_direct_script_generation_and_check(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        environment = {key: value for key, value in os.environ.items() if key.upper() != "PYTHONPATH"}
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            source, output = directory / "record.json", directory / "graph.svg"
+            source.write_text(json.dumps(fixture_record()), encoding="utf-8")
+            command = [
+                sys.executable,
+                str(root / "tools/render_benchmark_graph.py"),
+                "--input",
+                str(source),
+                "--output",
+                str(output),
+            ]
+            for sentinel in (None, b"existing unrelated bytes"):
+                if sentinel is not None:
+                    output.write_bytes(sentinel)
+                checked = subprocess.run(
+                    [*command, "--check"], cwd=directory, env=environment, capture_output=True, timeout=30
+                )
+                self.assertEqual(checked.returncode, 1)
+                self.assertEqual(output.read_bytes() if output.exists() else None, sentinel)
+            generated = subprocess.run(command, cwd=directory, env=environment, capture_output=True, timeout=30)
+            self.assertEqual(generated.returncode, 0, generated.stderr)
+            checked = subprocess.run(
+                [*command, "--check"], cwd=directory, env=environment, capture_output=True, timeout=30
+            )
+            self.assertEqual(checked.returncode, 0, checked.stderr)
 
 
 # Purpose: Build one complete paired-run record without depending on a real GPU or filesystem benchmark.
@@ -226,6 +312,196 @@ def receipt_fixture() -> dict:
 
 
 class BenchmarkGraphTests(unittest.TestCase):
+    # Purpose: Refuse malformed trials and incomplete chart populations at the measured-record boundary.
+    # Inputs: Independent counter, phase, identity and sample mutations plus empty or undersampled chart sets.
+    # Outputs: Each malformed record or population raises ValueError; no sample is repaired or silently dropped.
+    def test_run_and_chart_population_boundaries(self) -> None:
+        invalid = (
+            (("profile",), "not a profile", "workload profile"),
+            (("size_mib",), True, "workload size"),
+            (("gpu_utilization_metric",), "unknown", "GPU utilization"),
+            (("lane_order",), "unknown", "lane order"),
+            (("source_commit",), "bad", "complete Git SHA"),
+            (("binary_sha256",), "bad", "SHA-256 digest"),
+            (("runs",), [], "no runs"),
+            (("runs", 0, "lane"), None, "lane"),
+            (("runs", 0, "iteration"), 0, "iteration"),
+            (("runs", 0, "block_size_kib"), 1, "production block size"),
+            (("runs", 0, "input_bytes"), 1, "input size differs"),
+            (("runs", 0, "output_bytes"), True, "exact positive integer"),
+            (("runs", 0, "compress_seconds"), -1, "phase timing"),
+        )
+        for path, value, diagnostic in invalid:
+            record = fixture_record()
+            if path[0] == "gpu_utilization_metric":
+                record["schema_version"] = 2
+            target = record
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, diagnostic):
+                graph.validate_record(record, False)
+        with self.assertRaisesRegex(ValueError, "no benchmark cases"):
+            graph.summarize_records([], False)
+        with self.assertRaisesRegex(ValueError, "duplicate run across"):
+            graph.summarize_records([fixture_record(), fixture_record()], False)
+        record = fixture_record()
+        record["runs"].append(copy.deepcopy(record["runs"][0]))
+        with self.assertRaisesRegex(ValueError, "duplicate lane iteration"):
+            graph.validate_record(record, False)
+        record = fixture_record()
+        record["runs"] = record["runs"][:4]
+        with self.assertRaisesRegex(ValueError, "at least three"):
+            graph.summarize_records([record], False)
+        record = fixture_record()
+        record["runs"][2]["output_bytes"] += 1
+        with self.assertRaisesRegex(ValueError, "encoded size changed"):
+            graph.summarize_records([record], False)
+        identity, rows = graph.summarize_records([fixture_record()], False)
+        with self.assertRaisesRegex(ValueError, "16 explicit cases"):
+            graph.render_svg(identity, rows * 17)
+
+    # Purpose: Enforce sampling and provenance contracts even when inputs stop before full admission.
+    # Inputs: Independently malformed fixed plans, frozen geometry, budgets, protocol declarations and native receipts.
+    # Outputs: Each helper refuses its own invalid boundary without silently repairing or discarding observations.
+    def test_sampling_and_provenance_boundary_contracts(self) -> None:
+        cases = (
+            (
+                graph.validate_sampling_plan,
+                lambda: sampling_fixture()["sampling_policy"],
+                (("case_plans",), []),
+                "missing fixed",
+            ),
+            (
+                graph.validate_sampling_plan,
+                lambda: sampling_fixture()["sampling_policy"],
+                (("case_plans", 0), None),
+                "invalid confirmation plan",
+            ),
+            (graph.validate_confirmation_wall_budget, artifact_fixture, (("sampling_policy",), None), "budget policy"),
+            (
+                graph.validate_confirmation_wall_budget,
+                artifact_fixture,
+                (("sampling_policy", "confirmation_wall_budget"), None),
+                "wall budget",
+            ),
+            (
+                graph.validate_confirmation_wall_budget,
+                artifact_fixture,
+                (("sampling_policy", "case_plans"), [None]),
+                "wall budget plans",
+            ),
+            (
+                graph.validate_confirmation_wall_budget,
+                artifact_fixture,
+                (("sampling_policy", "case_plans", 0, "confirmation_count"), True),
+                "wall budget count",
+            ),
+            (
+                graph.validate_confirmation_wall_budget,
+                artifact_fixture,
+                (("sampling_policy", "case_plans", 0, "block_size_kib"), 2048),
+                "lacks a pilot case",
+            ),
+            (
+                graph.validate_integrity_protocol,
+                artifact_fixture,
+                (("measurement_protocol",), "unknown"),
+                "unsupported integrity",
+            ),
+            (graph.validate_integrity_protocol, artifact_fixture, (("pilot_runs", 0), None), "invalid bytewise"),
+            (
+                graph.validate_artifact_measurement_identity,
+                artifact_fixture,
+                (("pilot_runs", 0), None),
+                "identity observation",
+            ),
+            (
+                graph.validate_artifact_measurement_identity,
+                artifact_fixture,
+                (("measurement_identity_policy",), "unknown"),
+                "unsupported measurement",
+            ),
+            (
+                graph.validate_artifact_measurement_identity,
+                artifact_fixture,
+                (("native_build_receipt_sha256",), "a" * 64),
+                "policy declaration",
+            ),
+            (
+                graph.validate_native_receipt_record,
+                receipt_fixture,
+                (("binary_dependencies_sha256",), {}),
+                "app-local DLLs",
+            ),
+        )
+        for validate, factory, (path, value), diagnostic in cases:
+            record = factory()
+            target = record
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(validator=validate.__name__, path=path), self.assertRaisesRegex(ValueError, diagnostic):
+                validate(record)
+        for field, value, diagnostic in (
+            ("geometry_plans", None, "missing frozen"),
+            ("geometry_plans", [{"case": "CPU:1024", "workers": 0}], "geometry bounds"),
+        ):
+            record = sampling_fixture()
+            record["sampling_policy"][field] = value
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, diagnostic):
+                graph.validate_frozen_geometry(record, record["sampling_policy"])
+        record = artifact_fixture()
+        record["sampling_policy"]["method"] = "fixed_count"
+        graph.validate_confirmation_wall_budget(record)
+
+    # Purpose: Require matching confirmation cases, complete serialized sizes and genuine HIP build scope.
+    # Inputs: A wrong frozen case key, payload-only sizes for every observation and a valid CPU-only receipt.
+    # Outputs: Each internally consistent-looking cohort is rejected at its missing scientific boundary.
+    def test_consistent_but_incomplete_measurement_evidence(self) -> None:
+        record = sampling_fixture()
+        record["sampling_policy"]["case_plans"][0]["block_size_kib"] = 2048
+        with self.assertRaisesRegex(ValueError, "does not cover"):
+            graph.validate_record(record, False)
+        record = sampling_fixture()
+        for run in record["runs"] + record["pilot_runs"]:
+            run["archive_bytes"] = run["output_bytes"]
+        with self.assertRaisesRegex(ValueError, "serialized archive size"):
+            graph.validate_record(record, False)
+        record = receipt_fixture()
+        receipt = record["native_build_receipt"]
+        receipt["recipe"]["FLITZZIP_ENABLE_HIP"] = "OFF"
+        del receipt["toolchain"]["hip_sdk"]
+        record["native_build_receipt_sha256"] = validate_receipt(receipt)
+        with self.assertRaisesRegex(ValueError, "CPU-only build receipt"):
+            graph.validate_native_receipt_record(record)
+
+    # Purpose: Prevent malformed host metadata and nonfinite aggregate timings from becoming scientific evidence.
+    # Inputs: Independent mutations of the top-level object, hardware labels, disk counter and finite phase values.
+    # Outputs: Every invalid record raises ValueError instead of being admitted or failing in rendering arithmetic.
+    def test_record_shapes_and_aggregate_timing_are_validated(self) -> None:
+        for value in (None, [], "record"):
+            with self.subTest(root=value), self.assertRaises(ValueError):
+                graph.validate_record(value, False)
+        for path, value in (
+            (("cpu_model",), None),
+            (("gpu_model",), 7),
+            (("cpu_model",), "  "),
+            (("runs", 0, "disk_write_bytes"), False),
+        ):
+            record = fixture_record()
+            target = record
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                graph.validate_record(record, False)
+        record = fixture_record()
+        for phase in ("compress_seconds", "verify_seconds", "extract_seconds"):
+            record["runs"][0][phase] = 1e308
+        with self.assertRaisesRegex(ValueError, "elapsed time"):
+            graph.validate_record(record, False)
+
     # Purpose: Preserve exact historical receipt reading without admitting it as a current build.
     # Inputs: Current fixture reduced to the complete original toolchain schema.
     # Outputs: Historical graph acceptance, strict live-build rejection and separate cohort identity.

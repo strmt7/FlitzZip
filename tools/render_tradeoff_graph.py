@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from tools.benchmark_comparators import parse_metadata
 from tools.render_comparison_graph import SVG, label, summarize
 from tools.render_svg_graph import append_range_whisker, new_document
 
@@ -265,7 +265,7 @@ def main() -> int:
     parser.add_argument("--input", action="append", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    records = [json.loads(path.read_text(encoding="utf-8")) for path in args.input]
+    records = [parse_metadata(path.read_bytes()) for path in args.input]
     commit, panels = collect(records)
     args.output.write_bytes(render(commit, panels))
     return 0

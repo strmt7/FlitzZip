@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import re
 import statistics
@@ -13,9 +12,11 @@ from collections import defaultdict
 from pathlib import Path
 
 try:
+    from tools.benchmark_comparators import parse_metadata
     from tools.native_build_receipt import receipt_product_name, validate_receipt
     from tools.render_svg_graph import SVG, append_range_whisker, new_document
 except ModuleNotFoundError:
+    from benchmark_comparators import parse_metadata
     from native_build_receipt import receipt_product_name, validate_receipt
     from render_svg_graph import SVG, append_range_whisker, new_document
 
@@ -407,6 +408,8 @@ def validate_native_receipt_record(record: dict) -> tuple:
 # Inputs: A parsed historical or current RAM record and a local-preview switch.
 # Outputs: Returns normalized run groups or raises ValueError with the invalid field.
 def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
+    if not isinstance(record, dict):
+        raise ValueError("RAM benchmark record must be an object")
     schema = record.get("schema_version")
     if (
         type(schema) is not int
@@ -432,6 +435,8 @@ def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
         raise ValueError("source_commit must be a complete Git SHA")
     if not isinstance(binary_hash, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", binary_hash):
         raise ValueError("binary_sha256 must be a SHA-256 digest")
+    if any(not isinstance(record.get(field), str) or not record[field].strip() for field in ("cpu_model", "gpu_model")):
+        raise ValueError("benchmark hardware identity is missing or invalid")
     profile = record.get("profile")
     if not isinstance(profile, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", profile):
         raise ValueError("invalid workload profile")
@@ -459,7 +464,11 @@ def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
     for run in runs:
         if not isinstance(run, dict) or run.get("lane") not in ("CPU", "GPU"):
             raise ValueError("invalid benchmark lane")
-        if run.get("memory_only") is not True or run.get("disk_write_bytes") != 0:
+        if (
+            run.get("memory_only") is not True
+            or type(run.get("disk_write_bytes")) is not int
+            or run["disk_write_bytes"] != 0
+        ):
             raise ValueError("benchmark run is not RAM-only")
         if schema >= 2:
             for field in ("gpu_avg_pct", "gpu_peak_pct"):
@@ -483,8 +492,8 @@ def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
         if any(type(value) not in (int, float) or not math.isfinite(value) or value < 0 for value in phases):
             raise ValueError("invalid phase timing")
         seconds = sum(phases)
-        if seconds <= 0:
-            raise ValueError("run has no positive elapsed time")
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError("run has no finite positive elapsed time")
         if run["lane"] == "GPU" and (
             type(run.get("gpu_kernel_launches")) is not int or run["gpu_kernel_launches"] <= 0
         ):
@@ -725,7 +734,7 @@ def main() -> int:
     parser.add_argument("--allow-dirty", action="store_true", help="Local preview only; not for publication")
     args = parser.parse_args()
     try:
-        records = [json.loads(path.read_text(encoding="utf-8")) for path in args.input]
+        records = [parse_metadata(path.read_bytes()) for path in args.input]
         identity, rows = summarize_records(records, args.allow_dirty)
         graphic = render_svg(identity, rows)
         if args.check:
@@ -734,7 +743,7 @@ def main() -> int:
         else:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_bytes(graphic)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
         print(f"benchmark graph: {exc}", file=sys.stderr)
         return 1
     print(f"benchmark graph: {'verified' if args.check else 'created'}; cases={len(rows)}")
