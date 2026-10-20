@@ -484,14 +484,39 @@ def measure_case(
     }
 
 
+# Purpose: Decode Git's unquoted NUL records without losing rename endpoints or splitting filenames.
+# Inputs: Complete porcelain-v1 -z bytes; rename/copy records have a second NUL-delimited path.
+# Outputs: All changed paths; malformed/truncated records raise RuntimeError rather than appearing clean.
+def changed_paths(status: bytes) -> list[str]:
+    if not status:
+        return []
+    records = status.decode("utf-8", errors="strict").split("\0")
+    if records.pop() != "":
+        raise RuntimeError("Git status output is not NUL terminated")
+    paths = []
+    position = 0
+    while position < len(records):
+        record = records[position]
+        position += 1
+        if len(record) < 4 or record[2] != " " or not re.fullmatch(r"[ MADRCU?!]{2}", record[:2]):
+            raise RuntimeError("Git status record is malformed")
+        paths.append(record[3:].replace("\\", "/"))
+        if "R" in record[:2] or "C" in record[:2]:
+            if position >= len(records) or not records[position]:
+                raise RuntimeError("Git rename/copy record has no source path")
+            paths.append(records[position].replace("\\", "/"))
+            position += 1
+    return paths
+
+
 # Purpose: Require source/binary identity without treating unrelated local edits as product changes.
 # Inputs: Git checkout root and tested FlitzZip executable.
 # Outputs: Returns clean source commit, executable SHA-256, and unrelated dirty path names.
 def source_identity(binary: Path) -> tuple[str, str, list[str]]:
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     status = subprocess.check_output(
-        ["git", "status", "--porcelain", "--untracked-files=all"], cwd=ROOT, text=True
-    ).splitlines()
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=ROOT, timeout=30
+    )
     relevant = (
         "src/",
         "include/",
@@ -507,7 +532,7 @@ def source_identity(binary: Path) -> tuple[str, str, list[str]]:
         "docs/comparative-benchmark-methodology.md",
         "docs/benchmark-permissions.md",
     )
-    dirty = [line[3:].replace("\\", "/") for line in status]
+    dirty = changed_paths(status)
     if any(path.startswith(relevant) for path in dirty):
         raise RuntimeError("product or comparison method is dirty; commit and rebuild before publication")
     return commit, digest(binary), dirty
@@ -680,7 +705,10 @@ def main() -> int:
     record = result_record(
         args, commit, binary_hash, unrelated_dirty, build, tool_data, files, cases, host_before, corpus_metadata
     )
-    output.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if source_identity(binaries["FlitzZip"])[:2] != (commit, binary_hash):
+        raise RuntimeError("source or executable identity changed during comparison; observations cannot be published")
+    with output.open("x", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
     print(f"saved {output}", flush=True)
     return 0
 

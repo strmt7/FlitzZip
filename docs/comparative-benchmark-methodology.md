@@ -309,6 +309,14 @@ measurement is an explicit local run, never an automatic noisy CI benchmark.
 Every README chart links to this method and its reviewed record. Unmeasured
 formats and systems are shown as unmeasured, not as failures or wins.
 
+The application comparison controller decodes NUL-delimited Git status records,
+including both rename/copy endpoints. Whitespace and Unicode filenames do not
+exempt changed product inputs from its clean-source requirement. It rechecks
+the source commit and executable digest immediately before saving observations,
+and creates the result exclusively so a concurrent owner's output survives.
+These endpoint checks detect an observed identity change; they do not establish
+that every input stayed immutable throughout every command.
+
 ## Measurement Cache
 
 Store competitor records separately from FlitzZip records. A FlitzZip source
