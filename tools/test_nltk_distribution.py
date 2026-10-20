@@ -9,6 +9,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -202,6 +203,28 @@ class DistributionTests(unittest.TestCase):
             else:
                 with self.assertRaisesRegex(ValueError, "wheel exceeds"):
                     packaging.wheel_files(directory_limited)
+
+    def test_shared_wheel_paths_refuse_redirects_and_replacement(self):
+        """Purpose: Keep package admission and publication on owned regular files.
+        Inputs: Reparse metadata and occupied output. Outputs: Refusal without mutation.
+        """
+        redirected = SimpleNamespace(
+            st_mode=stat.S_IFREG,
+            st_size=self.wheel.stat().st_size,
+            st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT,
+        )
+        with patch.object(Path, "lstat", return_value=redirected):
+            with self.assertRaisesRegex(ValueError, "redirected"):
+                packaging.digest(self.wheel)
+            with self.assertRaisesRegex(ValueError, "redirected"):
+                packaging.wheel_files(self.wheel)
+        output = self.root / "occupied-canonical.whl"
+        sentinel = b"preserve existing artifact"
+        output.write_bytes(sentinel)
+        data = {"version": self.data["version"], "source_date_epoch": 1704067200}
+        with self.assertRaises(FileExistsError):
+            packaging.canonical_wheel(self.wheel, output, data, project="nltk")
+        self.assertEqual(output.read_bytes(), sentinel)
 
     def setUp(self):
         """Purpose: Keep contracts offline. Inputs: Owned fixture. Outputs: Isolated asset/cache and cleanup."""

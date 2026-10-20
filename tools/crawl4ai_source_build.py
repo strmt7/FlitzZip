@@ -21,13 +21,25 @@ def recipe() -> dict:
     """Purpose: Admit original source. Inputs: Pinned recipe/archive. Outputs: Verified build recipe or refusal."""
     data = packaging.read_recipe(SOURCE_ROOT / "build.json")
     if (
-        type(data.get("schema")) is not int
+        set(data)
+        != {
+            "schema",
+            "project",
+            "upstream_version",
+            "version",
+            "source",
+            "source_date_epoch",
+            "source_url",
+        }
+        or type(data.get("schema")) is not int
         or data["schema"] != 1
         or data.get("project") != "crawl4ai"
         or data.get("upstream_version") != "0.9.4"
         or data.get("version") != "0.9.4+flitzzip.portable2"
         or data.get("source") != "crawl4ai-0.9.4.tar.gz"
-        or type(data.get("source_date_epoch")) is not int
+        or data.get("source_date_epoch") != 1790165349
+        or data.get("source_url")
+        != "https://files.pythonhosted.org/packages/fc/df/39bf85e67faf31b6c1587d849ffb74b4cfb078c6f646e158a18768b15cdb/crawl4ai-0.9.4.tar.gz"
     ):
         raise ValueError("Unsupported Crawl4AI source build recipe")
     archive = SOURCE_ROOT / data["source"]
@@ -51,11 +63,13 @@ def identity() -> str:
 
 def extract_source(archive: Path, destination: Path) -> Path:
     """Purpose: Extract owned bounded regular source. Inputs: Verified tar/destination. Outputs: Source tree."""
+    if destination.exists() or destination.is_symlink():
+        raise ValueError("Crawl4AI source destination must be new and unredirected")
     with tarfile.open(archive, "r:gz") as source:
         entries, total = [], 0
         for item in source:
             total += item.size
-            if len(entries) >= 2000 or total > packaging.MAX_SOURCE_BYTES or len(item.name) > 4096:
+            if item.size < 0 or len(entries) >= 2000 or total > packaging.MAX_SOURCE_BYTES or len(item.name) > 4096:
                 raise ValueError("Crawl4AI source exceeds its reviewed extent")
             entries.append(item)
         seen = set()
@@ -69,6 +83,7 @@ def extract_source(archive: Path, destination: Path) -> Path:
                 or ".." in path.parts
                 or "\\" in item.name
                 or ":" in item.name
+                or "\0" in item.name
                 or not (item.isfile() or item.isdir())
                 or item.name.casefold() in seen
             ):
@@ -149,14 +164,13 @@ def runtime_hashes() -> dict[str, str]:
 def repair_source(source: Path, data: dict) -> None:
     """Purpose: Repair the actual download boundary. Inputs: Owned exact source/recipe. Outputs: Identified source."""
     strategy = source / "crawl4ai/async_crawler_strategy.py"
-    strategy.write_text(patched_strategy(strategy.read_text(encoding="utf-8")), encoding="utf-8", newline="\n")
-    (source / "crawl4ai/flitzzip_download.py").write_text(
-        OPENER.read_text(encoding="utf-8"), encoding="utf-8", newline="\n"
-    )
     version = source / "crawl4ai/__version__.py"
-    version.write_text(
-        patched_version(version.read_text(encoding="utf-8"), data["version"]), encoding="utf-8", newline="\n"
-    )
+    repaired_strategy = patched_strategy(strategy.read_text(encoding="utf-8"))
+    repaired_version = patched_version(version.read_text(encoding="utf-8"), data["version"])
+    config = source / "pyproject.toml"
+    contents = config.read_text(encoding="utf-8")
+    if contents.count('license = "Apache-2.0"') != 1:
+        raise ValueError("Upstream license packaging changed")
     notice = (
         "FlitzZip Crawl4AI development-tool source build\n\n"
         "Upstream: https://github.com/unclecode/crawl4ai/releases/tag/v0.9.4\n"
@@ -173,10 +187,11 @@ def repair_source(source: Path, data: dict) -> None:
         "as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai).\n"
     )
     (source / "FLITZZIP_BUILD_NOTICE.txt").write_text(notice, encoding="utf-8", newline="\n")
-    config = source / "pyproject.toml"
-    contents = config.read_text(encoding="utf-8")
-    if contents.count('license = "Apache-2.0"') != 1:
-        raise ValueError("Upstream license packaging changed")
+    strategy.write_text(repaired_strategy, encoding="utf-8", newline="\n")
+    (source / "crawl4ai/flitzzip_download.py").write_text(
+        OPENER.read_text(encoding="utf-8"), encoding="utf-8", newline="\n"
+    )
+    version.write_text(repaired_version, encoding="utf-8", newline="\n")
     config.write_text(
         contents.replace(
             'license = "Apache-2.0"', 'license = "Apache-2.0"\nlicense-files = ["LICENSE", "FLITZZIP_BUILD_NOTICE.txt"]'
