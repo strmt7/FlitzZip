@@ -116,6 +116,31 @@ test names or collector heuristics. The collector's
 [Debug guidance](https://github.com/OpenCppCoverage/OpenCppCoverage/wiki#release-versus-debug)
 explains the mapping limitation.
 
+## Python contract measurements
+
+Python tooling and MCP measurements are separate from the native Codecov badge.
+Freeze the selected production modules, tests, collector configuration and tool
+identity. Select the appropriate offline or installed-provider contracts from
+the verifier and retained measurement manifest; blanket test discovery does not
+provision foreign provider dependencies or a Linux fuzz-build environment.
+Keep those runtime qualification scopes explicit rather than silently skipping
+them or claiming their coverage from unrelated tests.
+
+Use coverage.py's standard subprocess tracing for same-interpreter children.
+With parallel collection, combine the completed commands before reporting. When
+adding observations to an existing consolidated data file, use
+`coverage combine --append --keep`; a plain combine starts a new consolidated
+result and can discard earlier observations. `coverage run --append` cannot be
+used in parallel mode. Retain raw data and a consolidated snapshot so an export
+or supplemental test cannot silently replace the cohort. A small independent
+control should demonstrate both loss without append and preservation with it.
+
+Path aliases may unify exact source copies used by isolated process tests only
+when the fixture proves byte equality with the frozen production inputs. Never
+alias a test double or modified copy to a production module. Report production
+totals separately from measured test bodies, retain zero-hit production lines,
+and disclose line and branch results independently.
+
 ## Meaningful tests
 
 Choose a missing behavior or concrete failure mode before writing a test. Prefer

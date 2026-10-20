@@ -6,6 +6,7 @@ import csv
 import hashlib
 import io
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -703,14 +704,74 @@ class CurrentHostedMetadataTests(unittest.TestCase):
 
 
 class ScannerReviewCommandTests(unittest.TestCase):
-    # Purpose: Exercise only owned alert snapshots. Inputs: None. Outputs: Cleanup-bound files and real module root.
+    # Purpose: Own a committed CLI fixture independently of the developer's current policy edits.
+    # Inputs: None. Outputs: Cleanup-bound snapshots and exact copies of production modules and review policies.
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.snapshot = self.root / "alerts.json"
         self.snapshot.write_text("[]")
-        self.checkout = Path(review.__file__).resolve().parents[1]
+        source = Path(review.__file__).resolve().parents[1]
+        self.checkout = self.root / "scanner-cli-source-copy"
+        for name in (
+            "tools/scanner_metadata_review.py",
+            "tools/scanner_hosted_review.py",
+            "tools/native_build_provenance.py",
+            ".github/scanner-metadata-reviews.csv",
+            ".github/scanner-source-reviews.csv",
+            ".github/scanner-hosted-reviews.csv",
+            ".github/scanner-hosted-approval.csv",
+            ".github/scanner-false-positive-reviews.csv",
+        ):
+            destination = self.checkout / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source / name, destination)
+            self.assertEqual(destination.read_bytes(), (source / name).read_bytes())
+        options = [
+            "git",
+            "-c",
+            "user.name=Coverage Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            f"core.hooksPath={self.root / 'no-hooks'}",
+        ]
+        for arguments in (
+            ("init", "--quiet", "-b", "main"),
+            ("add", "--all"),
+            ("commit", "--quiet", "-m", "owned CLI unit fixture"),
+        ):
+            subprocess.run([*options, *arguments], cwd=self.checkout, check=True, capture_output=True, timeout=15)
+
+    # Purpose: Prove empty findings do not authorize a modified working review ledger.
+    # Inputs: An exact private committed fixture, then an uncommitted byte change to its current-decision ledger.
+    # Outputs: The actual CLI rejects the mismatch and preserves the raw snapshot instead of returning admission IDs.
+    def test_real_cli_rejects_dirty_current_ledger(self):
+        ledger = self.checkout / ".github/scanner-false-positive-reviews.csv"
+        ledger.write_bytes(ledger.read_bytes() + b"\n")
+        process = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-m",
+                "tools.scanner_metadata_review",
+                "--hosted-alerts",
+                str(self.snapshot),
+                "--current-reviews",
+                "--repository",
+                "strmt7/FlitzZip",
+            ],
+            cwd=self.checkout,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(process.returncode, 1)
+        self.assertIn("ledger differs from the audited commit", process.stderr)
+        self.assertEqual(self.snapshot.read_bytes(), b"[]")
 
     # Purpose: Exercise the actual process entry point with current policy bytes and no scanner or remote API.
     # Inputs: Empty complete snapshot and explicit read modes. Outputs: Exact empty classification and no raw changes.
