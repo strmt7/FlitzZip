@@ -2,6 +2,7 @@
 #include "cpio/cpio_numeric.hpp"
 
 #include "core/file_manifest.hpp"
+#include "core/file_size.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/path_text.hpp"
@@ -641,7 +642,7 @@ OperationStats compress_cpio(const std::vector<std::filesystem::path>& sources,
 
     OperationStats stats;
     stats.input_bytes = write_stats.input_bytes;
-    stats.output_bytes = std::filesystem::file_size(output_archive);
+    stats.output_bytes = regular_file_size(output_archive);
     stats.entries = write_stats.entries;
     stats.gpu_used = false;
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();

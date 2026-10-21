@@ -1,6 +1,7 @@
 #include "zip/zip_adapter.hpp"
 
 #include "core/file_manifest.hpp"
+#include "core/file_size.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/path_text.hpp"
@@ -193,7 +194,7 @@ OperationStats compress_zip(const std::vector<std::filesystem::path>& sources,
         if (verify_after_write) {
             static_cast<void>(verify_zip(publication.staging_path(), progress_callback));
         }
-        output_bytes = std::filesystem::file_size(publication.staging_path());
+        output_bytes = regular_file_size(publication.staging_path());
         publication.commit(true);
     } catch (...) {
         if (!finalized) {
@@ -249,7 +250,7 @@ OperationStats verify_zip(const std::filesystem::path& archive_path, const Progr
             publish_progress(progress, progress_callback);
         }
         OperationStats stats;
-        stats.input_bytes = std::filesystem::file_size(archive_path);
+        stats.input_bytes = regular_file_size(archive_path);
         stats.output_bytes = scan.total_bytes;
         stats.entries = scan.paths.size();
         stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -321,7 +322,7 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
         mz_zip_reader_end(&zip);
 
         OperationStats stats;
-        stats.input_bytes = std::filesystem::file_size(archive_path);
+        stats.input_bytes = regular_file_size(archive_path);
         stats.output_bytes = scan.total_bytes;
         stats.entries = file_count;
         stats.gpu_used = false;

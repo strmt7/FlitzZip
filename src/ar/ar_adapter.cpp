@@ -1,6 +1,7 @@
 #include "ar/ar_adapter.hpp"
 
 #include "core/file_manifest.hpp"
+#include "core/file_size.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limit_checks.hpp"
@@ -345,7 +346,7 @@ std::string read_string_table(std::ifstream& input, std::uint64_t size) {
 // Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported
 // layout.
 ArScanResult scan_ar(const std::filesystem::path& archive_path, ArchivePathEncoding encoding) {
-    const auto archive_size = std::filesystem::file_size(archive_path);
+    const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open AR archive: " + archive_path.string());
@@ -488,7 +489,7 @@ OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
 
     OperationStats stats;
     stats.input_bytes = manifest.total_file_bytes;
-    stats.output_bytes = std::filesystem::file_size(output_archive);
+    stats.output_bytes = regular_file_size(output_archive);
     stats.entries = entries;
     stats.gpu_used = false;
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();

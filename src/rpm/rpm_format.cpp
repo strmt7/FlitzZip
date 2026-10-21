@@ -1,5 +1,6 @@
 #include "rpm/rpm_format.hpp"
 
+#include "core/file_size.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
@@ -293,7 +294,7 @@ std::array<unsigned char, 6U> read_payload_magic(std::ifstream& input, std::uint
 // Inputs: `archive_path` identifies an untrusted RPM package that must remain readable for the scan.
 // Outputs: Returns validated payload offsets, sizes, and compression metadata; throws ArchiveError on malformed input.
 RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path) {
-    const auto archive_size = std::filesystem::file_size(archive_path);
+    const auto archive_size = regular_file_size(archive_path);
     if (archive_size < kRpmLeadBytes) {
         throw ArchiveError("RPM file is too small");
     }

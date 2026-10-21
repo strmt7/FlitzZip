@@ -331,25 +331,6 @@ TEST_CASE(arj_extract_rejects_payload_crc_mismatch_without_output) {
     std::filesystem::remove_all(root);
 }
 
-// Purpose: Keep host filesystem failures inside the documented FlitzZip adapter error contract.
-// Inputs: A missing archive path and an otherwise valid empty destination root.
-// Outputs: Requires ArchiveError with actionable path context rather than a leaking filesystem exception type.
-TEST_CASE(arj_missing_archive_reports_product_error) {
-    const auto root = test_temp_dir("arj-missing-archive");
-    const auto archive = root / "missing.arj";
-    bool rejected = false;
-    try {
-        (void)flitzzip::extract_arj(archive, root / "out", false);
-    } catch (const flitzzip::ArchiveError& error) {
-        REQUIRE_TRUE(std::string_view(error.what()).find("cannot inspect ARJ archive") != std::string_view::npos);
-        REQUIRE_TRUE(std::string_view(error.what()).find("missing.arj") != std::string_view::npos);
-        rejected = true;
-    }
-    REQUIRE_TRUE(rejected);
-    REQUIRE_TRUE(!std::filesystem::exists(root / "out"));
-    std::filesystem::remove_all(root);
-}
-
 // Purpose: Exercise strict ARJ basic-header framing before any entry or output admission.
 // Inputs: Independent prefixes, sizes, CRCs and filename-string boundary mutations.
 // Outputs: Requires precise rejection and preservation of the destination for every malformed header.

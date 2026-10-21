@@ -2,6 +2,7 @@
 
 #include "bzip2/bzip2_stream.hpp"
 #include "core/file_manifest.hpp"
+#include "core/file_size.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limit_checks.hpp"
@@ -747,7 +748,7 @@ TarScanResult scan_tar(const std::filesystem::path& archive_path) {
     if (!input) {
         throw ArchiveError("cannot open TAR archive: " + archive_path.string());
     }
-    return scan_tar_stream(input, true, std::filesystem::file_size(archive_path));
+    return scan_tar_stream(input, true, regular_file_size(archive_path));
 }
 
 // Purpose: Copy one already-positioned TAR payload from a stream to a verified temporary file.
@@ -968,7 +969,7 @@ OperationStats compress_tar(const std::vector<std::filesystem::path>& sources,
 
     OperationStats stats;
     stats.input_bytes = write_stats.input_bytes;
-    stats.output_bytes = std::filesystem::file_size(output_archive);
+    stats.output_bytes = regular_file_size(output_archive);
     stats.entries = write_stats.entries;
     stats.gpu_used = false;
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();

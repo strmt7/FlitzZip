@@ -1,6 +1,7 @@
 #include "arj/arj_adapter.hpp"
 
 #include "core/checksum.hpp"
+#include "core/file_size.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limits.hpp"
@@ -15,7 +16,6 @@
 #include <limits>
 #include <span>
 #include <string>
-#include <system_error>
 #include <vector>
 
 namespace flitzzip {
@@ -324,11 +324,7 @@ ArjEntryMetadata scan_arj_entry(std::ifstream& input, const ArjHeader& header, s
 // Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, unsupported methods,
 // duplicates, or corrupt stored data.
 ArjScanResult scan_arj(const std::filesystem::path& archive_path) {
-    std::error_code size_error;
-    const auto archive_size = std::filesystem::file_size(archive_path, size_error);
-    if (size_error) {
-        throw ArchiveError("cannot inspect ARJ archive: " + archive_path.string() + ": " + size_error.message());
-    }
+    const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open ARJ archive: " + archive_path.string());
@@ -436,7 +432,7 @@ OperationStats extract_arj(const std::filesystem::path& archive_path, const std:
     }
 
     OperationStats stats;
-    stats.input_bytes = std::filesystem::file_size(archive_path);
+    stats.input_bytes = regular_file_size(archive_path);
     stats.output_bytes = scanned.total_file_bytes;
     stats.entries = static_cast<std::uint64_t>(scanned.entries.size());
     stats.gpu_used = false;
