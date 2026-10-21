@@ -896,6 +896,7 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_archive_metadata_failures.cpp
     tests/cpp/test_integrity.cpp
     tests/cpp/test_archive_format.cpp
+    tests/cpp/test_adapter_error_contracts.cpp
     tests/cpp/test_ar_compat.cpp
     tests/cpp/test_archive_name_encoding.cpp
     tests/cpp/test_arc_compat.cpp

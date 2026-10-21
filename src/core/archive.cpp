@@ -5,6 +5,7 @@
 #include "core/byte_plane_block.hpp"
 #include "core/checksum.hpp"
 #include "core/decoded_chunk.hpp"
+#include "core/file_size.hpp"
 #include "core/host_memory_budget.hpp"
 #include "core/worker_budget.hpp"
 #include "core/file_manifest.hpp"
@@ -983,7 +984,7 @@ OperationStats compress_flzip(const std::vector<std::filesystem::path>& sources,
     if (!output) {
         throw ArchiveError("failed to close finalized archive");
     }
-    stats.output_bytes = std::filesystem::file_size(publication.staging_path());
+    stats.output_bytes = regular_file_size(publication.staging_path());
     stats.gpu_runtime = snapshot_gpu_telemetry(*gpu_telemetry);
 
     // Read back private output through the normal bounded decoder before replacing the final archive.
@@ -1022,7 +1023,7 @@ OperationStats extract_flzip(const std::filesystem::path& archive_path, const st
     if (!input) {
         throw ArchiveError("cannot open archive: " + archive_path.string());
     }
-    const auto archive_size = std::filesystem::file_size(archive_path);
+    const auto archive_size = regular_file_size(archive_path);
     auto index = read_index_from_file(input);
 
     // Validate the complete index up front so extraction cannot create files for malformed metadata.
@@ -1137,7 +1138,7 @@ OperationStats verify_flzip(const std::filesystem::path& archive_path, const Ext
     if (!input) {
         throw ArchiveError("cannot open archive: " + archive_path.string());
     }
-    const auto archive_size = std::filesystem::file_size(archive_path);
+    const auto archive_size = regular_file_size(archive_path);
     auto index = read_index_from_file(input);
     const auto validation = validate_archive_index_metadata(index);
     const auto decode_window_bytes = resolve_decode_window_bytes(options, validation);

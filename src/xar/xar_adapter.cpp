@@ -436,11 +436,11 @@ void set_xar_file_name(XarFileContext& context, std::string_view text, XarMetada
         throw ArchiveError("XAR filename exceeds FlitzZip component length limit");
     }
     auto name = decode_xml_text(text);
-    if (name.empty() || name.find_first_of("/\\") != std::string::npos) {
-        throw SecurityError("XAR filename is empty or contains a path separator");
+    if (name.empty()) {
+        throw SecurityError("XAR filename is empty");
     }
     const auto normalized_name = normalize_archive_path_key(name);
-    if (normalized_name != name) {
+    if (normalized_name != name || name.find_first_of("/\\") != std::string::npos) {
         throw SecurityError("XAR filename is not a single canonical path component");
     }
     const auto separator_bytes = context.parent_path.empty() ? 0U : 1U;
@@ -578,14 +578,57 @@ struct XarTocParseState {
     std::vector<std::string> tag_stack;
     std::uint64_t tag_stack_bytes = 0;
     std::uint64_t element_count = 0;
+    bool saw_xar_root = false;
+    bool saw_toc = false;
 };
 
 // Purpose: Apply one bounded XML text interval to the active XAR element.
 // Inputs: `xml`, `start`, and `end` delimit text; `state` owns active tag/file context.
-// Outputs: Updates active metadata or returns without effect when no element can consume text.
+// Outputs: Updates active metadata, accepts outside-root whitespace, or rejects non-XML trailing/prefix bytes.
 void consume_xar_toc_text(std::string_view xml, std::size_t start, std::size_t end, XarTocParseState& state) {
-    if (end > start && !state.tag_stack.empty()) {
-        apply_xar_text(state.tag_stack.back(), xml.substr(start, end - start), state.file_stack, state.metadata);
+    if (end <= start) {
+        return;
+    }
+    const auto text = xml.substr(start, end - start);
+    if (state.tag_stack.empty()) {
+        if (std::ranges::any_of(text, [](char value) { return !is_ascii_space(value); })) {
+            throw ArchiveError("XAR TOC contains text outside its root element");
+        }
+        return;
+    }
+    apply_xar_text(state.tag_stack.back(), text, state.file_stack, state.metadata);
+}
+
+// Purpose: Enforce the canonical XAR/TOC/file/data ownership hierarchy before mutating parser state.
+// Inputs: `name`/`self_closing` describe the opening element and `state` contains its current parent and root history.
+// Outputs: Records unique root/TOC admission or throws before misplaced identity/payload fields can be accepted.
+void validate_xar_toc_open_context(const std::string& name, bool self_closing, XarTocParseState& state) {
+    if (state.tag_stack.empty()) {
+        if (name != "xar" || state.saw_xar_root || self_closing) {
+            throw ArchiveError("XAR TOC must contain one nonempty xar root element");
+        }
+        state.saw_xar_root = true;
+        return;
+    }
+    const auto& parent = state.tag_stack.back();
+    if (parent == "xar") {
+        if (name != "toc" || state.saw_toc || self_closing) {
+            throw ArchiveError("XAR root must contain one nonempty toc element");
+        }
+        state.saw_toc = true;
+        return;
+    }
+    if (name == "xar" || name == "toc") {
+        throw ArchiveError("XAR root and toc elements cannot be nested or repeated");
+    }
+    if (name == "file" && parent != "toc" && parent != "file") {
+        throw ArchiveError("XAR file entry is outside toc/file ownership");
+    }
+    if ((name == "name" || name == "type" || name == "data") && parent != "file") {
+        throw ArchiveError("XAR file metadata is outside its file entry");
+    }
+    if ((name == "offset" || name == "size" || name == "length" || name == "encoding") && parent != "data") {
+        throw ArchiveError("XAR payload metadata is outside its data element");
     }
 }
 
@@ -612,6 +655,7 @@ void close_xar_toc_tag(const std::string& name, XarTocParseState& state) {
 // Inputs: `tag` is raw bounded tag text, `name` is canonical, `self_closing` is syntax state, and `state` is mutable.
 // Outputs: Pushes/finalizes bounded context or throws before invalid nesting or duplicate metadata is retained.
 void open_xar_toc_tag(std::string_view tag, const std::string& name, bool self_closing, XarTocParseState& state) {
+    validate_xar_toc_open_context(name, self_closing, state);
     if (name == "file") {
         if (state.file_stack.size() >= kMaxArchivePathComponents ||
             state.metadata.entries.size() >= kMaxArchiveEntries) {
@@ -718,6 +762,9 @@ XarMetadata parse_xar_toc(std::span<const unsigned char> toc_bytes, const XarHea
     }
     if (!state.tag_stack.empty() || !state.file_stack.empty()) {
         throw ArchiveError("XAR TOC ended with unclosed XML elements");
+    }
+    if (!state.saw_xar_root || !state.saw_toc) {
+        throw ArchiveError("XAR TOC is missing its xar/toc document structure");
     }
     if (state.metadata.entries.empty()) {
         throw ArchiveError("XAR archive contains no extractable entries");

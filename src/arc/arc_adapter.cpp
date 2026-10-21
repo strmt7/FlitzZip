@@ -1,5 +1,6 @@
 #include "arc/arc_adapter.hpp"
 
+#include "core/file_size.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limits.hpp"
@@ -228,7 +229,7 @@ void validate_unpacked_payload(std::ifstream& input, const ArcHeader& header, st
 // Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, unsupported methods,
 // duplicates, or corrupt stored data.
 ArcScanResult scan_arc(const std::filesystem::path& archive_path) {
-    const auto archive_size = std::filesystem::file_size(archive_path);
+    const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open ARC archive: " + archive_path.string());
@@ -346,7 +347,7 @@ OperationStats extract_arc(const std::filesystem::path& archive_path, const std:
     }
 
     OperationStats stats;
-    stats.input_bytes = std::filesystem::file_size(archive_path);
+    stats.input_bytes = regular_file_size(archive_path);
     stats.output_bytes = scanned.total_file_bytes;
     stats.entries = static_cast<std::uint64_t>(scanned.entries.size());
     stats.gpu_used = false;

@@ -2,6 +2,7 @@
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
+#include "core/resource_limits.hpp"
 #include "core/result.hpp"
 #include "xar/xar_adapter.hpp"
 
@@ -282,6 +283,90 @@ TEST_CASE(xar_xml_structure_is_validated_before_extraction) {
         require_xar_metadata_rejected(root / "input.xar", root / "output", "<xar><toc>" + entry + "</toc></xar>");
     }
     require_xar_metadata_rejected(root / "input.xar", root / "output", "<xar><toc><file");
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Exercise XML tokenizer boundaries independently from payload decompression and filesystem publication.
+// Inputs: Empty/malformed tags, unterminated attributes, declarations, empty documents, oversized names and totals.
+// Outputs: Rejects every hostile grammar/resource case while preserving the destination sentinel.
+TEST_CASE(xar_xml_tokenizer_and_resource_boundaries_fail_closed) {
+    const auto root = test_temp_dir("xar-xml-tokenizer-boundaries");
+    const auto archive = root / "input.xar";
+    const auto output = root / "output";
+    const std::string prefix = "<xar><toc>";
+    const std::string suffix = "</toc></xar>";
+    const std::string data = "<length>1</length><offset>0</offset><size>1</size>";
+
+    const std::vector<std::string> invalid{
+        prefix + "</>" + suffix,
+        prefix + "</ />" + suffix,
+        prefix + "<>" + suffix,
+        "<!DOCTYPE xar>" + prefix + stored_xar_entry("file.txt") + suffix,
+        prefix + suffix,
+        prefix + "</file>" + suffix,
+        prefix + stored_xar_entry("a//b") + suffix,
+        prefix + stored_xar_entry(std::string(flitzzip::kMaxArchivePathComponentBytes + 1U, 'a')) + suffix,
+        prefix + stored_xar_entry("file.txt", data + "<encoding style='application/octet-stream/>") + suffix,
+        prefix +
+            stored_xar_entry("file.txt", "<length>1</length><offset>0</offset><size>" +
+                                             std::to_string(flitzzip::kMaxPipelineMemoryBytes + 1U) + "</size>") +
+            suffix,
+    };
+    for (const auto& toc : invalid) {
+        require_xar_metadata_rejected(archive, output, toc);
+    }
+
+    std::string nested = prefix;
+    constexpr std::size_t component_bytes = 1000U;
+    const auto components = static_cast<std::size_t>(flitzzip::kMaxArchivePathBytes / component_bytes) + 2U;
+    for (std::size_t index = 0; index < components; ++index) {
+        nested += "<file><name>" + std::string(component_bytes, static_cast<char>('a' + (index % 26U))) +
+                  "</name><type>directory</type>";
+    }
+    for (std::size_t index = 0; index < components; ++index) {
+        nested += "</file>";
+    }
+    nested += suffix;
+    require_xar_metadata_rejected(archive, output, nested);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Accept XML trailing whitespace and encoding attributes without a style while retaining exact bytes.
+// Inputs: A complete stored entry followed by XML whitespace and an unrelated encoding attribute.
+// Outputs: Exercises absent-attribute and terminal-text paths without relaxing document structure validation.
+TEST_CASE(xar_terminal_whitespace_and_absent_encoding_style_extract) {
+    const auto root = test_temp_dir("xar-terminal-text");
+    const auto archive = root / "input.xar";
+    const std::array<unsigned char, 1> heap{'z'};
+    const auto data = "<length>1</length><offset>0</offset><size>1</size><encoding other='metadata'/>";
+    write_xar_fixture(archive, "<xar><toc>" + stored_xar_entry("file.txt", data) + "</toc></xar> \r\n\t", heap);
+    const auto stats = flitzzip::extract_xar(archive, root / "output", false);
+    REQUIRE_EQ(stats.entries, 1U);
+    REQUIRE_EQ(read_text_file(root / "output" / "file.txt"), "z");
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject files/fields outside their canonical XAR owners and any non-whitespace bytes outside the root.
+// Inputs: Wrong/duplicate roots, misplaced TOCs and file/data scalar fields, plus trailing character data.
+// Outputs: Every structurally ambiguous document fails before changing the destination.
+TEST_CASE(xar_document_hierarchy_rejects_ambiguous_metadata) {
+    const auto root = test_temp_dir("xar-document-hierarchy");
+    const auto entry = stored_xar_entry("file.txt");
+    const std::vector<std::string> invalid{
+        entry,
+        "<toc>" + entry + "</toc>",
+        "<xar>" + entry + "</xar>",
+        "<xar><toc>" + entry + "</toc><toc></toc></xar>",
+        "<xar><toc>" + entry + "</toc></xar><xar><toc></toc></xar>",
+        "<xar><toc><meta>" + entry + "</meta></toc></xar>",
+        "<xar><toc><name>file.txt</name>" + entry + "</toc></xar>",
+        "<xar><toc><file><name>file.txt</name><type>file</type><meta><data/></meta></file></toc></xar>",
+        "<xar><toc><file><name>file.txt</name><type>file</type><offset>0</offset></file></toc></xar>",
+        "<xar><toc>" + entry + "</toc></xar>trailing",
+    };
+    for (const auto& toc : invalid) {
+        require_xar_metadata_rejected(root / "input.xar", root / "output", toc);
+    }
     std::filesystem::remove_all(root);
 }
 

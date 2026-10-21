@@ -274,6 +274,63 @@ TEST_CASE(sevenzip_extraction_rejects_missing_name_property_without_crash) {
     REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
 }
 
+// Purpose: Reject ill-formed UTF-16 names returned by the bundled SDK before path conversion or publication.
+// Inputs: Checksum-correct empty-file headers containing an unpaired high or low surrogate followed by a terminator.
+// Outputs: Requires the specific Unicode security error and an untouched destination for both malformed sequences.
+TEST_CASE(sevenzip_invalid_utf16_surrogates_fail_before_publication) {
+    const std::array<std::pair<std::vector<unsigned char>, std::string_view>, 2> cases{
+        std::pair{std::vector<unsigned char>{0x01, 0x05, 0x01, 0x0E, 0x01, 0x80, 0x11, 0x07, 0x00, 0x00, 0xD8, 'a',
+                                             0x00, 0x00, 0x00, 0x00, 0x00},
+                  "invalid UTF-16 surrogate pair"},
+        std::pair{std::vector<unsigned char>{0x01, 0x05, 0x01, 0x0E, 0x01, 0x80, 0x11, 0x05, 0x00, 0x00, 0xDC, 0x00,
+                                             0x00, 0x00, 0x00},
+                  "unpaired UTF-16 low surrogate"},
+    };
+    for (std::size_t index = 0; index < cases.size(); ++index) {
+        const auto root = test_temp_dir("sevenzip-invalid-surrogate-" + std::to_string(index));
+        const auto archive = root / "invalid.7z";
+        write_7z_fixture(archive, make_unencoded_7z(cases[index].first));
+        bool rejected = false;
+        try {
+            (void)flitzzip::extract_7z(archive, root / "out", false);
+        } catch (const flitzzip::SecurityError& error) {
+            rejected = std::string_view(error.what()).find(cases[index].second) != std::string_view::npos;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(count_regular_files(root / "out"), 0U);
+        std::filesystem::remove_all(root);
+    }
+}
+
+// Purpose: Refuse Windows reparse/device bits and POSIX special-file types from checksum-correct 7z metadata.
+// Inputs: One named empty file with an independently encoded WinAttrib property for each unsupported class.
+// Outputs: Requires SecurityError before the destination receives any filesystem object.
+TEST_CASE(sevenzip_special_file_attributes_fail_before_publication) {
+    const std::array<std::pair<std::uint32_t, std::string_view>, 3> cases{
+        std::pair{0x00000040U, "unsupported Windows special-file attributes"},
+        std::pair{0x00000400U, "unsupported Windows special-file attributes"},
+        std::pair{0xA0000000U, "unsupported POSIX special-file attributes"},
+    };
+    for (std::size_t index = 0; index < cases.size(); ++index) {
+        std::vector<unsigned char> header{0x01, 0x05, 0x01, 0x0E, 0x01, 0x80, 0x11, 0x05, 0x00,
+                                          'x',  0x00, 0x00, 0x00, 0x15, 0x06, 0x01, 0x00};
+        append_le32(header, cases[index].first);
+        header.insert(header.end(), {0x00, 0x00});
+        const auto root = test_temp_dir("sevenzip-special-attribute-" + std::to_string(index));
+        const auto archive = root / "special.7z";
+        write_7z_fixture(archive, make_unencoded_7z(header));
+        bool rejected = false;
+        try {
+            (void)flitzzip::extract_7z(archive, root / "out", false);
+        } catch (const flitzzip::SecurityError& error) {
+            rejected = std::string_view(error.what()).find(cases[index].second) != std::string_view::npos;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(count_regular_files(root / "out"), 0U);
+        std::filesystem::remove_all(root);
+    }
+}
+
 // Purpose: Exercise bounded folder scanning through complete checksum-correct production archives.
 // Inputs: A valid empty Copy folder and invalid coder counts, descriptors, properties and binding graphs.
 // Outputs: The valid control extracts exactly one empty file; every invalid graph fails before output.

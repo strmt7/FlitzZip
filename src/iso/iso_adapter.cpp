@@ -1,6 +1,7 @@
 #include "iso/iso_adapter.hpp"
 
 #include "core/file_manifest.hpp"
+#include "core/file_size.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limit_checks.hpp"
@@ -348,7 +349,7 @@ IsoVolume read_iso_volume(std::ifstream& input, std::uint64_t archive_size) {
 // Outputs: Returns trusted extraction metadata; throws on malformed records, unsafe paths, duplicates, or unsupported
 // layout.
 IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
-    const auto archive_size = std::filesystem::file_size(archive_path);
+    const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open ISO image: " + archive_path.string());

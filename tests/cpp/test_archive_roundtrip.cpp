@@ -124,6 +124,22 @@ TEST_CASE(flzip_rejects_footer_index_version_mismatch) {
 
     const auto archive = root / ("version-" + std::to_string(flitzzip::kFlitzZipVersion) + ".flzip");
     const auto footer_version_offset = static_cast<std::streamoff>(std::filesystem::file_size(archive) - 20U);
+    for (const auto invalid_version :
+         {flitzzip::kFlitzZipMinReadableVersion - 1U, flitzzip::kFlitzZipMaxReadableVersion + 1U}) {
+        {
+            std::fstream file(archive, std::ios::binary | std::ios::in | std::ios::out);
+            file.seekp(footer_version_offset, std::ios::beg);
+            flitzzip::write_u32(file, invalid_version);
+            REQUIRE_TRUE(static_cast<bool>(file));
+        }
+        bool unsupported = false;
+        try {
+            static_cast<void>(flitzzip::verify_flzip(archive, options));
+        } catch (const flitzzip::ArchiveError& error) {
+            unsupported = std::string(error.what()).find("unsupported archive footer version") != std::string::npos;
+        }
+        REQUIRE_TRUE(unsupported);
+    }
     {
         std::fstream file(archive, std::ios::binary | std::ios::in | std::ios::out);
         file.seekp(footer_version_offset, std::ios::beg);
