@@ -1,9 +1,11 @@
 #include "test_util.hpp"
 
 #include "cli/benchmark_suite_policy.hpp"
+#include "cli/memory_benchmark.hpp"
 #include "cli/memory_benchmark_source.hpp"
 #include "core/checksum.hpp"
 #include "core/decoded_chunk.hpp"
+#include "core/integrity.hpp"
 #include "core/result.hpp"
 #include "gpu/gpu_codec.hpp"
 
@@ -47,7 +49,193 @@ std::string parallel_validation_error(std::span<const std::byte> bytes, std::uin
     }
     return {};
 }
+
+// Purpose: Invoke benchmark planning and retain its exact production diagnostic for admission-contract assertions.
+// Inputs: One benchmark option set; no codec or source allocation is performed by this helper.
+// Outputs: Returns an ArchiveError/GpuError diagnostic, or an empty string when planning succeeds.
+std::string benchmark_plan_error(const flitzzip::cli::MemoryBenchmarkOptions& options) {
+    try {
+        (void)flitzzip::cli::plan_memory_benchmark(options);
+    } catch (const flitzzip::Error& error) {
+        return error.what();
+    }
+    return {};
+}
 }  // namespace
+
+// Purpose: Reject malformed RAM-benchmark geometry before allocation or codec execution.
+// Inputs: Generated/corpus boundary cases for size, identity, backend, workers, block size and queue depth.
+// Outputs: Requires the specific production diagnostic for each independently invalid contract.
+TEST_CASE(memory_benchmark_plan_rejects_invalid_geometry_before_execution) {
+    using Options = flitzzip::cli::MemoryBenchmarkOptions;
+    constexpr auto lowercase_sha = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    struct InvalidCase {
+        Options options;
+        std::string_view diagnostic;
+    };
+    std::vector<InvalidCase> cases;
+    {
+        Options options;
+        options.size_mib = 1U;
+        options.force_cpu = true;
+        cases.push_back({options, "memory benchmark workload must be at least 10240 MiB (10 GiB)"});
+    }
+    {
+        Options options;
+        options.size_mib = 10240U;
+        options.profile = "Unknown";
+        options.force_cpu = true;
+        cases.push_back({options, "unknown memory benchmark profile: Unknown"});
+    }
+    {
+        Options options;
+        options.size_mib = std::numeric_limits<std::uint64_t>::max();
+        options.force_cpu = true;
+        cases.push_back({options, "memory benchmark size overflows"});
+    }
+    {
+        Options options;
+        options.size_mib = 10240U;
+        options.expected_source_sha256 = lowercase_sha;
+        options.force_cpu = true;
+        cases.push_back({options, "source SHA-256 requires a preloaded corpus"});
+    }
+    {
+        Options options;
+        options.corpus_bytes = 1U;
+        options.profile = "Corpus";
+        options.expected_source_sha256 = lowercase_sha;
+        options.require_gpu = true;
+        options.force_cpu = true;
+        cases.push_back({options, "--require-gpu and --force-cpu are mutually exclusive"});
+    }
+    {
+        Options options;
+        options.corpus_bytes = 1U;
+        options.profile = "Corpus";
+        options.expected_source_sha256 = lowercase_sha;
+        options.force_cpu = true;
+        options.block_size = flitzzip::kMinArchiveBlockBytes - 1U;
+        cases.push_back({options, "memory benchmark block size is outside FlitzZip resource limits"});
+    }
+    {
+        Options options;
+        options.corpus_bytes = 1U;
+        options.profile = "Corpus";
+        options.expected_source_sha256 = lowercase_sha;
+        options.force_cpu = true;
+        options.block_size = flitzzip::kMinArchiveBlockBytes + 1U;
+        cases.push_back({options, "memory benchmark block size must divide the 128 MiB chunk size"});
+    }
+    {
+        Options options;
+        options.corpus_bytes = 1U;
+        options.profile = "Corpus";
+        options.expected_source_sha256 = lowercase_sha;
+        options.force_cpu = true;
+        options.inflight_chunks = flitzzip::kMaxInflightArchiveChunks + 1U;
+        cases.push_back({options, "benchmark inflight depth exceeds FlitzZip resource limit"});
+    }
+    {
+        Options options;
+        options.corpus_bytes = 1U;
+        options.profile = "Corpus";
+        options.expected_source_sha256 = lowercase_sha;
+        options.force_cpu = true;
+        options.workers = flitzzip::kMaxArchiveWorkers + 1U;
+        cases.push_back({options, "worker count exceeds FlitzZip resource limit"});
+    }
+    {
+        Options options;
+        options.corpus_bytes = 1U;
+        options.profile = "Corpus";
+        options.expected_source_sha256 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        options.force_cpu = true;
+        cases.push_back({options, "corpus requires a 32-bit extent and a lowercase SHA-256 identity"});
+    }
+
+    for (const auto& invalid : cases) {
+        REQUIRE_EQ(benchmark_plan_error(invalid.options), invalid.diagnostic);
+    }
+}
+
+// Purpose: Exercise the complete RAM-only CPU benchmark pipeline against a resident, authenticated corpus.
+// Inputs: A small unaligned source, bounded queues/workers and production encode/verify/extract implementations.
+// Outputs: Requires byte-exact validation, CPU-only identity, native-container accounting and explicit no-disk output.
+TEST_CASE(memory_benchmark_cpu_pipeline_is_byte_exact_and_ram_only) {
+    std::vector<std::byte> source(1024U * 1024U + 37U);
+    flitzzip::cli::fill_memory_benchmark_chunk(source, 0U, source.size(), "RepeatedRecord");
+    const auto sha256 = flitzzip::sha256_bytes(source);
+
+    flitzzip::cli::MemoryBenchmarkOptions options;
+    options.source = source;
+    options.corpus_bytes = source.size();
+    options.expected_source_sha256 = sha256;
+    options.profile = "Corpus";
+    options.force_cpu = true;
+    options.workers = 2U;
+    options.inflight_chunks = 1U;
+    options.decode_inflight_chunks = 1U;
+    options.block_size = 256U * 1024U;
+    options.compression_level = 3;
+
+    const auto result = flitzzip::cli::run_memory_benchmark(options);
+    REQUIRE_EQ(result.source_sha256, sha256);
+    REQUIRE_EQ(result.stats.entries, 1U);
+    REQUIRE_EQ(result.stats.input_bytes, source.size());
+    REQUIRE_EQ(result.validated_bytes, source.size());
+    REQUIRE_EQ(result.stats.workers, 2U);
+    REQUIRE_EQ(result.stats.inflight_chunks, 1U);
+    REQUIRE_EQ(result.decode_inflight_chunks, 1U);
+    REQUIRE_TRUE(!result.stats.gpu_used);
+    REQUIRE_TRUE(result.stats.output_bytes > 0U);
+    REQUIRE_TRUE(result.archive_bytes > result.stats.output_bytes);
+    REQUIRE_TRUE(result.wall_seconds >= result.validation_seconds);
+
+    std::ostringstream output;
+    auto* original = std::cout.rdbuf(output.rdbuf());
+    flitzzip::cli::print_memory_benchmark_stats(result);
+    std::cout.rdbuf(original);
+    const auto text = output.str();
+    REQUIRE_TRUE(text.find("source_sha256=" + sha256) != std::string::npos);
+    REQUIRE_TRUE(text.find("gpu_used=false") != std::string::npos);
+    REQUIRE_TRUE(text.find("validated_bytes=" + std::to_string(source.size())) != std::string::npos);
+    REQUIRE_TRUE(text.find("memory_only=true disk_write_bytes=0") != std::string::npos);
+}
+
+// Purpose: Exercise Neutron through the same authenticated RAM-only benchmark boundary used by the CLI.
+// Inputs: A bounded corpus and a genuinely admitted AMD HIP device; CPU-only hosts report the unexercised scope.
+// Outputs: Requires required-HIP encode/decode use and exact independent byte validation without filesystem writes.
+TEST_CASE(memory_benchmark_neutron_pipeline_requires_real_hip_and_exact_bytes) {
+    if (!flitzzip::query_gpu_info().available) {
+        std::cout << "Neutron RAM-only benchmark pipeline not exercised: HIP unavailable\n";
+        return;
+    }
+    std::vector<std::byte> source(1024U * 1024U + 37U);
+    flitzzip::cli::fill_memory_benchmark_chunk(source, 0U, source.size(), "SegmentedRecords");
+
+    flitzzip::cli::MemoryBenchmarkOptions options;
+    options.source = source;
+    options.corpus_bytes = source.size();
+    options.expected_source_sha256 = flitzzip::sha256_bytes(source);
+    options.profile = "Corpus";
+    options.require_gpu = true;
+    options.workers = 2U;
+    options.inflight_chunks = 1U;
+    options.decode_inflight_chunks = 1U;
+    options.block_size = 256U * 1024U;
+    options.compression_level = flitzzip::kMaxCompressionLevel;
+    options.compression_mode = flitzzip::NativeCompressionMode::NeutronStar;
+
+    const auto result = flitzzip::cli::run_memory_benchmark(options);
+    REQUIRE_TRUE(result.stats.gpu_used);
+    REQUIRE_EQ(result.stats.input_bytes, source.size());
+    REQUIRE_EQ(result.validated_bytes, source.size());
+    REQUIRE_EQ(result.compression_mode, flitzzip::NativeCompressionMode::NeutronStar);
+    REQUIRE_TRUE(result.stats.gpu_runtime.encode_chunks > 0U);
+    REQUIRE_TRUE(result.stats.gpu_runtime.decode_chunks > 0U);
+}
 
 // Purpose: Check source admission at exact physical-memory boundaries without allocating or pressuring the host.
 // Inputs: Independent even/odd capacity fixtures, at/above-target snapshots, invalid counters and a wrapping-size
