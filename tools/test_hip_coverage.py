@@ -598,6 +598,41 @@ class HipCoverageTests(unittest.TestCase):
             native.assert_not_called()
             self.assertEqual(self.source.read_bytes(), original)
 
+    # Purpose: Exercise export CLI parsing and missing-input admission without launching a native descendant.
+    # Inputs: Four owned path arguments, one absent input and the direct help entry point.
+    # Outputs: Exact routing, early missing-input refusal and standard zero-status help.
+    def test_export_cli_routes_paths_and_rejects_missing_input(self):
+        output = self.root / "cli-export.json"
+        arguments = [
+            "hip_coverage_export",
+            "--tool",
+            str(self.source),
+            "--image",
+            str(self.source),
+            "--profile",
+            str(self.source),
+            "--output",
+            str(output),
+        ]
+        with patch("sys.argv", arguments), patch.object(capture, "capture") as routed:
+            self.assertEqual(capture.main(), 0)
+        routed.assert_called_once_with(self.source, self.source, self.source, output)
+
+        with (
+            patch.object(capture, "ROOT", self.root),
+            patch.object(capture, "require_job"),
+            self.assertRaisesRegex(ValueError, "Missing LLVM export input"),
+        ):
+            capture.capture(self.root / "absent", self.source, self.source, output)
+
+        with (
+            patch("sys.argv", ["hip_coverage_export", "--help"]),
+            patch("sys.stdout", io.StringIO()),
+            self.assertRaises(SystemExit) as status,
+        ):
+            runpy.run_path(str(Path(capture.__file__).resolve()), run_name="__main__")
+        self.assertEqual(status.exception.code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

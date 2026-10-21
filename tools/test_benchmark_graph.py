@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import builtins
 import copy
 import hashlib
+import io
 import json
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tools import render_benchmark_graph as graph
 from tools.native_build_provenance import canonical
@@ -98,6 +102,49 @@ class GraphPublicationCommandTests(unittest.TestCase):
                 [*command, "--check"], cwd=directory, env=environment, capture_output=True, timeout=30
             )
             self.assertEqual(checked.returncode, 0, checked.stderr)
+
+    # Purpose: Exercise imported check failure and the supported direct-script import fallback without subprocess gaps.
+    # Inputs: One valid record, stale output and a controlled package-import miss with the tools directory available.
+    # Outputs: Stale bytes are preserved and the fallback exposes the same renderer contracts.
+    def test_imported_check_and_direct_script_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            source, output = directory / "record.json", directory / "graph.svg"
+            source.write_text(json.dumps(fixture_record()), encoding="utf-8")
+            sentinel = b"unrelated existing chart"
+            output.write_bytes(sentinel)
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    ["render_benchmark_graph.py", "--input", str(source), "--output", str(output), "--check"],
+                ),
+                patch.object(graph.sys, "stderr", io.StringIO()),
+            ):
+                self.assertEqual(graph.main(), 1)
+            self.assertEqual(output.read_bytes(), sentinel)
+
+        original_import = builtins.__import__
+
+        def direct_script_import(name, globals=None, locals=None, fromlist=(), level=0):
+            """Purpose: Model direct-script resolution.
+            Inputs: Import request. Outputs: One package miss, then normal imports.
+            """
+            if name == "tools.benchmark_comparators":
+                raise ModuleNotFoundError(name)
+            return original_import(name, globals, locals, fromlist, level)
+
+        tool_directory = str(Path(graph.__file__).resolve().parent)
+        sys.path.insert(0, tool_directory)
+        try:
+            with patch.object(builtins, "__import__", side_effect=direct_script_import):
+                namespace = runpy.run_path(
+                    str(Path(graph.__file__).resolve()), run_name="render_benchmark_graph_direct"
+                )
+        finally:
+            sys.path.remove(tool_directory)
+        self.assertTrue(callable(namespace["parse_metadata"]))
+        self.assertTrue(callable(namespace["validate_receipt"]))
 
 
 # Purpose: Build one complete paired-run record without depending on a real GPU or filesystem benchmark.

@@ -5,6 +5,7 @@ import io
 import itertools
 import json
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -217,6 +218,49 @@ class ReleaseMetadataTests(unittest.TestCase):
             result.stdout,
             "Release version: 7.8.9-1beta\nRelease tag: 7.8.9-1beta\nPackage base: FlitzZip-7.8.9-1beta-win64\n",
         )
+
+    # Purpose: Verify imported and direct entry points use the same output and Actions-export implementation.
+    # Inputs: A valid explicit version, owned append targets, JSON output and the direct help option.
+    # Outputs: Exact metadata in all three destinations and zero-status direct help.
+    def test_imported_main_exports_all_destinations_and_direct_help(self):
+        env_file, output_file, json_file = [self.root / name for name in ("env.txt", "output.txt", "metadata.json")]
+        env_file.write_text("EXISTING=keep\n", encoding="utf-8")
+        output_file.write_text("existing=keep\n", encoding="utf-8")
+        arguments = [
+            "--requested-version",
+            "7.8.9-rc.1",
+            "--repo-root",
+            str(self.root),
+            "--json-output",
+            str(json_file),
+        ]
+        with (
+            patch.dict(os.environ, {"GITHUB_ENV": str(env_file), "GITHUB_OUTPUT": str(output_file)}, clear=True),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(metadata.main(arguments), 0)
+        expected = {
+            "release_version": "7.8.9-rc.1",
+            "release_tag": "7.8.9-rc.1",
+            "package_version": "7.8.9-rc.1",
+            "package_base": "FlitzZip-7.8.9-rc.1-win64",
+        }
+        self.assertEqual(json.loads(json_file.read_text(encoding="utf-8")), expected)
+        self.assertEqual(
+            env_file.read_text(encoding="utf-8"),
+            "EXISTING=keep\n" + "".join(f"{key.upper()}={value}\n" for key, value in expected.items()),
+        )
+        self.assertEqual(
+            output_file.read_text(encoding="utf-8"),
+            "existing=keep\n" + "".join(f"{key}={value}\n" for key, value in expected.items()),
+        )
+        with (
+            patch.object(sys, "argv", ["release_metadata.py", "--help"]),
+            patch.object(sys, "stdout", io.StringIO()),
+            self.assertRaises(SystemExit) as status,
+        ):
+            runpy.run_path(str(Path(metadata.__file__).resolve()), run_name="__main__")
+        self.assertEqual(status.exception.code, 0)
 
     # Purpose: Refuse malformed CLI structure before resolving or exporting a version.
     # Inputs: Unknown options and a missing requested-version argument.
