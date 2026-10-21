@@ -116,6 +116,18 @@ class CoverageTests(unittest.TestCase):
         self.assertTrue(imports, "The real GUI driver must expose its imported helper dependencies")
         self.assertLessEqual(imports, set(collector.GUI_SCENARIO_INPUTS))
 
+    # Purpose: Keep instrumentation overhead from becoming a false Neutron failure while bounding every GUI wait.
+    # Inputs: The actual GUI scenario source.
+    # Outputs: A short default and one explicit bounded Neutron operation budget.
+    def test_gui_neutron_wait_has_explicit_instrumentation_budget(self):
+        source = (collector.ROOT / "tools/gui_smoke.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("[ValidateRange(1, 300)][int]$TimeoutSeconds = 5", source)
+        self.assertIn("while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds)", source)
+        self.assertIn(
+            "Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Compress: completed' -TimeoutSeconds 30",
+            source,
+        )
+
     # Purpose: Prove normalization retains executed and unexecuted lines rather than manufacturing coverage.
     # Inputs: Hand-authored source roots and line evidence.
     # Outputs: Portable paths, unchanged hits and independent totals.
