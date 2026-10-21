@@ -19,8 +19,10 @@ inline std::uint64_t regular_file_size(const std::filesystem::path& path) {
     if (error) {
         throw ArchiveError("cannot read file size: " + path_diagnostic_utf8(path));
     }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("file size exceeds FlitzZip limits: " + path_diagnostic_utf8(path));
+    if constexpr (std::numeric_limits<std::uintmax_t>::max() > std::numeric_limits<std::uint64_t>::max()) {
+        if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
+            throw ArchiveError("file size exceeds FlitzZip limits: " + path_diagnostic_utf8(path));
+        }
     }
     return static_cast<std::uint64_t>(size);
 }

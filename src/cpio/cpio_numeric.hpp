@@ -1,9 +1,6 @@
 #pragma once
 
-#include "core/result.hpp"
-
 #include <array>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
 
@@ -11,19 +8,14 @@ namespace flitzzip::detail {
 
 // Purpose: Encode one SVR4 new ASCII header field without locale or varargs conversion.
 // Inputs: value is the complete unsigned 32-bit field, including zero and UINT32_MAX.
-// Outputs: Returns exactly eight zero-padded uppercase ASCII hex digits; throws on conversion failure.
+// Outputs: Returns exactly eight uppercase ASCII hex digits, including leading zeroes.
 inline std::array<char, 8> encode_cpio_hex_field(std::uint32_t value) {
-    std::array<char, 8> digits{};
-    const auto result = std::to_chars(digits.data(), digits.data() + digits.size(), value, 16);
-    if (result.ec != std::errc{}) {
-        throw ArchiveError("failed to encode CPIO header field");
-    }
-    const auto count = static_cast<std::size_t>(result.ptr - digits.data());
+    constexpr std::array<char, 16> alphabet{'0', '1', '2', '3', '4', '5', '6', '7',
+                                            '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
     std::array<char, 8> field{};
-    field.fill('0');
-    for (std::size_t i = 0; i < count; ++i) {
-        const auto digit = digits[i];
-        field[field.size() - count + i] = digit >= 'a' && digit <= 'f' ? static_cast<char>('A' + digit - 'a') : digit;
+    for (std::size_t offset = 0; offset < field.size(); ++offset) {
+        field[field.size() - 1U - offset] = alphabet[value & 0x0fU];
+        value >>= 4U;
     }
     return field;
 }

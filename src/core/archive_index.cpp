@@ -16,6 +16,7 @@ namespace {
 
 constexpr std::uint64_t kMinimumEntryMetadataBytes = 35U;
 constexpr std::uint64_t kMinimumBlockMetadataBytes = 18U;
+static_assert(kMaxArchivePathBytes <= std::numeric_limits<std::uint16_t>::max());
 
 // Purpose: Write an unsigned integer in little-endian byte order.
 // Inputs: `output` is an open binary stream and `value` is the integral value.
@@ -241,9 +242,6 @@ void write_archive_index(std::ostream& output, const ArchiveIndex& index) {
     write_u32(output, index.version);
     write_u32(output, static_cast<std::uint32_t>(index.entries.size()));
     for (const auto& entry : index.entries) {
-        if (entry.path.size() > std::numeric_limits<std::uint16_t>::max()) {
-            throw ArchiveError("archive path is too long: " + entry.path);
-        }
         write_u16(output, static_cast<std::uint16_t>(entry.path.size()));
         output.write(entry.path.data(), static_cast<std::streamsize>(entry.path.size()));
         output.put(entry.directory ? '\1' : '\0');
@@ -263,9 +261,6 @@ void write_archive_index(std::ostream& output, const ArchiveIndex& index) {
             write_u64(output, block.encoded_offset);
             write_u32(output, block.encoded_len);
         }
-    }
-    if (!output) {
-        throw ArchiveError("failed to write archive index");
     }
 }
 

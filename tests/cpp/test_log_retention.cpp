@@ -63,6 +63,7 @@ TEST_CASE(log_level_filter_matrix_matches_settings_labels) {
     REQUIRE_EQ(log_severity_text(LogSeverity::Information), std::string_view("Information"));
     REQUIRE_EQ(log_severity_text(LogSeverity::Warning), std::string_view("Warning"));
     REQUIRE_EQ(log_severity_text(LogSeverity::Debug), std::string_view("Debug"));
+    REQUIRE_EQ(log_severity_text(static_cast<LogSeverity>(-1)), std::string_view("Information"));
 }
 
 TEST_CASE(log_retention_prunes_expired_entries_and_caps_count) {

@@ -168,6 +168,8 @@ TEST_CASE(dropdown_layout_clamps_offsets_and_rejects_unusable_viewports) {
     REQUIRE_EQ(first.row_height, 28);
     REQUIRE_EQ(flitzzip::app::dropdown_first_row_for_selection(last, 0), 0);
     REQUIRE_EQ(flitzzip::app::dropdown_first_row_for_selection(first, 18), 3);
-    REQUIRE_EQ(flitzzip::app::make_dropdown_layout(anchor, content, 96, 0, 0).visible_rows, 0);
+    const auto empty = flitzzip::app::make_dropdown_layout(anchor, content, 96, 0, 0);
+    REQUIRE_EQ(empty.visible_rows, 0);
+    REQUIRE_EQ(flitzzip::app::dropdown_first_row_for_selection(empty, 8), 0);
     REQUIRE_EQ(flitzzip::app::make_dropdown_layout(anchor, RECT{86, 52, 960, 60}, 96, 19, 0).visible_rows, 0);
 }

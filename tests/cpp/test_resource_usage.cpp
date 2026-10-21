@@ -51,6 +51,8 @@ TEST_CASE(selected_gpu_memory_rejects_malformed_negative_and_overflowing_data) {
         GpuMemorySample{L"luid_0x0_0x000146dg_phys_0", 900},
         GpuMemorySample{L"luid_0x0_0x000146da_phys_", 900},
         GpuMemorySample{L"luid_0x0_0x000146da_phys_0_extra", 900},
+        GpuMemorySample{L"luid_0x0", 900},
+        GpuMemorySample{L"luid_0x0_0x000146da", 900},
         GpuMemorySample{L"pid_4294967296_luid_0x0_0x000146da_phys_0", 900},
         GpuMemorySample{L"pid_x_luid_0x0_0x000146da_phys_0", 900},
         GpuMemorySample{L"luid_0x0_0x000177de_phys_0", -1},
@@ -90,6 +92,7 @@ TEST_CASE(system_gpu_utilization_rejects_invalid_and_inconsistent_counters) {
     constexpr auto valid_name = L"pid_42_luid_0x00000000_0x000146da_phys_0_eng_0_engtype_3D";
     const std::array invalid{
         GpuEngineSample{L"not-an-engine", 90.0},
+        GpuEngineSample{L"pid_42", 90.0},
         GpuEngineSample{L"pid_x_luid_0x00000000_0x000146da_phys_0_eng_0_engtype_3D", 90.0},
         GpuEngineSample{L"pid_42_luid_0x00000000_0x000146da_eng_0_engtype_3D", 90.0},
         GpuEngineSample{L"pid_42_luid_0x00000000_0x000146da_phys_0_eng__engtype_3D", 90.0},

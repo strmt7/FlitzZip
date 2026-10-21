@@ -134,7 +134,8 @@ TEST_CASE(windows_api_path_rejects_unrepresentable_paths) {
     auto embedded_nul = std::wstring(L"C:\\root\\file");
     embedded_nul.push_back(L'\0');
     embedded_nul += L"hidden.txt";
-    for (const auto& path : {embedded_nul, L"C:\\" + std::wstring(32764U, L'a')}) {
+    for (const auto& path :
+         {embedded_nul, L"C:\\" + std::wstring(32760U, L'a'), L"C:\\" + std::wstring(32764U, L'a')}) {
         bool refused = false;
         try {
             static_cast<void>(flitzzip::windows_api_path(std::filesystem::path(path)));
@@ -1007,6 +1008,17 @@ TEST_CASE(relative_directory_preserves_names_and_exclusive_creation) {
             }
             REQUIRE_TRUE(refused);
         }
+        bool invalid_mode_refused = false;
+        try {
+            std::unique_ptr<void, decltype(&CloseHandle)> invalid(
+                open_directory_relative(parent.get(), L"invalid-mode", static_cast<DirectoryOpenMode>(-1)),
+                &CloseHandle);
+        } catch (const flitzzip::ArchiveError& error) {
+            REQUIRE_EQ(std::string_view(error.what()), "invalid relative directory open mode");
+            invalid_mode_refused = true;
+        }
+        REQUIRE_TRUE(invalid_mode_refused);
+        REQUIRE_TRUE(!std::filesystem::exists(root / "invalid-mode"));
         REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(root), std::filesystem::directory_iterator{}), 1);
     }
     std::filesystem::remove_all(root);
