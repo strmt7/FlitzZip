@@ -4,6 +4,9 @@ import argparse
 import contextlib
 import io
 import json
+import math
+import runpy
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -78,6 +81,17 @@ class AgentContextTests(unittest.TestCase):
         narrower = self.read_args(section=None, start=4, end=4, session="one-context")
         self.assertEqual(context.read_window(self.root, narrower)["content"], "4: required\n")
 
+    def test_read_history_rejects_invalid_shape_and_full_session(self):
+        """Purpose: Bound disposable session history.
+        Inputs: Non-list and 200-record cache states. Outputs: Early refusal without state growth.
+        """
+        args = self.read_args(session="bounded-session")
+        name = context.state_name("sessions", args.session)
+        for reads, message in (({}, "invalid/oversized"), ([{"record": index} for index in range(200)], "is full")):
+            context.write_state(self.root, name, {"schema": 1, "reads": reads})
+            with self.subTest(reads=type(reads).__name__), self.assertRaisesRegex(ValueError, message):
+                context.read_window(self.root, args)
+
     def test_long_line_returns_zero_content_and_entire_unread_range(self):
         """Purpose: Bound indivisible source lines.
         Inputs: long line/tiny budget.
@@ -127,6 +141,39 @@ class AgentContextTests(unittest.TestCase):
         for key in ("../escape", "Caps", "", "a" * 65):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 context.state_name("notes", key)
+        with patch.object(context, "MAX_FILE_BYTES", 64), self.assertRaisesRegex(ValueError, "state exceeds"):
+            context.write_state(self.root, "out/agent-context/large.json", {"schema": 1, "value": "x" * 100})
+        with self.assertRaises(ValueError):
+            context.write_state(self.root, "out/agent-context/nonfinite.json", {"schema": 1, "value": math.nan})
+
+    def test_state_rejects_ambiguous_json_and_non_integer_schema(self):
+        """Purpose: Keep reusable context state typed and unambiguous.
+        Inputs: Boolean schema, duplicate members and nonfinite values. Outputs: Controlled refusal.
+        """
+        path = self.root / "state.json"
+        for payload in ('{"schema":true}', '{"schema":1,"schema":1}', '{"schema":1,"value":NaN}'):
+            path.write_text(payload, encoding="utf-8")
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                context.load_state(self.root, "state.json")
+
+    def test_resolved_escape_is_rejected_after_component_checks(self):
+        """Purpose: Preserve the final containment check across path resolution changes.
+        Inputs: Modeled final resolution outside the checkout. Outputs: Refusal before reading.
+        """
+        outside = self.root.parent / "outside"
+        original = Path.resolve
+
+        def resolve(path, *args, **kwargs):
+            """Purpose: Model final path escape. Inputs: Path/resolve options. Outputs: Actual root or outside file."""
+            if path == self.source:
+                return outside
+            return original(path, *args, **kwargs)
+
+        with (
+            patch.object(Path, "resolve", autospec=True, side_effect=resolve),
+            self.assertRaisesRegex(ValueError, "escapes checkout"),
+        ):
+            context.safe_path(self.root, "guide.md")
 
     def test_symlink_ancestor_is_rejected_for_reads_and_writes(self):
         """Purpose: Contain aliases.
@@ -197,6 +244,37 @@ class AgentContextTests(unittest.TestCase):
         context.write_state(self.root, context.state_name("notes", args.key), note)
         self.assertEqual(context.recall(self.root, args.key)["reasons"], [{"reason": "expired"}])
 
+    def test_note_input_and_recall_schema_boundaries(self):
+        """Purpose: Reject incomplete synthesis and malformed retained provenance.
+        Inputs: Blank summary, no sources, missing provenance and timezone-free expiry. Outputs: Controlled refusal.
+        """
+        args = self.note_args()
+        (self.root / args.summary_file).write_text(" \n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "summary"):
+            context.remember(self.root, args)
+        with self.assertRaisesRegex(ValueError, "evidence"):
+            context.remember(self.root, self.note_args(source=[]))
+
+        name = context.state_name("notes", "malformed-note")
+        context.write_state(self.root, name, {"schema": 1, "sources": []})
+        with self.assertRaisesRegex(ValueError, "provenance"):
+            context.recall(self.root, "malformed-note")
+
+        _, digest = context.read_source(self.root, "guide.md")
+        context.write_state(
+            self.root,
+            name,
+            {
+                "schema": 1,
+                "kind": "decision",
+                "summary": "Bounded evidence.\n",
+                "sources": [{"path": "guide.md", "sha256": digest}],
+                "expires_at": "2030-01-01T00:00:00",
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "timezone"):
+            context.recall(self.root, "malformed-note")
+
     def test_startup_delivers_current_mandatory_skills_and_fails_if_missing(self):
         """Purpose: Check actual instruction delivery.
         Inputs: repository and missing local fixture.
@@ -236,6 +314,16 @@ class AgentContextTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Crawl4AI"):
             context.startup(self.root)
 
+    def test_startup_requires_both_declared_skill_paths(self):
+        """Purpose: Prevent a generic mandatory claim from replacing executable skill routing.
+        Inputs: Current instructions with one exact skill path removed. Outputs: Explicit startup refusal.
+        """
+        agents, _ = context.read_source(context.ROOT, "AGENTS.md")
+        agents = agents.replace(".agents/skills/caveman/SKILL.md", "missing-caveman-skill")
+        (self.root / "AGENTS.md").write_text(agents, encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "mandatory Caveman and CocoIndex routing"):
+            context.startup(self.root)
+
     def test_cli_budget_errors_and_stale_exit_remain_machine_visible(self):
         """Purpose: Verify real command dispatch.
         Inputs: valid/invalid CLI and expired note.
@@ -255,6 +343,68 @@ class AgentContextTests(unittest.TestCase):
                 with self.subTest(argv=argv), contextlib.redirect_stdout(io.StringIO()) as output:
                     self.assertEqual(context.main(argv), expected)
                     self.assertIsInstance(json.loads(output.getvalue()), dict)
+
+    def test_cli_routes_startup_read_remember_and_direct_entrypoint(self):
+        """Purpose: Exercise every remaining public command route.
+        Inputs: Controlled handlers, valid read/note arguments and direct help. Outputs: Exact status and dispatch.
+        """
+        with (
+            patch.object(context, "startup", return_value={"status": "ready"}) as start,
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(context.main(["startup"]), 0)
+        start.assert_called_once_with(context.ROOT)
+        self.assertEqual(json.loads(output.getvalue())["status"], "ready")
+        with patch.object(context, "ROOT", self.root):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(context.main(["read", "guide.md", "--start", "1", "--end", "1"]), 0)
+            args = self.note_args()
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    context.main(
+                        [
+                            "remember",
+                            args.key,
+                            "--summary-file",
+                            args.summary_file,
+                            "--source",
+                            args.source[0],
+                            "--kind",
+                            args.kind,
+                        ]
+                    ),
+                    0,
+                )
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(
+                    context.main(
+                        [
+                            "remember",
+                            "bad-expiry",
+                            "--summary-file",
+                            args.summary_file,
+                            "--source",
+                            args.source[0],
+                            "--kind",
+                            args.kind,
+                            "--expires-hours",
+                            "0",
+                        ]
+                    ),
+                    2,
+                )
+            self.assertIn("1-168 hours", json.loads(output.getvalue())["error"])
+        original_path = list(sys.path)
+        try:
+            with (
+                patch.object(sys, "argv", ["agent_context.py", "--help"]),
+                patch.object(sys, "stdout", io.StringIO()),
+                self.assertRaises(SystemExit) as status,
+            ):
+                runpy.run_path(str(Path(context.__file__).resolve()), run_name="__main__")
+            self.assertEqual(status.exception.code, 0)
+        finally:
+            sys.path[:] = original_path
 
     def invoke(self, argv):
         """Purpose: Exercise the real reader interface. Inputs: CLI arguments. Outputs: Exit and decoded response."""
@@ -310,7 +460,17 @@ class AgentContextTests(unittest.TestCase):
                 self.assertEqual(code, 0)
                 self.assertEqual(result["value"], expected)
                 self.assertEqual(type(result["value"]), type(expected))
-        for pointer in ("a/b", "/a~2b", "/missing", "/a~1b/~0key/01", "/a~1b/~0key/-", "/a~1b/~0key/8"):
+        (self.root / "report.json").write_text('{"value":1.5}', encoding="utf-8")
+        self.assertEqual(self.invoke(["json", "report.json", "--pointer", "/value"])[1]["value"], 1.5)
+        for pointer in (
+            "a/b",
+            "/a~2b",
+            "/missing",
+            "/value/nested",
+            "/a~1b/~0key/01",
+            "/a~1b/~0key/-",
+            "/a~1b/~0key/8",
+        ):
             with self.subTest(pointer=pointer):
                 self.assertEqual(self.invoke(["json", "report.json", "--pointer", pointer])[0], 2)
 
@@ -328,6 +488,9 @@ class AgentContextTests(unittest.TestCase):
                 self.assertEqual(code, 2)
                 self.assertIn("cannot fit", result["error"])
             self.assertLessEqual(len(context.compact_json(result)), 512)
+        key = "k" * 500
+        (self.root / "report.json").write_text(json.dumps({key: 1}), encoding="utf-8")
+        self.assertEqual(self.invoke(["json", "report.json", "--pointer", "/" + key, "--max-chars", "512"])[0], 2)
 
     def test_json_projection_preserves_failures_and_refuses_missing_fields(self):
         """Purpose: Inspect many results without repeated reads. Inputs: Real mixed outcomes. Outputs: Exact fields."""
@@ -343,6 +506,8 @@ class AgentContextTests(unittest.TestCase):
         self.assertNotIn("large", json.dumps(result))
         for args in (["--field", "missing"], ["--field", "id", "--field", "id"], ["--pointer", "/0", "--field", "id"]):
             self.assertEqual(self.invoke(["json", "report.json", *args])[0], 2)
+        (self.root / "report.json").write_text("[1,2]", encoding="utf-8")
+        self.assertEqual(self.invoke(["json", "report.json", "--field", "id"])[0], 2)
 
     def test_json_rejects_ambiguous_nonfinite_deep_or_oversized_evidence(self):
         """Purpose: Refuse unbounded evidence. Inputs: Invalid JSON families. Outputs: Explicit failures."""
@@ -418,6 +583,9 @@ class AgentContextTests(unittest.TestCase):
         self.assertEqual(len(identities), 1)
         self.assertEqual([entry["title"] for entry in entries], [f"Heading {index}" for index in range(75)])
         self.assertEqual([entry["start"] for entry in entries], list(range(1, 150, 2)))
+        self.assertEqual(self.invoke(["outline", "guide.md", "--offset", "76"])[0], 2)
+        self.source.write_text("## " + "H" * 1000 + "\n", encoding="utf-8")
+        self.assertEqual(self.invoke(["outline", "guide.md", "--max-chars", "512"])[0], 2)
 
 
 if __name__ == "__main__":
