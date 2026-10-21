@@ -34,16 +34,29 @@ def recipe() -> dict:
     """Purpose: Load the narrow reviewed packaging operation. Inputs: Tracked manifest. Outputs: Validated pins."""
     data = read_recipe(MANIFEST)
     if (
-        type(data.get("schema")) is not int
+        set(data) != {"schema", "upstream_version", "version", "mcp_before", "mcp_after", "advisory", "wheels"}
+        or type(data.get("schema")) is not int
         or data["schema"] != 1
         or data.get("upstream_version") != "1.181.0"
         or data.get("version") != "1.181.0+flitzzip.mcp1"
         or data.get("mcp_before") != "1.29.0"
         or data.get("mcp_after") != "1.30.0"
-        or set(data.get("wheels", {})) != {"linux", "windows"}
+        or data.get("advisory")
+        != "https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv"
+        or not isinstance(data.get("wheels"), dict)
+        or set(data["wheels"]) != {"linux", "windows"}
     ):
         raise ValueError("Unsupported Semgrep packaging recipe")
     for target, pin in data["wheels"].items():
+        if (
+            not isinstance(pin, dict)
+            or set(pin) != {"filename", "url", "bytes", "sha256", "derived_sha256"}
+            or not isinstance(pin.get("filename"), str)
+            or not isinstance(pin.get("url"), str)
+            or not isinstance(pin.get("sha256"), str)
+            or not isinstance(pin.get("derived_sha256"), str)
+        ):
+            raise ValueError("Invalid pinned Semgrep wheel")
         url = urlsplit(pin["url"])
         if (
             url.scheme != "https"
@@ -95,6 +108,7 @@ def read_wheel(contents: bytes) -> dict[str, tuple[bytes, int]]:
         if len(entries) > 4096 or sum(item.file_size for item in entries) > MAX_BYTES:
             raise ValueError("Semgrep wheel exceeds the reviewed extent")
         files = {}
+        folded = set()
         for item in entries:
             name = item.filename
             path = PurePosixPath(name)
@@ -107,12 +121,14 @@ def read_wheel(contents: bytes) -> dict[str, tuple[bytes, int]]:
                 or any(value in name for value in ("\\", ":", "\0"))
                 or name != path.as_posix()
                 or item.orig_filename != name
-                or name in files
+                or name.casefold() in folded
+                or any(part != part.rstrip(" .") for part in path.parts)
                 or item.is_dir()
                 or (mode and stat.S_IFMT(mode) not in (0, stat.S_IFREG))
                 or item.flag_bits & 1
             ):
                 raise ValueError("Unsafe or duplicate Semgrep wheel member")
+            folded.add(name.casefold())
             files[name] = (archive.read(item), 0o100755 if mode & 0o111 else 0o100644)
     return files
 
@@ -124,7 +140,12 @@ def record_digest(contents: bytes) -> str:
 
 def validate_record(files: dict[str, tuple[bytes, int]], record_name: str) -> None:
     """Purpose: Reject incomplete or invalid wheel records. Inputs: File map. Outputs: Exact integrity check."""
-    rows = list(csv.reader(io.StringIO(files[record_name][0].decode("utf-8"))))
+    if record_name not in files:
+        raise ValueError("Semgrep wheel RECORD is missing")
+    try:
+        rows = list(csv.reader(io.StringIO(files[record_name][0].decode("utf-8"))))
+    except (UnicodeDecodeError, csv.Error) as error:
+        raise ValueError("Semgrep wheel RECORD is malformed") from error
     if len(rows) != len(files) or any(len(row) != 3 for row in rows):
         raise ValueError("Semgrep wheel RECORD does not cover the file set")
     seen = set()
@@ -186,6 +207,8 @@ def build(output: Path, target: str) -> Path:
     Outputs: Hash-verified wheel and source/output receipt; refuses replacement and unsupported platforms.
     """
     data = recipe()
+    if target not in data["wheels"]:
+        raise ValueError("Unsupported Semgrep wheel target")
     pin = data["wheels"][target]
     output.mkdir(parents=True, exist_ok=False)
     contents = derive_wheel(download(pin), data)
@@ -193,22 +216,27 @@ def build(output: Path, target: str) -> Path:
         raise ValueError("Derived Semgrep wheel differs from the reviewed reproducible output")
     filename = pin["filename"].replace(f"semgrep-{data['upstream_version']}-", f"semgrep-{data['version']}-", 1)
     wheel = output / filename
-    with wheel.open("xb") as stream:
-        stream.write(contents)
-    (output / "receipt.json").write_text(
-        json.dumps(
-            {
-                "manifest_sha256": sha256(MANIFEST.read_bytes()),
-                "target": target,
-                "source": pin,
-                "output": filename,
-                "sha256": sha256(contents),
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    receipt = output / "receipt.json"
+    try:
+        with wheel.open("xb") as stream:
+            stream.write(contents)
+        with receipt.open("x", encoding="utf-8", newline="\n") as stream:
+            json.dump(
+                {
+                    "manifest_sha256": sha256(MANIFEST.read_bytes()),
+                    "target": target,
+                    "source": pin,
+                    "output": filename,
+                    "sha256": sha256(contents),
+                },
+                stream,
+                indent=2,
+            )
+            stream.write("\n")
+    except BaseException:
+        wheel.unlink(missing_ok=True)
+        receipt.unlink(missing_ok=True)
+        raise
     return wheel
 
 

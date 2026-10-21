@@ -10,7 +10,8 @@ import tempfile
 import unittest
 from contextlib import nullcontext
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from tools import crawl4ai_download_opener as opener
 from tools import crawl4ai_source_build as build
@@ -261,6 +262,56 @@ class SourceContracts(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), b"byte exact")
                 link.unlink()
             path.unlink()
+
+    def test_download_opener_rejects_windows_aliases_flags_and_unverified_handles(self):
+        """Purpose: Exercise every fail-closed native handle boundary.
+        Inputs: Reserved name, unsupported flags, query failure and reparse metadata. Outputs: Refusal and cleanup.
+        """
+        if os.name != "nt":
+            self.skipTest("Windows handle contract is qualified in the Windows matrix")
+        import ctypes
+
+        with self.assertRaisesRegex(ValueError, "Reserved Windows"):
+            opener.validate_download_name("CON")
+        with self.assertRaisesRegex(ValueError, "Unsupported download"):
+            opener.windows_handle("safe-name", 1 << 29)
+
+        close = Mock(return_value=True)
+        query = Mock(return_value=False)
+        kernel = SimpleNamespace(CloseHandle=close, GetFileInformationByHandleEx=query)
+        with (
+            patch.object(opener, "windows_handle", return_value=123),
+            patch.object(ctypes, "WinDLL", return_value=kernel),
+            patch.object(ctypes, "get_last_error", return_value=5),
+            self.assertRaises(OSError),
+        ):
+            opener.windows_descriptor("owned", os.O_WRONLY)
+        close.assert_called_once_with(123)
+
+        def mark_reparse(_handle, _kind, attributes, _size):
+            """Purpose: Model handle metadata. Inputs: Query buffer. Outputs: Reparse tag and success."""
+            attributes._obj[0] = 0x400
+            return True
+
+        close.reset_mock()
+        query.side_effect = mark_reparse
+        with (
+            patch.object(opener, "windows_handle", return_value=456),
+            patch.object(ctypes, "WinDLL", return_value=kernel),
+            self.assertRaisesRegex(OSError, "reparse point"),
+        ):
+            opener.windows_descriptor("owned", os.O_WRONLY)
+        close.assert_called_once_with(456)
+
+    def test_download_opener_preserves_posix_no_follow_flag(self):
+        """Purpose: Preserve the non-Windows no-follow boundary.
+        Inputs: Modeled POSIX open and caller flags. Outputs: Descriptor with O_NOFOLLOW added.
+        """
+        opened = Mock(return_value=17)
+        platform = SimpleNamespace(name="posix", O_NOFOLLOW=0x20000, open=opened)
+        with patch.object(opener, "os", platform):
+            self.assertEqual(opener.open_download("owned", 3), 17)
+        opened.assert_called_once_with("owned", 3 | platform.O_NOFOLLOW)
 
 
 if __name__ == "__main__":
