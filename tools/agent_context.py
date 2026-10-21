@@ -78,8 +78,13 @@ def load_state(root: Path, name: str) -> dict:
     if not path.exists():
         return {"schema": 1}
     text, _ = read_source(root, name)
-    value = json.loads(text)
-    if not isinstance(value, dict) or value.get("schema") != 1:
+    value = json.loads(
+        text,
+        object_pairs_hook=unique_json_object,
+        parse_constant=reject_json_constant,
+        parse_float=finite_json_float,
+    )
+    if not isinstance(value, dict) or type(value.get("schema")) is not int or value["schema"] != 1:
         raise ValueError("unsupported context state; use a new session/key")
     return value
 
@@ -91,7 +96,7 @@ def write_state(root: Path, name: str, value: dict, *, exclusive: bool = False) 
     path = safe_path(root, name)
     path.parent.mkdir(parents=True, exist_ok=True)
     safe_path(root, name)
-    payload = (json.dumps(value, ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
+    payload = (json.dumps(value, ensure_ascii=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
     if len(payload) > MAX_FILE_BYTES:
         raise ValueError("context state exceeds 1 MiB; use a new session/key")
     temporary = None
