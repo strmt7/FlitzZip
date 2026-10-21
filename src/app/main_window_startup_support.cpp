@@ -28,11 +28,6 @@ std::filesystem::path known_folder_or_empty(REFKNOWNFOLDERID folder_id, DWORD fl
 
 }  // namespace
 
-// Purpose: Convert UTF-8 text to UTF-16 for Win32 rendering.
-// Inputs: `value` is UTF-8 text.
-// Outputs: Returns UTF-16 text; returns an empty string for empty input.
-std::wstring widen(const std::string& value);
-
 // Purpose: Return the fixed release window style.
 // Inputs: None.
 // Outputs: Returns a non-resizable Win32 overlapped-window style.

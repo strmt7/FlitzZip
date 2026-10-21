@@ -259,6 +259,9 @@ std::string resolve_gnu_long_name(const std::string& string_table, std::uint64_t
         throw ArchiveError("AR long-name offset is outside the GNU string table");
     }
     const auto start = static_cast<std::size_t>(offset);
+    if (start != 0U && string_table[start - 1U] != '\n') {
+        throw ArchiveError("AR long-name offset does not identify a GNU string-table entry");
+    }
     auto end = string_table.find('\n', start);
     if (end == std::string::npos) {
         end = string_table.size();

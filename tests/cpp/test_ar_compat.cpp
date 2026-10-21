@@ -259,6 +259,22 @@ TEST_CASE(ar_extracts_gnu_string_table_names) {
     REQUIRE_EQ(read_text_file(output / "dir" / "gnu-long-name.txt"), "gnu payload");
 }
 
+// Purpose: Reject GNU long-name references into the middle of a string-table entry.
+// Inputs: A valid table with two names and a numeric reference two bytes into the first name.
+// Outputs: Requires canonical entry-boundary validation before any extraction directory is published.
+TEST_CASE(ar_gnu_long_name_offsets_must_start_at_entry_boundaries) {
+    const auto root = test_temp_dir("ar-gnu-long-name-boundary");
+    const auto archive = root / "gnu-invalid.ar";
+    {
+        std::ofstream output(archive, std::ios::binary);
+        output.write("!<arch>\n", 8);
+        write_ar_member(output, "//", "alpha.txt/\nbeta.txt/\n");
+        write_ar_member(output, "/2", "payload");
+    }
+    require_ar_rejection_before_output(archive, root / "out", "does not identify a GNU string-table entry");
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Verify `.deb` files use the native AR extraction path for outer members.
 // Inputs: A Debian-package-named AR container with one regular member.
 // Outputs: Throws if detection, registry support, or extraction routing assumptions regress.

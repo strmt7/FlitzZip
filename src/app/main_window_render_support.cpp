@@ -34,34 +34,6 @@ double ease_out(double t) {
     return 1.0 - ((1.0 - clamped) * (1.0 - clamped));
 }
 
-// Purpose: Convert UTF-8 text to UTF-16 for Win32 rendering.
-// Inputs: `value` is UTF-8 text.
-// Outputs: Returns UTF-16 text; returns an empty string for empty input.
-std::wstring widen(const std::string& value) {
-    if (value.empty()) {
-        return {};
-    }
-    const int needed = MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
-    std::wstring result(static_cast<std::size_t>(needed), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), result.data(), needed);
-    return result;
-}
-
-// Purpose: Format a byte count with binary units.
-// Inputs: `value` is a byte count or byte-per-second value.
-// Outputs: Returns a compact display string such as `1.5 MiB`.
-std::string human_bytes(double value) {
-    const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
-    int unit = 0;
-    while (value >= 1024.0 && unit < 4) {
-        value /= 1024.0;
-        ++unit;
-    }
-    std::ostringstream out;
-    out << std::fixed << std::setprecision(unit == 0 ? 0 : 1) << value << ' ' << units[unit];
-    return out.str();
-}
-
 // Purpose: Convert a Windows FILETIME into 100 ns ticks.
 // Inputs: `value` is a FILETIME returned by a Win32 process-time API.
 // Outputs: Returns the unsigned 64-bit tick value used for interval math.
