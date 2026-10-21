@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import builtins
 import copy
 import hashlib
 import json
 import os
+import runpy
 import subprocess
 import sys
 import threading
@@ -665,6 +667,32 @@ class NativeBuildReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ambiguous native configured recipe"):
             receipt.validate_receipt(data, allow_historical_toolchain=True)
         receipt.validate_current(self.root, "Release", False)
+
+    # Purpose: Preserve the supported direct-script import route used by Windows helper invocations.
+    # Inputs: A controlled package-import miss with the tools directory available as a script directory.
+    # Outputs: The fallback loads the same repository root and callable provenance boundary.
+    def test_direct_script_provenance_import_fallback(self):
+        original_import = builtins.__import__
+
+        def direct_script_import(name, globals=None, locals=None, fromlist=(), level=0):
+            """Purpose: Model direct-script resolution.
+            Inputs: Import request. Outputs: One package miss, then normal imports.
+            """
+            if name == "tools.native_build_provenance":
+                raise ModuleNotFoundError(name)
+            return original_import(name, globals, locals, fromlist, level)
+
+        tool_directory = str(Path(receipt.__file__).resolve().parent)
+        sys.path.insert(0, tool_directory)
+        try:
+            with patch.object(builtins, "__import__", side_effect=direct_script_import):
+                namespace = runpy.run_path(
+                    str(Path(receipt.__file__).resolve()), run_name="native_build_receipt_direct"
+                )
+        finally:
+            sys.path.remove(tool_directory)
+        self.assertEqual(namespace["ROOT"], receipt.ROOT)
+        self.assertTrue(callable(namespace["capture_inputs"]))
 
     # Purpose: Keep corrupted tool metadata and runaway runtime inventories from allocating or hashing unbounded input.
     # Inputs: Oversized real metadata, a bounded declared DLL list and a simulated SDK directory enumeration.

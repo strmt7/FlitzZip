@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import runpy
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from tools import redact_trufflehog as redactor
 from tools.redact_trufflehog import (
     MAX_RECORD_BYTES,
     REVIEW_EVIDENCE_PATHS,
@@ -149,6 +151,61 @@ class ReportRedactionTests(unittest.TestCase):
                 self.assertEqual(result.stdout, b"")
                 self.assertNotIn(b"Traceback", result.stderr)
                 self.assertFalse(destination.exists())
+
+    # Purpose: Verify imported CLI routing, review status codes and direct execution without exposing raw findings.
+    # Inputs: One synthetic finding, incomplete and complete review states, and standard direct help.
+    # Outputs: Redacted success, fixed failure diagnostics, exact review exit codes and zero-status help.
+    def test_imported_cli_routes_redaction_and_review_statuses(self):
+        payload = (json.dumps(finding()) + "\n").encode("utf-8")
+
+        def invoke(arguments, data=payload, review=None):
+            """Purpose: Exercise main in-process.
+            Inputs: CLI args, scanner bytes, optional review. Outputs: Status/text.
+            """
+            stdout, stderr = io.StringIO(), io.StringIO()
+            contexts = [
+                patch.object(redactor.sys, "argv", ["redact_trufflehog.py", *arguments]),
+                patch.object(redactor.sys, "stdin", Mock(buffer=io.BytesIO(data))),
+                patch.object(redactor.sys, "stdout", stdout),
+                patch.object(redactor.sys, "stderr", stderr),
+            ]
+            if review is not None:
+                contexts.append(patch.object(redactor, "PublicFixtureReview", return_value=review))
+            with contexts[0], contexts[1], contexts[2], contexts[3]:
+                if review is None:
+                    status = redactor.main()
+                else:
+                    with contexts[4]:
+                        status = redactor.main()
+            return status, stdout.getvalue(), stderr.getvalue()
+
+        status, stdout, stderr = invoke([])
+        self.assertEqual(status, 0)
+        self.assertNotIn(FIXTURE_PRIVATE, stdout)
+        self.assertIn("completed: 1 finding(s)", stderr)
+
+        status, stdout, stderr = invoke(["--scanner-image", "owned-image"], b"")
+        self.assertEqual((status, stdout), (2, ""))
+        self.assertIn("details were not published", stderr)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary) / "review.json"
+            for reviewed, expected in ((0, 3), (1, 4)):
+                review = Mock(total=1, reviewed=reviewed)
+                status, stdout, stderr = invoke(
+                    ["--scanner-image", "owned-image", "--review-report", str(report)], review=review
+                )
+                self.assertEqual(status, expected)
+                self.assertNotIn(FIXTURE_PRIVATE, stdout + stderr)
+                review.publish.assert_called_once_with(report)
+
+        with (
+            patch.object(sys, "argv", ["redact_trufflehog.py", "--help"]),
+            patch.object(sys, "stdout", io.StringIO()),
+            self.assertRaises(SystemExit) as status,
+        ):
+            runpy.run_path(str(Path(redactor.__file__).resolve()), run_name="__main__")
+        self.assertEqual(status.exception.code, 0)
 
     # Purpose: Exercise the real checkout's review references through the publication CLI before scanning.
     # Inputs: Tracked approval cohorts and their actual evidence files, with an empty scanner stream.

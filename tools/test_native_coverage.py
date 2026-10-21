@@ -6,6 +6,8 @@ import io
 import json
 import os
 import re
+import runpy
+import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -979,6 +981,17 @@ class CoverageTests(unittest.TestCase):
         ):
             collector.main()
         collect.assert_called_once_with(executable, lock, self.root / "out/coverage-gui", False, True)
+
+    # Purpose: Keep direct module execution connected to the same argparse contract as imported calls.
+    # Inputs: The standard help option. Outputs: A clean zero-status SystemExit before host or artifact access.
+    def test_direct_entrypoint_help(self):
+        with (
+            patch.object(sys, "argv", ["native_coverage.py", "--help"]),
+            patch.object(sys, "stdout", io.StringIO()),
+            self.assertRaises(SystemExit) as status,
+        ):
+            runpy.run_path(str(Path(collector.__file__).resolve()), run_name="__main__")
+        self.assertEqual(status.exception.code, 0)
 
 
 if __name__ == "__main__":
