@@ -261,6 +261,40 @@ class DistributionTests(unittest.TestCase):
         self.assertGreater(len(files["nltk-3.10.4.dist-info/licenses/AUTHORS.md"]), 100)
         self.assertFalse(any("FLITZZIP_BUILD_NOTICE" in name for name in files))
 
+    def test_cache_identity_binds_recipe_text_and_artifact_digest(self):
+        """Purpose: Invalidate cached environments after provenance or wheel changes.
+        Inputs: Controlled recipe identity and admitted wheel digest. Outputs: Exact composite SHA-256 identity.
+        """
+        recipe_identity = "a" * 64
+        expected = hashlib.sha256((recipe_identity + self.data["sha256"]).encode("ascii")).hexdigest()
+        with patch("tools.crawl4ai_tool.text_identity", return_value=recipe_identity):
+            self.assertEqual(build.identity(), expected)
+
+    def test_installed_runtime_rejects_special_files_on_every_host(self):
+        """Purpose: Keep device, socket and pipe entries outside the admitted Python runtime.
+        Inputs: Modeled special directory entry. Outputs: Refusal before opening or hashing it.
+        """
+        root = self.root / "modeled-runtime"
+        root.mkdir()
+        child = SimpleNamespace(
+            path=str(root / "special-entry"),
+            stat=lambda follow_symlinks=False: SimpleNamespace(st_mode=stat.S_IFIFO, st_file_attributes=0),
+        )
+
+        class Scan:
+            """Purpose: Model one scandir page. Inputs: Context entry. Outputs: One inert special-file record."""
+
+            def __enter__(self):
+                """Purpose: Enter modeled enumeration. Inputs: None. Outputs: Iterator over one record."""
+                return iter((child,))
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                """Purpose: Close modeled enumeration. Inputs: Exit state. Outputs: No exception suppression."""
+                return False
+
+        with patch.object(build.os, "scandir", return_value=Scan()), self.assertRaisesRegex(ValueError, "special file"):
+            build.installed_runtime_sha256(root)
+
     def test_provenance_and_wheel_tampering_refuse_installation(self):
         """Purpose: Refuse substituted packages. Inputs: Changed metadata/bytes. Outputs: Installation refusal."""
         data = build.distribution()
