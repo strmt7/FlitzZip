@@ -54,11 +54,24 @@ Assert-NativeSelection ('flzip_gpu_entropy_efforts_preserve_per_block_winners' -
 Assert-NativeSelection ('flzip_gpu_mixed_materialization_skips_unaligned_prefix_windows' -notin $entropy.tests) 'unrelated manual decoder fixture exclusion'
 $sparsePaths = @('src/gpu/sparse_pattern_candidate.cpp', 'src/gpu/hip_sparse_pattern.hip.cpp')
 $sparse = Get-FlitzZipNativeTestSelection -Paths $sparsePaths
-Assert-NativeSelection ($sparse.mode -eq 'component' -and $sparse.requireHip -and $sparse.tests.Count -eq 12) 'reviewed sparse candidate cohort and required HIP'
+$sparseExpected = @(
+    'flzip_gpu_efforts_preserve_dictionary_candidates_after_entropy_gain',
+    'flzip_gpu_entropy_efforts_preserve_per_block_winners',
+    'flzip_long_sparse_pattern_v7_reader_roundtrip', 'flzip_long_sparse_pattern_writer_selects_v7',
+    'flzip_sparse_pattern_cpu_reader_roundtrip', 'long_sparse_pattern_required_hip_roundtrip',
+    'sparse_pattern_block_admits_canonical_payload', 'sparse_pattern_block_rejects_malformed_payload',
+    'sparse_pattern_field_reader_rejects_truncation_and_wrapping_offsets',
+    'sparse_pattern_hip_batch_preserves_block_offsets',
+    'sparse_pattern_hip_batch_rejects_prepopulated_output_fields', 'sparse_pattern_long_period_boundaries',
+    'sparse_pattern_required_hip_encode_roundtrip'
+)
+Assert-NativeSelection ($sparse.mode -eq 'component' -and $sparse.requireHip -and
+    (($sparse.tests | Sort-Object) -join '|') -ceq (($sparseExpected | Sort-Object) -join '|')) 'exact reviewed sparse candidate cohort and required HIP'
 foreach ($name in @('sparse_pattern_hip_batch_rejects_prepopulated_output_fields',
         'sparse_pattern_hip_batch_preserves_block_offsets', 'long_sparse_pattern_required_hip_roundtrip',
         'flzip_sparse_pattern_cpu_reader_roundtrip', 'flzip_long_sparse_pattern_v7_reader_roundtrip',
-        'flzip_long_sparse_pattern_writer_selects_v7')) {
+        'flzip_long_sparse_pattern_writer_selects_v7',
+        'sparse_pattern_field_reader_rejects_truncation_and_wrapping_offsets')) {
     Assert-NativeSelection ($name -in $sparse.tests) "sparse direct admission, layout and archive consumer coverage: $name"
 }
 $gpuBatch = Get-FlitzZipNativeTestSelection -Paths ($entropyPaths + $sparsePaths)

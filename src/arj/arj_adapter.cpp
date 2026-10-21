@@ -15,6 +15,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace flitzzip {
@@ -323,7 +324,11 @@ ArjEntryMetadata scan_arj_entry(std::ifstream& input, const ArjHeader& header, s
 // Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, unsupported methods,
 // duplicates, or corrupt stored data.
 ArjScanResult scan_arj(const std::filesystem::path& archive_path) {
-    const auto archive_size = std::filesystem::file_size(archive_path);
+    std::error_code size_error;
+    const auto archive_size = std::filesystem::file_size(archive_path, size_error);
+    if (size_error) {
+        throw ArchiveError("cannot inspect ARJ archive: " + archive_path.string() + ": " + size_error.message());
+    }
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open ARJ archive: " + archive_path.string());

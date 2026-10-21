@@ -8,6 +8,7 @@
 #include <cmath>
 #include <limits>
 #include <string_view>
+#include <utility>
 
 using flitzzip::reconcile_vram_usage;
 
@@ -178,6 +179,55 @@ TEST_CASE(resource_accounting_checks_overflow_before_policy_limits) {
         }
         REQUIRE_EQ(policy.add(41U, 1U, "boundary"), 42U);
     }
+}
+
+// Purpose: Exercise native index block-count admission without allocating attacker-sized descriptor vectors.
+// Inputs: Exact per-entry/aggregate limits, one-count excess, an invalid prior total and caller diagnostics.
+// Outputs: Admits both boundaries, distinguishes each failure and remains reusable after every rejection.
+TEST_CASE(archive_index_block_accounting_enforces_both_limits) {
+    constexpr auto per_entry = "per-entry diagnostic";
+    constexpr auto aggregate = "aggregate diagnostic";
+    REQUIRE_EQ(flitzzip::checked_add_archive_index_blocks(0U, 0U, per_entry, aggregate), 0U);
+    REQUIRE_EQ(flitzzip::checked_add_archive_index_blocks(0U, flitzzip::kMaxBlocksPerEntry, per_entry, aggregate),
+               flitzzip::kMaxArchiveBlocks);
+    REQUIRE_EQ(flitzzip::checked_add_archive_index_blocks(flitzzip::kMaxArchiveBlocks, 0U, per_entry, aggregate),
+               flitzzip::kMaxArchiveBlocks);
+    const std::array invalid{
+        std::pair{static_cast<std::uint64_t>(flitzzip::kMaxArchiveBlocks), 1ULL},
+        std::pair{static_cast<std::uint64_t>(flitzzip::kMaxArchiveBlocks) + 1U, 0ULL},
+        std::pair{0ULL, static_cast<std::uint64_t>(flitzzip::kMaxBlocksPerEntry) + 1U},
+    };
+    for (std::size_t index = 0; index < invalid.size(); ++index) {
+        bool rejected = false;
+        try {
+            (void)flitzzip::checked_add_archive_index_blocks(invalid[index].first, invalid[index].second, per_entry,
+                                                             aggregate);
+        } catch (const flitzzip::ArchiveError& error) {
+            REQUIRE_EQ(std::string_view(error.what()), index == 2U ? per_entry : aggregate);
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+    REQUIRE_EQ(flitzzip::checked_add_archive_index_blocks(41U, 1U, per_entry, aggregate), 42U);
+}
+
+// Purpose: Exercise native index entry-count admission without constructing a quarter-million entry tree.
+// Inputs: Zero, the exact resource limit, the first excessive count and a caller-owned diagnostic.
+// Outputs: Admits both valid boundaries, preserves the exact error and recovers for a later valid check.
+TEST_CASE(archive_index_entry_accounting_enforces_limit) {
+    constexpr auto diagnostic = "entry diagnostic";
+    flitzzip::validate_archive_index_entry_count(0U, diagnostic);
+    flitzzip::validate_archive_index_entry_count(flitzzip::kMaxArchiveEntries, diagnostic);
+    bool rejected = false;
+    try {
+        flitzzip::validate_archive_index_entry_count(static_cast<std::uint64_t>(flitzzip::kMaxArchiveEntries) + 1U,
+                                                     diagnostic);
+    } catch (const flitzzip::ArchiveError& error) {
+        REQUIRE_EQ(std::string_view(error.what()), diagnostic);
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    flitzzip::validate_archive_index_entry_count(1U, diagnostic);
 }
 
 }  // namespace

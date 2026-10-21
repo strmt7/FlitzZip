@@ -49,19 +49,17 @@ template <typename T> T read_le(std::istream& input) {
 // Inputs: `input` is the archive-index stream after a successful read.
 // Outputs: Remaining bytes or an empty optional when end seeking is unsupported; failed position restoration throws.
 std::optional<std::uint64_t> stream_bytes_remaining(std::istream& input) {
-    auto* buffer = input.rdbuf();
-    if (buffer == nullptr) {
-        throw ArchiveError("archive metadata stream has no input buffer");
-    }
-    const auto current = buffer->pubseekoff(0, std::ios::cur, std::ios::in);
+    // The three successfully decoded header fields establish a live input buffer before this helper is called.
+    auto& buffer = *input.rdbuf();
+    const auto current = buffer.pubseekoff(0, std::ios::cur, std::ios::in);
     if (current == std::istream::pos_type(-1)) {
         return std::nullopt;
     }
     // Probe the buffer directly: unsupported seeking must not trip the caller's failbit exception policy.
-    const auto end = buffer->pubseekoff(0, std::ios::end, std::ios::in);
+    const auto end = buffer.pubseekoff(0, std::ios::end, std::ios::in);
     // A failed end query may still move a custom buffer. Never resume parsing at an unverified position.
-    if (buffer->pubseekoff(0, std::ios::cur, std::ios::in) != current &&
-        buffer->pubseekpos(current, std::ios::in) != current) {
+    if (buffer.pubseekoff(0, std::ios::cur, std::ios::in) != current &&
+        buffer.pubseekpos(current, std::ios::in) != current) {
         throw ArchiveError("failed to restore archive metadata stream position");
     }
     if (end == std::istream::pos_type(-1) || end < current) {
@@ -87,9 +85,7 @@ void reject_count_exceeding_stream(std::istream& input, std::uint64_t count, std
 // Outputs: Returns normally for bounded indexes; throws `ArchiveError` before count truncation or oversized metadata
 // emission.
 void reject_unbounded_index_shape(const ArchiveIndex& index) {
-    if (index.entries.size() > kMaxArchiveEntries) {
-        throw ArchiveError("archive entry count exceeds FlitzZip resource limit");
-    }
+    validate_archive_index_entry_count(index.entries.size(), "archive entry count exceeds FlitzZip resource limit");
     std::uint64_t total_blocks = 0;
     std::uint64_t total_path_bytes = 0;
     for (const auto& entry : index.entries) {
@@ -98,13 +94,9 @@ void reject_unbounded_index_shape(const ArchiveIndex& index) {
         }
         total_path_bytes =
             checked_add_archive_path_metadata_bytes(total_path_bytes, entry.path.size(), "archive index");
-        if (entry.blocks.size() > kMaxBlocksPerEntry) {
-            throw ArchiveError("archive block count exceeds per-entry resource limit");
-        }
-        if (entry.blocks.size() > kMaxArchiveBlocks - total_blocks) {
-            throw ArchiveError("archive block count exceeds total resource limit");
-        }
-        total_blocks += entry.blocks.size();
+        total_blocks = checked_add_archive_index_blocks(total_blocks, entry.blocks.size(),
+                                                        "archive block count exceeds per-entry resource limit",
+                                                        "archive block count exceeds total resource limit");
     }
 }
 
@@ -279,9 +271,7 @@ ArchiveIndex read_archive_index(std::istream& input) {
     }
     index.version = version;
     const auto entry_count = read_u32(input);
-    if (entry_count > kMaxArchiveEntries) {
-        throw ArchiveError("archive entry count is unreasonable");
-    }
+    validate_archive_index_entry_count(entry_count, "archive entry count is unreasonable");
     reject_count_exceeding_stream(input, entry_count, kMinimumEntryMetadataBytes,
                                   "archive entry count exceeds index size");
     index.entries.reserve(entry_count);
@@ -313,13 +303,9 @@ ArchiveIndex read_archive_index(std::istream& input) {
         entry.payload_size = read_u64(input);
         entry.crc32 = read_u32(input);
         const auto block_count = read_u32(input);
-        if (block_count > kMaxBlocksPerEntry) {
-            throw ArchiveError("archive block count is unreasonable");
-        }
-        if (block_count > kMaxArchiveBlocks - total_blocks) {
-            throw ArchiveError("archive total block count is unreasonable");
-        }
-        total_blocks += block_count;
+        total_blocks =
+            checked_add_archive_index_blocks(total_blocks, block_count, "archive block count is unreasonable",
+                                             "archive total block count is unreasonable");
         reject_count_exceeding_stream(input, block_count, kMinimumBlockMetadataBytes,
                                       "archive block count exceeds index size");
         entry.blocks.reserve(block_count);
