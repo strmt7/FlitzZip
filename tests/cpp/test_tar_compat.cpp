@@ -507,7 +507,7 @@ TEST_CASE(tar_numeric_headers_are_bounded_and_checksummed) {
         REQUIRE_EQ(input.get(), 'z');
         REQUIRE_EQ(input.get(), EOF);
     }
-    for (int mutation = 0; mutation < 4; ++mutation) {
+    for (int mutation = 0; mutation < 6; ++mutation) {
         auto invalid = positive;
         if (mutation == 0) {
             invalid[124] = static_cast<char>(0xFFU);
@@ -517,6 +517,12 @@ TEST_CASE(tar_numeric_headers_are_bounded_and_checksummed) {
         }
         if (mutation == 2) {
             invalid[124] = '8';
+        }
+        if (mutation == 4 || mutation == 5) {
+            std::fill(invalid.begin() + 124, invalid.begin() + 136, '\0');
+            invalid[124] = '1';
+            invalid[125] = mutation == 4 ? '\0' : ' ';
+            invalid[126] = '7';
         }
         checksum_tar_fixture(invalid);
         if (mutation == 3) {

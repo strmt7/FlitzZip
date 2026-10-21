@@ -14,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -142,6 +143,21 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
     return count;
 }
 
+// Purpose: Require malformed ARC metadata to fail during preflight without publishing output.
+// Inputs: Exact fixture bytes and a required diagnostic fragment.
+// Outputs: Verifies ArchiveError identity and an absent extraction destination.
+void require_arc_rejection_before_output(const std::filesystem::path& archive, const std::filesystem::path& destination,
+                                         std::string_view diagnostic) {
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_arc(archive, destination, false);
+    } catch (const flitzzip::ArchiveError& error) {
+        rejected = std::string_view(error.what()).find(diagnostic) != std::string_view::npos;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(destination));
+}
+
 }  // namespace
 
 // Purpose: Verify native ARC extraction for unpacked method-1 and method-2 files.
@@ -167,6 +183,37 @@ TEST_CASE(arc_extracts_unpacked_files) {
     REQUIRE_EQ(read_text_file(output / "hello.txt"), std::string("hello"));
     REQUIRE_EQ(read_text_file(output / "old.txt"), std::string("old"));
     flitzzip_test::export_compat_fixture(archive, output);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Exercise ARC framing boundaries before payload parsing or destination publication.
+// Inputs: Empty, partial, mis-marked, truncated, size-inconsistent, nameless, extent-invalid, and trailing fixtures.
+// Outputs: Each exact malformed archive fails with its structural diagnostic and leaves no output tree.
+TEST_CASE(arc_structural_header_boundaries_fail_before_publication) {
+    const auto root = test_temp_dir("arc-structural-boundaries");
+    auto mismatched = make_arc_archive({ArcFixtureEntry{.name = "size.txt", .payload = {'x'}}});
+    mismatched[25] = 2U;
+    auto nameless = make_arc_archive({ArcFixtureEntry{.name = "", .payload = {'x'}}});
+    auto oversized = make_arc_archive({ArcFixtureEntry{.name = "extent.txt", .payload = {'x'}}});
+    oversized[15] = 32U;
+    auto trailing = make_arc_archive({});
+    trailing.push_back(0x7FU);
+    const std::vector<std::pair<std::vector<unsigned char>, std::string_view>> cases{
+        {{}, "missing the end marker"},
+        {{0x1A}, "header prefix extends past"},
+        {{0x00, 0x00}, "malformed ARC header marker"},
+        {{0x1A, 0x01}, "old header extends past"},
+        {{0x1A, 0x02}, "ARC header extends past"},
+        {std::move(mismatched), "mismatched compressed and original sizes"},
+        {std::move(nameless), "ARC entry name is empty"},
+        {std::move(oversized), "payload extends past"},
+        {std::move(trailing), "trailing data after the end marker"},
+    };
+    for (std::size_t index = 0; index < cases.size(); ++index) {
+        const auto archive = root / (std::to_string(index) + ".arc");
+        write_binary_file(archive, cases[index].first);
+        require_arc_rejection_before_output(archive, root / ("out-" + std::to_string(index)), cases[index].second);
+    }
     std::filesystem::remove_all(root);
 }
 

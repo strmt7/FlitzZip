@@ -409,15 +409,16 @@ std::string read_tar_string(const std::array<char, kTarBlockSize>& header, std::
 std::uint64_t parse_tar_octal(std::span<const char> field, const char* label) {
     std::uint64_t value = 0;
     bool saw_digit = false;
+    bool saw_terminator = false;
     for (const char raw : field) {
         const auto ch = static_cast<unsigned char>(raw);
         if (ch == '\0' || ch == ' ') {
             if (saw_digit) {
-                break;
+                saw_terminator = true;
             }
             continue;
         }
-        if (ch < '0' || ch > '7') {
+        if (saw_terminator || ch < '0' || ch > '7') {
             throw ArchiveError(std::string("malformed TAR octal field: ") + label);
         }
         saw_digit = true;

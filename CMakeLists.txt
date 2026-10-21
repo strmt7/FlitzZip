@@ -810,6 +810,7 @@ if(FLITZZIP_BUILD_GUI AND WIN32)
     src/app/main_window_settings_timers.cpp
     src/app/main_window_shell_render.cpp
     src/app/main_window_startup_support.cpp
+    src/app/text_format.cpp
     src/app/FlitzZip.rc)
   add_dependencies(FlitzZip flitzzip_brand_logo_header
                    flitzzip_license_notices_header)
@@ -933,9 +934,13 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_lzma_compat.cpp
     tests/cpp/test_macbinary_compat.cpp
     tests/cpp/test_log_retention.cpp
+    tests/cpp/test_main_window_archive_support.cpp
     tests/cpp/test_settings_migration.cpp
     tests/cpp/test_settings_json.cpp
+    src/app/main_window_archive_support.cpp
+    src/app/main_window_startup_support.cpp
     src/app/settings_json.cpp
+    src/app/text_format.cpp
     tests/cpp/test_folder_size_cache.cpp
     tests/cpp/test_folder_size.cpp
     src/app/folder_size.cpp
@@ -983,8 +988,9 @@ if(FLITZZIP_BUILD_TESTS)
       FLITZZIP_TEST_GUI_BUILT=$<TARGET_EXISTS:FlitzZip>
       FLITZZIP_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
   add_executable(flitzzip_tests $<TARGET_OBJECTS:flitzzip_test_objects>)
-  target_link_libraries(flitzzip_tests PRIVATE flitzzip_core gdi32 user32
-                                               oleaut32 RuntimeObject)
+  target_link_libraries(
+    flitzzip_tests PRIVATE flitzzip_core gdi32 user32 shell32 oleaut32
+                           RuntimeObject)
   flitzzip_copy_zstd_runtime(flitzzip_tests)
   flitzzip_copy_wimlib_runtime(flitzzip_tests)
   add_dependencies(flitzzip_tests flitzzip_cli)
