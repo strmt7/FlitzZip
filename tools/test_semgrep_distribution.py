@@ -1,9 +1,13 @@
 """Integrity and dependency-boundary regressions for the Semgrep packaging revision."""
 
 import base64
+import copy
 import csv
 import hashlib
 import io
+import json
+import runpy
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -56,6 +60,27 @@ def fixture(*, newline="\n", dependency="1.29.0", extra=None) -> bytes:
 
 
 class DistributionTests(unittest.TestCase):
+    def test_recipe_rejects_ambiguous_or_incomplete_metadata(self):
+        """Purpose: Convert every malformed packaging record into controlled refusal.
+        Inputs: Wrong top-level and wheel-field shapes. Outputs: ValueError without field lookup exceptions.
+        """
+        valid = distribution.recipe()
+        variants = (
+            valid | {"unreviewed": True},
+            valid | {"advisory": "https://example.invalid/advisory"},
+            valid | {"wheels": ["linux", "windows"]},
+            valid | {"wheels": valid["wheels"] | {"linux": []}},
+            valid | {"wheels": valid["wheels"] | {"linux": valid["wheels"]["linux"] | {"sha256": None}}},
+            valid | {"wheels": valid["wheels"] | {"linux": valid["wheels"]["linux"] | {"bytes": True}}},
+        )
+        for candidate in variants:
+            with (
+                self.subTest(candidate=candidate),
+                patch.object(distribution, "read_recipe", return_value=candidate),
+                self.assertRaises(ValueError),
+            ):
+                distribution.recipe()
+
     # Purpose: Reject a transport that returns all expected bytes but reaches EOF after the acquisition deadline.
     # Inputs: Tiny inert response bytes and a controlled monotonic clock; no remote server or waiting is used.
     # Outputs: Late EOF fails instead of admitting the wheel; an otherwise identical timely response succeeds.
@@ -120,13 +145,40 @@ class DistributionTests(unittest.TestCase):
         for variant in variants:
             with self.subTest(record=variant[record][0]), self.assertRaises(ValueError):
                 distribution.validate_record(variant, record)
+        rows = list(csv.reader(io.StringIO(files[record][0].decode("utf-8"))))
+        rows[1] = rows[0]
+        duplicate = io.StringIO()
+        writer = csv.writer(duplicate, lineterminator="\n")
+        writer.writerows(rows)
+        files[record] = (duplicate.getvalue().encode(), 0o100644)
+        with self.assertRaisesRegex(ValueError, "unknown or duplicate"):
+            distribution.validate_record(files, record)
+        del files[record]
+        with self.assertRaisesRegex(ValueError, "RECORD is missing"):
+            distribution.validate_record(files, record)
+        files[record] = (b"\xff", 0o100644)
+        with self.assertRaisesRegex(ValueError, "RECORD is malformed"):
+            distribution.validate_record(files, record)
 
     # Purpose: Prevent path aliases or hostile extraction names from entering a derived wheel.
     # Inputs: Original wheel members outside canonical relative paths. Outputs: Rejection without filesystem writes.
     def test_unsafe_members_are_rejected(self):
-        for name in ("../escape", "/absolute", "C:/drive", "a\\b", "a//b", "a/./b"):
+        for name in ("../escape", "/absolute", "C:/drive", "a\\b", "a//b", "a/./b", "name. "):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 distribution.read_wheel(fixture(extra={name: b"payload"}))
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            distribution.read_wheel(fixture(extra={"Case/Name": b"first", "case/name": b"second"}))
+        with patch.object(distribution, "MAX_BYTES", 1), self.assertRaisesRegex(ValueError, "extent"):
+            distribution.read_wheel(fixture())
+
+    def test_distribution_identity_drift_is_rejected(self):
+        """Purpose: Bind the upstream wheel identity before changing metadata.
+        Inputs: A correctly recorded wheel with the wrong project identity. Outputs: Refusal before patching.
+        """
+        info = "semgrep-1.181.0.dist-info/"
+        metadata = b"Name: other\nVersion: 1.181.0\nRequires-Dist: mcp==1.29.0\n\n"
+        with self.assertRaisesRegex(ValueError, "metadata differs"):
+            distribution.derive_wheel(fixture(extra={info + "METADATA": metadata}), distribution.recipe())
 
     # Purpose: Require exact response extent and digest before metadata parsing or publication.
     # Inputs: Bounded mock HTTPS bodies. Outputs: Successful exact body or rejection of altered/truncated bytes.
@@ -172,6 +224,83 @@ class DistributionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "derived|Derived"):
                     distribution.build(root / "new", "linux")
             self.assertEqual(list((root / "new").iterdir()), [])
+
+    def test_successful_build_records_exact_artifacts_and_cleans_receipt_failure(self):
+        """Purpose: Exercise complete publication and transactional failure cleanup.
+        Inputs: Inert source wheel, reviewed digest and receipt failure.
+        Outputs: Exact receipt or empty output.
+        """
+        source = fixture()
+        data = copy.deepcopy(distribution.recipe())
+        derived = distribution.derive_wheel(source, data)
+        data["wheels"]["windows"]["derived_sha256"] = distribution.sha256(derived)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch.object(distribution, "recipe", return_value=data),
+                patch.object(distribution, "download", return_value=source),
+            ):
+                wheel = distribution.build(root / "complete", "windows")
+            receipt = json.loads((wheel.parent / "receipt.json").read_text(encoding="utf-8"))
+            self.assertEqual(receipt["output"], wheel.name)
+            self.assertEqual(receipt["sha256"], distribution.sha256(wheel.read_bytes()))
+
+            original_open = Path.open
+
+            def fail_receipt(path, *args, **kwargs):
+                """Purpose: Inject publication failure. Inputs: Output path/open options. Outputs: File or error."""
+                if path.name == "receipt.json":
+                    raise OSError("receipt failure")
+                return original_open(path, *args, **kwargs)
+
+            with (
+                patch.object(distribution, "recipe", return_value=data),
+                patch.object(distribution, "download", return_value=source),
+                patch.object(Path, "open", side_effect=fail_receipt, autospec=True),
+                self.assertRaisesRegex(OSError, "receipt failure"),
+            ):
+                distribution.build(root / "failed", "windows")
+            self.assertEqual(list((root / "failed").iterdir()), [])
+            with patch.object(distribution, "recipe", return_value=data), self.assertRaisesRegex(ValueError, "target"):
+                distribution.build(root / "unsupported", "other")
+
+    def test_cli_selects_explicit_and_native_targets_and_entrypoint_status(self):
+        """Purpose: Exercise supported CLI routing and platform refusal.
+        Inputs: Explicit/native target arguments and unsupported host facts.
+        Outputs: Exact builder calls or parser exit.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "wheel"
+            for arguments, system, machine, target in (
+                (["--output", str(output), "--target", "linux"], "Other", "other", "linux"),
+                (["--output", str(output)], "Windows", "AMD64", "windows"),
+            ):
+                with (
+                    self.subTest(arguments=arguments),
+                    patch.object(sys, "argv", ["semgrep_distribution.py", *arguments]),
+                    patch.object(distribution.platform, "system", return_value=system),
+                    patch.object(distribution.platform, "machine", return_value=machine),
+                    patch.object(distribution, "build", return_value=output / "result.whl") as build,
+                    patch("builtins.print"),
+                ):
+                    self.assertEqual(distribution.main(), 0)
+                build.assert_called_once_with(output, target)
+            for system, machine in (("Other", "x86_64"), ("Windows", "arm64")):
+                with (
+                    patch.object(sys, "argv", ["semgrep_distribution.py", "--output", str(output)]),
+                    patch.object(distribution.platform, "system", return_value=system),
+                    patch.object(distribution.platform, "machine", return_value=machine),
+                    patch.object(sys, "stderr", io.StringIO()),
+                    self.assertRaises(SystemExit),
+                ):
+                    distribution.main()
+            with (
+                patch.object(sys, "argv", ["semgrep_distribution.py", "--output", str(output), "--target", "other"]),
+                patch.object(sys, "stderr", io.StringIO()),
+                self.assertRaises(SystemExit) as status,
+            ):
+                runpy.run_path(str(Path(distribution.__file__).resolve()), run_name="__main__")
+            self.assertEqual(status.exception.code, 2)
 
 
 if __name__ == "__main__":
