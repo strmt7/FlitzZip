@@ -18,9 +18,13 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 REPO = Path(__file__).resolve().parent.parent
+# Purpose: Preserve direct script use. Inputs: This file's package context. Outputs: Exact checkout imports.
+if not __package__:
+    sys.path.insert(0, str(REPO))
 LOCK_PATH = REPO / "tools" / "rocm-sdk-lock.json"
 CHUNK = 1024 * 1024
 MAX_FILE = 8 * 1024**3
+MAX_ARCHIVE = 16 * 1024**3
 MAX_MEMBERS = 200_000
 MAX_UNPACKED = 80 * 1024**3
 
@@ -32,6 +36,69 @@ def hash_file(path: Path) -> str:
     """
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def read_lock(path: Path = LOCK_PATH) -> dict:
+    """Purpose: Admit complete ROCm provenance before network, disk or process work.
+    Inputs: Bounded repository lock path. Outputs: Typed exact distribution metadata or refusal.
+    """
+    from tools.python_wheel import read_recipe
+
+    data = read_recipe(path)
+    expected = {
+        "version",
+        "archive_name",
+        "url",
+        "sha256",
+        "archive_bytes",
+        "unpacked_bytes",
+        "members",
+        "digest_origin",
+        "release_notes",
+        "installation_guide",
+        "observed_package_version",
+        "observed_hip_version",
+        "observed_clang_version",
+    }
+    strings = (
+        "digest_origin",
+        "observed_package_version",
+        "observed_hip_version",
+        "observed_clang_version",
+    )
+    if (
+        set(data) != expected
+        or not isinstance(data.get("version"), str)
+        or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", data["version"]) is None
+        or data.get("archive_name") != f"therock-dist-windows-multiarch-{data['version']}.tar.gz"
+        or not isinstance(data.get("sha256"), str)
+        or re.fullmatch(r"[a-f0-9]{64}", data["sha256"]) is None
+        or type(data.get("archive_bytes")) is not int
+        or not 0 < data["archive_bytes"] <= MAX_ARCHIVE
+        or type(data.get("unpacked_bytes")) is not int
+        or not data["archive_bytes"] < data["unpacked_bytes"] <= MAX_UNPACKED
+        or type(data.get("members")) is not int
+        or not 0 < data["members"] <= MAX_MEMBERS
+        or any(not isinstance(data.get(key), str) or not 0 < len(data[key]) <= 1024 for key in strings)
+    ):
+        raise ValueError("Unsupported ROCm SDK distribution lock")
+    source = urlsplit(data.get("url", ""))
+    release = urlsplit(data.get("release_notes", ""))
+    guide = urlsplit(data.get("installation_guide", ""))
+    if (
+        (source.scheme, source.netloc, PurePosixPath(source.path).name)
+        != ("https", "stable.repo.amd.com", data["archive_name"])
+        or source.query
+        or source.fragment
+        or (release.scheme, release.netloc) != ("https", "rocm.docs.amd.com")
+        or release.query
+        or release.fragment
+        or (guide.scheme, guide.netloc) != ("https", "rocmdocs.amd.com")
+        or guide.query
+        or guide.fragment
+    ):
+        raise ValueError("ROCm SDK distribution lock contains unsupported provenance URLs")
+    return data
 
 
 def reject_link_chain(path: Path) -> None:
@@ -145,7 +212,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def download_archive(lock: dict, destination: Path) -> None:
     """Purpose: Download the pinned whole distribution over HTTPS with bounded memory and lifetime.
     Inputs: Lock supplies public provenance and exact expected bytes; destination must not already exist.
-    Outputs: Publishes verified archive bytes without overwrite; preserves failed partials for diagnosis.
+    Outputs: Publishes verified archive bytes without overwrite; removes failed partials.
     """
     url = urlsplit(lock["url"])
     if url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment:
@@ -154,24 +221,28 @@ def download_archive(lock: dict, destination: Path) -> None:
     if destination.exists():
         raise ValueError("ROCm distribution download refuses to overwrite an existing archive")
     partial = destination.with_name(destination.name + "." + uuid.uuid4().hex + ".partial")
-    opener = urllib.request.build_opener(NoRedirect())
-    deadline = time.monotonic() + 1200
-    total = 0
-    request = urllib.request.Request(lock["url"], headers={"Accept-Encoding": "identity"})
-    with opener.open(request, timeout=60) as response:
-        if int(response.headers.get("Content-Length", "-1")) != lock["archive_bytes"]:
-            raise ValueError("ROCm distribution HTTP length differs from the pin")
-        with partial.open("xb") as output:
-            while block := response.read(CHUNK):
-                total += len(block)
-                if total > lock["archive_bytes"] or time.monotonic() > deadline:
-                    raise ValueError("ROCm distribution download exceeds its byte or lifetime bounds")
-                output.write(block)
-    if time.monotonic() > deadline:
-        raise ValueError("ROCm distribution download exceeded its lifetime boundary at EOF")
-    if total != lock["archive_bytes"] or hash_file(partial) != lock["sha256"]:
-        raise ValueError("ROCm distribution download size or SHA-256 mismatch")
-    partial.rename(destination)
+    try:
+        opener = urllib.request.build_opener(NoRedirect())
+        deadline = time.monotonic() + 1200
+        total = 0
+        request = urllib.request.Request(lock["url"], headers={"Accept-Encoding": "identity"})
+        with opener.open(request, timeout=60) as response:
+            if int(response.headers.get("Content-Length", "-1")) != lock["archive_bytes"]:
+                raise ValueError("ROCm distribution HTTP length differs from the pin")
+            with partial.open("xb") as output:
+                while block := response.read(CHUNK):
+                    total += len(block)
+                    if total > lock["archive_bytes"] or time.monotonic() > deadline:
+                        raise ValueError("ROCm distribution download exceeds its byte or lifetime bounds")
+                    output.write(block)
+        if time.monotonic() > deadline:
+            raise ValueError("ROCm distribution download exceeded its lifetime boundary at EOF")
+        if total != lock["archive_bytes"] or hash_file(partial) != lock["sha256"]:
+            raise ValueError("ROCm distribution download size or SHA-256 mismatch")
+        partial.rename(destination)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
 
 
 def bounded_extract(archive: Path, destination: Path) -> None:
@@ -225,13 +296,18 @@ def provision(lock: dict, parent: Path, archive: Path | None = None) -> Path:
             raise ValueError("Insufficient disk headroom for the complete ROCm SDK")
         stage = parent / ("stage-" + uuid.uuid4().hex)
         stage.mkdir()
-        bounded_extract(source, stage)
-        sdk_identity(stage, lock["version"])
-        stage.rename(sdk)
+        try:
+            bounded_extract(source, stage)
+            sdk_identity(stage, lock["version"])
+            stage.rename(sdk)
+        except BaseException:
+            shutil.rmtree(stage)
+            raise
     identity = sdk_identity(sdk, lock["version"])
     with receipt.open("x", encoding="utf-8") as output:
         json.dump(
             {
+                "schema": 1,
                 **inventory,
                 "version": lock["version"],
                 "url": lock["url"],
@@ -255,7 +331,7 @@ def main() -> int:
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("FlitzZip ROCm provisioning requires native Windows; do not use WSL")
-    lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+    lock = read_lock()
     parent = args.parent or REPO / "out" / f"rocm-core-sdk-{lock['version']}"
     try:
         print(provision(lock, parent, args.archive))
