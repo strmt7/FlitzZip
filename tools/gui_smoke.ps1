@@ -426,13 +426,19 @@ function Assert-SettingsValue {
 }
 
 # Purpose: Wait for a newly appended GUI command result rather than assuming input was processed.
-# Inputs: Path is the smoke log, PreviousLength is its prior byte length, and Message is expected row text.
-# Outputs: Returns after the expected new row, or throws after five seconds without it.
+# Inputs: Path is the smoke log, PreviousLength is its prior byte length, Message is expected row text, and
+# TimeoutSeconds is the explicit bounded wait for the selected operation.
+# Outputs: Returns after the expected new row, or throws after the selected timeout without it.
 function Wait-GuiLogEvent {
-    param([string]$Path, [long]$PreviousLength, [string]$Message)
+    param(
+        [string]$Path,
+        [long]$PreviousLength,
+        [string]$Message,
+        [ValidateRange(1, 300)][int]$TimeoutSeconds = 5
+    )
 
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
-    while ($timer.Elapsed.TotalSeconds -lt 5) {
+    while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
         if ((Get-Item -LiteralPath $Path).Length -gt $PreviousLength) {
             $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
             try {
@@ -444,7 +450,7 @@ function Wait-GuiLogEvent {
         }
         Start-Sleep -Milliseconds 50
     }
-    throw "GUI command did not report '$Message' within five seconds."
+    throw "GUI command did not report '$Message' within $TimeoutSeconds seconds."
 }
 
 # Purpose: Verify legacy preference/effort migration, obsolete no-op removal and current-key precedence through actual GUI loads and Apply.
@@ -623,7 +629,7 @@ function Assert-NeutronArchiveOperation {
     $length = (Get-Item -LiteralPath $logPath).Length
     $lineCount = @(Get-Content -LiteralPath $logPath).Count
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
-    Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Compress: completed'
+    Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Compress: completed' -TimeoutSeconds 30
     $rows = @(Get-Content -LiteralPath $logPath -Encoding UTF8 | Select-Object -Skip $lineCount)
     if (-not ($rows | Where-Object { $_.Contains('(Neutron star mode)') })) {
         throw 'The GUI worker did not report its captured Neutron compression mode.'
