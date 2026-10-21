@@ -809,7 +809,10 @@ function Assert-OperationSummary {
             }
             $openRows = @($newRows | Where-Object { $_.Contains('Destination folder open suppressed (GUI smoke):') })
             $expectedOpens = if ($scenario -eq 'Enabled') { 1 } else { 0 }
-            if ($openRows.Count -ne $expectedOpens -or ($expectedOpens -eq 1 -and -not $openRows[0].EndsWith($Destination))) {
+            # Persistent log fields use reversible C-style escaping so control bytes cannot forge rows.
+            $loggedDestination = $Destination.Replace('\', '\\')
+            if ($openRows.Count -ne $expectedOpens -or
+                ($expectedOpens -eq 1 -and -not $openRows[0].EndsWith($loggedDestination))) {
                 throw "Summary scenario $scenario did not honor the captured destination-opening preference."
             }
         } finally {
@@ -1080,7 +1083,8 @@ function Assert-LegacyNameExtraction {
     $length = (Get-Item -LiteralPath $logPath).Length
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 368 -Synchronous
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
-    Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message "Destination folder open suppressed (GUI smoke): $OutputRoot"
+    $loggedOutputRoot = $OutputRoot.Replace('\', '\\')
+    Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message "Destination folder open suppressed (GUI smoke): $loggedOutputRoot"
     $expected = @(Get-ChildItem -LiteralPath (Join-Path $FixtureRoot 'expected') -File)
     foreach ($file in $expected) {
         $target = Join-Path $OutputRoot $file.Name

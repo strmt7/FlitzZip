@@ -41,6 +41,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <system_error>
 
 #include <knownfolders.h>
 #include <shlobj.h>
@@ -568,13 +569,12 @@ std::wstring log_retention_text(int index) {
     return std::wstring(log_retention_display_text(index));
 }
 
-// Purpose: Return a JSON-safe string literal for a path or status field.
-// Inputs: `value` is UTF-8 text that may contain JSON metacharacters.
-// Outputs: Returns a quoted JSON string with control characters escaped.
-std::string json_string(std::string_view value) {
+// Purpose: Encode one persistent plain-text log field without permitting forged rows or ambiguous escapes.
+// Inputs: `value` is caller-owned UTF-8 text that may contain filesystem or backend control bytes.
+// Outputs: Preserves printable bytes and escapes backslash plus every ASCII control byte without adding delimiters.
+std::string escape_log_field(std::string_view value) {
     std::string escaped;
-    escaped.reserve(value.size() + 2U);
-    escaped.push_back('"');
+    escaped.reserve(value.size());
     for (const unsigned char ch : value) {
         switch (ch) {
         case '\\':
@@ -599,7 +599,7 @@ std::string json_string(std::string_view value) {
             escaped += "\\t";
             break;
         default:
-            if (ch < 0x20U) {
+            if (ch < 0x20U || ch == 0x7fU) {
                 constexpr char kHex[] = "0123456789abcdef";
                 escaped += "\\u00";
                 escaped.push_back(kHex[(ch >> 4U) & 0x0FU]);
@@ -610,7 +610,6 @@ std::string json_string(std::string_view value) {
             break;
         }
     }
-    escaped.push_back('"');
     return escaped;
 }
 
@@ -846,7 +845,8 @@ void append_log_file_entry(const std::filesystem::path& path, LogSeverity severi
     if (!output) {
         throw ArchiveError("could not open FlitzZip log file");
     }
-    output << log_timestamp_text(timestamp) << " [" << log_severity_text(severity) << "] " << message << '\n';
+    output << log_timestamp_text(timestamp) << " [" << log_severity_text(severity) << "] " << escape_log_field(message)
+           << '\n';
     if (!output) {
         throw ArchiveError("could not write FlitzZip log file");
     }
@@ -862,6 +862,16 @@ AppSettings read_settings_file(const std::filesystem::path& path) {
         throw ArchiveError("could not inspect settings file");
     }
     if (!exists) {
+        const auto parent = path.parent_path();
+        if (!parent.empty()) {
+            const auto parent_status = std::filesystem::status(parent, ec);
+            if (ec && ec != std::errc::no_such_file_or_directory) {
+                throw ArchiveError("could not inspect settings file");
+            }
+            if (!ec && std::filesystem::exists(parent_status) && !std::filesystem::is_directory(parent_status)) {
+                throw ArchiveError("could not inspect settings file");
+            }
+        }
         return {};
     }
     std::ifstream input(path, std::ios::binary);

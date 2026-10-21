@@ -3,8 +3,12 @@
 #include "app/main_window_support.hpp"
 #include "core/result.hpp"
 
+#include <algorithm>
+#include <array>
 #include <fstream>
+#include <iterator>
 #include <limits>
+#include <string_view>
 #include <utility>
 
 namespace {
@@ -59,6 +63,30 @@ class ScopedEnvironment final {
     std::wstring previous_;
     bool existed_ = false;
 };
+
+// Purpose: Read an owned test artifact byte-for-byte without text-mode newline conversion.
+// Inputs: Existing regular file path.
+// Outputs: Returns complete bytes as a string or fails the test when the file cannot be opened.
+std::string read_binary_text(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    REQUIRE_TRUE(static_cast<bool>(input));
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+// Purpose: Locate exact restored content without coupling the GUI route test to adapter-specific output names.
+// Inputs: Extraction root and expected file bytes.
+// Outputs: Returns true only when a regular descendant has exactly the expected content.
+bool contains_file_with_contents(const std::filesystem::path& root, std::string_view expected) {
+    std::error_code error;
+    for (std::filesystem::recursive_directory_iterator entries(root, error), end; !error && entries != end;
+         entries.increment(error)) {
+        if (entries->is_regular_file(error) && !error && read_binary_text(entries->path()) == expected) {
+            return true;
+        }
+    }
+    REQUIRE_TRUE(!error);
+    return false;
+}
 
 }  // namespace
 
@@ -261,6 +289,254 @@ TEST_CASE(gui_compression_routing_rejects_invalid_combinations_before_io) {
                                                       flitzzip::NativeCompressionMode::Standard, progress);
         },
         "archive format recognized but not implemented for compression: rar");
+}
+
+// Purpose: Prove every GUI-visible compatibility create route reaches a real codec and its matching extractor.
+// Inputs: One bounded binary source and every non-FLZIP format accepted by `compress_gui_archive`.
+// Outputs: Each archive is nonempty, extraction restores exact bytes, and ZIP/general validation discards all output.
+TEST_CASE(gui_compatibility_routing_round_trips_all_create_formats) {
+    struct Route {
+        flitzzip::ArchiveFormat format;
+        std::wstring_view extension;
+    };
+    constexpr std::array<Route, 13> routes{{
+        {flitzzip::ArchiveFormat::FlitzZip, L".flzip"},
+        {flitzzip::ArchiveFormat::Zip, L".zip"},
+        {flitzzip::ArchiveFormat::Tar, L".tar"},
+        {flitzzip::ArchiveFormat::TarGzip, L".tar.gz"},
+        {flitzzip::ArchiveFormat::TarBzip2, L".tar.bz2"},
+        {flitzzip::ArchiveFormat::TarZstd, L".tar.zst"},
+        {flitzzip::ArchiveFormat::Gzip, L".gz"},
+        {flitzzip::ArchiveFormat::Bzip2, L".bz2"},
+        {flitzzip::ArchiveFormat::Zstd, L".zst"},
+        {flitzzip::ArchiveFormat::UnixCompress, L".Z"},
+        {flitzzip::ArchiveFormat::Cpio, L".cpio"},
+        {flitzzip::ArchiveFormat::CpioGzip, L".cpio.gz"},
+        {flitzzip::ArchiveFormat::Ar, L".ar"},
+    }};
+    const auto root = test_temp_dir("gui-compatibility-routes");
+    const auto source = root / "source.bin";
+    std::string payload;
+    payload.reserve(8192U);
+    for (std::size_t index = 0; index < 8192U; ++index) {
+        payload.push_back(static_cast<char>((index * 37U + index / 17U) & 0xffU));
+    }
+    {
+        std::ofstream output(source, std::ios::binary);
+        REQUIRE_TRUE(static_cast<bool>(output));
+        output.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+        REQUIRE_TRUE(static_cast<bool>(output));
+    }
+
+    std::filesystem::path zip_archive;
+    std::filesystem::path tar_archive;
+    std::filesystem::path flzip_archive;
+    for (std::size_t index = 0; index < routes.size(); ++index) {
+        const auto& route = routes[index];
+        const auto archive = root / (L"archive-" + std::to_wstring(index) + std::wstring(route.extension));
+        const auto stats = flitzzip::app::compress_gui_archive({source}, archive, route.format, false, false,
+                                                               flitzzip::kDefaultArchiveBlockBytes, 3,
+                                                               flitzzip::NativeCompressionMode::Standard, {});
+        REQUIRE_TRUE(std::filesystem::is_regular_file(archive));
+        REQUIRE_TRUE(std::filesystem::file_size(archive) > 0U);
+        REQUIRE_EQ(stats.input_bytes, payload.size());
+
+        const auto extraction = root / (L"extract-" + std::to_wstring(index));
+        const auto restored =
+            flitzzip::app::extract_detected_archive(route.format, archive, extraction, false, false, {});
+        REQUIRE_EQ(restored.output_bytes, payload.size());
+        REQUIRE_TRUE(contains_file_with_contents(extraction, payload));
+        if (route.format == flitzzip::ArchiveFormat::FlitzZip) {
+            flzip_archive = archive;
+        } else if (route.format == flitzzip::ArchiveFormat::Zip) {
+            zip_archive = archive;
+        } else if (route.format == flitzzip::ArchiveFormat::Tar) {
+            tar_archive = archive;
+        }
+    }
+
+    ScopedEnvironment redirect(L"FLITZZIP_GUI_SMOKE_SETTINGS_REDIRECT");
+    redirect.set(L"1");
+    REQUIRE_EQ(flitzzip::app::validate_detected_archive(flitzzip::ArchiveFormat::FlitzZip, flzip_archive, false, {})
+                   .output_bytes,
+               payload.size());
+    REQUIRE_EQ(
+        flitzzip::app::validate_detected_archive(flitzzip::ArchiveFormat::Zip, zip_archive, false, {}).output_bytes,
+        payload.size());
+    REQUIRE_EQ(
+        flitzzip::app::validate_detected_archive(flitzzip::ArchiveFormat::Tar, tar_archive, false, {}).output_bytes,
+        payload.size());
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Keep unknown, recognized-unsupported, and name-aware GUI extraction routes fail-closed before publication.
+// Inputs: Owned empty files and exact format identities that exercise dispatcher-only policy branches.
+// Outputs: Stable diagnostics are returned and no extraction destination is published.
+TEST_CASE(gui_extraction_dispatch_rejects_unimplemented_routes) {
+    const auto root = test_temp_dir("gui-extraction-routing-errors");
+    const auto archive = root / "input.bin";
+    {
+        std::ofstream output(archive, std::ios::binary);
+        REQUIRE_TRUE(static_cast<bool>(output));
+    }
+    const auto destination = root / "output";
+    require_archive_error(
+        [&] {
+            (void)flitzzip::app::extract_detected_archive(flitzzip::ArchiveFormat::Unknown, archive, destination, false,
+                                                          false, {});
+        },
+        "unable to detect archive format: " + archive.string());
+    require_archive_error(
+        [&] {
+            (void)flitzzip::app::extract_detected_archive(flitzzip::ArchiveFormat::Rar, archive, destination, false,
+                                                          false, {});
+        },
+        "archive format recognized but not implemented for extraction: rar");
+    require_archive_error(
+        [&] {
+            (void)flitzzip::app::extract_detected_archive(flitzzip::ArchiveFormat::Unknown, archive, destination, false,
+                                                          false, {}, static_cast<flitzzip::ArchivePathEncoding>(99));
+        },
+        "unsupported archive member name encoding");
+    bool rpm_rejected = false;
+    try {
+        (void)flitzzip::app::extract_detected_archive(flitzzip::ArchiveFormat::Rpm, archive, destination, false, false,
+                                                      {}, flitzzip::ArchivePathEncoding::HostCodePage);
+    } catch (const flitzzip::ArchiveError&) {
+        rpm_rejected = true;
+    }
+    REQUIRE_TRUE(rpm_rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(destination));
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Prevent persistent-log row injection and verify settings/log storage errors remain transactional.
+// Inputs: Control-bearing log text, extreme time, round-tripped settings, missing files, and directory/file confusion.
+// Outputs: One encoded row per event, deterministic fallback time, exact settings, and explicit open failures.
+TEST_CASE(gui_storage_escapes_log_controls_and_round_trips_settings) {
+    const auto root = test_temp_dir("gui-storage-contracts");
+    const auto settings_path = root / "settings.json";
+    const flitzzip::app::AppSettings defaults;
+    REQUIRE_TRUE(flitzzip::app::settings_equal(flitzzip::app::read_settings_file(settings_path), defaults));
+
+    auto settings = defaults;
+    settings.compression_format_index = 4;
+    settings.compression_level_index = 7;
+    settings.overwrite = true;
+    flitzzip::app::write_settings_file(settings_path, settings);
+    REQUIRE_TRUE(flitzzip::app::settings_equal(flitzzip::app::read_settings_file(settings_path), settings));
+
+    const auto log_path = root / "flitzzip.log";
+    constexpr char injected_bytes[] = "plain\\path\"quoted\"\r\n[ERROR] forged\t\b\f\0\x01\x7f";
+    const std::string injected(injected_bytes, sizeof(injected_bytes) - 1U);
+    flitzzip::app::append_log_file_entry(log_path, flitzzip::app::LogSeverity::Warning, injected,
+                                         std::chrono::system_clock::time_point{});
+    const auto first = read_binary_text(log_path);
+    REQUIRE_EQ(static_cast<std::size_t>(std::count(first.begin(), first.end(), '\n')), 1U);
+    REQUIRE_TRUE(first.find("plain\\\\path\\\"quoted\\\"\\r\\n[ERROR] forged\\t\\b\\f\\u0000\\u0001\\u007f") !=
+                 std::string::npos);
+
+    const auto extreme_log = root / "extreme.log";
+    flitzzip::app::append_log_file_entry(extreme_log, flitzzip::app::LogSeverity::Information, "event",
+                                         std::chrono::system_clock::time_point::min());
+    REQUIRE_TRUE(read_binary_text(extreme_log).starts_with("0000-00-00 00:00:00 [Information] event\n"));
+
+    const auto directory = root / "directory";
+    std::filesystem::create_directories(directory);
+    require_archive_error([&] { (void)flitzzip::app::read_settings_file(directory); },
+                          "could not open settings file for reading");
+    require_archive_error(
+        [&] { flitzzip::app::append_log_file_entry(directory, flitzzip::app::LogSeverity::Information, "event", {}); },
+        "could not open FlitzZip log file");
+
+    const auto ordinary_file = root / "ordinary-file";
+    {
+        std::ofstream output(ordinary_file, std::ios::binary);
+        REQUIRE_TRUE(static_cast<bool>(output));
+        output << "not a directory";
+    }
+    require_archive_error([&] { (void)flitzzip::app::read_settings_file(ordinary_file / "child.json"); },
+                          "could not inspect settings file");
+
+    ScopedEnvironment redirect(L"FLITZZIP_GUI_SMOKE_SETTINGS_REDIRECT");
+    ScopedEnvironment temporary(L"TEMP");
+    ScopedEnvironment temporary_alias(L"TMP");
+    temporary.set(root.c_str());
+    temporary_alias.set(root.c_str());
+    redirect.set(L"1");
+    const auto redirected_storage = flitzzip::app::app_storage_directory();
+    REQUIRE_EQ(redirected_storage, root / L"FlitzZip");
+    REQUIRE_EQ(flitzzip::app::settings_file_path(), redirected_storage / L"gui-smoke-settings.json");
+    flitzzip::app::ensure_app_storage();
+    REQUIRE_TRUE(std::filesystem::is_regular_file(redirected_storage / L"flitzzip.log"));
+
+    redirect.set(nullptr);
+    const auto storage = flitzzip::app::app_storage_directory();
+    REQUIRE_TRUE(!storage.empty());
+    REQUIRE_EQ(flitzzip::app::settings_file_path(), storage / L"settings.json");
+    REQUIRE_EQ(flitzzip::app::log_file_path(), storage / L"flitzzip.log");
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Exercise every dropdown selection branch and normalization boundary independently of rendering.
+// Inputs: Distinct state rows, stale name-encoding selections, and invalid enum values.
+// Outputs: Each selection maps to its owning state field and invalid identifiers remain inert.
+TEST_CASE(gui_dropdown_selection_and_name_encoding_are_bounded) {
+    flitzzip::app::UiState state;
+    state.compression_format_index = 4;
+    state.compression_level_index = 5;
+    state.compression_block_size_index = 6;
+    state.extract_name_encoding_index = 1;
+    state.history_operation_filter_index = 3;
+    state.history_status_filter_index = 2;
+    state.performance_update_seconds = 5;
+    state.gpu_required = false;
+    state.io_drive_index = 999;
+    state.log_level_index = 2;
+    state.log_retention_index = 1;
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::CompressFormat), 4);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::CompressLevel), 5);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::CompressMethod), 1);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::CompressBlockSize), 6);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::ExtractOverwrite), 0);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::ExtractNameEncoding), 1);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::HistoryOperation), 3);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::HistoryStatus), 2);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::GpuUpdateSpeed), 2);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::SystemIoDrive), 0);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::SettingsLogLevel), 2);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::SettingsLogRetention), 1);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::None), 0);
+    REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, static_cast<flitzzip::app::DropdownId>(999)), 0);
+    REQUIRE_EQ(flitzzip::app::dropdown_options(flitzzip::app::DropdownId::CompressMethod, state).size(), 2U);
+    REQUIRE_EQ(flitzzip::app::dropdown_options(flitzzip::app::DropdownId::ExtractOverwrite, state).size(), 2U);
+    REQUIRE_TRUE(flitzzip::app::dropdown_options(static_cast<flitzzip::app::DropdownId>(999), state).empty());
+
+    flitzzip::app::UiState default_destination;
+    REQUIRE_EQ(flitzzip::app::destination_directory_or_default(default_destination),
+               flitzzip::app::current_user_downloads_directory());
+    REQUIRE_EQ(flitzzip::app::extraction_output_path_for(default_destination),
+               flitzzip::app::current_user_downloads_directory() / L"FlitzZip-extracted");
+    REQUIRE_TRUE(flitzzip::app::compression_format_uses_flzip_tuning(flitzzip::ArchiveFormat::FlitzZip));
+    REQUIRE_TRUE(!flitzzip::app::compression_format_uses_flzip_tuning(flitzzip::ArchiveFormat::Zip));
+    REQUIRE_TRUE(flitzzip::app::compression_format_uses_level(flitzzip::ArchiveFormat::Zstd));
+    REQUIRE_TRUE(!flitzzip::app::compression_format_uses_level(flitzzip::ArchiveFormat::Tar));
+    REQUIRE_EQ(flitzzip::app::compression_block_size_bytes(-1), flitzzip::app::kCompressionBlockSizeOptions.back());
+    REQUIRE_EQ(flitzzip::app::compression_block_size_bytes(flitzzip::app::kCompressionBlockSizeMaxIndex + 1),
+               flitzzip::app::kCompressionBlockSizeOptions.front());
+    const auto drives = flitzzip::app::fixed_io_drive_options();
+    const auto drive_index = flitzzip::app::normalize_io_drive_index(999);
+    REQUIRE_EQ(flitzzip::app::io_drive_option_text(999), drives.empty() ? L"-" : drives[drive_index]);
+
+    const std::array<std::filesystem::path, 2> encoded_candidates{L"archive.ar", L"archive.zip"};
+    REQUIRE_TRUE(flitzzip::app::extract_name_encoding_available(encoded_candidates));
+    const std::array<std::filesystem::path, 1> utf8_only{L"archive.zip"};
+    REQUIRE_TRUE(!flitzzip::app::extract_name_encoding_available(utf8_only));
+
+    state.extract_name_encoding_index = -50;
+    REQUIRE_EQ(flitzzip::app::selected_name_encoding(state).encoding, flitzzip::ArchivePathEncoding::Utf8);
+    state.extract_name_encoding_index = 50;
+    REQUIRE_EQ(flitzzip::app::selected_name_encoding(state).encoding, flitzzip::ArchivePathEncoding::HostCodePage);
 }
 
 // Purpose: Validate fixed-window and smoke-control startup policy without launching the GUI.
