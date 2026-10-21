@@ -37,11 +37,7 @@ inline std::wstring windows_api_path(const std::filesystem::path& path) {
     auto absolute = std::filesystem::absolute(windows_regular_path(path)).lexically_normal();
     const auto text = absolute.make_preferred().native();
     std::wstring result;
-    if (text.starts_with(L"\\\\?\\")) {
-        if (!text.starts_with(L"\\\\?\\UNC\\") && !(text.size() >= 7 && text[5] == L':' && text[6] == L'\\'))
-            throw std::invalid_argument("device paths are not filesystem publication paths");
-        result = text;
-    } else if (text.starts_with(L"\\\\.\\")) {
+    if (text.starts_with(L"\\\\?\\") || text.starts_with(L"\\\\.\\")) {
         throw std::invalid_argument("device paths are not filesystem publication paths");
     } else if (text.starts_with(L"\\\\")) {
         result = L"\\\\?\\UNC\\" + text.substr(2);

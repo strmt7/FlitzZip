@@ -62,7 +62,23 @@ TEST_CASE(queue_metadata_reader_reports_file_directory_size_and_missing_transiti
     std::filesystem::create_directory(path);
     REQUIRE_TRUE(read_queue_file_metadata(path).kind == QueueFileKind::Directory);
     REQUIRE_TRUE(!read_queue_file_metadata(path).bytes);
+    const auto device = read_queue_file_metadata(L"\\\\.\\NUL");
+    REQUIRE_TRUE(device.kind == QueueFileKind::Unavailable);
+    REQUIRE_TRUE(!device.bytes);
     std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject a cache without an authoritative metadata reader before it can start a worker.
+// Inputs: An empty callback object. Outputs: Construction throws and owns no thread or queued work.
+TEST_CASE(queue_metadata_cache_requires_reader) {
+    bool rejected = false;
+    try {
+        const QueueMetadataCache cache(QueueMetadataCache::Reader{});
+    } catch (const std::invalid_argument& error) {
+        REQUIRE_EQ(std::string_view(error.what()), "Queue metadata requires a reader");
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
 }
 
 TEST_CASE(queue_metadata_hot_reads_are_deduplicated_and_run_on_one_other_thread) {

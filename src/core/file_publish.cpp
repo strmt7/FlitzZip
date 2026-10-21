@@ -11,7 +11,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -490,7 +489,7 @@ void rename_payload_to_pinned_path(HANDLE payload, const std::filesystem::path& 
     rename->ReplaceIfExists = overwrite ? TRUE : FALSE;
     rename->RootDirectory = nullptr;
     rename->FileNameLength = static_cast<DWORD>(filename_bytes);
-    std::memcpy(rename->FileName, target_text.data(), filename_bytes);
+    std::copy(target_text.begin(), target_text.end(), rename->FileName);
     if (SetFileInformationByHandle(payload, FileRenameInfo, rename, static_cast<DWORD>(storage.size())) == 0) {
         const auto error = GetLastError();
         if (!overwrite &&
