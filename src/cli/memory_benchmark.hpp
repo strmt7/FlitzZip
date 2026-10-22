@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cli/benchmark_suite_policy.hpp"
 #include "core/archive.hpp"
 
 #include <cstdint>
@@ -70,6 +71,11 @@ struct BenchmarkSuiteOptions {
     bool tune = false;
     bool tune_levels = false;
 };
+
+// Purpose: Project a completed RAM measurement into the tuner's score and complete-container size policy.
+// Inputs: A completed result with native framing included in archive_bytes and independently validated input bytes.
+// Outputs: Returns the measured geometry, throughput score and complete archive/input ratio.
+BenchmarkSuiteObservation make_benchmark_suite_observation(const MemoryBenchmarkResult& result);
 
 // Purpose: Run a no-filesystem CPU or AMD-HIP benchmark over generated in-memory chunks.
 // Inputs: `options` controls virtual workload size, data profile, backend lane, worker count, and compression level.

@@ -270,6 +270,47 @@ TEST_CASE(memory_benchmark_source_headroom_admission_is_allocation_free) {
     }
 }
 
+// Purpose: Reject a faster candidate whose native metadata exceeds the complete-archive size guard.
+// Inputs: Actual CPU/HIP zero-payload archives at two block sizes, with controlled scores rather than timing claims.
+// Outputs: Requires byte-exact RAM-only validation and the smaller complete archive despite equal payload sizes.
+TEST_CASE(memory_benchmark_suite_accounts_for_container_overhead) {
+    const std::vector<std::byte> source(8U * flitzzip::kMinArchiveBlockBytes);
+    for (const bool gpu : {false, true}) {
+        if (gpu && !flitzzip::query_gpu_info().available) {
+            continue;
+        }
+        flitzzip::cli::MemoryBenchmarkOptions options;
+        options.source = source;
+        options.corpus_bytes = source.size();
+        options.expected_source_sha256 = flitzzip::sha256_bytes(source);
+        options.profile = "Corpus";
+        options.require_gpu = gpu;
+        options.force_cpu = !gpu;
+        options.workers = 1U;
+        options.inflight_chunks = 1U;
+        options.decode_inflight_chunks = 1U;
+        auto balanced = flitzzip::cli::run_memory_benchmark(options);
+        options.block_size = flitzzip::kMinArchiveBlockBytes;
+        options.compression_level = 9;
+        auto faster = flitzzip::cli::run_memory_benchmark(options);
+        REQUIRE_EQ(balanced.validated_bytes, source.size());
+        REQUIRE_EQ(faster.validated_bytes, source.size());
+        REQUIRE_EQ(balanced.stats.gpu_used, gpu);
+        REQUIRE_EQ(faster.stats.gpu_used, gpu);
+        REQUIRE_EQ(balanced.stats.output_bytes, 0U);
+        REQUIRE_EQ(faster.stats.output_bytes, 0U);
+        REQUIRE_TRUE(static_cast<double>(faster.archive_bytes) > 1.02 * balanced.archive_bytes);
+        // Fix scores independently of the live host so the larger archive is always the tempting candidate.
+        balanced.compress_seconds = balanced.verify_seconds = balanced.extract_seconds = 0.02;
+        faster.compress_seconds = faster.verify_seconds = faster.extract_seconds = 0.01;
+        const std::array observations{flitzzip::cli::make_benchmark_suite_observation(faster),
+                                      flitzzip::cli::make_benchmark_suite_observation(balanced)};
+        REQUIRE_TRUE(observations[0].gpu_score > observations[1].gpu_score);
+        REQUIRE_TRUE(observations[0].compression_ratio > 0.0);
+        REQUIRE_EQ(flitzzip::cli::select_benchmark_suite_recommendation(observations, true), 1U);
+    }
+}
+
 // Purpose: Keep a fixed nondefault block-size sweep anchored to balanced compression, not its first weak level.
 // Inputs: Unit observations with fast level-one output twice as large as level five; no timing claim is made.
 // Outputs: Requires the fastest size-eligible case even when level one precedes the balanced observation.

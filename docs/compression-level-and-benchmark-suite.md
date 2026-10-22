@@ -388,9 +388,15 @@ round(((compress MiB/s * 0.50) + (verify MiB/s * 0.25) + (extract MiB/s * 0.25))
 Higher is better for the same workload size, profile, compression level, and
 hardware state. The score is not comparable across different profiles or
 compression levels unless the compression ratio is also analyzed.
-Every benchmark-suite record must also print the initial byte count and final
-encoded byte count. Optimization notes must use those byte counts plus the
-ratio; ratio-only summaries are incomplete evidence.
+Every benchmark-suite record prints the initial byte count, encoded payload
+bytes and complete native archive bytes, including its index and footer.
+`cpu_compression_ratio`, `gpu_compression_ratio` and the recommendation's
+`compression_ratio` use complete archive bytes divided by input bytes. The
+level-tuning size guard uses the same complete-container measurement; equal
+payloads can have different metadata costs at different block sizes.
+Optimization notes must use those byte counts plus the ratio; ratio-only
+summaries are incomplete evidence. Historical suite results that counted only
+payload bytes do not qualify the current complete-archive size guard.
 
 ## Autotuning Flow
 
