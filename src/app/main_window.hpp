@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/cpu_sampling.hpp"
+#include "app/pdh_percentage_sampler.hpp"
 #include "app/dropdown_layout.hpp"
 #include "app/folder_size_cache.hpp"
 #include "app/gdi_back_buffer.hpp"
@@ -1280,7 +1281,7 @@ class MainWindow {
     void update_performance_sample();
 
     // Purpose: Sample total system CPU use since the previous monitor tick.
-    // Inputs: None; reads cumulative system CPU counters.
+    // Inputs: None; reads Windows' processor-group-aware total CPU counter.
     // Outputs: Returns observed CPU use or no value while the counter baseline is unavailable.
     [[nodiscard]] std::optional<double> sample_system_cpu_percent();
 
@@ -1478,7 +1479,7 @@ class MainWindow {
     bool ole_initialized_ = false;
     QueueDropTarget* drop_target_ = nullptr;
     flitzzip::app::ProcessCpuSampler process_cpu_sampler_;
-    flitzzip::app::SystemCpuSampler system_cpu_sampler_;
+    flitzzip::app::PdhPercentageSampler<> system_cpu_sampler_{flitzzip::app::kSystemCpuCounterPath};
     std::uint64_t cached_vram_total_bytes_ = 0;
     std::uint64_t cached_vram_free_bytes_ = 0;
     std::optional<std::uint64_t> cached_gpu_adapter_luid_;

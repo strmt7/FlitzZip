@@ -3,12 +3,67 @@
 #include "app/performance_options.hpp"
 #include "app/performance_counters.hpp"
 #include "app/cpu_sampling.hpp"
+#include "app/pdh_percentage_sampler.hpp"
 #include "test_util.hpp"
 
 #include <memory>
 #include <limits>
 
 namespace {
+struct PdhFixtureState {
+    PDH_STATUS open_status = ERROR_SUCCESS;
+    PDH_STATUS add_status = ERROR_SUCCESS;
+    PDH_STATUS collect_status = ERROR_SUCCESS;
+    PDH_STATUS read_status = ERROR_SUCCESS;
+    DWORD sample_status = PDH_CSTATUS_VALID_DATA;
+    double value = 42.125;
+    bool null_query = false;
+    bool null_counter = false;
+    bool opened = false;
+    bool valid_ownership = true;
+    bool group_aware_total_path = false;
+    unsigned opens = 0;
+    unsigned closes = 0;
+    int query_token = 0;
+    int counter_token = 0;
+};
+
+struct PdhFixtureBackend {
+    PdhFixtureState* state;
+    // Purpose: Model complete/partial query acquisition. Inputs: Output handle. Outputs: Fixture status and owner.
+    PDH_STATUS open(PDH_HQUERY* query) noexcept {
+        ++state->opens;
+        *query = state->null_query ? nullptr : &state->query_token;
+        state->opened = *query != nullptr;
+        return state->open_status;
+    }
+    // Purpose: Model counter admission. Inputs: Query, exact path and output. Outputs: Fixture status and counter.
+    PDH_STATUS add(PDH_HQUERY query, const wchar_t* path, PDH_HCOUNTER* counter) noexcept {
+        state->valid_ownership &= state->opened && query == &state->query_token;
+        state->group_aware_total_path = std::wstring_view(path) == L"\\Processor Information(_Total)\\% Processor Time";
+        *counter = state->null_counter ? nullptr : &state->counter_token;
+        return state->add_status;
+    }
+    // Purpose: Model rate collection failure. Inputs: Query owner. Outputs: Configured native status.
+    PDH_STATUS collect(PDH_HQUERY query) noexcept {
+        state->valid_ownership &= state->opened && query == &state->query_token;
+        return state->collect_status;
+    }
+    // Purpose: Supply independent formatted data. Inputs: Counter and output. Outputs: Native status and sample.
+    PDH_STATUS read(PDH_HCOUNTER counter, PDH_FMT_COUNTERVALUE* value) noexcept {
+        state->valid_ownership &= state->opened && counter == &state->counter_token;
+        value->CStatus = state->sample_status;
+        value->doubleValue = state->value;
+        return state->read_status;
+    }
+    // Purpose: Detect leaks and double closes. Inputs: Query to release. Outputs: Tracked ownership and close count.
+    void close(PDH_HQUERY query) noexcept {
+        state->valid_ownership &= state->opened && query == &state->query_token;
+        state->opened = false;
+        ++state->closes;
+    }
+};
+
 // Purpose: Check numeric results with a relative rounding bound while preserving exact observed zero.
 // Inputs: Finite actual and independently calculated expected values.
 // Outputs: Fails for nonfinite values, nonzero idle readings or an error beyond eight rounding units.
@@ -30,6 +85,98 @@ void require_contained(const RECT& child, const RECT& parent) {
     REQUIRE_TRUE(child.top >= parent.top && child.bottom <= parent.bottom);
 }
 }  // namespace
+
+// Purpose: Qualify native query ownership at every acquisition and collection failure boundary.
+// Inputs: Failed/partial opens, absent handles, counter failures and collection failures through the real sampler.
+// Outputs: Each acquired query closes exactly once; no failed observation becomes a numeric CPU measurement.
+TEST_CASE(system_pdh_percentage_sampler_cleans_up_every_failed_acquisition) {
+    for (unsigned failure = 0; failure < 5; ++failure) {
+        PdhFixtureState state;
+        state.open_status = failure == 0 ? PDH_INVALID_ARGUMENT : ERROR_SUCCESS;
+        state.null_query = failure == 1;
+        state.add_status = failure == 2 ? PDH_CSTATUS_NO_COUNTER : ERROR_SUCCESS;
+        state.null_counter = failure == 3;
+        state.collect_status = failure == 4 ? PDH_INVALID_HANDLE : ERROR_SUCCESS;
+        {
+            flitzzip::app::PdhPercentageSampler<PdhFixtureBackend> sampler(flitzzip::app::kSystemCpuCounterPath,
+                                                                           PdhFixtureBackend{&state});
+            REQUIRE_TRUE(!sampler.sample());
+            REQUIRE_TRUE(!state.opened && state.valid_ownership);
+            REQUIRE_EQ(state.opens, 1U);
+            REQUIRE_EQ(state.closes, failure == 1 ? 0U : 1U);
+            sampler.reset();
+        }
+        REQUIRE_TRUE(!state.opened && state.valid_ownership);
+        REQUIRE_EQ(state.closes, failure == 1 ? 0U : 1U);
+    }
+}
+
+// Purpose: Preserve warmup, read errors and invalid data independently from real idle and ordinary fractional use.
+// Inputs: API/sample errors, finite percentage endpoints, nonfinite values and values outside the percentage range.
+// Outputs: Exact zero remains observed, other admitted rates match, and unavailable readings never become zero.
+TEST_CASE(system_pdh_percentage_sampler_preserves_data_quality_and_native_baselines) {
+    PdhFixtureState state;
+    {
+        flitzzip::app::PdhPercentageSampler<PdhFixtureBackend> sampler(flitzzip::app::kSystemCpuCounterPath,
+                                                                       PdhFixtureBackend{&state});
+        state.sample_status = PDH_CSTATUS_INVALID_DATA;
+        REQUIRE_TRUE(!sampler.sample());
+        REQUIRE_TRUE(state.opened && state.group_aware_total_path);
+        for (const DWORD status : {PDH_CSTATUS_NEW_DATA, PDH_CSTATUS_VALID_DATA}) {
+            state.sample_status = status;
+            for (const double expected : {0.0, 42.125, 100.0}) {
+                state.value = expected;
+                const auto value = sampler.sample();
+                REQUIRE_TRUE(value.has_value());
+                require_numeric_sample(*value, expected);
+            }
+        }
+        for (const double invalid :
+             {-0.01, 100.01, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(),
+              std::numeric_limits<double>::quiet_NaN()}) {
+            state.value = invalid;
+            REQUIRE_TRUE(!sampler.sample());
+        }
+        state.value = 42.125;
+        state.read_status = PDH_INVALID_HANDLE;
+        REQUIRE_TRUE(!sampler.sample());
+        state.read_status = ERROR_SUCCESS;
+        state.sample_status = PDH_CSTATUS_NO_INSTANCE;
+        REQUIRE_TRUE(!sampler.sample());
+        REQUIRE_EQ(state.opens, 1U);
+        REQUIRE_EQ(state.closes, 0U);
+    }
+    REQUIRE_TRUE(!state.opened && state.valid_ownership);
+    REQUIRE_EQ(state.closes, 1U);
+}
+
+// Purpose: Ensure collection failure resets the native rate baseline and subsequent recovery owns a new query.
+// Inputs: One observed value, failed collection, a new query's warmup and its later valid reading.
+// Outputs: Recovery never returns stale data; reset and destruction release each acquired query exactly once.
+TEST_CASE(system_pdh_percentage_sampler_reopens_after_collection_failure) {
+    PdhFixtureState state;
+    {
+        flitzzip::app::PdhPercentageSampler<PdhFixtureBackend> sampler(flitzzip::app::kSystemCpuCounterPath,
+                                                                       PdhFixtureBackend{&state});
+        REQUIRE_TRUE(sampler.sample().has_value());
+        state.collect_status = PDH_INVALID_HANDLE;
+        REQUIRE_TRUE(!sampler.sample());
+        REQUIRE_EQ(state.closes, 1U);
+        state.collect_status = ERROR_SUCCESS;
+        state.sample_status = PDH_CSTATUS_INVALID_DATA;
+        REQUIRE_TRUE(!sampler.sample());
+        REQUIRE_EQ(state.opens, 2U);
+        state.sample_status = PDH_CSTATUS_NEW_DATA;
+        const auto value = sampler.sample();
+        REQUIRE_TRUE(value.has_value());
+        require_numeric_sample(*value, 42.125);
+        sampler.reset();
+        sampler.reset();
+        REQUIRE_EQ(state.closes, 2U);
+    }
+    REQUIRE_TRUE(!state.opened && state.valid_ownership);
+    REQUIRE_EQ(state.closes, 2U);
+}
 
 // Purpose: Prevent failed process-counter reads from stretching CPU ticks across a shorter elapsed interval.
 // Inputs: Independent two-second/four-processor accounting, a missing read, observed idle and a counter restart.
@@ -80,39 +227,6 @@ TEST_CASE(system_process_cpu_sampling_validates_capacity_time_and_tick_extents) 
     const auto saturated = sampler.sample(CpuTimes{maximum, maximum}, start + std::chrono::seconds(4), 2U);
     REQUIRE_TRUE(saturated.has_value());
     require_numeric_sample(*saturated, 100.0);
-}
-
-// Purpose: Distinguish true system idle from missing, regressing or inconsistent CPU accounting.
-// Inputs: Kernel ticks include idle, user ticks add busy work; failures and unsigned limits exercise recovery.
-// Outputs: Independent busy/total ratios match, unavailable intervals leave gaps and summed ticks cannot wrap.
-TEST_CASE(system_total_cpu_sampling_validates_accounting_and_recovers_after_errors) {
-    using flitzzip::app::SystemCpuTimes;
-    flitzzip::app::SystemCpuSampler sampler;
-    REQUIRE_TRUE(!sampler.sample(SystemCpuTimes{{100U, 100U}, 80U}));
-    auto value = sampler.sample(SystemCpuTimes{{200U, 200U}, 130U});
-    REQUIRE_TRUE(value.has_value());
-    require_numeric_sample(*value, 75.0);
-    value = sampler.sample(SystemCpuTimes{{300U, 200U}, 230U});
-    REQUIRE_TRUE(value.has_value());
-    require_numeric_sample(*value, 0.0);
-    REQUIRE_TRUE(!sampler.sample(SystemCpuTimes{{300U, 200U}, 230U}));
-    REQUIRE_TRUE(!sampler.sample(std::nullopt));
-    REQUIRE_TRUE(!sampler.sample(SystemCpuTimes{{600U, 400U}, 300U}));
-    value = sampler.sample(SystemCpuTimes{{700U, 500U}, 400U});
-    REQUIRE_TRUE(value.has_value());
-    require_numeric_sample(*value, 50.0);
-    for (const auto invalid : std::array<SystemCpuTimes, 4>{
-             {{{699U, 500U}, 400U}, {{700U, 499U}, 400U}, {{700U, 500U}, 399U}, {{701U, 500U}, 402U}}}) {
-        flitzzip::app::SystemCpuSampler control;
-        REQUIRE_TRUE(!control.sample(SystemCpuTimes{{700U, 500U}, 400U}));
-        REQUIRE_TRUE(!control.sample(invalid));
-    }
-    const auto maximum = std::numeric_limits<std::uint64_t>::max();
-    flitzzip::app::SystemCpuSampler large;
-    REQUIRE_TRUE(!large.sample(SystemCpuTimes{{maximum - 100U, maximum - 100U}, maximum - 50U}));
-    value = large.sample(SystemCpuTimes{{maximum, maximum}, maximum});
-    REQUIRE_TRUE(value.has_value());
-    require_numeric_sample(*value, 75.0);
 }
 
 // Purpose: Distinguish an observed idle GPU from missing or invalid counters before graph rendering.

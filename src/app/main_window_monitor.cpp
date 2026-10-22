@@ -140,6 +140,7 @@ void MainWindow::initialize_performance_monitor() {
 // Inputs: None.
 // Outputs: Closes the PDH query and clears owned counter handles.
 void MainWindow::shutdown_performance_monitor() {
+    system_cpu_sampler_.reset();
     if (gpu_query_ != nullptr) {
         PdhCloseQuery(gpu_query_);
         gpu_query_ = nullptr;
@@ -212,17 +213,10 @@ std::optional<double> MainWindow::sample_process_cpu_percent(std::chrono::steady
 }
 
 // Purpose: Sample total system CPU use since the previous monitor tick.
-// Inputs: None; reads cumulative system kernel, user and idle counters.
-// Outputs: Returns observed busy percentage, or no value while the counter baseline is unavailable or invalid.
+// Inputs: None; reads Windows' processor-group-aware total CPU counter.
+// Outputs: Returns observed busy percentage, or no value while the native baseline is unavailable or invalid.
 std::optional<double> MainWindow::sample_system_cpu_percent() {
-    FILETIME idle_time{};
-    FILETIME kernel_time{};
-    FILETIME user_time{};
-    if (!GetSystemTimes(&idle_time, &kernel_time, &user_time)) {
-        return system_cpu_sampler_.sample(std::nullopt);
-    }
-    return system_cpu_sampler_.sample(
-        SystemCpuTimes{{filetime_ticks(kernel_time), filetime_ticks(user_time)}, filetime_ticks(idle_time)});
+    return system_cpu_sampler_.sample();
 }
 
 // Purpose: Sample Windows GPU dedicated memory assigned to the FlitzZip process.

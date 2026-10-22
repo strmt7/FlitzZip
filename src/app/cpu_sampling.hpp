@@ -13,11 +13,6 @@ struct CpuTimes {
     std::uint64_t user = 0;
 };
 
-struct SystemCpuTimes {
-    CpuTimes total;
-    std::uint64_t idle = 0;
-};
-
 class ProcessCpuSampler {
   public:
     // Purpose: Measure process CPU over the exact interval owned by two successful counter reads.
@@ -47,30 +42,6 @@ class ProcessCpuSampler {
         std::uint32_t processors;
     };
     std::optional<Baseline> baseline_;
-};
-
-class SystemCpuSampler {
-  public:
-    // Purpose: Derive system CPU use only from a valid pair of monotonic Windows counter snapshots.
-    // Inputs: Optional cumulative kernel/user/idle ticks; kernel ticks include idle time.
-    // Outputs: The observed busy percentage, or no value for missing, first, regressing or inconsistent data.
-    std::optional<double> sample(std::optional<SystemCpuTimes> current) noexcept {
-        const auto previous = std::exchange(baseline_, current);
-        if (!current || !previous || current->total.kernel < previous->total.kernel ||
-            current->total.user < previous->total.user || current->idle < previous->idle) {
-            return std::nullopt;
-        }
-        const double total = static_cast<double>(current->total.kernel - previous->total.kernel) +
-                             static_cast<double>(current->total.user - previous->total.user);
-        const double idle = static_cast<double>(current->idle - previous->idle);
-        if (total <= 0.0 || idle > total) {
-            return std::nullopt;
-        }
-        return ((total - idle) / total) * 100.0;
-    }
-
-  private:
-    std::optional<SystemCpuTimes> baseline_;
 };
 
 }  // namespace flitzzip::app
