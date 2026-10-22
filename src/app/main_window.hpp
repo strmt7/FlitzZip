@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/cpu_sampling.hpp"
 #include "app/dropdown_layout.hpp"
 #include "app/folder_size_cache.hpp"
 #include "app/gdi_back_buffer.hpp"
@@ -1279,14 +1280,14 @@ class MainWindow {
     void update_performance_sample();
 
     // Purpose: Sample total system CPU use since the previous monitor tick.
-    // Inputs: `elapsed_seconds` is the interval from the previous sample.
-    // Outputs: Returns logical-processor-normalized CPU percentage and updates previous system FILETIME state.
-    [[nodiscard]] double sample_system_cpu_percent(double elapsed_seconds);
+    // Inputs: None; reads cumulative system CPU counters.
+    // Outputs: Returns observed CPU use or no value while the counter baseline is unavailable.
+    [[nodiscard]] std::optional<double> sample_system_cpu_percent();
 
     // Purpose: Sample FlitzZip process CPU use since the previous monitor tick.
-    // Inputs: `elapsed_seconds` is the interval from the previous sample.
-    // Outputs: Returns total-system-capacity CPU percentage and updates previous process FILETIME state.
-    [[nodiscard]] double sample_process_cpu_percent(double elapsed_seconds);
+    // Inputs: `now` timestamps this process-counter read.
+    // Outputs: Returns capacity-normalized CPU use or no value while establishing or recovering its baseline.
+    [[nodiscard]] std::optional<double> sample_process_cpu_percent(std::chrono::steady_clock::time_point now);
 
     // Purpose: Sample total selected fixed-drive activity through Windows performance counters.
     // Inputs: `selected_drive_index` identifies the user-selected fixed-drive row.
@@ -1304,9 +1305,9 @@ class MainWindow {
     void refresh_gpu_memory_cache(std::chrono::steady_clock::time_point now);
 
     // Purpose: Publish a completed performance sample into current UI state and graph history.
-    // Inputs: `sample` is the counter set and `now` is the sample timestamp.
-    // Outputs: Updates visible performance state, ring-buffer graph history, and last-sample time.
-    void publish_performance_sample(const PerformanceMonitorSample& sample, std::chrono::steady_clock::time_point now);
+    // Inputs: `sample` is the counter set.
+    // Outputs: Updates visible performance state and ring-buffer graph history.
+    void publish_performance_sample(const PerformanceMonitorSample& sample);
 
     // Purpose: Sample total Windows GPU engine utilization when PDH exposes it.
     // Inputs: None; uses initialized PDH wildcard counters.
@@ -1398,7 +1399,6 @@ class MainWindow {
     std::chrono::steady_clock::time_point page_transition_start_{};
     std::chrono::steady_clock::time_point toggle_transition_start_{};
     std::chrono::steady_clock::time_point button_release_start_{};
-    std::chrono::steady_clock::time_point last_performance_sample_time_{};
     std::chrono::steady_clock::time_point last_gpu_memory_sample_time_{};
     ToggleId transition_toggle_ = ToggleId::None;
     bool transition_toggle_from_ = false;
@@ -1477,11 +1477,8 @@ class MainWindow {
     std::atomic_bool operation_cancel_requested_ = false;
     bool ole_initialized_ = false;
     QueueDropTarget* drop_target_ = nullptr;
-    FILETIME last_process_kernel_time_{};
-    FILETIME last_process_user_time_{};
-    FILETIME last_system_idle_time_{};
-    FILETIME last_system_kernel_time_{};
-    FILETIME last_system_user_time_{};
+    flitzzip::app::ProcessCpuSampler process_cpu_sampler_;
+    flitzzip::app::SystemCpuSampler system_cpu_sampler_;
     std::uint64_t cached_vram_total_bytes_ = 0;
     std::uint64_t cached_vram_free_bytes_ = 0;
     std::optional<std::uint64_t> cached_gpu_adapter_luid_;

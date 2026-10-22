@@ -925,7 +925,7 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
     };
     for (std::size_t i = 0; i < performance_history_count_; ++i) {
         const auto& item = sample_at(i);
-        cpu[i] = item.cpu_percent / 100.0;
+        cpu[i] = graph_percent_sample(item.cpu_percent);
         memory[i] = item.system_memory_percent / 100.0;
         io_busy[i] = graph_percent_sample(matching_drive_counter(item.io_busy_percent, item.io_drive, drive_name));
         gpu[i] = graph_percent_sample(item.gpu_utilization_percent, item.gpu_utilization_available);
@@ -954,10 +954,11 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
                            drives_available, drives_available);
             }
         } else if (i == 0) {
-            const auto detail = std::wstring(L"CPU used (total): ") + percentage_text(sample.cpu_percent) +
-                                L"\nCPU used (dedicated): " + percentage_text(sample.process_cpu_percent);
-            draw_performance_monitor_card(dc, card, L"CPU", percentage_text(sample.cpu_percent), detail, cpu_span,
-                                          kInfo, percent_top, zero_percent);
+            const auto total = sample.cpu_percent ? percentage_text(*sample.cpu_percent) : L"Unavailable";
+            const auto process =
+                sample.process_cpu_percent ? percentage_text(*sample.process_cpu_percent) : L"Unavailable";
+            const auto detail = std::wstring(L"CPU used (total): ") + total + L"\nCPU used (dedicated): " + process;
+            draw_performance_monitor_card(dc, card, L"CPU", total, detail, cpu_span, kInfo, percent_top, zero_percent);
         } else if (i == 1) {
             const bool has_vram = sample.vram_total_bytes > 0U;
             const auto used = sample.vram_total_bytes - sample.vram_free_bytes;
