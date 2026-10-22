@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -133,9 +134,10 @@ struct PerformanceMonitorSample {
     double process_cpu_percent = 0.0;
     double gpu_utilization_percent = 0.0;
     double system_memory_percent = 0.0;
-    double io_busy_percent = 0.0;
-    double io_read_bytes_per_second = 0.0;
-    double io_write_bytes_per_second = 0.0;
+    std::wstring io_drive;
+    std::optional<double> io_busy_percent;
+    std::optional<double> io_read_bytes_per_second;
+    std::optional<double> io_write_bytes_per_second;
     std::uint64_t private_bytes = 0;
     std::uint64_t system_memory_total_bytes = 0;
     std::uint64_t system_memory_used_bytes = 0;

@@ -4,6 +4,8 @@
 
 #include <array>
 #include <filesystem>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include <windows.h>
@@ -50,11 +52,12 @@ struct ExtractJobRequest {
     ArchivePathEncoding name_encoding = ArchivePathEncoding::Utf8;
 };
 
+// Independent selected-drive measurements; an absent counter is never an observed idle rate.
 struct ProcessIoRates {
-    bool available = false;
-    double busy_percent = 0.0;
-    double read_bytes_per_second = 0.0;
-    double write_bytes_per_second = 0.0;
+    std::wstring drive;
+    std::optional<double> busy_percent;
+    std::optional<double> read_bytes_per_second;
+    std::optional<double> write_bytes_per_second;
 };
 
 struct CompressLayout {

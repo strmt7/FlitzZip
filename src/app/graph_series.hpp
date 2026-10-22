@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <windows.h>
@@ -16,6 +17,12 @@ inline double graph_percent_sample(double percent, bool available) {
     return available && std::isfinite(percent) && percent >= 0.0 && percent <= 100.0
                ? percent / 100.0
                : std::numeric_limits<double>::quiet_NaN();
+}
+
+// Purpose: Preserve a typed optional percentage's availability at the graph boundary.
+// Inputs: One independently available percentage. Outputs: A normalized finite value or a timeline gap.
+inline double graph_percent_sample(std::optional<double> percent) {
+    return percent ? graph_percent_sample(*percent, true) : std::numeric_limits<double>::quiet_NaN();
 }
 
 // Purpose: Partition a history into drawable contiguous runs without dropping missing samples from its timeline.
