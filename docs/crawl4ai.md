@@ -9,7 +9,7 @@ SHA-256 digests in [the installation lock](../tools/requirements/crawl4ai.txt).
 The installed crawler is the explicitly identified `0.9.4+flitzzip.portable2`
 source build. It repairs the upstream HTTP download opener on Windows while
 preserving POSIX no-follow behavior; see [the repair and qualification](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/development/crawl4ai-portable-download-repair-2026-10-05.md).
-NLTK uses the maintainer-authorized official `v3.10.4-rc1` asset, with unchanged
+NLTK uses the unmodified official stable `v3.10.4` asset, with unchanged
 package version `3.10.4`, to address the model-artifact sandbox advisory. See
 [dependency remediation](security-reviews/dependency-risk-acceptance.md).
 

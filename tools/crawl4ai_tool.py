@@ -199,6 +199,7 @@ def verify_versions(python: Path, env: dict[str, str]) -> None:
     from tools import crawl4ai_source_build, nltk_distribution
 
     pins = dict(re.findall(r"^([\w-]+)==([^\s]+)", LOCK.read_text(encoding="utf-8"), re.M))
+    pins["nltk"] = nltk_distribution.distribution()["version"]
     script = (
         "import importlib.metadata,json,sys,hashlib; pins=json.loads(sys.argv[1]); "
         "bad=[n for n,v in pins.items() if importlib.metadata.version(n)!=v]; "

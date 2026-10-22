@@ -152,6 +152,7 @@ class CrawlerContracts(unittest.TestCase):
             argv = child.call_args.args[0]
             pins = json.loads(argv[3])
             self.assertEqual(pins["crawl4ai"], tool.VERSION)
+            self.assertEqual(pins["nltk"], "3.10.4")
             self.assertIn("importlib.metadata.version", argv[2])
             self.assertIn("crawl4ai/flitzzip_download.py", json.loads(argv[4]))
             self.assertIn("verify_installed_runtime(sys.argv[3])", argv[2])
@@ -387,6 +388,19 @@ class CrawlerContracts(unittest.TestCase):
         self.assertNotIn("sentence-transformers", versions)
         for name, version, hashes in entries:
             self.assertTrue(name and version and hashes)
+
+    def test_release_asset_pin_cannot_resolve_to_a_same_version_index_wheel(self):
+        """Purpose: Remove same-version artifact ambiguity without changing dependency resolution or hash enforcement.
+        Inputs: Canonical upstream record and the actual portable installation lock. Outputs: One exact URL/hash pin.
+        """
+        from tools import nltk_distribution
+
+        data = nltk_distribution.distribution()
+        text = tool.LOCK.read_text(encoding="utf-8")
+        selected = re.findall(r"^nltk @ (\S+) \\\n    --hash=sha256:([a-f0-9]{64})$", text, re.M)
+        self.assertEqual(selected, [(data["url"], data["sha256"])])
+        self.assertNotRegex(text, r"(?m)^nltk==")
+        self.assertEqual(re.findall(r"^[\w-]+ @", text, re.M), ["nltk @"])
 
     def test_documented_upstream_configuration(self):
         """Purpose: Reject custom engine patches. Inputs: Integration source. Outputs: Uses public upstream API."""

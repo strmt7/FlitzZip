@@ -1642,8 +1642,8 @@ multidict==6.9.1 \
     --hash=sha256:fd882aa29bf402b62bf1fd7c19fd5df4b6528cf468a908864b39368572b662a9
 networkx==3.7 \
     --hash=sha256:e3fd2c13a7814cee3746340d8d7f8598a67f16a58bf47fb7f8793fab6efca1b0
-nltk==3.10.4 \
-    --hash=sha256:7b81857ad9cdbfa6d04ceccdfd7a3379fbd2bf4b5368334bd8c9b0dacec48c30
+nltk @ https://github.com/nltk/nltk/releases/download/v3.10.4/nltk-3.10.4-py3-none-any.whl \
+    --hash=sha256:e46d89e59ef949270e3b19ab097da8dbb09350e05cb5a746ff92f6ccf6e8ce90
 numpy==2.5.3 \
     --hash=sha256:012e66aca395d795496446e52aeeb5866312a5d4d3f27da270e5a0b43f70dc5c \
     --hash=sha256:09d5a423c71ad5feb5625844ad58050e35df43871004b52ac9c0ad44a56775be \

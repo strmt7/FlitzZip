@@ -220,6 +220,18 @@ gate, never clean-scan evidence.
 
 ## Finding Triage
 
+The stable NLTK distribution's `sha256` is public integrity metadata for the
+unmodified official `v3.10.4` GitHub wheel. Its size and digest were recomputed
+from the downloaded asset; comparison with the same-version PyPI wheel found
+identical Python and license files, with differences only in metadata ordering
+and its corresponding wheel record. The six development-notice hashes were
+independently recomputed from their retained license files. Their values remain
+unchanged; the notice manifest now identifies the stable NLTK asset. Under the
+maintainer's authorization for individually proven false positives, the metadata
+ledger binds these seven DS173237 matches to the complete current manifests.
+Raw reports remain retained. Changed bytes or values expire each review; no
+source-code report or unmatched value is admitted by this metadata contract.
+
 The four `sha256`/`derived_sha256` values in the current Semgrep distribution
 manifest are public artifact integrity metadata, not authentication material.
 Both original wheels were checked against the pinned official distribution

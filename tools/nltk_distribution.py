@@ -15,7 +15,7 @@ from pathlib import Path
 from tools.python_wheel import MAX_SOURCE_BYTES, digest, read_recipe, wheel_files
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE_ROOT = ROOT / "third_party/upstream/nltk/3.10.4-rc1"
+SOURCE_ROOT = ROOT / "third_party/upstream/nltk/3.10.4"
 
 
 def distribution() -> dict:
