@@ -4,6 +4,33 @@ FlitzZip uses automatic GitHub security workflows adapted for a native Windows
 C++ app. The workflows are source-controlled, SHA-pinned where GitHub Actions
 are used, and default to read-only repository permissions.
 
+## Installed Scanner Dependencies
+
+Semgrep's reviewed local packaging revision is built from pinned upstream wheels;
+it is not published on PyPI. Dependabot's resolver cannot install that local
+version by itself and can retain an older dependency graph after a resolution
+failure. Its earlier OpenTelemetry alert therefore must be checked against both
+the current lock and the actual installed scanner environment.
+
+The existing security workflow now reports the complete normally resolved,
+hash-locked scanner environment through GitHub's
+[dependency submission API](https://docs.github.com/en/rest/dependency-graph/dependency-submission).
+It observes installed distribution metadata, checks every version against the
+canonical lock, and follows active platform and transitive-extra dependency
+edges. Every explicitly pinned package remains present, including the exact
+local Semgrep version. Scanner dependencies are labelled as development tools.
+No vulnerable package is removed from reporting or manually dismissed.
+
+A separate default-branch job receives only the immutable artifact from that
+workflow run. Before publication it validates the complete inventory, exact
+source/run identity, generator, lock and distribution recipe. Only that job has
+the `contents: write` permission required by GitHub's API; the scanner retains
+read-only contents access. An installation or admission failure prevents graph
+publication. A later SAST finding does not discard a successfully qualified graph.
+GitHub documents that [user-submitted snapshots take precedence](https://docs.github.com/en/rest/dependency-graph/dependency-submission)
+for the same manifest. Fresh hosted execution must establish actual submission
+and alert status; local contracts alone do not establish closure.
+
 ## Scanner Input Roles
 
 Folder names alone do not establish security relevance. Product code, tests,

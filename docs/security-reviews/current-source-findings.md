@@ -291,6 +291,24 @@ The value is the public SHA-256 digest of empty input, asserted against the prod
 
 `SzDecodePpmd` stores the caller stream only in its private `CPpmdWithInput` owner. All range decoding and callbacks finish synchronously; `Ppmd7_Free` and `ISzAlloc_Free` release the decoder and bridge before returning. Neither pointer is returned or registered with a worker. The existing PPMd tests independently check callback ownership, both allocation failures, I/O errors, truncation and null empty output. The separate empty-output pointer-arithmetic defect was repaired in f6014cb and remains covered by its regression.
 
+## Installed scanner graph context
+
+The security workflow now separates its unchanged Semgrep scan command from
+installation qualification and submits the verified installed development graph
+through GitHub's supported API. The scan flags, rules, source inventory, pinned
+detectors, CodeQL CPU/HIP jobs, DevSkim invocation and SARIF publication remain
+unchanged. The added publisher has its own scoped write permission; the scanner
+does not acquire contents-write access. Snapshot admission cannot filter or
+dispose of source findings.
+
+The complete workflow diff and each affected review context were checked against
+the preceding committed bytes. Contexts are renewed only where the full reviewed
+source and every other bound caller, regression and configuration still match.
+Already stale records remain stale. This reporting change alters none of the
+individual extent, lifetime, test-vector or staged-inclusion rationales below.
+Fresh preflight and hosted analysis retain every original report and remain
+required; the renewed context alone does not establish their acceptance.
+
 ## SBOM action context renewal
 
 The reviewed Actions update changes only the SPDX SBOM action from 0.24.2 to
