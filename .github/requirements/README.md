@@ -75,8 +75,8 @@ failure as evidence that the Linux dependency graph is broken.
 
 The current [Semgrep artifact manifest](semgrep-distribution.json) identifies
 the exact upstream wheels, downstream distribution version and narrowly
-authorized MCP requirement change. The builder preserves scanner source,
-executables, every other requirement and original notices. This packaging
+authorized MCP and OpenTelemetry requirement changes. The builder preserves scanner source,
+executables, unrelated requirements and original notices. This packaging
 revision is not an official Semgrep release. Its provenance and rationale
 remain in [the scanning guide](../../docs/security-code-scanning.md#scanner-dependency-remediation).
 

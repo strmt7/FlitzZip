@@ -38,7 +38,7 @@ def recipe() -> dict:
         or type(data.get("schema")) is not int
         or data["schema"] != 1
         or data.get("upstream_version") != "1.181.0"
-        or data.get("version") != "1.181.0+flitzzip.mcp1"
+        or data.get("version") != "1.181.0+flitzzip.security2"
         or data.get("mcp_before") != "1.29.0"
         or data.get("mcp_after") != "1.30.0"
         or data.get("advisory")
@@ -160,8 +160,8 @@ def validate_record(files: dict[str, tuple[bytes, int]], record_name: str) -> No
 
 
 def derive_wheel(contents: bytes, data: dict) -> bytes:
-    """Purpose: Change only the distribution identity and MCP requirement. Inputs: Original wheel and recipe.
-    Outputs: Reproducible wheel; scanner code, executables, other requirements and notices remain byte-exact.
+    """Purpose: Apply the exact reviewed MCP/OpenTelemetry requirement changes. Inputs: Original wheel and recipe.
+    Outputs: Reproducible wheel; scanner code, executables, unrelated requirements and notices remain byte-exact.
     """
     files = read_wheel(contents)
     old_info = f"semgrep-{data['upstream_version']}.dist-info/"
@@ -175,6 +175,20 @@ def derive_wheel(contents: bytes, data: dict) -> bytes:
     for before, after in (
         (f"Version: {data['upstream_version']}{newline}", f"Version: {data['version']}{newline}"),
         (f"Requires-Dist: mcp=={data['mcp_before']}{newline}", f"Requires-Dist: mcp=={data['mcp_after']}{newline}"),
+        (f"Requires-Dist: opentelemetry-api~=1.37.0{newline}", f"Requires-Dist: opentelemetry-api==1.45.1{newline}"),
+        (f"Requires-Dist: opentelemetry-sdk~=1.37.0{newline}", f"Requires-Dist: opentelemetry-sdk==1.45.1{newline}"),
+        (
+            f"Requires-Dist: opentelemetry-exporter-otlp-proto-http~=1.37.0{newline}",
+            f"Requires-Dist: opentelemetry-exporter-otlp-proto-http==1.45.1{newline}",
+        ),
+        (
+            f"Requires-Dist: opentelemetry-instrumentation-requests~=0.58b0{newline}",
+            f"Requires-Dist: opentelemetry-instrumentation-requests==0.66b1{newline}",
+        ),
+        (
+            f"Requires-Dist: opentelemetry-instrumentation-threading~=0.58b0{newline}",
+            f"Requires-Dist: opentelemetry-instrumentation-threading==0.66b1{newline}",
+        ),
     ):
         if metadata.count(before.encode()) != 1:
             raise ValueError("Semgrep metadata patch does not match exactly once")
