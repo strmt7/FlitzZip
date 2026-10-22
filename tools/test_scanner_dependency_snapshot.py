@@ -3,6 +3,7 @@
 import copy
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -66,6 +67,8 @@ class SnapshotTests(unittest.TestCase):
             ("ref", "refs/heads/other"),
             ("version", False),
             ("scanned", "2026-02-31T00:00:00Z"),
+            ("scanned", None),
+            ("scanned", "2026-10-22"),
             ("manifests", {}),
         ):
             with self.subTest(key=key), self.assertRaises(ValueError):
@@ -153,6 +156,27 @@ class SnapshotTests(unittest.TestCase):
         )
         self.assertEqual(publisher.count("GH_TOKEN:"), 1)
         self.assertLess(publisher.index("- name: Submit the actual installed graph"), publisher.index("GH_TOKEN:"))
+
+    def test_module_entry_point_propagates_admission_failure(self):
+        """Purpose: Verify real process exit status, rather than only an imported function's exception.
+        Inputs: Complete snapshot followed by a stale version. Outputs: Success only for the admitted document.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "snapshot.json"
+            for version, expected in ((0, 0), (1, 1)):
+                path.write_text(json.dumps(self.snapshot | {"version": version}), encoding="utf-8")
+                result = subprocess.run(
+                    [sys.executable, "-B", "-m", "tools.scanner_dependency_snapshot", "validate", str(path)],
+                    env=os.environ | self.environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+                with self.subTest(version=version):
+                    self.assertEqual(result.returncode, expected, result.stderr)
+                    if expected:
+                        self.assertIn("source, recipe or run changed", result.stderr)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,18 @@ from tools.test_semgrep_runtime import REQUIREMENTS, pinned_version
 
 
 class InstallationTests(unittest.TestCase):
+    def test_lock_cannot_bypass_the_canonical_policy_with_an_alternate_option_layout(self):
+        """Purpose: Retain strict installation policy when another valid pip spelling is encountered.
+        Inputs: Equivalent-looking reordered/combined options and a complete hash pin. Outputs: Explicit refusal.
+        """
+        package = "example==1.2.3 --hash=sha256:" + ("a" * 64)
+        for options in (
+            "--only-binary :all: --index-url https://pypi.org/simple ",
+            "--index-url https://pypi.org/simple --only-binary=:all: ",
+        ):
+            with self.subTest(options=options), self.assertRaisesRegex(ValueError, "canonical installation policy"):
+                validate_locked_packages(options + package)
+
     # Purpose: Keep every active certifi tooling lane above the compromised emSign trust-store range.
     # Inputs: Both Linux resolver inputs and all three installed dependency locks, including the crawler.
     # Outputs: Exact locks meet the advisory floor and both reusable Linux inputs retain that floor for refreshes.

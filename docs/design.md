@@ -163,6 +163,10 @@ child invalidates the total instead of silently displaying a smaller partial siz
 Cancellation, entry/depth/time limits and metadata-query failures also display `--`.
 The traversal is shared with direct tests using real access-denied directories and
 junctions; the owning background worker contains exceptions from optional metadata work.
+Cache lookup, completed-result publication and invalidation borrow existing native
+path strings and do not allocate. This preserves the nonthrowing worker callback
+boundary under allocation failure. New entries still acquire their owned storage
+before admission, with rollback when insertion fails.
 
 ## Performance Monitor Contract
 

@@ -171,6 +171,12 @@ Controlled container-allocation failures also verify that source handles already
 have RAII owners before insertion, so unwinding closes the new handle without
 releasing previously retained locks.
 
+Folder-cache regressions calibrate real CRT allocation refusal on the current
+thread in MSVC Debug builds, without exhausting host memory. They require long-key
+lookup, completion, invalidation and duplicate admission to use existing storage.
+The preceding CRT hook is restored before assertions; Release runs retain the
+same state-transition assertions without claiming that Debug failure control.
+
 Native index I/O tests use independently packed wire bytes across every readable
 version. Forward-only streams exercise every truncation boundary without relying
 on seek-based size checks. Partial-seek fixtures also reject lost positions and
