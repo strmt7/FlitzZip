@@ -1,4 +1,5 @@
 #include "app/system_layout.hpp"
+#include "app/graph_series.hpp"
 #include "app/performance_options.hpp"
 #include "test_util.hpp"
 
@@ -14,6 +15,82 @@ void require_contained(const RECT& child, const RECT& parent) {
     REQUIRE_TRUE(child.top >= parent.top && child.bottom <= parent.bottom);
 }
 }  // namespace
+
+// Purpose: Distinguish an observed idle GPU from missing or invalid counters before graph rendering.
+// Inputs: Valid endpoints, ordinary utilization, unavailable values and nonfinite/out-of-range counters.
+// Outputs: Keeps actual zero at zero and represents every unavailable or invalid value as a gap.
+TEST_CASE(system_graph_percentages_preserve_missing_measurements) {
+    using flitzzip::app::graph_percent_sample;
+    REQUIRE_EQ(graph_percent_sample(0.0, true), 0.0);
+    REQUIRE_EQ(graph_percent_sample(50.0, true), 0.5);
+    REQUIRE_EQ(graph_percent_sample(100.0, true), 1.0);
+    for (const double value : {0.0, 50.0, 100.0}) {
+        REQUIRE_TRUE(std::isnan(graph_percent_sample(value, false)));
+    }
+    for (const double invalid : {-0.001, 100.001, std::numeric_limits<double>::quiet_NaN(),
+                                 std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()}) {
+        REQUIRE_TRUE(std::isnan(graph_percent_sample(invalid, true)));
+        REQUIRE_TRUE(std::isnan(graph_percent_sample(invalid, false)));
+    }
+}
+
+// Purpose: Prevent graph lines and filled areas from crossing missing intervals or shifting later observations.
+// Inputs: Empty, entirely missing, finite and mixed histories; missing samples occur at both ends and internally.
+// Outputs: Requires exact contiguous original-index runs, including isolated observed zeroes.
+TEST_CASE(system_graph_segments_preserve_gaps_and_original_indices) {
+    const double missing = std::numeric_limits<double>::quiet_NaN();
+    const double infinite = std::numeric_limits<double>::infinity();
+    using Runs = std::vector<std::pair<std::size_t, std::size_t>>;
+    // Purpose: Collect production segment selection. Inputs: A history. Outputs: Its original first/count runs.
+    const auto segments = [](std::span<const double> values) {
+        Runs runs;
+        // Purpose: Retain selected geometry. Inputs: Original first/count. Outputs: Appends a test observation.
+        flitzzip::app::for_each_graph_segment(
+            values, [&](std::size_t first, std::size_t count) { runs.emplace_back(first, count); });
+        return runs;
+    };
+    REQUIRE_TRUE(segments({}).empty());
+    REQUIRE_TRUE(segments(std::array{missing, infinite, -infinite}).empty());
+    REQUIRE_EQ(segments(std::array{0.0, 0.5, 1.0}), (Runs{{0U, 3U}}));
+    REQUIRE_EQ(segments(std::array{missing, 0.0, missing, 0.5, 1.0, infinite, 0.0, missing}),
+               (Runs{{1U, 1U}, {3U, 2U}, {6U, 1U}}));
+}
+
+// Purpose: Preserve graph history capacity, right alignment and sample spacing when missing samples split a line.
+// Inputs: A 96-pixel plot, short/full/long histories and invalid indices or collapsed geometry.
+// Outputs: Requires independently calculated integer pixel coordinates and explicit rejection of invalid calls.
+TEST_CASE(system_graph_sample_positions_preserve_the_existing_timeline) {
+    using flitzzip::app::graph_sample_x;
+    const RECT plot{100, 0, 196, 101};
+    REQUIRE_EQ(graph_sample_x(plot, 1U, 0U), 195);
+    for (std::size_t index = 0U; index < 3U; ++index) {
+        REQUIRE_EQ(graph_sample_x(plot, 3U, index), 193 + static_cast<int>(index));
+    }
+    for (std::size_t index = 0U; index < 96U; ++index) {
+        REQUIRE_EQ(graph_sample_x(plot, 96U, index), 100 + static_cast<int>(index));
+    }
+    for (std::size_t index = 0U; index < 128U; ++index) {
+        const auto expected = 100U + (190U * index + 127U) / 254U;
+        REQUIRE_EQ(graph_sample_x(plot, 128U, index), static_cast<int>(expected));
+    }
+    for (const auto [count, index] :
+         std::array<std::pair<std::size_t, std::size_t>, 3>{{{0U, 0U}, {1U, 1U}, {3U, 4U}}}) {
+        bool rejected = false;
+        try {
+            (void)graph_sample_x(plot, count, index);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+    bool collapsed_rejected = false;
+    try {
+        (void)graph_sample_x(RECT{100, 0, 100, 101}, 1U, 0U);
+    } catch (const std::invalid_argument&) {
+        collapsed_rejected = true;
+    }
+    REQUIRE_TRUE(collapsed_rejected);
+}
 
 // Purpose: Prevent a refreshed drive count from indexing an earlier inventory after a host drive change.
 // Inputs: Independently captured empty, one-drive and two-drive inventories, with forward/backward selections.

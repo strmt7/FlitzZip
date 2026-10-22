@@ -86,6 +86,9 @@ wheel scrolling and arrow bands; keyboard navigation reveals its selected row.
 Every create-format option remains selectable. Metric cards measure wrapped
 detail text with the selected native font before reserving graph space; sample
 counts, timing, and graph-series positioning logic are unchanged.
+Unavailable or nonfinite counter samples leave gaps in the plotted series.
+Their original timeline positions remain reserved, so a missing measurement
+cannot appear as observed zero utilization or connect unrelated observations.
 
 GUI smoke captures all eight pages at both the normal 1200-by-760-DIP client
 size and a programmatically resized 960-by-600-DIP test size at the host's
