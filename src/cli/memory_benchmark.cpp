@@ -450,17 +450,16 @@ BenchmarkSuiteCase run_benchmark_suite_case(const BenchmarkSuiteOptions& options
     const auto cpu_total = cpu.compress_seconds + cpu.verify_seconds + cpu.extract_seconds;
     const auto gpu_total = gpu.compress_seconds + gpu.verify_seconds + gpu.extract_seconds;
     const auto cpu_score = benchmark_score(cpu);
-    const auto gpu_score = benchmark_score(gpu);
-    const auto ratio = compression_ratio(gpu.stats.input_bytes, gpu.stats.output_bytes);
+    const auto observation = make_benchmark_suite_observation(gpu);
     return BenchmarkSuiteCase{
         .compression_level = level,
         .block_size = block_size,
         .cpu = std::move(cpu),
         .gpu = std::move(gpu),
         .cpu_score = cpu_score,
-        .gpu_score = gpu_score,
+        .gpu_score = observation.gpu_score,
         .speedup = gpu_total > 0.0 ? cpu_total / gpu_total : 0.0,
-        .compression_ratio = ratio,
+        .compression_ratio = observation.compression_ratio,
     };
 }
 
@@ -468,32 +467,30 @@ BenchmarkSuiteCase run_benchmark_suite_case(const BenchmarkSuiteOptions& options
 // Inputs: `candidate` is the completed CPU/GPU benchmark pair.
 // Outputs: Writes a single parseable `suite_case` line to stdout.
 void print_benchmark_suite_case(const BenchmarkSuiteCase& candidate) {
-    std::cout << "suite_case"
-              << " compression_level=" << candidate.compression_level
-              << " block_size_kib=" << (candidate.block_size / 1024U) << " cpu_score=" << candidate.cpu_score
-              << " gpu_score=" << candidate.gpu_score << " speedup_vs_cpu=" << candidate.speedup
-              << " cpu_input_bytes=" << candidate.cpu.stats.input_bytes
-              << " cpu_output_bytes=" << candidate.cpu.stats.output_bytes
-              << " gpu_input_bytes=" << candidate.gpu.stats.input_bytes
-              << " gpu_output_bytes=" << candidate.gpu.stats.output_bytes << " cpu_compression_ratio="
-              << compression_ratio(candidate.cpu.stats.input_bytes, candidate.cpu.stats.output_bytes)
-              << " gpu_compression_ratio="
-              << compression_ratio(candidate.gpu.stats.input_bytes, candidate.gpu.stats.output_bytes)
-              << " compression_ratio=" << candidate.compression_ratio << " cpu_compress_mib_s="
-              << mib_per_second(candidate.cpu.stats.input_bytes, candidate.cpu.compress_seconds)
-              << " gpu_compress_mib_s="
-              << mib_per_second(candidate.gpu.stats.input_bytes, candidate.gpu.compress_seconds)
-              << " gpu_encode_chunks=" << candidate.gpu.stats.gpu_runtime.encode_chunks
-              << " gpu_decode_chunks=" << candidate.gpu.stats.gpu_runtime.decode_chunks
-              << " gpu_kernel_launches=" << candidate.gpu.stats.gpu_runtime.kernel_launches
-              << " gpu_kernel_ms=" << candidate.gpu.stats.gpu_runtime.kernel_ms
-              << " gpu_pattern_blocks=" << candidate.gpu.stats.gpu_runtime.pattern_blocks
-              << " gpu_prefix_blocks=" << candidate.gpu.stats.gpu_runtime.prefix_blocks
-              << " gpu_dictionary_blocks=" << candidate.gpu.stats.gpu_runtime.dictionary_blocks
-              << " gpu_sparse_pattern_blocks=" << candidate.gpu.stats.gpu_runtime.sparse_pattern_blocks
-              << " memory_only=true"
-              << " disk_write_bytes=0"
-              << "\n";
+    std::cout
+        << "suite_case"
+        << " compression_level=" << candidate.compression_level << " block_size_kib=" << (candidate.block_size / 1024U)
+        << " cpu_score=" << candidate.cpu_score << " gpu_score=" << candidate.gpu_score
+        << " speedup_vs_cpu=" << candidate.speedup << " cpu_input_bytes=" << candidate.cpu.stats.input_bytes
+        << " cpu_output_bytes=" << candidate.cpu.stats.output_bytes
+        << " gpu_input_bytes=" << candidate.gpu.stats.input_bytes
+        << " gpu_output_bytes=" << candidate.gpu.stats.output_bytes
+        << " cpu_archive_bytes=" << candidate.cpu.archive_bytes << " gpu_archive_bytes=" << candidate.gpu.archive_bytes
+        << " cpu_compression_ratio=" << compression_ratio(candidate.cpu.stats.input_bytes, candidate.cpu.archive_bytes)
+        << " gpu_compression_ratio=" << compression_ratio(candidate.gpu.stats.input_bytes, candidate.gpu.archive_bytes)
+        << " compression_ratio=" << candidate.compression_ratio
+        << " cpu_compress_mib_s=" << mib_per_second(candidate.cpu.stats.input_bytes, candidate.cpu.compress_seconds)
+        << " gpu_compress_mib_s=" << mib_per_second(candidate.gpu.stats.input_bytes, candidate.gpu.compress_seconds)
+        << " gpu_encode_chunks=" << candidate.gpu.stats.gpu_runtime.encode_chunks
+        << " gpu_decode_chunks=" << candidate.gpu.stats.gpu_runtime.decode_chunks
+        << " gpu_kernel_launches=" << candidate.gpu.stats.gpu_runtime.kernel_launches
+        << " gpu_kernel_ms=" << candidate.gpu.stats.gpu_runtime.kernel_ms
+        << " gpu_pattern_blocks=" << candidate.gpu.stats.gpu_runtime.pattern_blocks
+        << " gpu_prefix_blocks=" << candidate.gpu.stats.gpu_runtime.prefix_blocks
+        << " gpu_dictionary_blocks=" << candidate.gpu.stats.gpu_runtime.dictionary_blocks
+        << " gpu_sparse_pattern_blocks=" << candidate.gpu.stats.gpu_runtime.sparse_pattern_blocks << " memory_only=true"
+        << " disk_write_bytes=0"
+        << "\n";
 }
 
 // Purpose: Select the best autotune candidate without silently degrading compression below the balanced baseline.
@@ -573,6 +570,14 @@ std::string validate_memory_benchmark_source_identity(const MemoryBenchmarkOptio
 }
 
 }  // namespace
+
+// Purpose: Project measured throughput and native container size through the shared recommendation boundary.
+// Inputs: A completed memory benchmark result, including its serialized index/footer size.
+// Outputs: Returns score/geometry and archive/input ratio without changing the original measurement.
+BenchmarkSuiteObservation make_benchmark_suite_observation(const MemoryBenchmarkResult& result) {
+    return {result.compression_level, result.block_size, benchmark_score(result),
+            compression_ratio(result.stats.input_bytes, result.archive_bytes)};
+}
 
 // Purpose: Share exact, snapshot-admitted geometry between preflight and measured execution.
 // Inputs: options contains validated workload settings and optional exact encode/decode queue depths.
@@ -864,6 +869,7 @@ void run_benchmark_suite(const BenchmarkSuiteOptions& options) {
               << " block_size_kib=" << (recommendation.block_size / 1024U) << " gpu_score=" << recommendation.gpu_score
               << " speedup_vs_cpu=" << recommendation.speedup << " input_bytes=" << recommendation.gpu.stats.input_bytes
               << " output_bytes=" << recommendation.gpu.stats.output_bytes
+              << " archive_bytes=" << recommendation.gpu.archive_bytes
               << " compression_ratio=" << recommendation.compression_ratio
               << " gpu_pattern_blocks=" << recommendation.gpu.stats.gpu_runtime.pattern_blocks
               << " gpu_prefix_blocks=" << recommendation.gpu.stats.gpu_runtime.prefix_blocks
