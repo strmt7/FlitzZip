@@ -8,6 +8,19 @@
 #include <limits>
 
 namespace {
+// Purpose: Check numeric results with a relative rounding bound while preserving exact observed zero.
+// Inputs: Finite actual and independently calculated expected values.
+// Outputs: Fails for nonfinite values, nonzero idle readings or an error beyond eight rounding units.
+void require_numeric_sample(double actual, double expected) {
+    REQUIRE_TRUE(std::isfinite(actual) && std::isfinite(expected));
+    if (std::fpclassify(expected) == FP_ZERO) {
+        REQUIRE_EQ(std::fpclassify(actual), FP_ZERO);
+    } else {
+        const double tolerance = 8.0 * std::numeric_limits<double>::epsilon() * std::abs(expected);
+        REQUIRE_TRUE(std::abs(actual - expected) <= tolerance);
+    }
+}
+
 // Purpose: Assert usable contained geometry; inputs: child/parent rectangles; outputs: fails invalid dimensions.
 void require_contained(const RECT& child, const RECT& parent) {
     REQUIRE_TRUE(child.right > child.left);
@@ -22,11 +35,17 @@ void require_contained(const RECT& child, const RECT& parent) {
 // Outputs: Keeps actual zero at zero and represents every unavailable or invalid value as a gap.
 TEST_CASE(system_graph_percentages_preserve_missing_measurements) {
     using flitzzip::app::graph_percent_sample;
-    REQUIRE_EQ(graph_percent_sample(0.0, true), 0.0);
-    REQUIRE_EQ(graph_percent_sample(50.0, true), 0.5);
-    REQUIRE_EQ(graph_percent_sample(100.0, true), 1.0);
-    REQUIRE_EQ(graph_percent_sample(std::optional<double>{0.0}), 0.0);
-    REQUIRE_EQ(graph_percent_sample(std::optional<double>{50.0}), 0.5);
+    require_numeric_sample(graph_percent_sample(0.0, true), 0.0);
+    require_numeric_sample(graph_percent_sample(50.0, true), 0.5);
+    require_numeric_sample(graph_percent_sample(100.0, true), 1.0);
+    require_numeric_sample(graph_percent_sample(std::optional<double>{0.0}), 0.0);
+    require_numeric_sample(graph_percent_sample(std::optional<double>{50.0}), 0.5);
+    for (int tenth_percent = 0; tenth_percent <= 1000; ++tenth_percent) {
+        const double percent = static_cast<double>(tenth_percent) / 10.0;
+        const double expected = static_cast<double>(tenth_percent) / 1000.0;
+        require_numeric_sample(graph_percent_sample(percent, true), expected);
+        require_numeric_sample(graph_percent_sample(std::optional<double>{percent}), expected);
+    }
     REQUIRE_TRUE(std::isnan(graph_percent_sample(std::nullopt)));
     for (const double value : {0.0, 50.0, 100.0}) {
         REQUIRE_TRUE(std::isnan(graph_percent_sample(value, false)));
@@ -47,7 +66,7 @@ TEST_CASE(system_performance_counters_preserve_independent_availability) {
         for (const double value : {0.0, 42.0, 1024.0}) {
             const auto sample = admitted_pdh_counter(ERROR_SUCCESS, status, value);
             REQUIRE_TRUE(sample.has_value());
-            REQUIRE_EQ(*sample, value);
+            require_numeric_sample(*sample, value);
         }
         for (const double invalid :
              {-1.0, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
