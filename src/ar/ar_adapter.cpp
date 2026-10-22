@@ -41,6 +41,14 @@ struct ArEntryMetadata {
     std::uint64_t payload_offset = 0;
 };
 
+// Purpose: Separate consumed name framing from the optional extractable member.
+// Inputs: The parser owns decoded path bytes and the exact raw BSD name extent.
+// Outputs: Lets metadata remain nonextracting without changing the next member's byte alignment.
+struct ArParsedMember {
+    std::optional<ArEntryMetadata> entry;
+    std::uint64_t name_bytes = 0;
+};
+
 struct ArScanResult {
     std::vector<ArEntryMetadata> entries;
     std::uint64_t total_file_bytes = 0;
@@ -222,11 +230,11 @@ void copy_file_to_ar(const std::filesystem::path& source, std::ostream& output, 
     }
 }
 
-// Purpose: Return whether an AR member name is archive metadata rather than an extractable file.
-// Inputs: `raw_name` is the header name after trimming spaces.
-// Outputs: Returns true for symbol tables and GNU/BSD metadata members.
-bool is_metadata_member(std::string_view raw_name) {
-    return raw_name == "/" || raw_name == "/SYM64/" || raw_name == "__.SYMDEF" || raw_name == "__.SYMDEF SORTED";
+// Purpose: Identify BSD/Darwin index names without confusing them with GNU header markers or ordinary members.
+// Inputs: `name` is a resolved name; the caller separately proves a leading-member position.
+// Outputs: Returns true for the four supported BSD/Darwin symbol-table names.
+bool is_bsd_symbol_table_name(std::string_view name) {
+    return name == "__.SYMDEF" || name == "__.SYMDEF SORTED" || name == "__.SYMDEF_64" || name == "__.SYMDEF_64 SORTED";
 }
 
 // Purpose: Parse an unsigned decimal suffix after a prefix.
@@ -284,19 +292,21 @@ std::string resolve_gnu_long_name(const std::string& string_table, std::uint64_t
 
 // Purpose: Parse one AR member name and adjust payload metadata for BSD long names.
 // Inputs: `input` is positioned after the fixed header, `raw` is the parsed header, and `string_table` contains
-// optional GNU long names. Outputs: Returns an archive path and payload size/offset, or empty when the member is
-// metadata.
-std::optional<ArEntryMetadata> parse_member_name_and_payload(std::ifstream& input, const ArRawHeader& raw,
-                                                             const std::string& string_table) {
+// optional GNU long names; `leading` identifies the first physical member. Outputs: Returns an optional file
+// and its separately consumed name extent; metadata
+// never becomes an extraction path, and only terminal BSD NUL padding is removed from the name.
+ArParsedMember parse_member_name_and_payload(std::ifstream& input, const ArRawHeader& raw,
+                                             const std::string& string_table, bool leading) {
     const auto payload_start_pos = input.tellg();
     if (payload_start_pos == std::istream::pos_type(-1)) {
         throw ArchiveError("failed to read AR payload offset");
     }
     auto payload_offset = static_cast<std::uint64_t>(payload_start_pos);
     auto payload_size = raw.size;
+    std::uint64_t name_bytes = 0;
 
-    if (raw.name == "//" || is_metadata_member(raw.name)) {
-        return std::nullopt;
+    if (raw.name == "/" || raw.name == "/SYM64/") {
+        return {};
     }
 
     std::string path;
@@ -309,6 +319,10 @@ std::optional<ArEntryMetadata> parse_member_name_and_payload(std::ifstream& inpu
         read_exact(input, name.data(), name.size(), "AR BSD long name");
         payload_offset = checked_add_ar_bytes(payload_offset, name_size, "AR BSD payload offset overflow");
         payload_size -= name_size;
+        name_bytes = name_size;
+        while (!name.empty() && name.back() == '\0') {
+            name.pop_back();
+        }
         path = std::move(name);
     } else if (raw.name.starts_with("/") && raw.name.size() > 1U) {
         const auto offset = parse_prefixed_decimal(raw.name, "/", "GNU long-name offset");
@@ -323,11 +337,16 @@ std::optional<ArEntryMetadata> parse_member_name_and_payload(std::ifstream& inpu
     if (path.empty()) {
         throw ArchiveError("AR member name is empty");
     }
-    return ArEntryMetadata{
-        .path = std::move(path),
-        .size = payload_size,
-        .payload_offset = payload_offset,
-    };
+    if (leading && is_bsd_symbol_table_name(path)) {
+        return {.entry = std::nullopt, .name_bytes = name_bytes};
+    }
+    return {.entry =
+                ArEntryMetadata{
+                    .path = std::move(path),
+                    .size = payload_size,
+                    .payload_offset = payload_offset,
+                },
+            .name_bytes = name_bytes};
 }
 
 // Purpose: Read a bounded GNU string-table member.
@@ -363,10 +382,12 @@ ArScanResult scan_ar(const std::filesystem::path& archive_path, ArchivePathEncod
     ArScanResult result;
     std::string string_table;
     std::vector<ArchivePathValidationEntry> validation_entries;
+    std::uint32_t member_count = 0;
     while (input.peek() != std::char_traits<char>::eof()) {
-        if (result.entries.size() >= kMaxArchiveEntries) {
-            throw ArchiveError("AR archive contains too many entries");
+        if (member_count >= kMaxArchiveEntries) {
+            throw ArchiveError("AR archive contains too many members");
         }
+        ++member_count;
         const auto raw = read_ar_header(input);
         const auto member_start_pos = input.tellg();
         if (member_start_pos == std::istream::pos_type(-1)) {
@@ -376,9 +397,9 @@ ArScanResult scan_ar(const std::filesystem::path& archive_path, ArchivePathEncod
         if (raw.name == "//") {
             string_table = read_string_table(input, raw.size);
         } else {
-            auto entry = parse_member_name_and_payload(input, raw, string_table);
-            const auto consumed =
-                entry.has_value() && raw.name.starts_with("#1/") ? static_cast<std::uint64_t>(entry->path.size()) : 0U;
+            auto parsed = parse_member_name_and_payload(input, raw, string_table, member_count == 1U);
+            auto& entry = parsed.entry;
+            const auto consumed = parsed.name_bytes;
             if (entry.has_value()) {
                 entry->path = decode_archive_name(entry->path, encoding);
                 result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
@@ -453,11 +474,22 @@ void extract_ar_file_payload(std::ifstream& input, const ArEntryMetadata& entry,
 // Purpose: Create a Unix AR archive from regular-file inputs.
 // Inputs: `sources` are caller-selected filesystem inputs, `output_archive` is the destination, and
 // `progress_callback` receives synchronous progress snapshots.
-// Outputs: Writes the archive and returns operation statistics, or throws on unsafe sources or I/O failure.
+// Outputs: Writes the archive and returns statistics, or refuses a reserved leading name before staging any output.
+// Other unsafe sources and I/O failures also propagate explicitly.
 OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
                            const std::filesystem::path& output_archive, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto manifest = build_manifest(sources);
+    for (const auto& entry : manifest.entries) {
+        if (entry.directory) {
+            continue;
+        }
+        if (is_bsd_symbol_table_name(entry.archive_path)) {
+            throw ArchiveError(
+                "AR reserves this leading member name for symbol metadata; choose another archive format");
+        }
+        break;
+    }
     FilePublishTransaction publication(output_archive);
     std::ofstream output(publication.staging_path(), std::ios::binary);
     if (!output) {
