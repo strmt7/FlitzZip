@@ -24,6 +24,16 @@ struct ArchiveCodecOptions {
     int compression_level = kDefaultCompressionLevel;
 };
 
+// Purpose: Enforce the shared native codec block-size interval at every direct CPU/HIP boundary.
+// Inputs: `block_size` is the requested decoded block extent. Outputs: Returns for the inclusive supported range;
+// throws `ArchiveError` otherwise.
+void validate_codec_block_size(std::uint32_t block_size);
+
+// Purpose: Enforce the shared native codec chunk limit without requiring a caller to allocate the rejected extent.
+// Inputs: `size` is a proposed span length and `label` identifies it in diagnostics. Outputs: Returns while bounded;
+// throws `ArchiveError` above the resource limit.
+void validate_codec_span_size(std::size_t size, const char* label);
+
 // Purpose: Bound native CPU encode workspace before allocating queued input windows.
 // Inputs: A nonzero bounded chunk, validated codec options, and a 1..64 aggregate worker budget.
 // Outputs: Returns metadata/context/trial overhead beyond three payload buffers; throws on invalid bounds.

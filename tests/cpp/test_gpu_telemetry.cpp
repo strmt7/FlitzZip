@@ -511,12 +511,14 @@ TEST_CASE(optional_hip_selects_cpu_only_blocks_before_device_work) {
 
 // Purpose: Distinguish expected absent-HIP CPU operation from real available-device work.
 // Inputs: Live readiness plus borrowed, owned and independent-block optional encoding on a small RAM fixture.
-// Outputs: Requires the selected backend identity and exact CPU readback; the CPU-only build exercises absence.
+// Outputs: Requires exact CPU/HIP readback and one published telemetry count per successful optional operation;
+// the CPU-only build requires no device activity.
 TEST_CASE(optional_hip_encoding_uses_explicit_availability) {
     const bool available = flitzzip::hip_device_available();
     flitzzip::GpuCodecOptions options;
     options.require_gpu = false;
     options.block_size = 4096U;
+    options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
     const std::vector<std::byte> source(4096U, std::byte{73});
     const std::array<std::uint32_t, 1> lengths{4096U};
     for (const auto& encoded : {flitzzip::encode_chunk(source, options), flitzzip::encode_owned_chunk(source, options),
@@ -527,7 +529,18 @@ TEST_CASE(optional_hip_encoding_uses_explicit_availability) {
         cpu.force_cpu = true;
         REQUIRE_TRUE(!flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, cpu));
         REQUIRE_TRUE(decoded == source);
+        std::fill(decoded.begin(), decoded.end(), std::byte{0});
+        REQUIRE_EQ(flitzzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options), available);
+        REQUIRE_TRUE(decoded == source);
+        const auto checked = flitzzip::crc_decoded_chunk(encoded.payload, encoded.blocks, source.size(), options);
+        REQUIRE_EQ(checked.gpu_used, available);
+        REQUIRE_EQ(checked.crc32, flitzzip::crc32(source));
     }
+    const auto stats = flitzzip::snapshot_gpu_telemetry(*options.telemetry);
+    REQUIRE_EQ(stats.encode_chunks, available ? 3U : 0U);
+    REQUIRE_EQ(stats.decode_chunks, available ? 6U : 0U);
+    REQUIRE_EQ(stats.kernel_launches > 0U, available);
+    REQUIRE_EQ(stats.device_allocation_bytes > 0U, available);
 }
 
 // Purpose: Preserve thread-local device selection while admitting the actual kernel payload on independent threads.

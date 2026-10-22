@@ -204,8 +204,8 @@ EncodedChunk apply_replacements(EncodedChunk baseline, const SparseReplacements&
             throw GpuError("sparse baseline block exceeds encoded payload");
         }
         descriptor.encoded_offset = result.payload.size();
-        if (!replacement.empty() && replacement.size() < descriptor.encoded_len) {
-            if (replacement.size() >= descriptor.uncompressed_len) {
+        if (!replacement.empty()) {
+            if (replacement.size() >= descriptor.encoded_len || replacement.size() >= descriptor.uncompressed_len) {
                 throw GpuError("sparse replacement does not improve the source block");
             }
             descriptor.kind = read_sparse_u32(replacement, 0U) > kMaxGpuPatternBytes ? BlockKind::GpuLongSparsePattern

@@ -724,7 +724,7 @@ static EncodedChunk select_neutron_byte_planes(std::span<const std::byte> source
             std::vector<std::byte> transformed(original.size());
             auto trial_options = options;
             trial_options.block_size = descriptor.uncompressed_len;
-            for (const std::uint8_t width : {2U, 4U, 8U}) {
+            for (const std::uint8_t width : std::array<std::uint8_t, 3U>{2U, 4U, 8U}) {
                 if (original.size() < width) {
                     continue;
                 }

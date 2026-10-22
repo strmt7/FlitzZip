@@ -59,20 +59,9 @@ ArchiveCodecOptions archive_codec_options(const GpuCodecOptions& options) {
 // Inputs: `options` supplies shared block size and compression effort.
 // Outputs: Returns normally for bounded settings; throws `ArchiveError` otherwise.
 void validate_gpu_codec_options(const GpuCodecOptions& options) {
-    if (options.block_size < kMinArchiveBlockBytes || options.block_size > kMaxArchiveBlockBytes) {
-        throw ArchiveError("codec block size is outside FlitzZip resource limits");
-    }
+    validate_codec_block_size(options.block_size);
     validate_native_compression_policy(options.compression_mode, options.compression_level, options.require_gpu,
                                        options.force_cpu);
-}
-
-// Purpose: Reject direct codec spans that exceed the bounded archive chunk contract.
-// Inputs: `size` is a caller-provided span length and `label` names the span.
-// Outputs: Returns normally while bounded; throws `ArchiveError` before large allocations.
-void reject_oversized_codec_span(std::size_t size, const char* label) {
-    if (size > kMaxArchiveChunkBytes) {
-        throw ArchiveError(std::string(label) + " exceeds FlitzZip codec resource limit");
-    }
 }
 
 // Purpose: Validate a dense independent-block batch before CPU work, HIP dispatch, or metadata allocation.
@@ -163,39 +152,35 @@ void merge_gpu_counter(std::atomic<std::uint64_t>& counter, std::uint64_t value)
 // Purpose: Merge a successful isolated HIP attempt into operation-level telemetry.
 // Inputs: `target` is the caller-visible telemetry; `source` is an attempt-local telemetry set.
 // Outputs: Adds only successful HIP execution counters to final operation statistics.
-void merge_successful_gpu_attempt(GpuTelemetry* target, const GpuTelemetry& source) {
-    if (!target) {
-        return;
-    }
-    merge_gpu_counter(target->encode_chunks, source.encode_chunks.load(std::memory_order_relaxed));
-    merge_gpu_counter(target->decode_chunks, source.decode_chunks.load(std::memory_order_relaxed));
-    merge_gpu_counter(target->kernel_launches, source.kernel_launches.load(std::memory_order_relaxed));
-    merge_gpu_counter(target->h2d_bytes, source.h2d_bytes.load(std::memory_order_relaxed));
-    merge_gpu_counter(target->d2h_bytes, source.d2h_bytes.load(std::memory_order_relaxed));
-    merge_gpu_counter(target->device_allocation_bytes, source.device_allocation_bytes.load(std::memory_order_relaxed));
-    merge_gpu_counter(target->host_pinned_allocation_bytes,
+void merge_successful_gpu_attempt(GpuTelemetry& target, const GpuTelemetry& source) {
+    merge_gpu_counter(target.encode_chunks, source.encode_chunks.load(std::memory_order_relaxed));
+    merge_gpu_counter(target.decode_chunks, source.decode_chunks.load(std::memory_order_relaxed));
+    merge_gpu_counter(target.kernel_launches, source.kernel_launches.load(std::memory_order_relaxed));
+    merge_gpu_counter(target.h2d_bytes, source.h2d_bytes.load(std::memory_order_relaxed));
+    merge_gpu_counter(target.d2h_bytes, source.d2h_bytes.load(std::memory_order_relaxed));
+    merge_gpu_counter(target.device_allocation_bytes, source.device_allocation_bytes.load(std::memory_order_relaxed));
+    merge_gpu_counter(target.host_pinned_allocation_bytes,
                       source.host_pinned_allocation_bytes.load(std::memory_order_relaxed));
-    merge_gpu_counter(target->host_pinned_output_bytes,
-                      source.host_pinned_output_bytes.load(std::memory_order_relaxed));
-    merge_gpu_counter(target->pattern_blocks, source.pattern_blocks.load(std::memory_order_relaxed));
-    merge_gpu_counter(target->prefix_blocks, source.prefix_blocks.load(std::memory_order_relaxed));
-    merge_gpu_counter(target->dictionary_blocks, source.dictionary_blocks.load(std::memory_order_relaxed));
-    merge_gpu_counter(target->sparse_pattern_blocks, source.sparse_pattern_blocks.load(std::memory_order_relaxed));
+    merge_gpu_counter(target.host_pinned_output_bytes, source.host_pinned_output_bytes.load(std::memory_order_relaxed));
+    merge_gpu_counter(target.pattern_blocks, source.pattern_blocks.load(std::memory_order_relaxed));
+    merge_gpu_counter(target.prefix_blocks, source.prefix_blocks.load(std::memory_order_relaxed));
+    merge_gpu_counter(target.dictionary_blocks, source.dictionary_blocks.load(std::memory_order_relaxed));
+    merge_gpu_counter(target.sparse_pattern_blocks, source.sparse_pattern_blocks.load(std::memory_order_relaxed));
     for (std::size_t index = 0; index < kGpuEncodeStageCount; ++index) {
-        accumulate_timing_microseconds(target->encode_stage_worker_microseconds[index],
+        accumulate_timing_microseconds(target.encode_stage_worker_microseconds[index],
                                        source.encode_stage_worker_microseconds[index].load(std::memory_order_relaxed));
     }
     for (std::size_t index = 0; index < kOwnedDecodeStageCount; ++index) {
         accumulate_timing_microseconds(
-            target->owned_decode_stage_worker_microseconds[index],
+            target.owned_decode_stage_worker_microseconds[index],
             source.owned_decode_stage_worker_microseconds[index].load(std::memory_order_relaxed));
     }
     for (std::size_t index = 0; index < kGpuClassificationStageCount; ++index) {
         accumulate_timing_microseconds(
-            target->classification_stage_worker_microseconds[index],
+            target.classification_stage_worker_microseconds[index],
             source.classification_stage_worker_microseconds[index].load(std::memory_order_relaxed));
     }
-    accumulate_timing_microseconds(target->kernel_microseconds,
+    accumulate_timing_microseconds(target.kernel_microseconds,
                                    source.kernel_microseconds.load(std::memory_order_relaxed));
 }
 
@@ -213,11 +198,12 @@ GpuCodecOptions gpu_attempt_options(const GpuCodecOptions& options, std::shared_
 }
 
 // Purpose: Publish isolated HIP telemetry after the attempt succeeds as a complete HIP codec operation.
-// Inputs: `target` is the final operation telemetry; `attempt_telemetry` is null for required-GPU or untracked
-// operations. Outputs: Merges temporary counters only for successful optional HIP work.
-void publish_successful_gpu_attempt(GpuTelemetry* target, const std::shared_ptr<GpuTelemetry>& attempt_telemetry) {
+// Inputs: `options` owns final telemetry whenever `attempt_telemetry` exists; the attempt is null for required-GPU or
+// untracked operations. Outputs: Merges temporary counters only for successful optional HIP work.
+void publish_successful_gpu_attempt(const GpuCodecOptions& options,
+                                    const std::shared_ptr<GpuTelemetry>& attempt_telemetry) {
     if (attempt_telemetry) {
-        merge_successful_gpu_attempt(target, *attempt_telemetry);
+        merge_successful_gpu_attempt(*options.telemetry, *attempt_telemetry);
     }
 }
 #endif
@@ -524,7 +510,7 @@ GpuDiagnosticResult run_gpu_diagnostic(const GpuDiagnosticOptions& options) {
 // Outputs: Returns owned encoded bytes; empty input reports no GPU work, and selected HIP failures never fall back.
 EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOptions& options) {
     validate_gpu_codec_options(options);
-    reject_oversized_codec_span(input.size(), "codec input");
+    validate_codec_span_size(input.size(), "codec input");
     const auto cpu_options = archive_codec_options(options);
 
     const bool use_hip = select_hip_codec(options);
@@ -534,7 +520,7 @@ EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOption
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         auto encoded = encode_chunk_hip(input, hip_options);
         encoded.gpu_used = !encoded.blocks.empty();
-        publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+        publish_successful_gpu_attempt(options, attempt_telemetry);
         return encoded;
     }
 #else
@@ -548,7 +534,7 @@ EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOption
 // Outputs: Returns encoded blocks/payload/CRC; empty input reports no GPU work, and raw payload may move from input.
 EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOptions& options) {
     validate_gpu_codec_options(options);
-    reject_oversized_codec_span(input.size(), "codec input");
+    validate_codec_span_size(input.size(), "codec input");
     const auto cpu_options = archive_codec_options(options);
 
     const bool use_hip = select_hip_codec(options);
@@ -558,7 +544,7 @@ EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOpti
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         auto encoded = encode_owned_chunk_hip(input, hip_options);
         encoded.gpu_used = !encoded.blocks.empty();
-        publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+        publish_successful_gpu_attempt(options, attempt_telemetry);
         return encoded;
     }
 #else
@@ -576,7 +562,7 @@ EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOpti
 EncodedBlockBatch encode_owned_block_batch(std::vector<std::byte> input, std::span<const std::uint32_t> block_lengths,
                                            const GpuCodecOptions& options) {
     validate_gpu_codec_options(options);
-    reject_oversized_codec_span(input.size(), "codec batch input");
+    validate_codec_span_size(input.size(), "codec batch input");
     validate_encode_batch(input.size(), block_lengths, options.block_size);
     const bool use_hip = select_hip_codec(options);
 #if FLITZZIP_ENABLE_HIP
@@ -585,7 +571,7 @@ EncodedBlockBatch encode_owned_block_batch(std::vector<std::byte> input, std::sp
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         auto batch = encode_owned_block_batch_hip(input, block_lengths, hip_options);
         batch.encoded.gpu_used = !block_lengths.empty();
-        publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+        publish_successful_gpu_attempt(options, attempt_telemetry);
         return batch;
     }
 #else
@@ -601,8 +587,8 @@ EncodedBlockBatch encode_owned_block_batch(std::vector<std::byte> input, std::sp
 bool decode_chunk(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                   std::span<std::byte> output, const GpuCodecOptions& options) {
     validate_gpu_codec_options(options);
-    reject_oversized_codec_span(payload.size(), "codec payload");
-    reject_oversized_codec_span(output.size(), "codec output");
+    validate_codec_span_size(payload.size(), "codec payload");
+    validate_codec_span_size(output.size(), "codec output");
     if (blocks.size() > kMaxBlocksPerEntry) {
         throw ArchiveError("codec block table exceeds FlitzZip resource limit");
     }
@@ -614,7 +600,7 @@ bool decode_chunk(std::span<const std::byte> payload, std::span<const BlockDescr
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         decode_chunk_hip(payload, blocks, output, hip_options);
-        publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+        publish_successful_gpu_attempt(options, attempt_telemetry);
         return !output.empty();
     }
 #else
@@ -631,7 +617,7 @@ bool decode_chunk(std::span<const std::byte> payload, std::span<const BlockDescr
 DecodedChunkCrc crc_decoded_chunk(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                                   std::uint64_t output_size, const GpuCodecOptions& options) {
     validate_gpu_codec_options(options);
-    reject_oversized_codec_span(payload.size(), "codec payload");
+    validate_codec_span_size(payload.size(), "codec payload");
     if (output_size > kMaxArchiveChunkBytes) {
         throw ArchiveError("codec output exceeds FlitzZip resource limit");
     }
@@ -649,7 +635,7 @@ DecodedChunkCrc crc_decoded_chunk(std::span<const std::byte> payload, std::span<
             .crc32 = crc_decoded_chunk_hip(payload, blocks, output_size, hip_options),
             .gpu_used = output_size != 0U,
         };
-        publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+        publish_successful_gpu_attempt(options, attempt_telemetry);
         return decoded;
     }
 #else

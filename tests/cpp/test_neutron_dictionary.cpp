@@ -951,3 +951,78 @@ TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
         flitzzip::encode_chunk(input, {.require_gpu = true, .block_size = block_bytes, .compression_level = 9}).payload,
         baseline.payload);
 }
+
+// Purpose: Enforce dictionary replacement invariants without depending on a particular HIP candidate winner.
+// Inputs: A mixed two-block baseline, one smaller replacement, and forged count/extent/cost variants.
+// Outputs: Valid bytes remain dense and metadata-stable; every inconsistent internal result fails closed.
+TEST_CASE(dictionary_replacements_validate_complete_internal_results) {
+    flitzzip::EncodedChunk baseline;
+    baseline.blocks = {
+        {.kind = flitzzip::BlockKind::GpuPrefix, .uncompressed_len = 12U, .encoded_offset = 0U, .encoded_len = 5U},
+        {.kind = flitzzip::BlockKind::Raw, .uncompressed_len = 9U, .encoded_offset = 5U, .encoded_len = 4U},
+    };
+    baseline.payload = {std::byte{0x10}, std::byte{0x11}, std::byte{0x12}, std::byte{0x13}, std::byte{0x14},
+                        std::byte{0x20}, std::byte{0x21}, std::byte{0x22}, std::byte{0x23}};
+    baseline.source_crc32 = 0x10203040U;
+    baseline.source_crc32_available = true;
+    baseline.gpu_used = true;
+    const DictionaryReplacements replacements{{std::byte{0x30}, std::byte{0x31}, std::byte{0x32}}, {}};
+    const auto result = apply_dictionary_replacements(baseline, replacements);
+    REQUIRE_EQ(result.source_crc32, baseline.source_crc32);
+    REQUIRE_TRUE(result.source_crc32_available && result.gpu_used);
+    REQUIRE_EQ(result.blocks.size(), 2U);
+    REQUIRE_EQ(result.blocks[0].kind, flitzzip::BlockKind::GpuDictionary);
+    REQUIRE_EQ(result.blocks[0].encoded_offset, 0U);
+    REQUIRE_EQ(result.blocks[0].encoded_len, 3U);
+    REQUIRE_EQ(result.blocks[1].kind, flitzzip::BlockKind::Raw);
+    REQUIRE_EQ(result.blocks[1].encoded_offset, 3U);
+    REQUIRE_EQ(result.payload,
+               (std::vector<std::byte>{std::byte{0x30}, std::byte{0x31}, std::byte{0x32}, std::byte{0x20},
+                                       std::byte{0x21}, std::byte{0x22}, std::byte{0x23}}));
+
+    const auto require_rejected = [](flitzzip::EncodedChunk chunk, DictionaryReplacements candidates,
+                                     std::string_view expected) {
+        bool rejected = false;
+        try {
+            (void)apply_dictionary_replacements(std::move(chunk), candidates);
+        } catch (const flitzzip::GpuError& error) {
+            rejected = std::string_view(error.what()) == expected;
+        }
+        REQUIRE_TRUE(rejected);
+    };
+    require_rejected(baseline, {{{std::byte{0x01}}}}, "dictionary replacement count differs from baseline blocks");
+    auto invalid_extent = baseline;
+    invalid_extent.blocks[0].encoded_offset = invalid_extent.payload.size() + 1U;
+    require_rejected(invalid_extent, replacements, "dictionary baseline block exceeds encoded payload");
+    invalid_extent = baseline;
+    invalid_extent.blocks[0].encoded_len = static_cast<std::uint32_t>(invalid_extent.payload.size() + 1U);
+    require_rejected(invalid_extent, replacements, "dictionary baseline block exceeds encoded payload");
+    require_rejected(baseline, {std::vector<std::byte>(5U), {}},
+                     "dictionary replacement does not improve the baseline block");
+    auto expansion = baseline;
+    expansion.blocks[0].encoded_len = 20U;
+    expansion.payload.resize(24U);
+    expansion.blocks[1].encoded_offset = 20U;
+    require_rejected(expansion, {std::vector<std::byte>(12U), {}},
+                     "dictionary replacement does not improve the baseline block");
+}
+
+// Purpose: Reject ordinary dictionary candidate geometry before any device query, allocation, or kernel work.
+// Inputs: Null device input, an overlong descriptor, and a descriptor leaving an uncovered source suffix.
+// Outputs: Each malformed request returns its precise GpuError on HIP and CPU-only builds alike.
+TEST_CASE(dictionary_candidate_layout_precedes_device_work) {
+    const std::array<std::byte, 8U> input{};
+    const auto require_rejected = [&](const std::byte* device, std::vector<flitzzip::BlockDescriptor> blocks,
+                                      std::string_view expected) {
+        bool rejected = false;
+        try {
+            (void)select_dictionary_replacements(input, device, blocks, 5, nullptr);
+        } catch (const flitzzip::GpuError& error) {
+            rejected = std::string_view(error.what()) == expected;
+        }
+        REQUIRE_TRUE(rejected);
+    };
+    require_rejected(nullptr, {}, "dictionary candidate device input is unavailable");
+    require_rejected(input.data(), {{.uncompressed_len = 9U}}, "dictionary candidate block exceeds source chunk");
+    require_rejected(input.data(), {{.uncompressed_len = 7U}}, "dictionary candidate blocks do not cover source chunk");
+}
