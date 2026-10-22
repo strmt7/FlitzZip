@@ -130,8 +130,8 @@ struct FocusTarget {
 struct PerformanceMonitorSample {
     bool live = false;
     bool gpu_utilization_available = false;
-    double cpu_percent = 0.0;
-    double process_cpu_percent = 0.0;
+    std::optional<double> cpu_percent;
+    std::optional<double> process_cpu_percent;
     double gpu_utilization_percent = 0.0;
     double system_memory_percent = 0.0;
     std::wstring io_drive;

@@ -45,6 +45,10 @@ publication directories or opening output streams. Stream-writing helpers consum
 that inventory rather than enumerating sources again. Exercise destinations inside
 selected source folders and retain legitimate temporary-looking user files; a
 filename or directory exclusion is not a repair for publication ordering.
+Rate samplers own both cumulative counters and the corresponding time baseline.
+Failed reads must not mix a stale counter delta with a newer global clock interval.
+Test first reads, independent failures, recovery, counter regressions and observed
+zero separately; unavailable readings remain absent in both text and graphs.
 Produce runtime digests from linked artifacts, not configure-time placeholders.
 PowerShell analyzer lint must also parse source with the native grammar parser;
 an analyzer's empty finding list does not establish syntactic validity.

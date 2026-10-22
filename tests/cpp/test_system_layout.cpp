@@ -2,6 +2,7 @@
 #include "app/graph_series.hpp"
 #include "app/performance_options.hpp"
 #include "app/performance_counters.hpp"
+#include "app/cpu_sampling.hpp"
 #include "test_util.hpp"
 
 #include <memory>
@@ -29,6 +30,90 @@ void require_contained(const RECT& child, const RECT& parent) {
     REQUIRE_TRUE(child.top >= parent.top && child.bottom <= parent.bottom);
 }
 }  // namespace
+
+// Purpose: Prevent failed process-counter reads from stretching CPU ticks across a shorter elapsed interval.
+// Inputs: Independent two-second/four-processor accounting, a missing read, observed idle and a counter restart.
+// Outputs: Retains 25 percent use on valid intervals, exposes gaps during recovery and preserves genuine zero.
+TEST_CASE(system_process_cpu_sampling_recovers_its_own_timing_baseline) {
+    using flitzzip::app::CpuTimes;
+    flitzzip::app::ProcessCpuSampler sampler;
+    const auto start = std::chrono::steady_clock::time_point{};
+    // Purpose: Supply deterministic sample times. Inputs: Elapsed seconds. Outputs: A steady-clock timestamp.
+    const auto at = [start](int seconds) { return start + std::chrono::seconds(seconds); };
+    REQUIRE_TRUE(!sampler.sample(CpuTimes{10000000U, 10000000U}, at(0), 4U));
+    auto value = sampler.sample(CpuTimes{20000000U, 20000000U}, at(2), 4U);
+    REQUIRE_TRUE(value.has_value());
+    require_numeric_sample(*value, 25.0);
+    REQUIRE_TRUE(!sampler.sample(std::nullopt, at(4), 4U));
+    REQUIRE_TRUE(!sampler.sample(CpuTimes{40000000U, 40000000U}, at(6), 4U));
+    value = sampler.sample(CpuTimes{50000000U, 50000000U}, at(8), 4U);
+    REQUIRE_TRUE(value.has_value());
+    require_numeric_sample(*value, 25.0);
+    value = sampler.sample(CpuTimes{50000000U, 50000000U}, at(10), 4U);
+    REQUIRE_TRUE(value.has_value());
+    require_numeric_sample(*value, 0.0);
+    REQUIRE_TRUE(!sampler.sample(CpuTimes{1U, 1U}, at(12), 4U));
+    value = sampler.sample(CpuTimes{10000001U, 10000001U}, at(14), 4U);
+    REQUIRE_TRUE(value.has_value());
+    require_numeric_sample(*value, 25.0);
+}
+
+// Purpose: Reject unusable CPU intervals and normalize capacity without overflowing cumulative tick sums.
+// Inputs: Missing processor counts, topology changes, zero/reversed elapsed time and maximum unsigned counters.
+// Outputs: Invalid intervals remain absent; valid fractional, saturated and large-counter intervals stay bounded.
+TEST_CASE(system_process_cpu_sampling_validates_capacity_time_and_tick_extents) {
+    using flitzzip::app::CpuTimes;
+    flitzzip::app::ProcessCpuSampler sampler;
+    const auto start = std::chrono::steady_clock::time_point{};
+    REQUIRE_TRUE(!sampler.sample(CpuTimes{0U, 0U}, start, 0U));
+    REQUIRE_TRUE(!sampler.sample(CpuTimes{0U, 0U}, start, 4U));
+    REQUIRE_TRUE(!sampler.sample(CpuTimes{0U, 0U}, start, 4U));
+    REQUIRE_TRUE(!sampler.sample(CpuTimes{0U, 0U}, start - std::chrono::seconds(1), 4U));
+    REQUIRE_TRUE(!sampler.sample(CpuTimes{0U, 0U}, start, 2U));
+    const auto maximum = std::numeric_limits<std::uint64_t>::max();
+    REQUIRE_TRUE(!sampler.sample(CpuTimes{maximum - 10000000U, maximum - 10000000U}, start, 2U));
+    const auto large = sampler.sample(CpuTimes{maximum, maximum}, start + std::chrono::seconds(1), 2U);
+    REQUIRE_TRUE(large.has_value());
+    require_numeric_sample(*large, 100.0);
+    REQUIRE_TRUE(!sampler.sample(CpuTimes{maximum, maximum - 1U}, start + std::chrono::seconds(2), 2U));
+    REQUIRE_TRUE(!sampler.sample(CpuTimes{1U, maximum}, start + std::chrono::seconds(3), 2U));
+    const auto saturated = sampler.sample(CpuTimes{maximum, maximum}, start + std::chrono::seconds(4), 2U);
+    REQUIRE_TRUE(saturated.has_value());
+    require_numeric_sample(*saturated, 100.0);
+}
+
+// Purpose: Distinguish true system idle from missing, regressing or inconsistent CPU accounting.
+// Inputs: Kernel ticks include idle, user ticks add busy work; failures and unsigned limits exercise recovery.
+// Outputs: Independent busy/total ratios match, unavailable intervals leave gaps and summed ticks cannot wrap.
+TEST_CASE(system_total_cpu_sampling_validates_accounting_and_recovers_after_errors) {
+    using flitzzip::app::SystemCpuTimes;
+    flitzzip::app::SystemCpuSampler sampler;
+    REQUIRE_TRUE(!sampler.sample(SystemCpuTimes{{100U, 100U}, 80U}));
+    auto value = sampler.sample(SystemCpuTimes{{200U, 200U}, 130U});
+    REQUIRE_TRUE(value.has_value());
+    require_numeric_sample(*value, 75.0);
+    value = sampler.sample(SystemCpuTimes{{300U, 200U}, 230U});
+    REQUIRE_TRUE(value.has_value());
+    require_numeric_sample(*value, 0.0);
+    REQUIRE_TRUE(!sampler.sample(SystemCpuTimes{{300U, 200U}, 230U}));
+    REQUIRE_TRUE(!sampler.sample(std::nullopt));
+    REQUIRE_TRUE(!sampler.sample(SystemCpuTimes{{600U, 400U}, 300U}));
+    value = sampler.sample(SystemCpuTimes{{700U, 500U}, 400U});
+    REQUIRE_TRUE(value.has_value());
+    require_numeric_sample(*value, 50.0);
+    for (const auto invalid : std::array<SystemCpuTimes, 4>{
+             {{{699U, 500U}, 400U}, {{700U, 499U}, 400U}, {{700U, 500U}, 399U}, {{701U, 500U}, 402U}}}) {
+        flitzzip::app::SystemCpuSampler control;
+        REQUIRE_TRUE(!control.sample(SystemCpuTimes{{700U, 500U}, 400U}));
+        REQUIRE_TRUE(!control.sample(invalid));
+    }
+    const auto maximum = std::numeric_limits<std::uint64_t>::max();
+    flitzzip::app::SystemCpuSampler large;
+    REQUIRE_TRUE(!large.sample(SystemCpuTimes{{maximum - 100U, maximum - 100U}, maximum - 50U}));
+    value = large.sample(SystemCpuTimes{{maximum, maximum}, maximum});
+    REQUIRE_TRUE(value.has_value());
+    require_numeric_sample(*value, 75.0);
+}
 
 // Purpose: Distinguish an observed idle GPU from missing or invalid counters before graph rendering.
 // Inputs: Valid endpoints, ordinary utilization, unavailable values and nonfinite/out-of-range counters.

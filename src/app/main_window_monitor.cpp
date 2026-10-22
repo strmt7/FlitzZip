@@ -197,67 +197,32 @@ double MainWindow::sample_gpu_utilization() {
 }
 
 // Purpose: Sample FlitzZip process CPU use since the previous monitor tick.
-// Inputs: `elapsed_seconds` is the interval from the previous sample.
-// Outputs: Returns total-system-capacity CPU percentage and updates previous process FILETIME state.
-double MainWindow::sample_process_cpu_percent(double elapsed_seconds) {
-    double cpu_percent = 0.0;
+// Inputs: `now` timestamps the current cumulative counter read.
+// Outputs: Returns capacity-normalized CPU use, or no value while establishing or recovering a valid baseline.
+std::optional<double> MainWindow::sample_process_cpu_percent(std::chrono::steady_clock::time_point now) {
     FILETIME creation_time{};
     FILETIME exit_time{};
     FILETIME kernel_time{};
     FILETIME user_time{};
     if (!GetProcessTimes(GetCurrentProcess(), &creation_time, &exit_time, &kernel_time, &user_time)) {
-        return cpu_percent;
+        return process_cpu_sampler_.sample(std::nullopt, now, 0U);
     }
-    if (elapsed_seconds > 0.0) {
-        const std::uint64_t previous_ticks =
-            filetime_ticks(last_process_kernel_time_) + filetime_ticks(last_process_user_time_);
-        const std::uint64_t current_ticks = filetime_ticks(kernel_time) + filetime_ticks(user_time);
-        const auto logical_processors = std::max<DWORD>(1, GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
-        if (current_ticks >= previous_ticks) {
-            cpu_percent = (static_cast<double>(current_ticks - previous_ticks) /
-                           (elapsed_seconds * 10000000.0 * static_cast<double>(logical_processors))) *
-                          100.0;
-            cpu_percent = std::clamp(cpu_percent, 0.0, 100.0);
-        }
-    }
-    last_process_kernel_time_ = kernel_time;
-    last_process_user_time_ = user_time;
-    return cpu_percent;
+    return process_cpu_sampler_.sample(CpuTimes{filetime_ticks(kernel_time), filetime_ticks(user_time)}, now,
+                                       GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
 }
 
 // Purpose: Sample total system CPU use since the previous monitor tick.
-// Inputs: `elapsed_seconds` is the interval from the previous sample.
-// Outputs: Returns logical-processor-normalized CPU percentage and updates previous system FILETIME state.
-double MainWindow::sample_system_cpu_percent(double elapsed_seconds) {
+// Inputs: None; reads cumulative system kernel, user and idle counters.
+// Outputs: Returns observed busy percentage, or no value while the counter baseline is unavailable or invalid.
+std::optional<double> MainWindow::sample_system_cpu_percent() {
     FILETIME idle_time{};
     FILETIME kernel_time{};
     FILETIME user_time{};
     if (!GetSystemTimes(&idle_time, &kernel_time, &user_time)) {
-        return 0.0;
+        return system_cpu_sampler_.sample(std::nullopt);
     }
-    double cpu_percent = 0.0;
-    if (elapsed_seconds > 0.0) {
-        const std::uint64_t previous_idle = filetime_ticks(last_system_idle_time_);
-        const std::uint64_t previous_kernel = filetime_ticks(last_system_kernel_time_);
-        const std::uint64_t previous_user = filetime_ticks(last_system_user_time_);
-        const std::uint64_t current_idle = filetime_ticks(idle_time);
-        const std::uint64_t current_kernel = filetime_ticks(kernel_time);
-        const std::uint64_t current_user = filetime_ticks(user_time);
-        const std::uint64_t previous_total = previous_kernel + previous_user;
-        const std::uint64_t current_total = current_kernel + current_user;
-        if (current_total >= previous_total && current_idle >= previous_idle) {
-            const auto total_delta = current_total - previous_total;
-            const auto idle_delta = current_idle - previous_idle;
-            if (total_delta > 0U) {
-                const auto busy_delta = total_delta > idle_delta ? total_delta - idle_delta : 0U;
-                cpu_percent = (static_cast<double>(busy_delta) / static_cast<double>(total_delta)) * 100.0;
-            }
-        }
-    }
-    last_system_idle_time_ = idle_time;
-    last_system_kernel_time_ = kernel_time;
-    last_system_user_time_ = user_time;
-    return std::clamp(cpu_percent, 0.0, 100.0);
+    return system_cpu_sampler_.sample(
+        SystemCpuTimes{{filetime_ticks(kernel_time), filetime_ticks(user_time)}, filetime_ticks(idle_time)});
 }
 
 // Purpose: Sample Windows GPU dedicated memory assigned to the FlitzZip process.
@@ -356,10 +321,9 @@ void MainWindow::refresh_gpu_memory_cache(std::chrono::steady_clock::time_point 
 }
 
 // Purpose: Publish a completed performance sample into current UI state and graph history.
-// Inputs: `sample` is the counter set and `now` is the sample timestamp.
-// Outputs: Updates visible performance state, ring-buffer graph history, and last-sample time.
-void MainWindow::publish_performance_sample(const PerformanceMonitorSample& sample,
-                                            std::chrono::steady_clock::time_point now) {
+// Inputs: `sample` is the counter set.
+// Outputs: Updates visible performance state and ring-buffer graph history.
+void MainWindow::publish_performance_sample(const PerformanceMonitorSample& sample) {
     {
         std::lock_guard lock(mutex_);
         state_.performance = sample;
@@ -367,7 +331,6 @@ void MainWindow::publish_performance_sample(const PerformanceMonitorSample& samp
     performance_history_[performance_history_next_] = sample;
     performance_history_next_ = (performance_history_next_ + 1U) % performance_history_.size();
     performance_history_count_ = std::min(performance_history_count_ + 1U, performance_history_.size());
-    last_performance_sample_time_ = now;
 }
 
 // Purpose: Collect one live performance sample for the System page.
@@ -375,13 +338,8 @@ void MainWindow::publish_performance_sample(const PerformanceMonitorSample& samp
 // Outputs: Updates `state_.performance` with CPU, RAM, I/O, GPU utilization, and VRAM values.
 void MainWindow::update_performance_sample() {
     const auto now = std::chrono::steady_clock::now();
-    double elapsed_seconds = 0.0;
-    if (last_performance_sample_time_ != std::chrono::steady_clock::time_point{}) {
-        elapsed_seconds = std::chrono::duration<double>(now - last_performance_sample_time_).count();
-    }
-
-    const double cpu_percent = sample_system_cpu_percent(elapsed_seconds);
-    const double process_cpu_percent = sample_process_cpu_percent(elapsed_seconds);
+    const auto cpu_percent = sample_system_cpu_percent();
+    const auto process_cpu_percent = sample_process_cpu_percent(now);
     int io_drive_index = 0;
     {
         std::lock_guard lock(mutex_);
@@ -416,7 +374,7 @@ void MainWindow::update_performance_sample() {
                                  ? sample.vram_total_bytes - vram_usage.total_used_bytes
                                  : 0U;
     sample.process_dedicated_vram_bytes = vram_usage.process_dedicated_bytes;
-    publish_performance_sample(sample, now);
+    publish_performance_sample(sample);
 }
 
 // Purpose: Start the tab transition animation.
