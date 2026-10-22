@@ -8,7 +8,7 @@ on:
       - CMakeLists.txt
       - tests/zstd/**
       - tests/cmake/precompiled_headers/**
-      - tests/cpp/test_zstd*.cpp
+      - tests/cpp/**
       - tests/cmake/test_zstd*.cmake
       - mcp/**
       - .agents/skills/**
@@ -21,7 +21,6 @@ on:
       - docs/comparative-benchmark-methodology.md
       - resources/benchmarks/**
       - src/cli/**
-      - tests/cpp/test_main.cpp
       - .github/workflows/component-contracts.yml
       - .github/workflows/zstd-sanitizers.yml
       - .github/workflows/windows-ci.yml

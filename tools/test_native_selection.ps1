@@ -60,10 +60,11 @@ $sparseExpected = @(
     'flzip_long_sparse_pattern_v7_reader_roundtrip', 'flzip_long_sparse_pattern_writer_selects_v7',
     'flzip_sparse_pattern_cpu_reader_roundtrip', 'long_sparse_pattern_required_hip_roundtrip',
     'sparse_pattern_block_admits_canonical_payload', 'sparse_pattern_block_rejects_malformed_payload',
+    'sparse_pattern_candidate_layout_precedes_device_work',
     'sparse_pattern_field_reader_rejects_truncation_and_wrapping_offsets',
     'sparse_pattern_hip_batch_preserves_block_offsets',
     'sparse_pattern_hip_batch_rejects_prepopulated_output_fields', 'sparse_pattern_long_period_boundaries',
-    'sparse_pattern_required_hip_encode_roundtrip'
+    'sparse_pattern_replacements_validate_complete_internal_results', 'sparse_pattern_required_hip_encode_roundtrip'
 )
 Assert-NativeSelection ($sparse.mode -eq 'component' -and $sparse.requireHip -and
     (($sparse.tests | Sort-Object) -join '|') -ceq (($sparseExpected | Sort-Object) -join '|')) 'exact reviewed sparse candidate cohort and required HIP'
@@ -123,6 +124,26 @@ foreach ($shared in @('src/gpu/hip_codec_support.hpp', 'src/gpu/hip_codec.hip.cp
 Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths $entropyPaths -Full).mode -eq 'full') 'explicit full qualification'
 Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths @('tests/cpp/test_main.cpp')).mode -eq 'runner') 'runner-only edits select registry contracts'
 $inventory = @(Get-FlitzZipNativeTestInventory)
+$monitorPaths = @('src/app/cpu_sampling.hpp', 'src/app/pdh_percentage_sampler.hpp',
+    'src/app/performance_counters.hpp', 'src/app/graph_series.hpp', 'src/app/main_window_monitor.cpp')
+$monitorExpected = @($inventory | Where-Object { $_.source -in @('tests/cpp/test_system_layout.cpp',
+        'tests/cpp/test_resource_usage.cpp') } | Select-Object -ExpandProperty name | Sort-Object)
+foreach ($monitorPath in $monitorPaths) {
+    $monitor = Get-FlitzZipNativeTestSelection -Paths @($monitorPath)
+    Assert-NativeSelection ($monitor.mode -eq 'component' -and -not $monitor.requireHip -and
+        ($monitor.tests -join '|') -ceq ($monitorExpected -join '|')) "complete monitor and accounting consumers: $monitorPath"
+}
+$monitorBatch = Get-FlitzZipNativeTestSelection -Paths ($monitorPaths + $monitorPaths + 'tests/cpp/test_system_layout.cpp')
+Assert-NativeSelection (($monitorBatch.tests -join '|') -ceq ($monitorExpected -join '|')) 'monitor batch retains every case without repetition'
+$monitorGpu = Get-FlitzZipNativeTestSelection -Paths ($monitorPaths + $entropyPaths)
+$monitorGpuExpected = @($monitorExpected + $entropyExpected | Sort-Object -Unique)
+Assert-NativeSelection ($monitorGpu.requireHip -and
+    ($monitorGpu.tests -join '|') -ceq ($monitorGpuExpected -join '|')) 'monitor selection cannot discard GPU consumers or hardware admission'
+foreach ($shared in @('src/app/main_window.hpp', 'src/app/main_window_state.hpp', 'src/app/unreviewed_monitor.hpp',
+        'src/core/resource_usage.cpp', 'CMakeLists.txt', 'tests/cpp/test_util.hpp')) {
+    Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths ($monitorPaths + $shared)).mode -eq 'full') "unreviewed/shared monitor dependencies retain broad coverage: $shared"
+}
+Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths $monitorPaths -Full).mode -eq 'full') 'explicit full monitor qualification remains broad'
 $sevenzip = Get-FlitzZipNativeTestSelection -Paths @('third_party/lzma_sdk/C/7zArcIn.c')
 $sevenzipExpected = @($inventory | Where-Object { $_.source -in @('tests/cpp/test_sevenzip_compat.cpp',
         'tests/cpp/test_sevenzip_ppmd.cpp') } | Select-Object -ExpandProperty name | Sort-Object)

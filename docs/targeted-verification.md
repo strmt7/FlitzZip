@@ -92,6 +92,17 @@ for the analysis and its audit.
 
 ### Normal Targeting
 
+The reviewed monitor implementation and its counter/graph helpers select every
+registered System-layout and resource-accounting test through the component
+driver. Release build, all-page GUI smoke, scanner preflight and hosted native
+and security acceptance remain required. Shared window/state headers, unreviewed
+paths, mixed shared changes and explicit full qualification retain the full
+native driver. This avoids rerunning unrelated codec migration contracts during
+isolated monitor work without weakening their own source-change gates.
+Changes to registered native tests or their CMake inventory rerun the selection
+consistency contracts locally and in the hosted component lane. Newly added
+regressions must not leave a reviewed cohort's expected inventory stale.
+
 | Change area | Required local verification | Relevant post-push workflows |
 | --- | --- | --- |
 | Docs only | changed-file hygiene, language lint | `lint` |

@@ -188,6 +188,8 @@ Assert-Selector ($entropyCommand.Count -eq 1 -and 'tools/native_component_tests.
 Assert-Selector (-not (Test-FlitzZipToolContractCommand -Command $entropyCommand[0])) 'native component execution must not enter the offline tool lane'
 foreach ($testPath in @('tests/cpp/test_zip_compat.cpp', 'tests/cpp/test_archive_roundtrip.cpp', 'tests/cpp/test_path_safety.cpp')) {
     $testOnlyPlan = Get-FlitzZipVerificationPlan -ChangedPath @($testPath)
+    Assert-Selector (Test-RequiredCommand -Plan $testOnlyPlan -Id 'native-selection-contracts') "registered test changes must validate reviewed cohort consistency: $testPath"
+    Assert-Selector (Test-Workflow -Plan $testOnlyPlan -Name 'component-contracts') "registered-test consistency must be enforced and awaited on GitHub: $testPath"
     $testCommand = @($testOnlyPlan.requiredLocalCommands | Where-Object id -eq 'unit-tests')[0]
     Assert-Selector ('tools/native_component_tests.ps1' -in $testCommand.arguments) "registered test edits select their own cases: $testPath"
     foreach ($id in @('compatibility-interop-smoke', 'format-matrix-smoke', 'short-fuzz-smoke', 'gui-smoke', 'package-smoke')) {
@@ -195,6 +197,17 @@ foreach ($testPath in @('tests/cpp/test_zip_compat.cpp', 'tests/cpp/test_archive
     }
 }
 $nativeToolPlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/native_test_selection.ps1', 'tools/native_component_tests.ps1')
+foreach ($monitorPath in @('src/app/cpu_sampling.hpp', 'src/app/pdh_percentage_sampler.hpp',
+        'src/app/performance_counters.hpp', 'src/app/graph_series.hpp', 'src/app/main_window_monitor.cpp')) {
+    $monitorPlan = Get-FlitzZipVerificationPlan -ChangedPath @($monitorPath)
+    $monitorTests = @($monitorPlan.requiredLocalCommands | Where-Object id -eq 'unit-tests')
+    Assert-Selector ($monitorTests.Count -eq 1 -and 'tools/native_component_tests.ps1' -in $monitorTests[0].arguments) "reviewed monitor inputs select their native consumers: $monitorPath"
+    foreach ($id in @('release-build', 'scanner-preflight', 'gui-smoke', 'changed-refactor-audit')) {
+        Assert-Selector (Test-RequiredCommand -Plan $monitorPlan -Id $id) "monitor changes preserve their owning gate: $monitorPath / $id"
+    }
+    Assert-Selector ((Test-Workflow -Plan $monitorPlan -Name 'windows-ci') -and
+        (Test-Workflow -Plan $monitorPlan -Name 'security') -and $monitorPlan.postPushAuditRequired) "monitor changes retain hosted native/security acceptance: $monitorPath"
+}
 Assert-Selector (Test-RequiredCommand -Plan $nativeToolPlan -Id 'native-selection-contracts') 'component driver changes require actual selection/execution contracts'
 Assert-Selector (-not (Test-RequiredCommand -Plan $nativeToolPlan -Id 'unit-tests')) 'component driver contracts do not require an unchanged native suite'
 $nativeRunnerPlan = Get-FlitzZipVerificationPlan -ChangedPath @('tests/cpp/test_main.cpp')
