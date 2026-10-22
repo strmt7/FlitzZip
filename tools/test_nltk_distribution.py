@@ -249,8 +249,8 @@ class DistributionTests(unittest.TestCase):
         """Purpose: Avoid fabricated identities. Inputs: Provenance and inert wheel. Outputs: Matching notices."""
         data = build.distribution()
         self.assertEqual(data["version"], "3.10.4")
-        self.assertEqual(data["tag"], "v3.10.4-rc1")
-        self.assertEqual(data["release_kind"], "release_candidate")
+        self.assertEqual(data["tag"], "v3.10.4")
+        self.assertEqual(data["release_kind"], "stable")
         self.assertIn("GHSA-8mgp-746c-j5xp", data["advisories"])
         files = packaging.wheel_files(build.wheel_path())
         self.assertEqual(files["nltk/VERSION"].decode().strip(), data["version"])
@@ -312,7 +312,7 @@ class DistributionTests(unittest.TestCase):
                     {"filename": "../wheel.whl"},
                     {"version": "3.10.3"},
                     {"url": "https://example.invalid/wheel.whl"},
-                    {"release_kind": "stable"},
+                    {"release_kind": "release_candidate"},
                     {"size": True},
                     {"sha256": "not a digest"},
                     {"sha256": None},

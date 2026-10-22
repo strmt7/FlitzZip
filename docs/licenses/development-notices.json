@@ -37,9 +37,9 @@
       "sha256": "5e8c0ba20456f84943cba547175e212962117b43ad1b20c877aa983429eb256c"
     },
     {
-      "name": "NLTK 3.10.4 (official v3.10.4-rc1 asset)",
+      "name": "NLTK 3.10.4 (official stable asset)",
       "source": "docs/licenses/NLTK-3.10.4.txt",
-      "upstream": "https://github.com/nltk/nltk/releases/tag/v3.10.4-rc1",
+      "upstream": "https://github.com/nltk/nltk/releases/tag/v3.10.4",
       "terms": "Apache-2.0; unmodified upstream distribution",
       "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
     }
