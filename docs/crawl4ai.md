@@ -70,7 +70,7 @@ local Crawl4AI caches are installation data and are not committed or packaged.
 The environment identity includes Python's version, the complete lock hash and
 the pinned Crawl4AI build and official NLTK distribution identities. Crawl4AI's
 repaired pure-Python wheel is built with pinned setuptools tooling in a separate
-external environment. NLTK's unmodified official release-candidate wheel is
+external environment. NLTK's unmodified official stable GitHub release wheel is
 downloaded once into the external cache using its exact URL, size and SHA-256;
 see [distribution provenance](../third_party/upstream/nltk/README.md).
 Both wheels are admitted by exact digests before normal dependency installation.
