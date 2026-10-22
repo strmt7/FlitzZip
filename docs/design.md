@@ -96,6 +96,10 @@ relabel another drive's current values or connect its historical graph samples.
 CPU readings also preserve availability. Their counter baselines belong to each
 sampler, so a failed read cannot stretch CPU ticks across a shorter clock interval.
 Startup, counter restarts and recovery leave gaps until a valid interval exists.
+System CPU uses Windows' `Processor Information(_Total)` counter across processor
+groups; the process sampler normalizes by the active processor count across all
+groups. No measurement silently substitutes the primary group's utilization for
+system-wide utilization on machines with more than 64 logical processors.
 
 GUI smoke captures all eight pages at both the normal 1200-by-760-DIP client
 size and a programmatically resized 960-by-600-DIP test size at the host's
