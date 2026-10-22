@@ -952,11 +952,11 @@ TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
         baseline.payload);
 }
 
-#if FLITZZIP_ENABLE_HIP
 // Purpose: Enforce dictionary replacement invariants without depending on a particular HIP candidate winner.
 // Inputs: A mixed two-block baseline, one smaller replacement, and forged count/extent/cost variants.
-// Outputs: Valid bytes remain dense and metadata-stable; every inconsistent internal result fails closed.
+// Outputs: HIP builds enforce replacement invariants; CPU-only builds confirm the backend is unavailable.
 TEST_CASE(dictionary_replacements_validate_complete_internal_results) {
+#if FLITZZIP_ENABLE_HIP
     flitzzip::EncodedChunk baseline;
     baseline.blocks = {
         {.kind = flitzzip::BlockKind::GpuPrefix, .uncompressed_len = 12U, .encoded_offset = 0U, .encoded_len = 5U},
@@ -1006,12 +1006,16 @@ TEST_CASE(dictionary_replacements_validate_complete_internal_results) {
     expansion.blocks[1].encoded_offset = 20U;
     require_rejected(expansion, {std::vector<std::byte>(12U), {}},
                      "dictionary replacement does not improve the baseline block");
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
 }
 
 // Purpose: Reject ordinary dictionary candidate geometry before any device query, allocation, or kernel work.
 // Inputs: Null device input, an overlong descriptor, and a descriptor leaving an uncovered source suffix.
 // Outputs: Each malformed request returns its precise GpuError in HIP builds, without requiring a live device.
 TEST_CASE(dictionary_candidate_layout_precedes_device_work) {
+#if FLITZZIP_ENABLE_HIP
     const std::array<std::byte, 8U> input{};
     const auto require_rejected = [&](const std::byte* device, std::vector<flitzzip::BlockDescriptor> blocks,
                                       std::string_view expected) {
@@ -1026,5 +1030,7 @@ TEST_CASE(dictionary_candidate_layout_precedes_device_work) {
     require_rejected(nullptr, {}, "dictionary candidate device input is unavailable");
     require_rejected(input.data(), {{.uncompressed_len = 9U}}, "dictionary candidate block exceeds source chunk");
     require_rejected(input.data(), {{.uncompressed_len = 7U}}, "dictionary candidate blocks do not cover source chunk");
-}
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
 #endif
+}

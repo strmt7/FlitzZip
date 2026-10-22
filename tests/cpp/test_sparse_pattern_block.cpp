@@ -381,11 +381,11 @@ TEST_CASE(sparse_pattern_hip_batch_rejects_prepopulated_output_fields) {
 #endif
 }
 
-#if FLITZZIP_ENABLE_HIP
 // Purpose: Enforce the sparse replacement boundary independently from HIP candidate generation.
 // Inputs: A two-block baseline, one smaller canonical payload, and forged count/extent/cost variants.
-// Outputs: Preserves dense bytes and metadata for valid input; rejects every inconsistent internal result.
+// Outputs: HIP builds enforce replacement invariants; CPU-only builds confirm the backend is unavailable.
 TEST_CASE(sparse_pattern_replacements_validate_complete_internal_results) {
+#if FLITZZIP_ENABLE_HIP
     flitzzip::EncodedChunk baseline;
     baseline.blocks = {
         {.kind = flitzzip::BlockKind::Raw, .uncompressed_len = 32U, .encoded_offset = 0U, .encoded_len = 8U},
@@ -439,12 +439,16 @@ TEST_CASE(sparse_pattern_replacements_validate_complete_internal_results) {
     auto non_improving = sparse;
     non_improving.resize(baseline.blocks[0].encoded_len, std::byte{0x55});
     require_rejected(baseline, {non_improving, {}}, "sparse replacement does not improve the source block");
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
 }
 
 // Purpose: Reject sparse candidate geometry before any device query, allocation, or kernel work.
 // Inputs: Null device input, an overlong descriptor, and descriptors that leave an uncovered source suffix.
 // Outputs: Each malformed call returns its precise GpuError in HIP builds, without requiring a live device.
 TEST_CASE(sparse_pattern_candidate_layout_precedes_device_work) {
+#if FLITZZIP_ENABLE_HIP
     const std::array<std::byte, 8U> input{};
     const auto require_rejected = [&](const std::byte* device, std::vector<flitzzip::BlockDescriptor> blocks,
                                       std::string_view expected) {
@@ -459,5 +463,7 @@ TEST_CASE(sparse_pattern_candidate_layout_precedes_device_work) {
     require_rejected(nullptr, {}, "sparse candidate device input is unavailable");
     require_rejected(input.data(), {{.uncompressed_len = 9U}}, "sparse candidate block exceeds source chunk");
     require_rejected(input.data(), {{.uncompressed_len = 7U}}, "sparse candidate blocks do not cover source chunk");
-}
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
 #endif
+}
