@@ -167,6 +167,13 @@ fuzz, GUI or package work. Shared headers, other unmapped production mechanisms,
 separate native test targets and explicit `-Full` keep the full native driver.
 Add reviewed dependency mappings as further mechanisms are investigated.
 
+The private folder-size cache selects every registered cache lifetime and
+allocation-failure case. Its native consumers are confined to the main window
+and that direct test source; GUI smoke remains independently required for the
+production header. Shared window or metadata headers and unknown dependencies
+retain the full native driver. Combining this cohort with another mechanism
+preserves its consumers and required-HIP admission without duplicate execution.
+
 The component driver validates the current successful native build receipt
 before running. HIP-dependent cohorts require a compiled backend and an
 available device before and after execution. It invokes exact names using the

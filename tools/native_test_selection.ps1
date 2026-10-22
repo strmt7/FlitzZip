@@ -78,6 +78,8 @@ function Get-FlitzZipNativeTestSelection {
     $broad = [pscustomobject]@{ mode = 'full'; components = @(); tests = @(); requireHip = $false }
     if ($Full.IsPresent) { return $broad }
     $definitions = @(
+        @{ id = 'folder-size-cache'; requireHip = $false; paths = @('src/app/folder_size_cache.hpp')
+           rules = @(@{ source = 'tests/cpp/test_folder_size_cache.cpp'; pattern = '^' }) },
         @{ id = 'gui-monitor'; requireHip = $false; paths = @(
                'src/app/cpu_sampling.hpp', 'src/app/pdh_percentage_sampler.hpp',
                'src/app/performance_counters.hpp', 'src/app/graph_series.hpp', 'src/app/main_window_monitor.cpp')

@@ -197,6 +197,12 @@ foreach ($testPath in @('tests/cpp/test_zip_compat.cpp', 'tests/cpp/test_archive
     }
 }
 $nativeToolPlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/native_test_selection.ps1', 'tools/native_component_tests.ps1')
+$folderCachePlan = Get-FlitzZipVerificationPlan -ChangedPath @('src/app/folder_size_cache.hpp')
+$folderCacheCommand = @($folderCachePlan.requiredLocalCommands | Where-Object id -eq 'unit-tests')
+Assert-Selector ($folderCacheCommand.Count -eq 1 -and 'tools/native_component_tests.ps1' -in $folderCacheCommand[0].arguments) 'private cache selects its complete native cohort once'
+foreach ($id in @('release-build', 'scanner-preflight', 'gui-smoke', 'changed-refactor-audit')) {
+    Assert-Selector (Test-RequiredCommand -Plan $folderCachePlan -Id $id) "cache mapping preserves independent production qualification: $id"
+}
 foreach ($monitorPath in @('src/app/cpu_sampling.hpp', 'src/app/pdh_percentage_sampler.hpp',
         'src/app/performance_counters.hpp', 'src/app/graph_series.hpp', 'src/app/main_window_monitor.cpp')) {
     $monitorPlan = Get-FlitzZipVerificationPlan -ChangedPath @($monitorPath)

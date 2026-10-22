@@ -124,6 +124,24 @@ foreach ($shared in @('src/gpu/hip_codec_support.hpp', 'src/gpu/hip_codec.hip.cp
 Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths $entropyPaths -Full).mode -eq 'full') 'explicit full qualification'
 Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths @('tests/cpp/test_main.cpp')).mode -eq 'runner') 'runner-only edits select registry contracts'
 $inventory = @(Get-FlitzZipNativeTestInventory)
+$folderCachePath = 'src/app/folder_size_cache.hpp'
+$folderCacheExpected = @($inventory | Where-Object source -eq 'tests/cpp/test_folder_size_cache.cpp' |
+    Select-Object -ExpandProperty name | Sort-Object)
+$folderCache = Get-FlitzZipNativeTestSelection -Paths @($folderCachePath)
+Assert-NativeSelection ($folderCache.mode -eq 'component' -and -not $folderCache.requireHip -and
+    ($folderCache.tests -join '|') -ceq ($folderCacheExpected -join '|')) 'cache selects every registered lifetime and allocation-failure case'
+$folderCacheBatch = Get-FlitzZipNativeTestSelection -Paths @($folderCachePath, $folderCachePath,
+    'tests/cpp/test_folder_size_cache.cpp')
+Assert-NativeSelection (($folderCacheBatch.tests -join '|') -ceq ($folderCacheExpected -join '|')) 'cache changes and tests form one complete deduplicated cohort'
+$folderCacheGpu = Get-FlitzZipNativeTestSelection -Paths (@($folderCachePath) + $entropyPaths)
+$folderCacheGpuExpected = @($folderCacheExpected + $entropyExpected | Sort-Object -Unique)
+Assert-NativeSelection ($folderCacheGpu.requireHip -and
+    ($folderCacheGpu.tests -join '|') -ceq ($folderCacheGpuExpected -join '|')) 'cache selection preserves unrelated required-HIP consumers'
+foreach ($shared in @('src/app/main_window.hpp', 'src/app/queue_metadata.hpp', 'src/app/unreviewed_cache.hpp',
+        'CMakeLists.txt', 'tests/cpp/test_util.hpp')) {
+    Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths @($folderCachePath, $shared)).mode -eq 'full') "shared or unreviewed cache consumers retain full native qualification: $shared"
+}
+Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths @($folderCachePath) -Full).mode -eq 'full') 'explicit full cache qualification remains broad'
 $monitorPaths = @('src/app/cpu_sampling.hpp', 'src/app/pdh_percentage_sampler.hpp',
     'src/app/performance_counters.hpp', 'src/app/graph_series.hpp', 'src/app/main_window_monitor.cpp')
 $monitorExpected = @($inventory | Where-Object { $_.source -in @('tests/cpp/test_system_layout.cpp',
