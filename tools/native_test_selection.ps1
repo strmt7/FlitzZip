@@ -78,6 +78,12 @@ function Get-FlitzZipNativeTestSelection {
     $broad = [pscustomobject]@{ mode = 'full'; components = @(); tests = @(); requireHip = $false }
     if ($Full.IsPresent) { return $broad }
     $definitions = @(
+        @{ id = 'gui-monitor'; requireHip = $false; paths = @(
+               'src/app/cpu_sampling.hpp', 'src/app/pdh_percentage_sampler.hpp',
+               'src/app/performance_counters.hpp', 'src/app/graph_series.hpp', 'src/app/main_window_monitor.cpp')
+           rules = @(
+               @{ source = 'tests/cpp/test_system_layout.cpp'; pattern = '^' },
+               @{ source = 'tests/cpp/test_resource_usage.cpp'; pattern = '^' }) },
         @{ id = 'sevenzip-parser'; requireHip = $false; paths = @('third_party/lzma_sdk/C/7zArcIn.c')
            rules = @(
                @{ source = 'tests/cpp/test_sevenzip_compat.cpp'; pattern = '^sevenzip_' },

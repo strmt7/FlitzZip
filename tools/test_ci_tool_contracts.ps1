@@ -37,6 +37,9 @@ foreach ($path in @('.clusterfuzzlite/build.sh', '.clusterfuzzlite/local_smoke.s
     Assert-CiContractPlan -Path $path -Required @('fuzz-resource-tests', 'fuzz-memory-tests')
 }
 Assert-CiContractPlan -Path 'tools/native_component_tests.ps1' -Required @('native-selection-contracts')
+foreach ($path in @('tests/cpp/test_sparse_pattern_block.cpp', 'tests/cpp/test_system_layout.cpp', 'tests/cpp/test_util.hpp')) {
+    Assert-CiContractPlan -Path $path -Required @('native-selection-contracts')
+}
 Assert-CiContractPlan -Path 'tests/cpp/test_main.cpp' -Required @('native-runner-contracts')
 Assert-CiContractPlan -Path 'tools/native_ci.ps1' -Required @('native-ci-contracts')
 Assert-CiContractPlan -Path 'tools/native_coverage.py' -Required @('native-coverage-contracts')
