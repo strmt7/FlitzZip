@@ -30,9 +30,7 @@ struct EncodedBlockWork {
 // Inputs: `options` contains block size, worker count, and CPU codec effort.
 // Outputs: Returns normally for bounded settings; throws `ArchiveError` otherwise.
 void validate_encode_options(const ArchiveCodecOptions& options) {
-    if (options.block_size < kMinArchiveBlockBytes || options.block_size > kMaxArchiveBlockBytes) {
-        throw ArchiveError("codec block size is outside FlitzZip resource limits");
-    }
+    validate_codec_block_size(options.block_size);
     if (options.compression_level < kMinCompressionLevel || options.compression_level > kMaxCompressionLevel) {
         throw ArchiveError("codec compression level must be between 1 and 9");
     }
@@ -42,18 +40,7 @@ void validate_encode_options(const ArchiveCodecOptions& options) {
 // Inputs: `options` contains the caller-selected block size and worker count.
 // Outputs: Returns normally for bounded settings; throws `ArchiveError` otherwise.
 void validate_decode_options(const ArchiveCodecOptions& options) {
-    if (options.block_size < kMinArchiveBlockBytes || options.block_size > kMaxArchiveBlockBytes) {
-        throw ArchiveError("codec block size is outside FlitzZip resource limits");
-    }
-}
-
-// Purpose: Reject direct codec spans that exceed the bounded archive chunk contract.
-// Inputs: `size` is a caller-provided span length and `label` names the span.
-// Outputs: Returns normally while bounded; throws `ArchiveError` before large allocations.
-void reject_oversized_codec_span(std::size_t size, const char* label) {
-    if (size > kMaxArchiveChunkBytes) {
-        throw ArchiveError(std::string(label) + " exceeds FlitzZip codec resource limit");
-    }
+    validate_codec_block_size(options.block_size);
 }
 
 // Purpose: Detect whether a block is a repeated byte value.
@@ -619,6 +606,24 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
 
 }  // namespace
 
+// Purpose: Enforce the shared native codec block-size interval at every direct CPU/HIP boundary.
+// Inputs: `block_size` is the requested decoded block extent. Outputs: Returns for the inclusive supported range;
+// throws `ArchiveError` otherwise.
+void validate_codec_block_size(std::uint32_t block_size) {
+    if (block_size < kMinArchiveBlockBytes || block_size > kMaxArchiveBlockBytes) {
+        throw ArchiveError("codec block size is outside FlitzZip resource limits");
+    }
+}
+
+// Purpose: Enforce the shared native codec chunk limit without requiring a caller to allocate the rejected extent.
+// Inputs: `size` is a proposed span length and `label` identifies it in diagnostics. Outputs: Returns while bounded;
+// throws `ArchiveError` above the resource limit.
+void validate_codec_span_size(std::size_t size, const char* label) {
+    if (size > kMaxArchiveChunkBytes) {
+        throw ArchiveError(std::string(label) + " exceeds FlitzZip codec resource limit");
+    }
+}
+
 // Purpose: Estimate native encode metadata and retained codec storage before pipeline allocation.
 // Inputs: A bounded nonempty chunk, codec block size/effort, and the aggregate worker ceiling.
 // Outputs: Returns conservative overhead beyond three payload buffers; throws for invalid runtime bounds.
@@ -764,7 +769,7 @@ static void encode_cpu_block_range(std::span<const std::byte> input, std::uint32
 // Outputs: Returns a dense encoded chunk or throws before exposing incomplete codec output.
 EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCodecOptions& options) {
     validate_encode_options(options);
-    reject_oversized_codec_span(input.size(), "codec input");
+    validate_codec_span_size(input.size(), "codec input");
 
     EncodedChunk out;
     const auto block_size = std::max<std::uint32_t>(1U, options.block_size);
@@ -842,8 +847,8 @@ bool block_table_contains_cpu_only(std::span<const BlockDescriptor> blocks) {
 void decode_cpu_only_blocks_cpu(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                                 std::span<std::byte> output, const ArchiveCodecOptions& options) {
     validate_decode_options(options);
-    reject_oversized_codec_span(payload.size(), "codec payload");
-    reject_oversized_codec_span(output.size(), "codec output");
+    validate_codec_span_size(payload.size(), "codec payload");
+    validate_codec_span_size(output.size(), "codec output");
     if (blocks.size() > kMaxBlocksPerEntry) {
         throw ArchiveError("codec block table exceeds FlitzZip resource limit");
     }
@@ -871,8 +876,8 @@ void decode_cpu_only_blocks_cpu(std::span<const std::byte> payload, std::span<co
 void decode_chunk_cpu(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                       std::span<std::byte> output, const ArchiveCodecOptions& options) {
     validate_decode_options(options);
-    reject_oversized_codec_span(payload.size(), "codec payload");
-    reject_oversized_codec_span(output.size(), "codec output");
+    validate_codec_span_size(payload.size(), "codec payload");
+    validate_codec_span_size(output.size(), "codec output");
     if (blocks.size() > kMaxBlocksPerEntry) {
         throw ArchiveError("codec block table exceeds FlitzZip resource limit");
     }

@@ -1,5 +1,6 @@
 #include "core/sparse_pattern_block.hpp"
 #include "gpu/gpu_codec.hpp"
+#include "gpu/sparse_pattern_candidate.hpp"
 #if FLITZZIP_ENABLE_HIP
 #include "gpu/sparse_pattern_device.hpp"
 #endif
@@ -378,4 +379,83 @@ TEST_CASE(sparse_pattern_hip_batch_rejects_prepopulated_output_fields) {
 #else
     REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
 #endif
+}
+
+// Purpose: Enforce the sparse replacement boundary independently from HIP candidate generation.
+// Inputs: A two-block baseline, one smaller canonical payload, and forged count/extent/cost variants.
+// Outputs: Preserves dense bytes and metadata for valid input; rejects every inconsistent internal result.
+TEST_CASE(sparse_pattern_replacements_validate_complete_internal_results) {
+    flitzzip::EncodedChunk baseline;
+    baseline.blocks = {
+        {.kind = flitzzip::BlockKind::Raw, .uncompressed_len = 32U, .encoded_offset = 0U, .encoded_len = 8U},
+        {.kind = flitzzip::BlockKind::GpuPrefix, .uncompressed_len = 16U, .encoded_offset = 8U, .encoded_len = 5U},
+    };
+    baseline.payload = {std::byte{0x10}, std::byte{0x11}, std::byte{0x12}, std::byte{0x13}, std::byte{0x14},
+                        std::byte{0x15}, std::byte{0x16}, std::byte{0x17}, std::byte{0x20}, std::byte{0x21},
+                        std::byte{0x22}, std::byte{0x23}, std::byte{0x24}};
+    baseline.source_crc32 = 0xA1B2C3D4U;
+    baseline.source_crc32_available = true;
+    baseline.gpu_used = true;
+
+    auto sparse = make_sparse_test_payload();
+    REQUIRE_TRUE(sparse.size() < baseline.blocks.front().uncompressed_len);
+    baseline.blocks.front().encoded_len = static_cast<std::uint32_t>(sparse.size() + 1U);
+    baseline.blocks[1].encoded_offset = baseline.blocks.front().encoded_len;
+    baseline.payload.resize(static_cast<std::size_t>(baseline.blocks.front().encoded_len) + 5U, std::byte{0x17});
+    const auto retained =
+        std::vector<std::byte>(baseline.payload.begin() + baseline.blocks[1].encoded_offset, baseline.payload.end());
+    const flitzzip::sparse_pattern::SparseReplacements replacements{sparse, {}};
+    const auto result = flitzzip::sparse_pattern::apply_replacements(baseline, replacements);
+    REQUIRE_EQ(result.source_crc32, baseline.source_crc32);
+    REQUIRE_TRUE(result.source_crc32_available && result.gpu_used);
+    REQUIRE_EQ(result.blocks.size(), 2U);
+    REQUIRE_EQ(result.blocks[0].kind, flitzzip::BlockKind::GpuSparsePattern);
+    REQUIRE_EQ(result.blocks[0].encoded_offset, 0U);
+    REQUIRE_EQ(result.blocks[0].encoded_len, sparse.size());
+    REQUIRE_EQ(result.blocks[1].kind, flitzzip::BlockKind::GpuPrefix);
+    REQUIRE_EQ(result.blocks[1].encoded_offset, sparse.size());
+    REQUIRE_EQ(std::vector<std::byte>(result.payload.begin(), result.payload.begin() + sparse.size()), sparse);
+    REQUIRE_EQ(std::vector<std::byte>(result.payload.begin() + sparse.size(), result.payload.end()), retained);
+
+    const auto require_rejected = [](flitzzip::EncodedChunk chunk,
+                                     flitzzip::sparse_pattern::SparseReplacements candidates,
+                                     std::string_view expected) {
+        bool rejected = false;
+        try {
+            (void)flitzzip::sparse_pattern::apply_replacements(std::move(chunk), candidates);
+        } catch (const flitzzip::GpuError& error) {
+            rejected = std::string_view(error.what()) == expected;
+        }
+        REQUIRE_TRUE(rejected);
+    };
+    require_rejected(baseline, {sparse}, "sparse replacement count differs from baseline blocks");
+    auto invalid_extent = baseline;
+    invalid_extent.blocks[0].encoded_offset = invalid_extent.payload.size() + 1U;
+    require_rejected(invalid_extent, replacements, "sparse baseline block exceeds encoded payload");
+    invalid_extent = baseline;
+    invalid_extent.blocks[0].encoded_len = static_cast<std::uint32_t>(invalid_extent.payload.size() + 1U);
+    require_rejected(invalid_extent, replacements, "sparse baseline block exceeds encoded payload");
+    auto non_improving = sparse;
+    non_improving.resize(baseline.blocks[0].encoded_len, std::byte{0x55});
+    require_rejected(baseline, {non_improving, {}}, "sparse replacement does not improve the source block");
+}
+
+// Purpose: Reject sparse candidate geometry before any device query, allocation, or kernel work.
+// Inputs: Null device input, an overlong descriptor, and descriptors that leave an uncovered source suffix.
+// Outputs: Each malformed call returns its precise GpuError without requiring HIP availability.
+TEST_CASE(sparse_pattern_candidate_layout_precedes_device_work) {
+    const std::array<std::byte, 8U> input{};
+    const auto require_rejected = [&](const std::byte* device, std::vector<flitzzip::BlockDescriptor> blocks,
+                                      std::string_view expected) {
+        bool rejected = false;
+        try {
+            (void)flitzzip::sparse_pattern::select_replacements(input, device, blocks, nullptr);
+        } catch (const flitzzip::GpuError& error) {
+            rejected = std::string_view(error.what()) == expected;
+        }
+        REQUIRE_TRUE(rejected);
+    };
+    require_rejected(nullptr, {}, "sparse candidate device input is unavailable");
+    require_rejected(input.data(), {{.uncompressed_len = 9U}}, "sparse candidate block exceeds source chunk");
+    require_rejected(input.data(), {{.uncompressed_len = 7U}}, "sparse candidate blocks do not cover source chunk");
 }

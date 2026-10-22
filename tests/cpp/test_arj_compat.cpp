@@ -45,16 +45,6 @@ void append_le32(std::vector<unsigned char>& bytes, std::uint32_t value) {
     bytes.push_back(static_cast<unsigned char>((value >> 24U) & 0xFFU));
 }
 
-// Purpose: Replace one little-endian 32-bit fixture field without using production parsing code.
-// Inputs: `bytes` contains the field at `offset`; `value` is the exact wire value.
-// Outputs: Replaces four existing bytes.
-void replace_le32(std::vector<unsigned char>& bytes, std::size_t offset, std::uint32_t value) {
-    bytes.at(offset) = static_cast<unsigned char>(value & 0xFFU);
-    bytes.at(offset + 1U) = static_cast<unsigned char>((value >> 8U) & 0xFFU);
-    bytes.at(offset + 2U) = static_cast<unsigned char>((value >> 16U) & 0xFFU);
-    bytes.at(offset + 3U) = static_cast<unsigned char>((value >> 24U) & 0xFFU);
-}
-
 // Purpose: Append one NUL-terminated ASCII ARJ fixture string.
 // Inputs: `bytes` is the mutable ARJ header and `value` is the raw fixture text.
 // Outputs: Appends `value` plus one NUL byte.

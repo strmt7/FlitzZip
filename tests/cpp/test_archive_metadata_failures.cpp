@@ -897,6 +897,13 @@ TEST_CASE(flzip_cpu_codec_options_reject_before_work_and_recover) {
                                     "codec block size is outside");
             REQUIRE_EQ(std::ranges::count(output, std::byte{0x7D}), 4);
         }
+        const flitzzip::GpuCodecOptions dispatch{.force_cpu = true, .block_size = block_size};
+        require_codec_rejection([&] { (void)flitzzip::encode_chunk(payload, dispatch); },
+                                "codec block size is outside");
+        output.fill(std::byte{0x7D});
+        require_codec_rejection([&] { (void)flitzzip::decode_chunk(payload, std::span(&raw, 1U), output, dispatch); },
+                                "codec block size is outside");
+        REQUIRE_EQ(std::ranges::count(output, std::byte{0x7D}), 4);
     }
     for (const int effort : {std::numeric_limits<int>::min(), 0, 10, std::numeric_limits<int>::max()}) {
         require_codec_rejection([&] { (void)flitzzip::encode_chunk_cpu(payload, {.compression_level = effort}); },
@@ -905,6 +912,24 @@ TEST_CASE(flzip_cpu_codec_options_reject_before_work_and_recover) {
     const auto encoded = flitzzip::encode_chunk_cpu(payload, {});
     flitzzip::decode_chunk_cpu(encoded.payload, encoded.blocks, output, {});
     REQUIRE_EQ(output, payload);
+}
+
+// Purpose: Test the shared codec span limit numerically without allocating a deliberately rejected giant buffer.
+// Inputs: Exact block/chunk boundaries and each adjacent invalid value. Outputs: One diagnostic contract for CPU/HIP.
+TEST_CASE(flzip_shared_codec_resource_limits_have_exact_boundaries) {
+    flitzzip::validate_codec_block_size(flitzzip::kMinArchiveBlockBytes);
+    flitzzip::validate_codec_block_size(flitzzip::kMaxArchiveBlockBytes);
+    flitzzip::validate_codec_span_size(static_cast<std::size_t>(flitzzip::kMaxArchiveChunkBytes), "test input");
+    require_codec_rejection([] { flitzzip::validate_codec_block_size(flitzzip::kMinArchiveBlockBytes - 1U); },
+                            "codec block size is outside");
+    require_codec_rejection([] { flitzzip::validate_codec_block_size(flitzzip::kMaxArchiveBlockBytes + 1U); },
+                            "codec block size is outside");
+    require_codec_rejection(
+        [] {
+            flitzzip::validate_codec_span_size(static_cast<std::size_t>(flitzzip::kMaxArchiveChunkBytes + 1U),
+                                               "test input");
+        },
+        "test input exceeds FlitzZip codec resource limit");
 }
 
 // Purpose: Reject caller output extents and excessive tables before parallel decoding can publish a prefix.
@@ -934,6 +959,14 @@ TEST_CASE(flzip_cpu_decode_extent_admission_preserves_output_and_recovers) {
             REQUIRE_EQ(std::ranges::count(output, std::byte{0x7D}), 8);
         }
     }
+    const flitzzip::GpuCodecOptions dispatch{.force_cpu = true};
+    require_codec_rejection([&] { (void)flitzzip::decode_chunk({}, excessive, output, dispatch); },
+                            "codec block table exceeds");
+    require_codec_rejection([&] { (void)flitzzip::crc_decoded_chunk({}, excessive, 0U, dispatch); },
+                            "codec block table exceeds");
+    require_codec_rejection(
+        [&] { (void)flitzzip::crc_decoded_chunk({}, {}, flitzzip::kMaxArchiveChunkBytes + 1U, dispatch); },
+        "codec output exceeds FlitzZip resource limit");
 }
 
 // Purpose: Guard HIP's final host admission even when an internal caller bypasses the public archive parser.
