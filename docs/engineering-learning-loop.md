@@ -40,6 +40,11 @@ compile-only checks cannot qualify either runtime behavior. Across separately
 linked CRTs, use an explicit versioned interface with ownership retained by its
 allocator and no exception propagation across the boundary. Validate packaged
 bytes independently from hardware availability.
+Archive writers must freeze their validated source inventory before reserving
+publication directories or opening output streams. Stream-writing helpers consume
+that inventory rather than enumerating sources again. Exercise destinations inside
+selected source folders and retain legitimate temporary-looking user files; a
+filename or directory exclusion is not a repair for publication ordering.
 Produce runtime digests from linked artifacts, not configure-time placeholders.
 PowerShell analyzer lint must also parse source with the native grammar parser;
 an analyzer's empty finding list does not establish syntactic validity.

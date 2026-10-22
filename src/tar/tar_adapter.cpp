@@ -952,16 +952,17 @@ TarWriteStats write_tar_stream(const Manifest& manifest, std::ostream& output,
 
 // Purpose: Create a standards-compatible TAR archive from files and directories.
 // Inputs: `sources` are existing paths, `output_archive` is the TAR target, and `progress_callback` receives updates.
-// Outputs: Writes the archive and returns telemetry, or throws on source, path, or output failures.
+// Outputs: Snapshots sources before creating output, then returns telemetry or throws on source/path/write failures.
 OperationStats compress_tar(const std::vector<std::filesystem::path>& sources,
                             const std::filesystem::path& output_archive, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
+    const auto manifest = build_manifest(sources);
     FilePublishTransaction publication(output_archive);
     std::ofstream output(publication.staging_path(), std::ios::binary);
     if (!output) {
         throw ArchiveError("cannot create TAR archive: " + output_archive.string());
     }
-    const auto write_stats = write_tar_stream(build_manifest(sources), output, progress_callback);
+    const auto write_stats = write_tar_stream(manifest, output, progress_callback);
     output.close();
     if (!output) {
         throw ArchiveError("failed to finalize TAR archive: " + output_archive.string());
@@ -979,14 +980,15 @@ OperationStats compress_tar(const std::vector<std::filesystem::path>& sources,
 
 // Purpose: Create a TAR.GZ stream from files/directories with bounded in-process Gzip compression.
 // Inputs: `sources`, `output_archive`, `compression_level`, and `progress_callback` define the archive run.
-// Outputs: Writes the archive and returns telemetry, or throws on source, TAR, or Gzip failures.
+// Outputs: Snapshots sources before creating output, then returns telemetry or throws on source/TAR/Gzip failures.
 OperationStats compress_tar_gzip(const std::vector<std::filesystem::path>& sources,
                                  const std::filesystem::path& output_archive, int compression_level,
                                  const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
+    const auto manifest = build_manifest(sources);
     FilePublishTransaction publication(output_archive);
     GzipOutputStream output(publication.staging_path(), compression_level);
-    const auto write_stats = write_tar_stream(build_manifest(sources), output, progress_callback);
+    const auto write_stats = write_tar_stream(manifest, output, progress_callback);
     output.close();
     const auto output_bytes = output.output_bytes();
     publication.commit(true);
@@ -1002,14 +1004,15 @@ OperationStats compress_tar_gzip(const std::vector<std::filesystem::path>& sourc
 
 // Purpose: Create a TAR.BZ2 stream from files/directories with bounded in-process Bzip2 compression.
 // Inputs: `sources`, `output_archive`, `compression_level`, and `progress_callback` define the archive run.
-// Outputs: Writes the archive and returns telemetry, or throws on source, TAR, or Bzip2 failures.
+// Outputs: Snapshots sources before creating output, then returns telemetry or throws on source/TAR/Bzip2 failures.
 OperationStats compress_tar_bzip2(const std::vector<std::filesystem::path>& sources,
                                   const std::filesystem::path& output_archive, int compression_level,
                                   const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
+    const auto manifest = build_manifest(sources);
     FilePublishTransaction publication(output_archive);
     Bzip2OutputStream output(publication.staging_path(), compression_level);
-    const auto write_stats = write_tar_stream(build_manifest(sources), output, progress_callback);
+    const auto write_stats = write_tar_stream(manifest, output, progress_callback);
     output.close();
     const auto output_bytes = output.output_bytes();
     publication.commit(true);

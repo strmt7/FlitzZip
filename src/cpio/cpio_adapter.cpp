@@ -493,11 +493,10 @@ CpioScanResult scan_cpio(const std::filesystem::path& archive_path, ArchivePathE
 }
 
 // Purpose: Write a CPIO stream to any output stream using shared compatibility semantics.
-// Inputs: `sources` are existing files/directories, `output` receives CPIO bytes, and `progress_callback` receives
+// Inputs: `manifest` fixes the source snapshot, `output` receives CPIO bytes, and `progress_callback` receives
 // synchronous snapshots. Outputs: Returns uncompressed input byte/entry counts; throws on source/path/write failures.
-CpioWriteStats write_cpio_stream(const std::vector<std::filesystem::path>& sources, std::ostream& output,
+CpioWriteStats write_cpio_stream(const Manifest& manifest, std::ostream& output,
                                  const ProgressCallback& progress_callback) {
-    const auto manifest = build_manifest(sources);
     ProgressState progress;
     progress.start(OperationKind::Compress, manifest.total_file_bytes, manifest.entries.size());
     std::uint32_t ino = 1;
@@ -623,17 +622,18 @@ void extract_validated_cpio_stream(std::istream& input, const CpioScanResult& sc
 
 // Purpose: Create a portable SVR4 new ASCII CPIO archive from files/directories.
 // Inputs: `sources` are filesystem roots, `output_archive` is the destination `.cpio`, and `progress_callback` receives
-// synchronous snapshots. Outputs: Returns operation statistics; throws `ArchiveError`/`SecurityError` on source, path,
-// or writer failures.
+// synchronous snapshots. Outputs: Snapshots sources before creating output; throws `ArchiveError`/`SecurityError` on
+// source, path, or writer failures.
 OperationStats compress_cpio(const std::vector<std::filesystem::path>& sources,
                              const std::filesystem::path& output_archive, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
+    const auto manifest = build_manifest(sources);
     FilePublishTransaction publication(output_archive);
     std::ofstream output(publication.staging_path(), std::ios::binary);
     if (!output) {
         throw ArchiveError("cannot create CPIO archive: " + path_diagnostic_utf8(output_archive));
     }
-    const auto write_stats = write_cpio_stream(sources, output, progress_callback);
+    const auto write_stats = write_cpio_stream(manifest, output, progress_callback);
     output.close();
     if (!output) {
         throw ArchiveError("failed to finalize CPIO archive: " + path_diagnostic_utf8(output_archive));
@@ -651,15 +651,16 @@ OperationStats compress_cpio(const std::vector<std::filesystem::path>& sources,
 
 // Purpose: Create a Gzip-compressed SVR4 new ASCII CPIO archive from files/directories.
 // Inputs: `sources` are filesystem roots, `output_archive` is the destination `.cpio.gz`/`.cpgz`, `compression_level`
-// is 1-9, and `progress_callback` receives synchronous snapshots. Outputs: Returns operation statistics; throws
+// is 1-9, and `progress_callback` receives synchronous snapshots. Outputs: Snapshots sources before output; throws
 // `ArchiveError`/`SecurityError` on source, CPIO writer, or Gzip writer failures.
 OperationStats compress_cpio_gzip(const std::vector<std::filesystem::path>& sources,
                                   const std::filesystem::path& output_archive, int compression_level,
                                   const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
+    const auto manifest = build_manifest(sources);
     FilePublishTransaction publication(output_archive);
     GzipOutputStream output(publication.staging_path(), compression_level);
-    const auto write_stats = write_cpio_stream(sources, output, progress_callback);
+    const auto write_stats = write_cpio_stream(manifest, output, progress_callback);
     output.close();
     const auto output_bytes = output.output_bytes();
     publication.commit(true);
