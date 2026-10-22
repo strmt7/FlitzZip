@@ -15,7 +15,7 @@ import time
 import unittest
 from functools import partial
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from tools.semgrep_distribution import recipe
 
@@ -136,6 +136,56 @@ class SemgrepRuntimeTests(unittest.TestCase):
                     consumer(token)
                 self.assertIsInstance(failure.exception.__cause__, RecursionError)
             fetch.assert_not_called()
+
+    def test_tracestate_rejects_hostile_headers_with_bounded_work(self):
+        """Purpose: Detect the quadratic untrusted-header parser, independently of implementation details.
+        Inputs: Valid propagation and 200 KB hostile whitespace runs in an isolated bounded child.
+        Outputs: Preserves valid entries and rejects hostile headers without retaining a busy worker.
+        """
+        program = (
+            "from opentelemetry.trace import TraceState\n"
+            "assert dict(TraceState.from_header(['alpha=one,beta=two'])) == {'alpha':'one','beta':'two'}\n"
+            "for whitespace in (' ', '\\t'):\n"
+            " assert not dict(TraceState.from_header(['a=b' + whitespace * 200000 + 'x']))\n"
+            "print('tracestate bounded rejection passed')\n"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", program], capture_output=True, text=True, timeout=5, check=True
+        )
+        self.assertEqual(completed.stdout.strip(), "tracestate bounded rejection passed")
+
+    def test_semgrep_telemetry_exports_through_fixed_cohort(self):
+        """Purpose: Exercise the scanner's resource and exporter consumers with the coordinated SDK upgrade.
+        Inputs: One in-memory span and a mocked HTTP transport; no network or persistent telemetry.
+        Outputs: A real protobuf export succeeds, keeps its resource, and releases its provider/session.
+        """
+        import requests
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+        from semgrep.telemetry import MutableResource, OTLPSpanExporter
+
+        resource = MutableResource(Resource({"service.name": "scanner-fixture"}))
+        provider = TracerProvider(resource=resource)
+        spans = InMemorySpanExporter()
+        provider.add_span_processor(SimpleSpanProcessor(spans))
+        with requests.Session() as session:
+            exporter = OTLPSpanExporter(endpoint="https://fixture.invalid/v1/traces", session=session)
+            try:
+                with provider.get_tracer("consumer-fixture").start_as_current_span("local-scan") as span:
+                    span.set_attribute("scan.engine_type", "fixture")
+                finished = spans.get_finished_spans()
+                self.assertEqual(len(finished), 1)
+                self.assertEqual(finished[0].resource.attributes["service.name"], "scanner-fixture")
+                response = Mock(ok=True, status_code=200, content=b"")
+                with patch.object(session, "send", return_value=response) as send:
+                    self.assertEqual(exporter.export(finished), SpanExportResult.SUCCESS)
+                    send.assert_called_once()
+                    self.assertTrue(send.call_args.args[0].body)
+            finally:
+                exporter.shutdown()
+                provider.shutdown()
 
     # Purpose: Preserve scanner exit semantics, negative controls and standard SARIF output.
     # Inputs: temporary benign rule and files. Outputs: detected/clean controls and one SARIF finding.

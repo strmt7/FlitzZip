@@ -220,6 +220,14 @@ gate, never clean-scan evidence.
 
 ## Finding Triage
 
+The four `sha256`/`derived_sha256` values in the current Semgrep distribution
+manifest are public artifact integrity metadata, not authentication material.
+Both original wheels were checked against the pinned official distribution
+bytes; both derived hashes were recomputed by the deterministic builder after
+the exact reviewed dependency metadata changes. The metadata ledger binds these
+four values to the complete current manifest. Raw DS173237 reports remain
+retained, and a changed manifest or value expires the corresponding review.
+
 The [coverage collector integrity review](security-reviews/coverage-integrity.md)
 documents individually recomputed public installer and runtime hashes under the
 maintainer's authorization for exact proven false positives. The metadata ledger
@@ -330,14 +338,24 @@ scanner with its tracked coverage audit.
 is fixed in official MCP 1.30.0. Semgrep 1.181.0 still requires exactly MCP
 1.29.0, so those official distributions cannot be installed together normally.
 The repository identifies its narrow downstream packaging revision as
-`semgrep==1.181.0+flitzzip.mcp1`. This is not an official Semgrep release.
+`semgrep==1.181.0+flitzzip.security2`. This is not an official Semgrep release.
 The pinned artifact manifest records the original and derived Linux/Windows
 x64 wheels. `tools/semgrep_distribution.py` validates the complete original
-wheel and RECORD, then changes only the distribution version and MCP requirement.
-Scanner source, executables, other requirements, executable permissions, licenses
+wheel and RECORD, then changes only the distribution version and the exact reviewed
+MCP and OpenTelemetry requirements. Scanner source, executables, unrelated requirements, executable permissions, licenses
 and notices remain unchanged. The version displayed by scanner code continues
 to identify its upstream source; installed distribution metadata identifies the
 downstream packaging revision.
+
+The OpenTelemetry tracestate parsing advisory GHSA-xcq7-p3pf-p88h is fixed in
+official API 1.45.1. Even Semgrep 1.182.1 still pins the affected 1.37 family.
+The same explicitly authorized packaging exception now installs the coordinated
+official API/SDK/OTLP 1.45.1 and requests/threading instrumentation 0.66b1 cohort.
+This is an exact reviewed change, not a general resolver override. The complete
+lock retains unrelated package versions. Runtime qualification exercises a
+bounded hostile-header parser regression, the scanner's real resource/exporter
+consumers with an intercepted HTTP transport, and the existing scanner/MCP/JWT
+controls. Linux execution remains required on the pushed revision.
 
 The builder generates standard wheel records and deterministic stored ZIP members.
 It checks the derived digest before publication and refuses existing output

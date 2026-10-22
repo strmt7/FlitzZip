@@ -32,6 +32,11 @@ def fixture(*, newline="\n", dependency="1.29.0", extra=None) -> bytes:
                 "Version: 1.181.0",
                 f"Requires-Dist: mcp=={dependency}",
                 "Requires-Dist: pyjwt[crypto]<3,>=2.15.0",
+                "Requires-Dist: opentelemetry-api~=1.37.0",
+                "Requires-Dist: opentelemetry-sdk~=1.37.0",
+                "Requires-Dist: opentelemetry-exporter-otlp-proto-http~=1.37.0",
+                "Requires-Dist: opentelemetry-instrumentation-requests~=0.58b0",
+                "Requires-Dist: opentelemetry-instrumentation-threading~=0.58b0",
                 "",
                 "Description",
                 "",
@@ -114,13 +119,21 @@ class DistributionTests(unittest.TestCase):
                 before, after = distribution.read_wheel(original), distribution.read_wheel(result)
                 self.assertEqual(len(before), len(after))
                 for name, value in before.items():
-                    renamed = name.replace("semgrep-1.181.0.dist-info/", "semgrep-1.181.0+flitzzip.mcp1.dist-info/")
+                    renamed = name.replace(
+                        "semgrep-1.181.0.dist-info/", "semgrep-1.181.0+flitzzip.security2.dist-info/"
+                    )
                     if not name.endswith(("/METADATA", "/RECORD")):
                         self.assertEqual(after[renamed], value)
-                info = "semgrep-1.181.0+flitzzip.mcp1.dist-info/"
+                info = "semgrep-1.181.0+flitzzip.security2.dist-info/"
                 expected = before["semgrep-1.181.0.dist-info/METADATA"][0]
-                expected = expected.replace(b"Version: 1.181.0", b"Version: 1.181.0+flitzzip.mcp1")
+                expected = expected.replace(b"Version: 1.181.0", b"Version: 1.181.0+flitzzip.security2")
                 expected = expected.replace(b"Requires-Dist: mcp==1.29.0", b"Requires-Dist: mcp==1.30.0")
+                for package in ("api", "sdk", "exporter-otlp-proto-http"):
+                    name = f"Requires-Dist: opentelemetry-{package}".encode()
+                    expected = expected.replace(name + b"~=1.37.0", name + b"==1.45.1")
+                for package in ("requests", "threading"):
+                    name = f"Requires-Dist: opentelemetry-instrumentation-{package}".encode()
+                    expected = expected.replace(name + b"~=0.58b0", name + b"==0.66b1")
                 self.assertEqual(after[info + "METADATA"][0], expected)
                 distribution.validate_record(after, info + "RECORD")
                 self.assertEqual(after["semgrep/bin/semgrep-core"][1], 0o100755)
