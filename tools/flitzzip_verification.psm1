@@ -545,10 +545,12 @@ function Get-FlitzZipLocalVerificationCommand {
     if ($scope.fullEscalationRequired -or (Test-FlitzZipAnyPath -Path $paths -Pattern @('^tools/(native_build_(provenance|receipt)|test_native_build_(provenance|receipt))\.py$', '^tools/build\.ps1$'))) {
         Add-FlitzZipVerificationCommand -List $local -Seen $seen -Command (Get-FlitzZipVerificationCommand -Id "native-build-receipt-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_native_build_provenance", "tools.test_native_build_receipt") -Reason "native invocation receipts must reject stale source/output bytes, active or incomplete attempts and required-HIP fallback while preserving evidence")
     }
-    if ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesGui -or $scope.touchesPackaging -or $scope.touchesNativeBuildInputs -or $scope.fullEscalationRequired) {
+    if ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesBrand -or $scope.touchesPackaging -or $scope.touchesNativeBuildInputs -or $scope.fullEscalationRequired) {
         Add-FlitzZipVerificationCommand -List $local -Seen $seen -Command (Get-FlitzZipVerificationCommand -Id "release-build" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/build.ps1", "-Configuration", "Release") -Reason "compiled product, CMake, package, GUI, or broad verification changes require a Release build")
+    } elseif ($scope.touchesGui) {
+        Add-FlitzZipVerificationCommand -List $local -Seen $seen -Command (Get-FlitzZipVerificationCommand -Id 'gui-native-receipt' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'tools.native_build_receipt', 'validate', '--configuration', 'Release', '--require-hip') -Reason 'GUI drivers require source-current HIP binaries and output identities before exercising actual interactions; missing or stale builds fail admission')
     }
-    if ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesGui -or $scope.fullEscalationRequired -or (Test-FlitzZipAnyPath -Path $paths -Pattern @('^tools/test\.ps1$'))) {
+    if ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesBrand -or $scope.fullEscalationRequired -or (Test-FlitzZipAnyPath -Path $paths -Pattern @('^tools/test\.ps1$'))) {
         $nativeSelection = Get-FlitzZipNativeTestSelection -Paths $paths -Full:$scope.fullEscalationRequired
         $usesFullNativeDriver = $nativeSelection.mode -eq 'full'
         if ($nativeSelection.mode -eq 'runner') {

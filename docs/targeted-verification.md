@@ -11,6 +11,12 @@ not itself select native compilation or package staging. The native version
 helper and actual package/build inputs retain those checks. Host coverage uses
 its frozen scenario dependency closure to select the real Debug CI measurement
 when any producer input changes, without repeating unrelated Release work.
+GUI smoke-driver changes retain the actual interactive smoke and first validate
+the existing Release build's complete source, configuration, required-HIP and
+output identities. A missing or stale receipt fails admission and requires a
+current build; it is never a passing skip. Driver-only edits do not rerun the
+unchanged native codec suites. Product source, artwork, native build inputs and
+explicit full qualification keep their build and applicable native tests.
 
 [Native code coverage](code-coverage.md) reuses the Windows CI build and records
 measured CPU line hits. Its offline contracts run locally; collector changes
