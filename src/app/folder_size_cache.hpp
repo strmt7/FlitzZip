@@ -28,16 +28,18 @@ struct FolderSizeTask {
 // Inputs: The caller holds one mutex for every method and for result-state reads.
 // Outputs: Issues task handles whose cancellation flag remains usable outside that mutex.
 class FolderSizeCache {
+    using PathKey = std::filesystem::path::string_type;
+
   public:
-    // Purpose: Find a row's cached task; inputs: path key; outputs: shared handle or null.
-    [[nodiscard]] std::shared_ptr<FolderSizeTask> find(const std::filesystem::path& path) const {
-        const auto found = entries_.find(path.wstring());
+    // Purpose: Find a row without allocating; inputs: borrowed native path key; outputs: shared handle or null.
+    [[nodiscard]] std::shared_ptr<FolderSizeTask> find(const std::filesystem::path& path) const noexcept {
+        const auto found = entries_.find(path.native());
         return found == entries_.end() ? nullptr : found->second;
     }
 
     // Purpose: Queue an uncached path; inputs: directory path; outputs: true only for a new task.
     bool enqueue(const std::filesystem::path& path) {
-        const auto key = path.wstring();
+        const auto& key = path.native();
         if (entries_.contains(key)) {
             return false;
         }
@@ -68,8 +70,8 @@ class FolderSizeCache {
         return task;
     }
 
-    // Purpose: Publish a current result; inputs: issued task and optional byte count; outputs: false if removed.
-    bool complete(const std::shared_ptr<FolderSizeTask>& task, std::optional<std::uintmax_t> bytes) {
+    // Purpose: Publish without allocating; inputs: issued task and optional byte count; outputs: false if removed.
+    bool complete(const std::shared_ptr<FolderSizeTask>& task, std::optional<std::uintmax_t> bytes) noexcept {
         if (!task || task->cancelled.load() || find(task->path) != task) {
             return false;
         }
@@ -78,21 +80,22 @@ class FolderSizeCache {
         return true;
     }
 
-    // Purpose: Invalidate a changed path; inputs: former folder key; outputs: cancels pending/in-flight stale sizes.
-    void invalidate(const std::filesystem::path& path) {
+    // Purpose: Invalidate without allocating; inputs: former folder key; outputs: cancels pending/in-flight stale
+    // sizes.
+    void invalidate(const std::filesystem::path& path) noexcept {
         if (const auto task = find(path)) {
             task->cancelled.store(true);
-            entries_.erase(path.wstring());
+            entries_.erase(path.native());
             std::erase_if(pending_, [](const auto& pending) { return pending->cancelled.load(); });
         }
     }
 
     // Purpose: Drop removed rows and their pending scans; inputs: current queue paths; outputs: cancels stale tasks.
     void retain(std::span<const std::filesystem::path> paths) {
-        std::unordered_set<std::wstring> retained;
+        std::unordered_set<PathKey> retained;
         retained.reserve(paths.size());
         for (const auto& path : paths) {
-            retained.insert(path.wstring());
+            retained.insert(path.native());
         }
         std::erase_if(entries_, [&retained](const auto& entry) {
             if (retained.contains(entry.first)) {
@@ -105,7 +108,7 @@ class FolderSizeCache {
     }
 
   private:
-    std::unordered_map<std::wstring, std::shared_ptr<FolderSizeTask>> entries_;
+    std::unordered_map<PathKey, std::shared_ptr<FolderSizeTask>> entries_;
     std::deque<std::shared_ptr<FolderSizeTask>> pending_;
 };
 

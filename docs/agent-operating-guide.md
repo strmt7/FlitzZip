@@ -608,6 +608,10 @@ tools\package.ps1 -Configuration Release
   Preserve content-identity and lifetime checks. Include real redirects whose
   targets remain inside the selected root in the boundary regressions.
 - Keep memory bounded. Do not read whole archives or whole large files into memory when streaming APIs are available.
+- Nonthrowing worker callbacks must not allocate implicitly through copying
+  accessors or cache lookups. Reuse owned storage at publication and invalidation
+  boundaries, and retain calibrated allocation-failure controls. Adding `noexcept`
+  alone does not repair an allocating implementation.
 - Prove byte extents before pointer formation, header access or payload copies.
   Check fixed overhead first, then compare payload length with remaining capacity;
   never validate a potentially overflowing sum. Keep initialized input length,
