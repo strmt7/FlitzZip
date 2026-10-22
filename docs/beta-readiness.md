@@ -39,10 +39,12 @@ retain full-file sizes, actual HIP work, byte-exact readback and measurement lim
 Broad size superiority and comparative GPU speed remain research targets.
 
 The development crawler's [dependency remediation](security-reviews/dependency-risk-acceptance.md)
-uses the maintainer-authorized official NLTK candidate and patched aiohttp.
-Clean installations and browser extraction passed on Windows, macOS and Linux;
-the pushed dependency audit reports no open Dependabot alerts for that graph.
-This evidence does not qualify a later dependency update.
+uses the official stable NLTK wheel and patched aiohttp and Pillow releases.
+The current graph has Windows installed-consumer and real browser-extraction
+qualification. Earlier Windows, macOS and Linux installation results cover their
+own preceding dependency bytes; the newer graph's Linux and macOS resolution
+checks do not establish fresh runtime acceptance. Exact dependency alerts and
+workflow results must be checked on the candidate's pushed revision.
 
 ## Outstanding Acceptance Limits
 

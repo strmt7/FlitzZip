@@ -272,6 +272,31 @@ $guiHelperPlan = Get-FlitzZipVerificationPlan -ChangedPath @("tools/FlitzZip.Gui
 Assert-Selector $guiHelperPlan.scope.touchesGui "GUI smoke helpers must be classified as GUI changes"
 Assert-Selector (Test-RequiredCommand -Plan $guiHelperPlan -Id "gui-smoke") "GUI smoke helper changes must exercise the GUI"
 Assert-Selector (Test-Workflow -Plan $guiHelperPlan -Name "windows-ci") "GUI smoke helper changes must select Windows CI"
+foreach ($driver in @('tools/gui_smoke.ps1', 'tools/FlitzZip.GuiSmoke.Ui.psm1', 'tools/FlitzZip.GuiSmoke.Pickers.psm1')) {
+    $driverPlan = Get-FlitzZipVerificationPlan -ChangedPath @($driver)
+    foreach ($id in @('scanner-preflight', 'gui-native-receipt', 'gui-smoke')) {
+        Assert-Selector (Test-RequiredCommand -Plan $driverPlan -Id $id) "GUI driver retains real qualification: $driver / $id"
+    }
+    foreach ($id in @('release-build', 'unit-tests')) {
+        Assert-Selector (-not (Test-RequiredCommand -Plan $driverPlan -Id $id)) "GUI driver must not repeat unchanged native production: $driver / $id"
+    }
+    $receipt = @($driverPlan.requiredLocalCommands | Where-Object id -eq 'gui-native-receipt')[0]
+    foreach ($argument in @('tools.native_build_receipt', 'validate', '--configuration', 'Release', '--require-hip')) {
+        Assert-Selector ($argument -in $receipt.arguments) "GUI driver admission must validate source-current HIP artifacts: $argument"
+    }
+    $ids = @($driverPlan.requiredLocalCommands.id)
+    Assert-Selector ([Array]::IndexOf($ids, 'gui-native-receipt') -lt [Array]::IndexOf($ids, 'gui-smoke')) 'Receipt admission precedes launching the GUI'
+    foreach ($product in @('src/app/main_window.cpp', 'resources/brand/flitzzip-logo.svg', 'tools/generate_brand_logo_header.ps1')) {
+        $mixedPlan = Get-FlitzZipVerificationPlan -ChangedPath @($driver, $product)
+        foreach ($id in @('release-build', 'unit-tests', 'gui-smoke')) {
+            Assert-Selector (Test-RequiredCommand -Plan $mixedPlan -Id $id) "Mixed driver/product changes preserve native qualification: $product / $id"
+        }
+    }
+    $fullDriverPlan = Get-FlitzZipVerificationPlan -ChangedPath @($driver) -SuspectGlobalBug
+    foreach ($id in @('release-build', 'unit-tests', 'gui-smoke')) {
+        Assert-Selector (Test-RequiredCommand -Plan $fullDriverPlan -Id $id) "Explicit full qualification remains available for GUI drivers: $id"
+    }
+}
 
 foreach ($path in @("src/core/archive_name_encoding.cpp", "src/core/archive_name_encoding.hpp")) {
     $encodingPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path)
