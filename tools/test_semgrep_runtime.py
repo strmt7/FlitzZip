@@ -15,6 +15,7 @@ import time
 import unittest
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from tools.semgrep_distribution import recipe
@@ -55,6 +56,36 @@ class SemgrepRuntimeTests(unittest.TestCase):
 
     # Purpose: Require the identified scanner revision and official fixed MCP/JWT distributions.
     # Inputs: Installed metadata and pinned recipe. Outputs: Exact identities and satisfied declared dependencies.
+    def test_installed_metadata_edges_extras_and_markers_are_observed(self):
+        """Purpose: Execute metadata parsing without importing packages.
+        Inputs: Runtime/extra/platform edges.
+        Outputs: Exact closure.
+        """
+        from tools import scanner_dependency_snapshot as tool
+
+        pins = {"root": ("1.0", ()), "child": ("2.0", ()), "crypto": ("3.0", ())}
+        records = {
+            "root": SimpleNamespace(
+                metadata={"Name": "Root"}, version="1.0", requires=["child[secure]>=2", 'absent; python_version < "1"']
+            ),
+            "child": SimpleNamespace(
+                metadata={"Name": "child"}, version="2.0", requires=['crypto>=3; extra == "secure"']
+            ),
+            "crypto": SimpleNamespace(metadata={"Name": "crypto"}, version="3.0", requires=[]),
+        }
+        with patch.object(importlib.metadata, "distribution", side_effect=records.__getitem__):
+            graph = tool.installed_graph(pins)
+            self.assertEqual(graph["pkg:pypi/root@1.0"]["dependencies"], ["pkg:pypi/child@2.0"])
+            self.assertEqual(graph["pkg:pypi/child@2.0"]["dependencies"], ["pkg:pypi/crypto@3.0"])
+            for changed in ({"root": ("9.0", ())}, {"child": ("1.0", ())}):
+                with self.subTest(changed=changed), self.assertRaises(ValueError):
+                    tool.installed_graph(pins | changed)
+            records["root"].requires = ["absent>=1"]
+            with self.assertRaises(ValueError):
+                tool.installed_graph(pins)
+        with self.assertRaises(ValueError):
+            tool.installed_graph({})
+
     def test_distribution_identity(self):
         from packaging.requirements import Requirement
         from packaging.version import Version

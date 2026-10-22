@@ -1324,10 +1324,11 @@ try {
 
     $captures += Assert-KeyboardQueueSelection -Handle $windowHandle -Dpi $windowDpi -InputPath $smokeInput -BasePath $basePath -Extension $extension
 
-    # Queue header actions: exercise Add files, Add folder, and Clear without modal dialogs.
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 918 -DesignY 91
-    Start-Sleep -Milliseconds 150
+    # Keep the directory visible: appending it below the overflow files never renders its
+    # asynchronous total and leaves the folder-size worker outside this integration check.
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1032 -DesignY 91
+    Start-Sleep -Milliseconds 500
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 918 -DesignY 91
     Start-Sleep -Milliseconds 150
     $pickerQueuePath = "${basePath}-Queue-AfterPickers$extension"
     $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $pickerQueuePath
@@ -1340,9 +1341,10 @@ try {
     $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $removeSelectedQueuePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-QueueEmptyMessageCentered -Path $removeSelectedQueuePath -Dpi $windowDpi -ClientOffsetX $offset.X -ClientOffsetY $offset.Y
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 918 -DesignY 91
-    Start-Sleep -Milliseconds 150
+    # Re-add the directory after removal to exercise its new queue/cache lifetime.
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1032 -DesignY 91
+    Start-Sleep -Milliseconds 500
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 918 -DesignY 91
     Start-Sleep -Milliseconds 150
     $pickerReloadedQueuePath = "${basePath}-Queue-AfterPickersReloaded$extension"
     $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $pickerReloadedQueuePath

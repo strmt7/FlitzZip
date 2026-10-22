@@ -269,6 +269,8 @@ jobs:
     name: Semgrep SAST
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      dependency_artifact: ${{ steps.dependency_artifact.outputs.artifact-id }}
     # Semgrep reads repository contents and uploads SAST SARIF.
     permissions:
       actions: read # allow scanner action metadata access
@@ -298,11 +300,11 @@ jobs:
             -o -name '*.md' \
             -o -name 'CMakeLists.txt' \) | sort
           echo "::endgroup::"
-      - name: Run Semgrep
+      - name: Qualify the pinned Semgrep installation
         shell: bash
         run: |
           set -euo pipefail
-          python -m unittest tools.test_semgrep_installation tools.test_semgrep_distribution
+          python -m unittest tools.test_semgrep_installation tools.test_semgrep_distribution tools.test_scanner_dependency_snapshot
           python -m tools.semgrep_distribution --output "$RUNNER_TEMP/semgrep-distribution"
           python -m venv "$RUNNER_TEMP/semgrep"
           "$RUNNER_TEMP/semgrep/bin/python" -m pip install \
@@ -313,6 +315,18 @@ jobs:
             -r .github/requirements/requirements-semgrep-linux.txt
           "$RUNNER_TEMP/semgrep/bin/python" -m pip check
           "$RUNNER_TEMP/semgrep/bin/python" -m unittest tools.test_semgrep_runtime
+          "$RUNNER_TEMP/semgrep/bin/python" -m tools.scanner_dependency_snapshot build "$RUNNER_TEMP/scanner-dependencies.json"
+      - name: Retain the verified installed dependency graph
+        id: dependency_artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scanner-dependencies
+          path: ${{ runner.temp }}/scanner-dependencies.json
+          if-no-files-found: error
+      - name: Run Semgrep
+        shell: bash
+        run: |
+          set -euo pipefail
           "$RUNNER_TEMP/semgrep/bin/semgrep" scan \
             --error \
             --sarif \
@@ -345,6 +359,40 @@ jobs:
         with:
           sarif_file: semgrep-results.sarif
           category: semgrep
+
+  scanner-dependencies:
+    name: Submit verified scanner dependencies
+    needs: semgrep
+    if: ${{ !cancelled() && needs.semgrep.outputs.dependency_artifact != '' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # retrieve only the graph artifact from this exact workflow run
+      contents: write # GitHub's dependency submission API requires this permission
+    steps:
+      - name: Checkout the exact analyzed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14.8"
+      - name: Retrieve this run's verified graph
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.semgrep.outputs.dependency_artifact }}
+          path: ${{ runner.temp }}/scanner-dependencies
+          merge-multiple: true
+      - name: Validate source, complete inventory and run identity
+        env:
+          SNAPSHOT: ${{ runner.temp }}/scanner-dependencies/scanner-dependencies.json
+        run: python -m tools.scanner_dependency_snapshot validate "$SNAPSHOT"
+      - name: Submit the actual installed graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SNAPSHOT: ${{ runner.temp }}/scanner-dependencies/scanner-dependencies.json
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/dependency-graph/snapshots" --input "$SNAPSHOT"
 
   devskim:
     name: DevSkim security lint
