@@ -39,6 +39,7 @@ SCENARIO_INPUTS = (
 GUI_SCENARIO_INPUTS = (
     "tools/gui_smoke.ps1",
     "tools/FlitzZip.GuiSmoke.Ui.psm1",
+    "tools/FlitzZip.GuiSmoke.Pickers.psm1",
     "tools/process_environment.ps1",
 )
 

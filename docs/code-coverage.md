@@ -83,6 +83,12 @@ uses the canonical bounded process runner, including its Windows PowerShell
 environment handling. It requires measured GUI entry points and records the
 GUI executable, PDB, scenario and imported UI helper identities. A smoke failure
 or a changed helper invalidates collection.
+The full smoke also opens real Windows multi-file and folder dialogs without
+selection-result overrides. It checks spaced and Unicode paths, cancellation
+with a populated filename field, unchanged Queue rendering, and a GUI-created
+ZIP whose exact member paths and bytes are checked by the independent .NET ZIP
+reader. HWND ownership and native control classes are verified before input;
+localized captions and personal file-list contents are not used as test data.
 Evidence goes to `out/coverage-hip-host-gui` (or `out/coverage-gui` without HIP),
 with `gui_host_coverage=true`. These local measurements do not replace the CI
 badge or establish device-instruction coverage. The default collector does not

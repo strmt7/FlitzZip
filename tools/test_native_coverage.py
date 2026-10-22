@@ -669,6 +669,7 @@ class CoverageTests(unittest.TestCase):
                 (True, "build/Debug/FlitzZip.pdb"),
                 (True, "tools/gui_smoke.ps1"),
                 (True, "tools/FlitzZip.GuiSmoke.Ui.psm1"),
+                (True, "tools/FlitzZip.GuiSmoke.Pickers.psm1"),
                 (True, "tools/process_environment.ps1"),
             ):
                 target = self.root / name
