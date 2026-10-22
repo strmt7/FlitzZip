@@ -952,6 +952,7 @@ TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
         baseline.payload);
 }
 
+#if FLITZZIP_ENABLE_HIP
 // Purpose: Enforce dictionary replacement invariants without depending on a particular HIP candidate winner.
 // Inputs: A mixed two-block baseline, one smaller replacement, and forged count/extent/cost variants.
 // Outputs: Valid bytes remain dense and metadata-stable; every inconsistent internal result fails closed.
@@ -1009,7 +1010,7 @@ TEST_CASE(dictionary_replacements_validate_complete_internal_results) {
 
 // Purpose: Reject ordinary dictionary candidate geometry before any device query, allocation, or kernel work.
 // Inputs: Null device input, an overlong descriptor, and a descriptor leaving an uncovered source suffix.
-// Outputs: Each malformed request returns its precise GpuError on HIP and CPU-only builds alike.
+// Outputs: Each malformed request returns its precise GpuError in HIP builds, without requiring a live device.
 TEST_CASE(dictionary_candidate_layout_precedes_device_work) {
     const std::array<std::byte, 8U> input{};
     const auto require_rejected = [&](const std::byte* device, std::vector<flitzzip::BlockDescriptor> blocks,
@@ -1026,3 +1027,4 @@ TEST_CASE(dictionary_candidate_layout_precedes_device_work) {
     require_rejected(input.data(), {{.uncompressed_len = 9U}}, "dictionary candidate block exceeds source chunk");
     require_rejected(input.data(), {{.uncompressed_len = 7U}}, "dictionary candidate blocks do not cover source chunk");
 }
+#endif

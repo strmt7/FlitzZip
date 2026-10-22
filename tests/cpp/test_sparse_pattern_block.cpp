@@ -381,6 +381,7 @@ TEST_CASE(sparse_pattern_hip_batch_rejects_prepopulated_output_fields) {
 #endif
 }
 
+#if FLITZZIP_ENABLE_HIP
 // Purpose: Enforce the sparse replacement boundary independently from HIP candidate generation.
 // Inputs: A two-block baseline, one smaller canonical payload, and forged count/extent/cost variants.
 // Outputs: Preserves dense bytes and metadata for valid input; rejects every inconsistent internal result.
@@ -442,7 +443,7 @@ TEST_CASE(sparse_pattern_replacements_validate_complete_internal_results) {
 
 // Purpose: Reject sparse candidate geometry before any device query, allocation, or kernel work.
 // Inputs: Null device input, an overlong descriptor, and descriptors that leave an uncovered source suffix.
-// Outputs: Each malformed call returns its precise GpuError without requiring HIP availability.
+// Outputs: Each malformed call returns its precise GpuError in HIP builds, without requiring a live device.
 TEST_CASE(sparse_pattern_candidate_layout_precedes_device_work) {
     const std::array<std::byte, 8U> input{};
     const auto require_rejected = [&](const std::byte* device, std::vector<flitzzip::BlockDescriptor> blocks,
@@ -459,3 +460,4 @@ TEST_CASE(sparse_pattern_candidate_layout_precedes_device_work) {
     require_rejected(input.data(), {{.uncompressed_len = 9U}}, "sparse candidate block exceeds source chunk");
     require_rejected(input.data(), {{.uncompressed_len = 7U}}, "sparse candidate blocks do not cover source chunk");
 }
+#endif
