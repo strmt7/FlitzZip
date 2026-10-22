@@ -1,4 +1,5 @@
 #include "app/main_window_impl.hpp"
+#include "app/graph_series.hpp"
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -923,7 +924,7 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
         cpu[i] = item.cpu_percent / 100.0;
         memory[i] = item.system_memory_percent / 100.0;
         io_busy[i] = item.io_busy_percent / 100.0;
-        gpu[i] = item.gpu_utilization_available ? item.gpu_utilization_percent / 100.0 : 0.0;
+        gpu[i] = graph_percent_sample(item.gpu_utilization_percent, item.gpu_utilization_available);
     }
 
     const auto cards = performance_monitor_card_rects(monitor);

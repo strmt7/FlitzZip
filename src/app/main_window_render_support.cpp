@@ -1,4 +1,5 @@
 #include "app/main_window_support.hpp"
+#include "app/graph_series.hpp"
 
 #include "core/archive_format.hpp"
 #include "flitzzip_brand_logo.hpp"
@@ -7,9 +8,11 @@
 #include <array>
 #include <cmath>
 #include <iomanip>
+#include <memory>
 #include <psapi.h>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace flitzzip::app {
@@ -323,47 +326,36 @@ void draw_graph_grid(HDC dc, const RECT& rect) {
     stroke_rect(dc, rect, RGB(46, 67, 74));
 }
 
-// Purpose: Draw one normalized history series inside a graph rectangle.
-// Inputs: `dc` is the target, `rect` is the plot area, `values` are clamped 0-1 samples, and `color` is the line.
-// Outputs: Renders a filled Task Manager-style trend area and crisp polyline; empty input produces no line.
-void draw_graph_series(HDC dc, const RECT& rect, std::span<const double> values, COLORREF color) {
-    if (values.empty()) {
-        return;
-    }
-    const int width = std::max(1, static_cast<int>(rect.right - rect.left - 1));
+// Purpose: Draw one contiguous finite run without connecting or filling across unavailable samples.
+// Inputs: A valid plot, the complete original history, an admitted finite first/count run, and its line color.
+// Outputs: Paints only that run at its original x coordinates, releasing all acquired GDI objects.
+static void draw_graph_segment(HDC dc, const RECT& rect, std::span<const double> values, std::size_t first,
+                               std::size_t count, COLORREF color) {
     const int height = std::max(1, static_cast<int>(rect.bottom - rect.top - 1));
-    const int left = static_cast<int>(rect.left);
-    const int right = static_cast<int>(rect.right);
-    constexpr std::size_t kFullGraphSampleCapacity = 96U;
-    const std::size_t capacity = std::max<std::size_t>(values.size(), kFullGraphSampleCapacity);
-    const double sample_step =
-        capacity <= 1U ? static_cast<double>(width) : static_cast<double>(width) / static_cast<double>(capacity - 1U);
-    const double first_x =
-        static_cast<double>(rect.right - 1) - (static_cast<double>(values.size() - 1U) * sample_step);
     std::vector<POINT> points;
-    points.reserve(values.size() + 2U);
-    points.push_back(POINT{std::clamp(static_cast<int>(std::round(first_x)), left, right), rect.bottom});
-    for (std::size_t index = 0; index < values.size(); ++index) {
+    points.reserve(count + 2U);
+    points.push_back(POINT{graph_sample_x(rect, values.size(), first), rect.bottom});
+    for (std::size_t index = first; index < first + count; ++index) {
         const double y_ratio = 1.0 - std::clamp(values[index], 0.0, 1.0);
-        const int x =
-            std::clamp(static_cast<int>(std::round(first_x + (static_cast<double>(index) * sample_step))), left, right);
+        const int x = graph_sample_x(rect, values.size(), index);
         const int y = rect.top + static_cast<int>(std::round(y_ratio * static_cast<double>(height)));
         points.push_back(POINT{x, y});
     }
     points.push_back(POINT{points[points.size() - 1U].x, rect.bottom});
 
     const COLORREF fill_color = blend_color(color, RGB(17, 27, 31), 0.72);
-    HBRUSH brush = CreateSolidBrush(fill_color);
-    HGDIOBJ previous_brush = SelectObject(dc, brush);
+    std::unique_ptr<std::remove_pointer_t<HBRUSH>, decltype(&DeleteObject)> brush(CreateSolidBrush(fill_color),
+                                                                                  &DeleteObject);
+    HGDIOBJ previous_brush = SelectObject(dc, brush.get());
     HGDIOBJ previous_pen_for_fill = SelectObject(dc, GetStockObject(NULL_PEN));
     Polygon(dc, points.data(), static_cast<int>(points.size()));
     SelectObject(dc, previous_pen_for_fill);
     SelectObject(dc, previous_brush);
-    DeleteObject(brush);
 
-    HPEN pen = CreatePen(PS_SOLID, 1, color);
-    HGDIOBJ previous_pen = SelectObject(dc, pen);
-    if (values.size() == 1U) {
+    std::unique_ptr<std::remove_pointer_t<HPEN>, decltype(&DeleteObject)> pen(CreatePen(PS_SOLID, 1, color),
+                                                                              &DeleteObject);
+    HGDIOBJ previous_pen = SelectObject(dc, pen.get());
+    if (count == 1U) {
         MoveToEx(dc, points[1].x, points[1].y, nullptr);
         LineTo(dc, std::min(points[1].x + 1, rect.right), points[1].y);
     } else {
@@ -376,7 +368,19 @@ void draw_graph_series(HDC dc, const RECT& rect, std::span<const double> values,
         }
     }
     SelectObject(dc, previous_pen);
-    DeleteObject(pen);
+}
+
+// Purpose: Draw normalized history while preserving unavailable intervals as unconnected gaps.
+// Inputs: The target, positive plot bounds, complete history and series color; nonfinite values are missing.
+// Outputs: Paints finite runs only, preserving the complete history's original sample positions and cadence.
+void draw_graph_series(HDC dc, const RECT& rect, std::span<const double> values, COLORREF color) {
+    if (rect.right <= rect.left || rect.bottom <= rect.top) {
+        return;
+    }
+    // Purpose: Render one admitted finite run. Inputs: Original index/count. Outputs: Paints its retained positions.
+    for_each_graph_segment(values, [&](std::size_t first, std::size_t count) {
+        draw_graph_segment(dc, rect, values, first, count, color);
+    });
 }
 
 // Purpose: Draw UTF-16 text with the currently selected font.
