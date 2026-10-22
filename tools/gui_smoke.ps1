@@ -377,6 +377,7 @@ foreach ($requiredSmokeExercise in @('About-Licenses-SmoothWheel', 'History-Deta
 }
 
 Import-Module (Join-Path $PSScriptRoot "FlitzZip.GuiSmoke.Ui.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "FlitzZip.GuiSmoke.Pickers.psm1") -Force
 
 # Purpose: Check sparse-detail detection independently of any product window or host font/DPI.
 # Inputs: None; creates one owned temporary image.
@@ -451,6 +452,47 @@ function Wait-GuiLogEvent {
         Start-Sleep -Milliseconds 50
     }
     throw "GUI command did not report '$Message' within $TimeoutSeconds seconds."
+}
+
+# Purpose: Verify actual picker results through a GUI-created ZIP and an independent .NET reader.
+# Inputs: Handle/Dpi identify the owned GUI; Destination and Expected contain only smoke-owned paths; BasePath/Extension locate the capture.
+# Outputs: Requires exactly the selected files and hashes, rejects cancelled/parent paths, and captures the result.
+function Assert-NativePickerArchive {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$Destination, [Collections.Generic.Dictionary[string, string]]$Expected, [string]$BasePath, [string]$Extension)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 820 -DesignY 154 -Synchronous
+    Select-CompressFormatIndex -Handle $Handle -Dpi $Dpi -Index 1
+    $logPath = Join-Path (Join-Path ([IO.Path]::GetTempPath()) 'FlitzZip') 'flitzzip.log'
+    $length = (Get-Item -LiteralPath $logPath).Length
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
+    Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Compress: completed' -TimeoutSeconds 15
+    $archive = [IO.Compression.ZipFile]::OpenRead((Join-Path $Destination 'FlitzZip-output.zip'))
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $files = @($archive.Entries | Where-Object { $_.Name.Length -gt 0 })
+        if ($files.Count -ne $Expected.Count -or $archive.Entries.Count -gt $Expected.Count + 1) {
+            throw 'Real Windows picker ZIP contains unexpected or missing entries.'
+        }
+        $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($entry in $files) {
+            if (-not $Expected.ContainsKey($entry.FullName) -or -not $seen.Add($entry.FullName)) {
+                throw 'Real Windows picker ZIP has an unexpected or duplicate file path.'
+            }
+            $source = $Expected[$entry.FullName]
+            if ($entry.Length -ne (Get-Item -LiteralPath $source).Length) { throw 'Real Windows picker ZIP changed a selected file length.' }
+            $stream = $entry.Open()
+            try { $actual = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') } finally { $stream.Dispose() }
+            if ($actual -cne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash) { throw 'Real Windows picker ZIP changed selected file bytes.' }
+        }
+        foreach ($entry in $archive.Entries) {
+            if ($entry.Name.Length -eq 0 -and -not @($Expected.Keys | Where-Object { $_.StartsWith($entry.FullName, [StringComparison]::Ordinal) }).Count) {
+                throw 'Real Windows picker ZIP has an unexpected directory.'
+            }
+        }
+    } finally { $sha.Dispose(); $archive.Dispose() }
+    Write-Information 'Real picker archive has exactly the three selected files and byte-exact independent readback.' -InformationAction Continue
+    Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-NativePicker-ArchiveReadback$Extension"
 }
 
 # Purpose: Verify legacy preference/effort migration, obsolete no-op removal and current-key precedence through actual GUI loads and Apply.
@@ -1278,8 +1320,17 @@ $previousDpiContext = [FlitzZipNativeUi]::SetThreadDpiAwarenessContext([IntPtr](
 $process = $null
 $windowHandle = [IntPtr]::Zero
 try {
+    $nativePickerCaptures = @()
     if (-not $CompactOnly -and -not $OperationSummaryOnly) {
         Assert-PublicationSettingsMigration -Exe $exe -SettingsPath $smokeSettingsFile
+        $nativeBasePath = Join-Path (Split-Path -Parent $ScreenshotPath) ([IO.Path]::GetFileNameWithoutExtension($ScreenshotPath))
+        $nativeExtension = [IO.Path]::GetExtension($ScreenshotPath)
+        $nativePickerCaptures = @(Assert-NativePickerQueue -Exe $exe -Root $smokeRoot -BasePath $nativeBasePath -Extension $nativeExtension -VerifyQueue {
+            param($Handle, $Dpi, $Destination, $Expected)
+            Assert-NativePickerArchive -Handle $Handle -Dpi $Dpi -Destination $Destination -Expected $Expected -BasePath $nativeBasePath -Extension $nativeExtension
+        })
+        # The picker scenario changes its own compression choice; the all-page run starts with default smoke preferences.
+        Remove-Item -LiteralPath $smokeSettingsFile -Force -ErrorAction SilentlyContinue
     }
     $process = Start-Process -FilePath $exe -PassThru
     $deadline = (Get-Date).AddSeconds(15)
@@ -1307,7 +1358,7 @@ try {
     Assert-WindowWorkAreaFit -Handle $windowHandle -Dpi $windowDpi
     Assert-WindowWorkAreaFit -Handle $windowHandle -Dpi $windowDpi -ExerciseEvents
     [void](Invoke-SmokeClientResize -Handle $windowHandle -Dpi $windowDpi -Width 1200 -Height 760)
-    $captures = @()
+    $captures = @($nativePickerCaptures)
     $pageNames = @("Queue", "Compress", "Extract", "Security", "History", "System", "Settings", "About")
     $basePath = Join-Path (Split-Path -Parent $ScreenshotPath) ([System.IO.Path]::GetFileNameWithoutExtension($ScreenshotPath))
     $extension = [System.IO.Path]::GetExtension($ScreenshotPath)
