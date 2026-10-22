@@ -337,7 +337,7 @@ TEST_CASE(gui_folder_archives_snapshot_sources_before_creating_staging_files) {
 }
 
 // Purpose: Prove every GUI-visible compatibility create route reaches a real codec and its matching extractor.
-// Inputs: One bounded binary source and every non-FLZIP format accepted by `compress_gui_archive`.
+// Inputs: One bounded binary source and every format accepted by `compress_gui_archive`.
 // Outputs: Each archive is nonempty, extraction restores exact bytes, and ZIP/general validation discards all output.
 TEST_CASE(gui_compatibility_routing_round_trips_all_create_formats) {
     struct Route {
@@ -536,7 +536,8 @@ TEST_CASE(gui_dropdown_selection_and_name_encoding_are_bounded) {
     state.history_status_filter_index = 2;
     state.performance_update_seconds = 5;
     state.gpu_required = false;
-    state.io_drive_index = 999;
+    // The first row is invariant across host inventories; explicit inventory tests cover stale-index arithmetic.
+    state.io_drive_index = 0;
     state.log_level_index = 2;
     state.log_retention_index = 1;
     REQUIRE_EQ(flitzzip::app::dropdown_selected_index(state, flitzzip::app::DropdownId::CompressFormat), 4);

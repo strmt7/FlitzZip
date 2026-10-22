@@ -1,5 +1,6 @@
 #include "app/main_window_impl.hpp"
 #include "app/graph_series.hpp"
+#include "app/performance_counters.hpp"
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -915,6 +916,9 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
     std::array<double, 96> memory{};
     std::array<double, 96> io_busy{};
     std::array<double, 96> gpu{};
+    const auto drives = fixed_io_drive_options();
+    const auto selected_drive = fixed_drive_index(drives, state.io_drive_index);
+    const auto drive_name = selected_drive ? drives[*selected_drive] : std::wstring{};
     const auto sample_at = [this](std::size_t index) -> const PerformanceMonitorSample& {
         const auto start = performance_history_next_ + performance_history_.size() - performance_history_count_;
         return performance_history_[(start + index) % performance_history_.size()];
@@ -923,7 +927,7 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
         const auto& item = sample_at(i);
         cpu[i] = item.cpu_percent / 100.0;
         memory[i] = item.system_memory_percent / 100.0;
-        io_busy[i] = item.io_busy_percent / 100.0;
+        io_busy[i] = graph_percent_sample(matching_drive_counter(item.io_busy_percent, item.io_drive, drive_name));
         gpu[i] = graph_percent_sample(item.gpu_utilization_percent, item.gpu_utilization_available);
     }
 
@@ -934,7 +938,7 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
     const std::span<const double> gpu_span(gpu.data(), performance_history_count_);
     const std::wstring percent_top = L"100%";
     const std::wstring zero_percent = L"0%";
-    const auto drives_available = !fixed_io_drive_options().empty();
+    const bool drives_available = selected_drive.has_value();
     for (int i = 0; i < 4; ++i) {
         RECT card = cards[static_cast<std::size_t>(i)];
         if (!sample.live) {
@@ -976,11 +980,16 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
                                 widen(human_bytes(static_cast<double>(sample.private_bytes)));
             draw_performance_monitor_card(dc, card, L"RAM", value, detail, memory_span, kOk, percent_top, zero_percent);
         } else {
-            const auto detail = std::wstring(L"Read: ") + rate_text(sample.io_read_bytes_per_second) + L"\nWrite: " +
-                                rate_text(sample.io_write_bytes_per_second);
-            const auto value = sample.live ? percentage_text(sample.io_busy_percent) : L"Unavailable";
+            const auto read_rate = matching_drive_counter(sample.io_read_bytes_per_second, sample.io_drive, drive_name);
+            const auto write_rate =
+                matching_drive_counter(sample.io_write_bytes_per_second, sample.io_drive, drive_name);
+            const auto busy = matching_drive_counter(sample.io_busy_percent, sample.io_drive, drive_name);
+            const auto read = read_rate ? rate_text(*read_rate) : L"Unavailable";
+            const auto write = write_rate ? rate_text(*write_rate) : L"Unavailable";
+            const auto detail = std::wstring(L"Read: ") + read + L"\nWrite: " + write;
+            const auto value = busy ? percentage_text(*busy) : L"Unavailable";
             draw_performance_monitor_card(dc, card, L"I/O", value, detail, io_span, kWarn, percent_top, zero_percent);
-            draw_field(dc, performance_io_drive_rect(monitor), L"", io_drive_option_text(state.io_drive_index),
+            draw_field(dc, performance_io_drive_rect(monitor), L"", drives_available ? drive_name : L"Unavailable",
                        drives_available, drives_available);
         }
     }

@@ -1,6 +1,7 @@
 #include "app/system_layout.hpp"
 #include "app/graph_series.hpp"
 #include "app/performance_options.hpp"
+#include "app/performance_counters.hpp"
 #include "test_util.hpp"
 
 #include <memory>
@@ -24,6 +25,9 @@ TEST_CASE(system_graph_percentages_preserve_missing_measurements) {
     REQUIRE_EQ(graph_percent_sample(0.0, true), 0.0);
     REQUIRE_EQ(graph_percent_sample(50.0, true), 0.5);
     REQUIRE_EQ(graph_percent_sample(100.0, true), 1.0);
+    REQUIRE_EQ(graph_percent_sample(std::optional<double>{0.0}), 0.0);
+    REQUIRE_EQ(graph_percent_sample(std::optional<double>{50.0}), 0.5);
+    REQUIRE_TRUE(std::isnan(graph_percent_sample(std::nullopt)));
     for (const double value : {0.0, 50.0, 100.0}) {
         REQUIRE_TRUE(std::isnan(graph_percent_sample(value, false)));
     }
@@ -32,6 +36,47 @@ TEST_CASE(system_graph_percentages_preserve_missing_measurements) {
         REQUIRE_TRUE(std::isnan(graph_percent_sample(invalid, true)));
         REQUIRE_TRUE(std::isnan(graph_percent_sample(invalid, false)));
     }
+}
+
+// Purpose: Preserve newly observed and genuinely idle counters while rejecting unavailable or malformed samples.
+// Inputs: Independent call/sample errors, valid/new statuses, zero, ordinary rates and invalid numeric values.
+// Outputs: Only documented successful nonnegative finite samples are admitted; independent failures stay absent.
+TEST_CASE(system_performance_counters_preserve_independent_availability) {
+    using flitzzip::app::admitted_pdh_counter;
+    for (const DWORD status : {PDH_CSTATUS_VALID_DATA, PDH_CSTATUS_NEW_DATA}) {
+        for (const double value : {0.0, 42.0, 1024.0}) {
+            const auto sample = admitted_pdh_counter(ERROR_SUCCESS, status, value);
+            REQUIRE_TRUE(sample.has_value());
+            REQUIRE_EQ(*sample, value);
+        }
+        for (const double invalid :
+             {-1.0, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
+            REQUIRE_TRUE(!admitted_pdh_counter(ERROR_SUCCESS, status, invalid));
+        }
+        REQUIRE_TRUE(!admitted_pdh_counter(PDH_INVALID_HANDLE, status, 42.0));
+    }
+    REQUIRE_TRUE(!admitted_pdh_counter(ERROR_SUCCESS, PDH_CSTATUS_NO_INSTANCE, 0.0));
+    REQUIRE_TRUE(!admitted_pdh_counter(ERROR_SUCCESS, PDH_CSTATUS_INVALID_DATA, 42.0));
+    const std::array independent{admitted_pdh_counter(ERROR_SUCCESS, PDH_CSTATUS_NO_INSTANCE, 0.0),
+                                 admitted_pdh_counter(ERROR_SUCCESS, PDH_CSTATUS_NEW_DATA, 0.0),
+                                 admitted_pdh_counter(ERROR_SUCCESS, PDH_CSTATUS_VALID_DATA, 2048.0)};
+    REQUIRE_TRUE(!independent[0]);
+    REQUIRE_EQ(independent[1], std::optional<double>{0.0});
+    REQUIRE_EQ(independent[2], std::optional<double>{2048.0});
+}
+
+// Purpose: Preserve drive attribution across selection changes and inventory refreshes without losing observed zero.
+// Inputs: Present/absent measurements associated with two independent logical-drive identities and empty selections.
+// Outputs: Only exact selected-drive measurements survive; another drive's history never becomes current data.
+TEST_CASE(system_performance_counters_bind_values_to_drive_identity) {
+    using flitzzip::app::matching_drive_counter;
+    REQUIRE_EQ(matching_drive_counter(0.0, L"C:", L"C:"), std::optional<double>{0.0});
+    REQUIRE_EQ(matching_drive_counter(2048.0, L"D:", L"D:"), std::optional<double>{2048.0});
+    REQUIRE_TRUE(!matching_drive_counter(2048.0, L"C:", L"D:"));
+    REQUIRE_TRUE(!matching_drive_counter(0.0, L"D:", L"C:"));
+    REQUIRE_TRUE(!matching_drive_counter(2048.0, L"C:", L""));
+    REQUIRE_TRUE(!matching_drive_counter(2048.0, L"", L""));
+    REQUIRE_TRUE(!matching_drive_counter(std::nullopt, L"C:", L"C:"));
 }
 
 // Purpose: Prevent graph lines and filled areas from crossing missing intervals or shifting later observations.
@@ -116,7 +161,7 @@ TEST_CASE(system_drive_selection_binds_indices_to_the_captured_inventory) {
 TEST_CASE(system_drive_selection_handles_all_drive_counts_and_signed_extremes) {
     for (std::size_t count = 1; count <= 26; ++count) {
         const std::vector<std::wstring> drives(count, L"fixture");
-        std::vector<int> indices{std::numeric_limits<int>::min(), std::numeric_limits<int>::max()};
+        std::vector<int> indices{std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), 999};
         for (int index = -52; index <= 52; ++index) {
             indices.push_back(index);
         }

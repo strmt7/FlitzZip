@@ -89,6 +89,10 @@ counts, timing, and graph-series positioning logic are unchanged.
 Unavailable or nonfinite counter samples leave gaps in the plotted series.
 Their original timeline positions remain reserved, so a missing measurement
 cannot appear as observed zero utilization or connect unrelated observations.
+Disk busy time, reads and writes preserve availability independently: a failed
+counter displays `Unavailable` while valid sibling measurements remain visible.
+Each I/O sample retains its logical-drive identity. Changing drives cannot
+relabel another drive's current values or connect its historical graph samples.
 
 GUI smoke captures all eight pages at both the normal 1200-by-760-DIP client
 size and a programmatically resized 960-by-600-DIP test size at the host's

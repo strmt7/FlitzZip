@@ -1,4 +1,5 @@
 #include "app/main_window_impl.hpp"
+#include "app/performance_counters.hpp"
 
 #include "core/resource_usage.hpp"
 
@@ -33,17 +34,16 @@ std::wstring logical_disk_counter_path(std::wstring_view instance, std::wstring_
 }
 
 // Purpose: Read a formatted double value from a PDH counter.
-// Inputs: `counter` is an initialized PDH counter and `value` receives the formatted sample.
-// Outputs: Returns true only when PDH reports valid counter data.
-bool read_pdh_double(PDH_HCOUNTER counter, double& value) {
+// Inputs: `counter` is an initialized PDH counter or absent.
+// Outputs: Returns an observed finite nonnegative sample, or no value when the handle, API or sample is invalid.
+std::optional<double> read_pdh_double(PDH_HCOUNTER counter) {
+    if (counter == nullptr) {
+        return std::nullopt;
+    }
     PDH_FMT_COUNTERVALUE formatted{};
     DWORD value_type = 0;
     const PDH_STATUS status = PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, &value_type, &formatted);
-    if (status != ERROR_SUCCESS || formatted.CStatus != PDH_CSTATUS_VALID_DATA) {
-        return false;
-    }
-    value = formatted.doubleValue;
-    return true;
+    return admitted_pdh_counter(status, formatted.CStatus, formatted.doubleValue);
 }
 
 // Purpose: Read dedicated-memory counters within one selected HIP adapter's Windows identity.
@@ -188,7 +188,7 @@ double MainWindow::sample_gpu_utilization() {
     samples.reserve(item_count);
     for (DWORD index = 0; index < item_count; ++index) {
         const auto& item = items[index];
-        if (item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA || item.szName == nullptr) {
+        if (!valid_pdh_counter_status(item.FmtValue.CStatus) || item.szName == nullptr) {
             continue;
         }
         samples.push_back({item.szName, item.FmtValue.doubleValue});
@@ -299,6 +299,7 @@ MainWindow::ProcessIoRates MainWindow::sample_selected_drive_io(int selected_dri
         return rates;
     }
     const std::wstring instance = drives[*selected];
+    rates.drive = instance;
     if (disk_query_ == nullptr || disk_counter_instance_ != instance) {
         reset_disk_performance_monitor();
         disk_counter_instance_ = instance;
@@ -322,17 +323,11 @@ MainWindow::ProcessIoRates MainWindow::sample_selected_drive_io(int selected_dri
         reset_disk_performance_monitor();
         return rates;
     }
-    double busy = 0.0;
-    double read = 0.0;
-    double write = 0.0;
-    const bool busy_ok = disk_busy_counter_ != nullptr && read_pdh_double(disk_busy_counter_, busy);
-    const bool read_ok = disk_read_counter_ != nullptr && read_pdh_double(disk_read_counter_, read);
-    const bool write_ok = disk_write_counter_ != nullptr && read_pdh_double(disk_write_counter_, write);
-    if (busy_ok || read_ok || write_ok) {
-        rates.available = true;
-        rates.busy_percent = busy_ok ? std::clamp(busy, 0.0, 100.0) : 0.0;
-        rates.read_bytes_per_second = read_ok ? std::max(0.0, read) : 0.0;
-        rates.write_bytes_per_second = write_ok ? std::max(0.0, write) : 0.0;
+    rates.busy_percent = read_pdh_double(disk_busy_counter_);
+    rates.read_bytes_per_second = read_pdh_double(disk_read_counter_);
+    rates.write_bytes_per_second = read_pdh_double(disk_write_counter_);
+    if (rates.busy_percent) {
+        rates.busy_percent = std::clamp(*rates.busy_percent, 0.0, 100.0);
     }
     return rates;
 }
@@ -409,9 +404,10 @@ void MainWindow::update_performance_sample() {
     sample.process_cpu_percent = process_cpu_percent;
     sample.gpu_utilization_percent = sample.gpu_utilization_available ? gpu_percent : 0.0;
     sample.system_memory_percent = system_memory.percent;
-    sample.io_busy_percent = io_rates.available ? io_rates.busy_percent : 0.0;
-    sample.io_read_bytes_per_second = std::max(0.0, io_rates.read_bytes_per_second);
-    sample.io_write_bytes_per_second = std::max(0.0, io_rates.write_bytes_per_second);
+    sample.io_drive = io_rates.drive;
+    sample.io_busy_percent = io_rates.busy_percent;
+    sample.io_read_bytes_per_second = io_rates.read_bytes_per_second;
+    sample.io_write_bytes_per_second = io_rates.write_bytes_per_second;
     sample.private_bytes = private_bytes;
     sample.system_memory_total_bytes = system_memory.total_bytes;
     sample.system_memory_used_bytes = system_memory.used_bytes;
