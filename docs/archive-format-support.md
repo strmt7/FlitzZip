@@ -365,8 +365,13 @@ disk.
 AR support covers Unix archive files with the global `!<arch>` magic. Creation
 writes BSD long-name members so nested paths are preserved without a separate
 string table. Extraction accepts simple member names, BSD `#1/<length>` names,
-and GNU `//` string-table references. Symbol-table metadata is skipped rather
-than extracted. The adapter supports regular-file members only because AR has no
+and GNU `//` string-table references. Leading BSD/Darwin symbol tables are
+recognized after resolving their names, including 64-bit variants. Later
+ordinary members with those names remain files. Terminal BSD NUL name padding
+is framing and never enters a filename or file payload. Creation refuses a
+reserved leading symbol-table name before staging output; later and nested
+ordinary files with those basenames remain supported.
+The adapter supports regular-file members only because AR has no
 portable directory entry model.
 
 CPIO, CPIO.GZ, AR, and the DEB/RPM wrapper routes default to strict UTF-8
@@ -560,6 +565,16 @@ publishing any file payload:
    entries that conflict with descendants.
 4. Publish each regular-file member through a private same-directory temporary
    file after validation.
+
+The archive member-count ceiling includes symbol and string-table records,
+including zero-byte metadata. Skipped metadata cannot bypass the parser-work
+budget. BSD name extents are accounted separately from the resolved extraction
+name, so removing terminal NUL padding or skipping a symbol table cannot move
+the next header or expose metadata bytes as regular files. Interior NUL bytes,
+empty padded names and padded traversal still fail complete preflight.
+BSD index recognition follows its leading-member position; name equality alone
+must not discard a later regular file. See the [BSD archive index format](https://man.netbsd.org/ranlib.5)
+and [LLVM's archive reader](https://github.com/llvm/llvm-project/blob/1b003ae550cc6a8ca47af673a889e4cdaaa8464d/llvm/lib/Object/Archive.cpp).
 
 ```mermaid
 flowchart TD

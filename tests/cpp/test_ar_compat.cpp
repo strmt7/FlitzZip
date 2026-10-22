@@ -5,6 +5,7 @@
 #include "ar/ar_adapter.hpp"
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
+#include "core/resource_limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -272,6 +273,253 @@ TEST_CASE(ar_gnu_long_name_offsets_must_start_at_entry_boundaries) {
         write_ar_member(output, "/2", "payload");
     }
     require_ar_rejection_before_output(archive, root / "out", "does not identify a GNU string-table entry");
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Preserve BSD filename padding as framing, rather than filename or file-content bytes.
+// Inputs: Different NUL-padding lengths, an odd payload and a following ordinary member.
+// Outputs: Exact decoded names, content, entry count and byte totals without losing the next header.
+TEST_CASE(ar_bsd_padded_names_preserve_payload_and_following_members) {
+    const auto root = test_temp_dir("ar-bsd-padded-names");
+    for (unsigned padding = 0; padding < 8; ++padding) {
+        const auto archive = root / "input.ar";
+        {
+            std::ofstream output(archive, std::ios::binary);
+            output.write("!<arch>\n", 8);
+            write_bsd_ar_member(output, "long filename.o" + std::string(padding, '\0'), "odd");
+            write_ar_member(output, "next.o/", "next payload");
+        }
+        const auto destination = root / std::to_string(padding);
+        const auto stats = flitzzip::extract_ar(archive, destination, false);
+        REQUIRE_EQ(stats.entries, 2U);
+        REQUIRE_EQ(stats.output_bytes, 15U);
+        REQUIRE_EQ(read_text_file(destination / "long filename.o"), "odd");
+        REQUIRE_EQ(read_text_file(destination / "next.o"), "next payload");
+        REQUIRE_EQ(count_regular_files(destination), 2U);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Keep symbol-table metadata nonextracting after every supported filename resolution.
+// Inputs: Leading GNU markers and BSD/Darwin 32/64-bit indexes in short, unpadded and padded BSD layouts.
+// Outputs: Only the exact before/after files become visible; metadata bytes never count as extracted content.
+TEST_CASE(ar_resolved_symbol_tables_do_not_become_regular_files) {
+    const auto root = test_temp_dir("ar-resolved-symbol-tables");
+    unsigned ordinal = 0;
+    for (const std::string name :
+         {"__.SYMDEF", "__.SYMDEF SORTED", "__.SYMDEF_64", "__.SYMDEF_64 SORTED", "/", "/SYM64/"}) {
+        for (unsigned layout = 0; layout < 3; ++layout) {
+            if (layout != 0 && name.starts_with('/')) {
+                continue;  // GNU index markers are raw header syntax, not BSD filenames.
+            }
+            if (layout == 0 && name.size() > 16U) {
+                continue;  // The fixed header physically cannot contain the longer Darwin name.
+            }
+            const auto archive = root / "input.ar";
+            {
+                std::ofstream output(archive, std::ios::binary);
+                output.write("!<arch>\n", 8);
+                if (layout == 0) {
+                    write_ar_member(output, name, "symbol metadata");
+                } else {
+                    write_bsd_ar_member(output, name + std::string(layout == 2 ? 3U : 0U, '\0'), "symbol metadata");
+                }
+                write_ar_member(output, "before.o/", "before");
+                write_ar_member(output, "after.o/", "after");
+            }
+            const auto destination = root / std::to_string(ordinal++);
+            const auto stats = flitzzip::extract_ar(archive, destination, false);
+            REQUIRE_EQ(stats.entries, 2U);
+            REQUIRE_EQ(stats.output_bytes, 11U);
+            REQUIRE_EQ(read_text_file(destination / "before.o"), "before");
+            REQUIRE_EQ(read_text_file(destination / "after.o"), "after");
+            REQUIRE_EQ(count_regular_files(destination), 2U);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Prevent name-only classification from dropping a regular member after the leading archive index slot.
+// Inputs: A preceding file, every BSD/Darwin symbol-like basename in short/BSD/GNU layouts and a following file.
+// Outputs: All three files retain exact bytes and sizes, including when a GNU string table precedes the name.
+TEST_CASE(ar_later_symbol_like_names_remain_ordinary_members) {
+    const auto root = test_temp_dir("ar-later-symbol-names");
+    const std::string content = "ordinary named data";
+    unsigned ordinal = 0;
+    for (const std::string name : {"__.SYMDEF", "__.SYMDEF SORTED", "__.SYMDEF_64", "__.SYMDEF_64 SORTED"}) {
+        for (unsigned layout = 0; layout < 3; ++layout) {
+            if (layout == 0 && name.size() > 16U) {
+                continue;
+            }
+            const auto archive = root / "input.ar";
+            {
+                std::ofstream output(archive, std::ios::binary);
+                output.write("!<arch>\n", 8);
+                write_ar_member(output, "before.o/", "before");
+                if (layout == 0) {
+                    write_ar_member(output, name, content);
+                } else if (layout == 1) {
+                    write_bsd_ar_member(output, name + std::string(3, '\0'), content);
+                } else {
+                    write_ar_member(output, "//", name + "/\n");
+                    write_ar_member(output, "/0", content);
+                }
+                write_ar_member(output, "after.o/", "after");
+            }
+            const auto destination = root / std::to_string(ordinal++);
+            const auto stats = flitzzip::extract_ar(archive, destination, false);
+            REQUIRE_EQ(stats.entries, 3U);
+            REQUIRE_EQ(stats.output_bytes, 11U + content.size());
+            REQUIRE_EQ(read_text_file(destination / "before.o"), "before");
+            REQUIRE_EQ(read_text_file(destination / name), content);
+            REQUIRE_EQ(read_text_file(destination / "after.o"), "after");
+            REQUIRE_EQ(count_regular_files(destination), 3U);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Prevent BSD padding normalization from hiding embedded invalid bytes or unsafe paths.
+// Inputs: Interior NUL data, empty/traversal names and GNU markers embedded as BSD names, first or after a file.
+// Outputs: Complete preflight rejection before any destination is created.
+TEST_CASE(ar_bsd_padding_does_not_hide_invalid_name_bytes) {
+    const auto root = test_temp_dir("ar-bsd-invalid-padding");
+    for (const auto& name :
+         {std::string("file\0unexpected", 15), std::string(12, '\0'), std::string("../escape\0\0", 11),
+          std::string("/\0\0", 3), std::string("/SYM64/\0\0", 9)}) {
+        for (const bool leading : {false, true}) {
+            const auto archive = root / "input.ar";
+            {
+                std::ofstream output(archive, std::ios::binary);
+                output.write("!<arch>\n", 8);
+                if (!leading) {
+                    write_ar_member(output, "before.o/", "before");
+                }
+                write_bsd_ar_member(output, name, "payload");
+            }
+            const auto destination = root / "output";
+            bool rejected = false;
+            try {
+                (void)flitzzip::extract_ar(archive, destination, false);
+            } catch (const flitzzip::Error&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+            REQUIRE_TRUE(!std::filesystem::exists(destination));
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Keep a GNU archive's first regular file distinct from a BSD leading index slot.
+// Inputs: A GNU string table first, its symbol-like filename reference second, and an ordinary sibling.
+// Outputs: Both exact files remain extractable; nonextracting metadata still occupies its physical member slot.
+TEST_CASE(ar_gnu_string_table_does_not_turn_a_file_into_a_bsd_index) {
+    const auto root = test_temp_dir("ar-gnu-first-symbol-name");
+    unsigned ordinal = 0;
+    for (const std::string name : {"__.SYMDEF", "__.SYMDEF SORTED", "__.SYMDEF_64", "__.SYMDEF_64 SORTED"}) {
+        const auto archive = root / "input.ar";
+        {
+            std::ofstream output(archive, std::ios::binary);
+            output.write("!<arch>\n", 8);
+            write_ar_member(output, "//", name + "/\n");
+            write_ar_member(output, "/0", "ordinary data");
+            write_ar_member(output, "after.o/", "after");
+        }
+        const auto destination = root / std::to_string(ordinal++);
+        const auto stats = flitzzip::extract_ar(archive, destination, false);
+        REQUIRE_EQ(stats.entries, 2U);
+        REQUIRE_EQ(stats.output_bytes, 18U);
+        REQUIRE_EQ(read_text_file(destination / name), "ordinary data");
+        REQUIRE_EQ(read_text_file(destination / "after.o"), "after");
+        REQUIRE_EQ(count_regular_files(destination), 2U);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Bound parser work even when every member is nonextracting metadata.
+// Inputs: Exactly the real member limit, then one additional independently framed zero-length symbol table.
+// Outputs: Admits the exact boundary, refuses its successor before output, and writes less than 16 MiB of fixtures.
+TEST_CASE(ar_metadata_members_consume_the_archive_entry_budget) {
+    const auto root = test_temp_dir("ar-metadata-member-budget");
+    const auto archive = root / "metadata.ar";
+    const auto header = make_ar_header("/", 0);
+    constexpr std::size_t batch_members = 1000;
+    std::array<char, 60U * batch_members> batch{};
+    for (std::size_t member = 0; member < batch_members; ++member) {
+        std::copy(header.begin(), header.end(), batch.begin() + static_cast<std::ptrdiff_t>(member * 60U));
+    }
+    static_assert(60ULL * flitzzip::kMaxArchiveEntries + 68U < 16ULL * 1024U * 1024U);
+    {
+        std::ofstream output(archive, std::ios::binary);
+        output.write("!<arch>\n", 8);
+        std::size_t remaining = flitzzip::kMaxArchiveEntries;
+        while (remaining) {
+            const auto members = std::min(remaining, batch_members);
+            output.write(batch.data(), static_cast<std::streamsize>(members * 60U));
+            remaining -= members;
+        }
+        output.close();
+        REQUIRE_TRUE(output.good());
+    }
+    const auto stats = flitzzip::extract_ar(archive, root / "at-limit", false);
+    REQUIRE_EQ(stats.entries, 0U);
+    REQUIRE_EQ(stats.output_bytes, 0U);
+    REQUIRE_TRUE(std::filesystem::is_empty(root / "at-limit"));
+    {
+        std::ofstream output(archive, std::ios::binary | std::ios::app);
+        output.write(header.data(), header.size());
+        output.close();
+        REQUIRE_TRUE(output.good());
+    }
+    require_ar_rejection_before_output(archive, root / "over-limit", "too many members");
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Refuse a reserved leading AR name instead of creating an archive that drops user bytes.
+// Inputs: Each leading BSD/Darwin symbol name, an existing output, and later/nested ordinary-file controls.
+// Outputs: Refusal preserves existing output; later and nested files with the same basename still round trip.
+TEST_CASE(ar_writer_rejects_leading_symbol_names_before_publication) {
+    const auto root = test_temp_dir("ar-reserved-writer-names");
+    const auto archive = root / "output.ar";
+    {
+        std::ofstream output(archive, std::ios::binary);
+        output << "retain old output";
+    }
+    for (const std::string name : {"__.SYMDEF", "__.SYMDEF SORTED", "__.SYMDEF_64", "__.SYMDEF_64 SORTED"}) {
+        const auto source = root / name;
+        {
+            std::ofstream output(source, std::ios::binary);
+            output << "caller data";
+        }
+        bool rejected = false;
+        try {
+            (void)flitzzip::compress_ar({source}, archive);
+        } catch (const flitzzip::Error&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(read_text_file(archive), "retain old output");
+    }
+    const auto folder = root / "nested";
+    std::filesystem::create_directory(folder);
+    {
+        std::ofstream output(folder / "__.SYMDEF", std::ios::binary);
+        output << "ordinary nested data";
+    }
+    (void)flitzzip::compress_ar({folder}, archive);
+    (void)flitzzip::extract_ar(archive, root / "restored", false);
+    REQUIRE_EQ(read_text_file(root / "restored" / "nested" / "__.SYMDEF"), "ordinary nested data");
+    const auto first = root / "0-first.o";
+    {
+        std::ofstream output(first, std::ios::binary);
+        output << "lead";
+    }
+    (void)flitzzip::compress_ar({first, root / "__.SYMDEF"}, archive);
+    const auto later = flitzzip::extract_ar(archive, root / "later", false);
+    REQUIRE_EQ(later.entries, 2U);
+    REQUIRE_EQ(read_text_file(root / "later" / "0-first.o"), "lead");
+    REQUIRE_EQ(read_text_file(root / "later" / "__.SYMDEF"), "caller data");
     std::filesystem::remove_all(root);
 }
 

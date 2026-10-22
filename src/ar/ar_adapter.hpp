@@ -11,7 +11,8 @@ namespace flitzzip {
 // Purpose: Create a Unix AR archive from regular files in one or more source trees.
 // Inputs: `sources` are existing filesystem roots, `output_archive` is the destination `.ar`, and `progress_callback`
 // receives synchronous progress snapshots. Outputs: Returns operation statistics; throws `ArchiveError`/`SecurityError`
-// on source, path, or writer failures.
+// on source, path, or writer failures. A leading symbol-table name fails before output staging; later ordinary
+// members and nested files with those basenames remain supported.
 OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
                            const std::filesystem::path& output_archive, const ProgressCallback& progress_callback = {});
 
