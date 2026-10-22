@@ -291,6 +291,51 @@ TEST_CASE(gui_compression_routing_rejects_invalid_combinations_before_io) {
         "archive format recognized but not implemented for compression: rar");
 }
 
+// Purpose: Keep writer-created staging files out of source enumeration without hiding legitimate user files.
+// Inputs: Seven folder-capable routes save inside their source, alongside an ordinary temporary-looking subtree.
+// Outputs: Each archive contains exactly the original four entries and restores both files byte-for-byte.
+TEST_CASE(gui_folder_archives_snapshot_sources_before_creating_staging_files) {
+    constexpr std::array formats{flitzzip::ArchiveFormat::Zip,     flitzzip::ArchiveFormat::Tar,
+                                 flitzzip::ArchiveFormat::TarGzip, flitzzip::ArchiveFormat::TarBzip2,
+                                 flitzzip::ArchiveFormat::TarZstd, flitzzip::ArchiveFormat::Cpio,
+                                 flitzzip::ArchiveFormat::CpioGzip};
+    const auto root = test_temp_dir("folder-source-snapshot");
+    const std::string payload = "ordinary source bytes\n";
+    const std::string temporary_named_payload = "intentional user data\n";
+    for (std::size_t index = 0; index < formats.size(); ++index) {
+        const auto directory = root / std::to_string(index);
+        const auto source = directory / "input";
+        std::filesystem::create_directories(source / ".fztmp-kept");
+        std::ofstream(source / "source.bin", std::ios::binary) << payload;
+        std::ofstream(source / ".fztmp-kept" / "payload.tmp", std::ios::binary) << temporary_named_payload;
+        const auto archive = source / "bundle.archive";
+        const auto stats = flitzzip::app::compress_gui_archive({source}, archive, formats[index], false, false,
+                                                               flitzzip::kDefaultArchiveBlockBytes, 3,
+                                                               flitzzip::NativeCompressionMode::Standard, {});
+        REQUIRE_EQ(stats.input_bytes, payload.size() + temporary_named_payload.size());
+        REQUIRE_EQ(stats.entries, 4U);
+        const auto destination = directory / "restored";
+        const auto restored =
+            flitzzip::app::extract_detected_archive(formats[index], archive, destination, false, false, {});
+        REQUIRE_EQ(restored.entries, 4U);
+        REQUIRE_EQ(restored.output_bytes, stats.input_bytes);
+        for (const auto& [relative, expected] : std::array<std::pair<std::filesystem::path, std::string>, 2>{
+                 {{std::filesystem::path("input") / "source.bin", payload},
+                  {std::filesystem::path("input") / ".fztmp-kept" / "payload.tmp", temporary_named_payload}}}) {
+            std::ifstream input(destination / relative, std::ios::binary);
+            REQUIRE_TRUE(input.is_open());
+            REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), expected);
+        }
+        REQUIRE_EQ(std::distance(std::filesystem::recursive_directory_iterator(destination),
+                                 std::filesystem::recursive_directory_iterator{}),
+                   4);
+        REQUIRE_EQ(std::distance(std::filesystem::recursive_directory_iterator(source),
+                                 std::filesystem::recursive_directory_iterator{}),
+                   4);
+    }
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Prove every GUI-visible compatibility create route reaches a real codec and its matching extractor.
 // Inputs: One bounded binary source and every non-FLZIP format accepted by `compress_gui_archive`.
 // Outputs: Each archive is nonempty, extraction restores exact bytes, and ZIP/general validation discards all output.
