@@ -7,9 +7,11 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -627,6 +629,125 @@ TEST_CASE(tar_writer_checksum_preserves_exact_wire_encoding) {
         REQUIRE_EQ(encoded, expected);
     }
     std::filesystem::remove_all(root);
+}
+
+namespace {
+
+// Purpose: Inspect the actual writer at POSIX name/prefix boundaries without using the product parser as an oracle.
+// Inputs: One native relative filename, its independently expected PAX requirement and an isolated fixture ordinal.
+// Outputs: Checks raw pathname records, exact payload/footer/stats and extracted bytes; removes the owned fixture.
+void require_tar_writer_path_boundary(const std::filesystem::path& relative, bool requires_pax, unsigned ordinal) {
+    const auto root = test_temp_dir("tar-writer-path-" + std::to_string(ordinal));
+    const auto tree = root / "tree";
+    auto native_relative = relative;
+    native_relative.make_preferred();
+    const auto source = tree / native_relative;
+    std::filesystem::create_directories(source.parent_path());
+    const std::string content = "filename boundary payload";
+    {
+        std::ofstream output(source, std::ios::binary);
+        output << content;
+        output.close();
+        REQUIRE_TRUE(output.good());
+    }
+    const auto archive = root / "output.tar";
+    const auto stats = flitzzip::compress_tar({tree}, archive);
+    const auto utf8 = relative.generic_u8string();
+    const std::string expected = "tree/" + std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+    bool file_seen = false;
+    std::uint64_t entries = 0;
+    {
+        std::ifstream input(archive, std::ios::binary);
+        std::optional<std::string> extended_path;
+        for (;;) {
+            std::array<char, 512> header{};
+            input.read(header.data(), header.size());
+            REQUIRE_EQ(input.gcount(), static_cast<std::streamsize>(header.size()));
+            if (std::ranges::all_of(header, [](char value) { return value == 0; })) {
+                input.read(header.data(), header.size());
+                REQUIRE_EQ(input.gcount(), static_cast<std::streamsize>(header.size()));
+                REQUIRE_TRUE(std::ranges::all_of(header, [](char value) { return value == 0; }));
+                REQUIRE_EQ(input.peek(), std::char_traits<char>::eof());
+                REQUIRE_TRUE(!extended_path);
+                break;
+            }
+            std::size_t size = 0;
+            for (std::size_t i = 124; i < 136 && header[i] != '\0'; ++i) {
+                REQUIRE_TRUE(header[i] >= '0' && header[i] <= '7');
+                size = size * 8U + static_cast<unsigned>(header[i] - '0');
+            }
+            REQUIRE_TRUE(size < 512U);
+            std::array<char, 512> payload{};
+            if (size) {
+                input.read(payload.data(), payload.size());
+                REQUIRE_EQ(input.gcount(), static_cast<std::streamsize>(payload.size()));
+                REQUIRE_TRUE(std::all_of(payload.begin() + static_cast<std::ptrdiff_t>(size), payload.end(),
+                                         [](char value) { return value == 0; }));
+            }
+            if (header[156] == 'x') {
+                REQUIRE_TRUE(!extended_path);
+                const std::string_view record(payload.data(), size);
+                const auto separator = record.find(' ');
+                REQUIRE_TRUE(separator != std::string_view::npos);
+                std::size_t declared_size = 0;
+                const auto parsed = std::from_chars(record.data(), record.data() + separator, declared_size);
+                REQUIRE_TRUE(parsed.ec == std::errc{} && parsed.ptr == record.data() + separator);
+                REQUIRE_EQ(declared_size, size);
+                REQUIRE_TRUE(record.substr(separator + 1U).starts_with("path=") && record.back() == '\n');
+                extended_path = std::string(record.substr(separator + 6U, size - separator - 7U));
+                continue;
+            }
+            REQUIRE_TRUE(header[156] == '0' || header[156] == '5');
+            ++entries;
+            if (header[156] == '0') {
+                REQUIRE_TRUE(!file_seen);
+                file_seen = true;
+                REQUIRE_EQ(extended_path.has_value(), requires_pax);
+                const auto name_end = std::find(header.begin(), header.begin() + 100, '\0');
+                const auto prefix_end = std::find(header.begin() + 345, header.begin() + 500, '\0');
+                const std::string prefix(header.begin() + 345, prefix_end);
+                const auto wire_path = prefix.empty() ? std::string(header.begin(), name_end)
+                                                      : prefix + '/' + std::string(header.begin(), name_end);
+                REQUIRE_EQ(extended_path.value_or(wire_path), expected);
+                REQUIRE_EQ(std::string(payload.data(), size), content);
+            }
+            extended_path.reset();
+        }
+    }
+    REQUIRE_TRUE(file_seen);
+    REQUIRE_EQ(stats.entries, entries);
+    REQUIRE_EQ(stats.input_bytes, content.size());
+    REQUIRE_EQ(stats.output_bytes, std::filesystem::file_size(archive));
+    const auto destination = root / "extracted";
+    const auto restored = flitzzip::extract_tar(archive, destination, false);
+    REQUIRE_EQ(restored.entries, entries);
+    REQUIRE_EQ(restored.output_bytes, content.size());
+    {
+        std::ifstream input(destination / "tree" / native_relative, std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), content);
+    }
+    std::filesystem::remove_all(root);
+}
+
+}  // namespace
+
+// Purpose: Prevent byte-width truncation, unnecessary PAX fallback and leaked directory overrides in writer output.
+// Inputs: Exact 100-byte names, 155-byte prefixes, earlier split points, over-limit and Unicode filenames.
+// Outputs: Every fixture retains its independently expected representation and exact payload after extraction.
+TEST_CASE(tar_writer_preserves_ustar_and_pax_filename_boundaries) {
+    const std::vector<std::pair<std::filesystem::path, bool>> cases{
+        {std::string(95, 'a'), false},
+        {std::string(96, 'a'), false},
+        {std::string(100, 'a'), false},
+        {std::string(101, 'a'), true},
+        {std::string(150, 'p') + '/' + std::string(100, 'a'), false},
+        {std::string(151, 'p') + '/' + std::string(100, 'a'), true},
+        {std::string(150, 'p') + '/' + std::string(60, 'q') + '/' + std::string(30, 'r'), false},
+        {std::filesystem::path(u8"caf\u00e9.txt"), true}};
+    unsigned ordinal = 0;
+    for (const auto& [relative, requires_pax] : cases) {
+        require_tar_writer_path_boundary(relative, requires_pax, ordinal++);
+    }
 }
 
 // Purpose: Preserve declared PAX encodings while leaving unmarked legacy TAR names unchanged.
