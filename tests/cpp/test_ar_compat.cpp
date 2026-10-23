@@ -3,6 +3,7 @@
 #include "test_legacy_name.hpp"
 
 #include "ar/ar_adapter.hpp"
+#include "ar/ar_reader.hpp"
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
@@ -14,8 +15,11 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <sstream>
+#include <streambuf>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -71,7 +75,7 @@ std::array<char, 60> make_ar_header(std::string_view name, std::uint64_t size) {
 // Purpose: Write one AR member with a raw header name.
 // Inputs: `output` is the archive stream, `name` is the header name, and `payload` is the member payload.
 // Outputs: Appends the member and even-byte padding when needed.
-void write_ar_member(std::ofstream& output, std::string_view name, std::string_view payload) {
+void write_ar_member(std::ostream& output, std::string_view name, std::string_view payload) {
     const auto header = make_ar_header(name, payload.size());
     output.write(header.data(), static_cast<std::streamsize>(header.size()));
     output.write(payload.data(), static_cast<std::streamsize>(payload.size()));
@@ -143,7 +147,192 @@ void require_ar_rejection_before_output(const std::filesystem::path& archive, co
     REQUIRE_TRUE(!std::filesystem::exists(output));
 }
 
+// Purpose: Present a complete owned archive with a controlled read boundary without altering filesystem state.
+// Inputs: Bytes own the full archive; boundary is the first unavailable byte; io_error selects bad I/O versus short
+// EOF. Outputs: Reads before the boundary behave normally; later reads fail synchronously and positions remain
+// queryable.
+class ArBoundaryInput final : public std::streambuf {
+  public:
+    // Purpose: Install a bounded get area after validating its extent.
+    // Inputs: Owned bytes, a byte boundary within them and the failure kind.
+    // Outputs: Creates a position-aware stream buffer or throws before forming an invalid endpoint.
+    ArBoundaryInput(std::string bytes, std::size_t boundary, bool io_error)
+        : bytes_(std::move(bytes)), io_error_(io_error) {
+        if (boundary > bytes_.size()) {
+            throw std::invalid_argument("AR test stream boundary exceeds input");
+        }
+        setg(bytes_.data(), bytes_.data(), bytes_.data() + boundary);
+    }
+
+  protected:
+    // Purpose: Distinguish a device-style read failure from a clean short stream at the controlled boundary.
+    // Inputs: The exhausted get area.
+    // Outputs: Throws an I/O failure or returns EOF; never supplies bytes beyond the boundary.
+    int_type underflow() override {
+        boundary_read_ = true;
+        if (io_error_) {
+            throw std::ios_base::failure("controlled AR input read failure");
+        }
+        return traits_type::eof();
+    }
+
+    // Purpose: Preserve normal file-style positioning within the readable prefix.
+    // Inputs: Input-mode seek offsets and one of the standard reference positions.
+    // Outputs: Moves within the validated get area, or returns the failed-position sentinel before invalid arithmetic.
+    pos_type seekoff(off_type offset, std::ios_base::seekdir direction, std::ios_base::openmode mode) override {
+        const auto end = static_cast<off_type>(egptr() - eback());
+        off_type base = 0;
+        if ((mode & std::ios_base::in) == 0) {
+            return pos_type(off_type(-1));
+        }
+        if (direction == std::ios_base::cur) {
+            base = static_cast<off_type>(gptr() - eback());
+        } else if (direction == std::ios_base::end) {
+            base = end;
+        } else if (direction != std::ios_base::beg) {
+            return pos_type(off_type(-1));
+        }
+        if (offset < -base || offset > end - base) {
+            return pos_type(off_type(-1));
+        }
+        const auto position = base + offset;
+        setg(eback(), eback() + position, egptr());
+        return pos_type(position);
+    }
+
+  public:
+    // Purpose: Prove a rejection reached the intended read boundary rather than an unrelated unsupported operation.
+    // Inputs: The completed parser attempt. Outputs: True only after an actual unavailable-byte read was requested.
+    bool boundary_read() const noexcept {
+        return boundary_read_;
+    }
+
+  private:
+    std::string bytes_;
+    bool io_error_;
+    bool boundary_read_ = false;
+};
+
+// Purpose: Build a valid two-member AR fixture and identify its exact first-member boundary independently.
+// Inputs: None; the existing raw-header serializer writes only into RAM.
+// Outputs: Returns complete bytes and the first position at which a valid prefix could be mistaken for completion.
+std::pair<std::string, std::size_t> ar_reader_boundary_fixture() {
+    std::ostringstream output(std::ios::out | std::ios::binary);
+    output << "!<arch>\n";
+    write_ar_member(output, "before.o/", "abc");
+    const auto position = output.tellp();
+    REQUIRE_TRUE(position != std::ostream::pos_type(-1));
+    const auto boundary = static_cast<std::size_t>(position);
+    write_ar_member(output, "after.o/", "defgh");
+    return {output.str(), boundary};
+}
+
+// Purpose: Require failure at every unread position after a valid member, including the next header's first byte.
+// Inputs: io_error chooses an injected read error or premature physical EOF; declared bytes remain complete.
+// Outputs: Throws a test failure if the production parser accepts any incomplete archive prefix.
+void require_ar_reader_boundary_failures(bool io_error) {
+    const auto [bytes, boundary] = ar_reader_boundary_fixture();
+    for (auto unavailable = boundary; unavailable < boundary + 60U; ++unavailable) {
+        ArBoundaryInput buffer(bytes, unavailable, io_error);
+        std::istream input(&buffer);
+        bool rejected = false;
+        try {
+            (void)flitzzip::detail::scan_ar_stream(input, bytes.size(), flitzzip::ArchivePathEncoding::Utf8);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(buffer.boundary_read());
+        REQUIRE_TRUE(rejected);
+    }
+}
+
 }  // namespace
+
+// Purpose: Prevent a non-EOF read error from being classified as a clean AR terminator.
+// Inputs: A valid two-member archive whose second member becomes unreadable at each byte boundary.
+// Outputs: The actual bounded production parser rejects every failed read after a valid prefix.
+TEST_CASE(ar_reader_rejects_read_errors_after_valid_prefix) {
+    require_ar_reader_boundary_failures(true);
+}
+
+// Purpose: Reject physical truncation against the independently established archive extent.
+// Inputs: A valid two-member archive that presents early EOF at every boundary after the first member.
+// Outputs: No shortened publication plan is accepted.
+TEST_CASE(ar_reader_rejects_premature_eof_after_valid_prefix) {
+    require_ar_reader_boundary_failures(false);
+}
+
+// Purpose: Keep valid parser behavior and payload locations independent of fault-injection expectations.
+// Inputs: An ordinary complete in-memory AR stream with two known payloads and odd-byte padding.
+// Outputs: Returns both exact names, lengths and original payload slices.
+TEST_CASE(ar_reader_complete_stream_preserves_payload_extents) {
+    const auto [bytes, boundary] = ar_reader_boundary_fixture();
+    std::istringstream input(bytes, std::ios::in | std::ios::binary);
+    const auto plan = flitzzip::detail::scan_ar_stream(input, bytes.size(), flitzzip::ArchivePathEncoding::Utf8);
+    REQUIRE_EQ(plan.entries.size(), 2U);
+    REQUIRE_EQ(plan.total_file_bytes, 8U);
+    REQUIRE_EQ(plan.entries[0].path, "before.o");
+    REQUIRE_EQ(plan.entries[1].path, "after.o");
+    REQUIRE_EQ(plan.entries[0].payload_offset, 68U);
+    REQUIRE_EQ(plan.entries[1].payload_offset, boundary + 60U);
+    REQUIRE_EQ(bytes.substr(plan.entries[0].payload_offset, plan.entries[0].size), "abc");
+    REQUIRE_EQ(bytes.substr(plan.entries[1].payload_offset, plan.entries[1].size), "defgh");
+}
+
+// Purpose: Keep an exact complete extent independent of any subsequent read or underlying EOF probe.
+// Inputs: A complete archive whose next byte access deliberately fails as an I/O error.
+// Outputs: Both entries validate without requesting any byte beyond the declared archive.
+TEST_CASE(ar_reader_complete_extent_does_not_probe_past_end) {
+    const auto [bytes, boundary] = ar_reader_boundary_fixture();
+    ArBoundaryInput buffer(bytes, bytes.size(), true);
+    std::istream input(&buffer);
+    const auto plan = flitzzip::detail::scan_ar_stream(input, bytes.size(), flitzzip::ArchivePathEncoding::Utf8);
+    REQUIRE_EQ(plan.entries.size(), 2U);
+    REQUIRE_TRUE(!buffer.boundary_read());
+    REQUIRE_TRUE(input.good());
+    REQUIRE_TRUE(boundary < bytes.size());
+}
+
+// Purpose: Reject a short declared next-header extent without borrowing bytes outside that extent.
+// Inputs: A complete backing stream with a deliberately bounded archive ending inside the second header.
+// Outputs: Rejects every partial extent while leaving the stream at the previous member boundary.
+TEST_CASE(ar_reader_partial_header_extent_never_reads_beyond_bound) {
+    const auto [bytes, boundary] = ar_reader_boundary_fixture();
+    for (std::size_t tail = 1; tail < 60U; ++tail) {
+        std::istringstream input(bytes, std::ios::in | std::ios::binary);
+        bool rejected = false;
+        try {
+            (void)flitzzip::detail::scan_ar_stream(input, boundary + tail, flitzzip::ArchivePathEncoding::Utf8);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(input.tellg(), std::istream::pos_type(boundary));
+    }
+}
+
+// Purpose: Enforce the global-header extent before reading bytes, including an empty valid archive control.
+// Inputs: Correct magic with declared lengths below and exactly at its eight-byte width.
+// Outputs: Short extents fail without consuming the backing stream; the exact empty archive succeeds.
+TEST_CASE(ar_reader_global_header_extent_is_checked_before_read) {
+    const std::string magic = "!<arch>\n";
+    for (std::size_t extent = 0; extent < magic.size(); ++extent) {
+        std::istringstream input(magic, std::ios::in | std::ios::binary);
+        bool rejected = false;
+        try {
+            (void)flitzzip::detail::scan_ar_stream(input, extent, flitzzip::ArchivePathEncoding::Utf8);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(input.tellg(), std::istream::pos_type(0));
+    }
+    ArBoundaryInput buffer(magic, magic.size(), true);
+    std::istream input(&buffer);
+    const auto plan = flitzzip::detail::scan_ar_stream(input, magic.size(), flitzzip::ArchivePathEncoding::Utf8);
+    REQUIRE_TRUE(plan.entries.empty());
+    REQUIRE_TRUE(!buffer.boundary_read());
+}
 
 // Purpose: Verify native `.ar` compatibility roundtrip for files in a directory tree.
 // Inputs: A temporary source tree compressed through the AR adapter.

@@ -566,6 +566,11 @@ publishing any file payload:
 4. Publish each regular-file member through a private same-directory temporary
    file after validation.
 
+The scanner accounts for member headers and padded extents against the pinned
+archive size. Premature physical EOF cannot turn a valid prefix into a complete
+publication plan. It rejects a partial next-header extent before reading outside
+that bound and stops at the exact complete extent without an extra EOF probe.
+
 The archive member-count ceiling includes symbol and string-table records,
 including zero-byte metadata. Skipped metadata cannot bypass the parser-work
 budget. BSD name extents are accounted separately from the resolved extraction
