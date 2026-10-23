@@ -5,6 +5,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,7 @@ TARGETS = {
     "macbinary": CORE,
     "lha": CORE,
     "cpio": CORE,
+    "ar": CORE,
     "xar": CORE,
 }
 COMPILER = """#!/usr/bin/env python3
@@ -76,7 +78,7 @@ class FuzzBuildTests(unittest.TestCase):
         return result, commands
 
     # Purpose: Preserve all target links and exact sanitizer/include contexts while removing repeated compilation.
-    # Inputs: Address and undefined command plans, not real binaries. Outputs: Eight shared compilations and 14 links.
+    # Inputs: Address and undefined command plans, not real binaries. Outputs: Shared builds and complete target links.
     def test_shared_objects_and_target_contracts(self):
         for sanitizer in ("address", "undefined"):
             with self.subTest(sanitizer=sanitizer), tempfile.TemporaryDirectory(prefix="fuzz build ") as temporary:
@@ -91,6 +93,21 @@ class FuzzBuildTests(unittest.TestCase):
                     self.assertEqual(sum("-Ithird_party/miniz" in args for args in instances), 1, name)
                 links = {Path(args[args.index("-o") + 1]).name: args for args in commands if "-c" not in args}
                 self.assertEqual(set(links), {f"flitzzip_{name}_fuzzer" for name in TARGETS})
+                with zipfile.ZipFile(Path(temporary) / "output/flitzzip_ar_fuzzer_seed_corpus.zip") as seeds:
+                    self.assertEqual(set(seeds.namelist()), {"empty.ar", "ordinary.ar", "gnu.ar", "bsd.ar"})
+                    self.assertEqual(seeds.read("empty.ar"), b"!<arch>\n")
+                    for name in ("ordinary.ar", "gnu.ar", "bsd.ar"):
+                        data = seeds.read(name)
+                        self.assertEqual(data[:8], b"!<arch>\n")
+                        offset = 8
+                        members = 0
+                        while offset < len(data):
+                            self.assertEqual(data[offset + 58 : offset + 60], b"`\n")
+                            size = int(data[offset + 48 : offset + 58])
+                            offset += 60 + size + size % 2
+                            members += 1
+                        self.assertEqual(offset, len(data))
+                        self.assertEqual(members, 2)
                 for name, expected_core in TARGETS.items():
                     args = links[f"flitzzip_{name}_fuzzer"]
                     self.assertIn("-fsanitize=fuzzer", args)

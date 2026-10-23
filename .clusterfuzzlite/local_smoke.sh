@@ -21,6 +21,7 @@ for target in /out/flitzzip_*_fuzzer; do
 done
 rm -rf /out/corpus
 mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/cpio /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lzma /out/corpus/lzip /out/corpus/arj /out/corpus/arc /out/corpus/macbinary /out/corpus/lha /out/corpus/xar
+python3 -m zipfile -e /out/flitzzip_ar_fuzzer_seed_corpus.zip /out/corpus/ar
 printf 'SUZP\001\000\000\000\000\000\000\000' > /out/corpus/archive_index/empty-index
 printf '\000\020\000\000\001\003A\000\000\004\000\000' > /out/corpus/archive_index/compound-fill-pattern
 printf '\003\020\000\000\004\003\000\000AB' > /out/corpus/archive_index/byte-plane-pattern-tail
@@ -138,6 +139,7 @@ if [ "$runs" -gt 0 ]; then
   /out/flitzzip_archive_index_fuzzer -runs=$runs -max_len=1048576 /out/corpus/archive_index
   /out/flitzzip_path_safety_fuzzer -runs=$runs -max_len=4096 /out/corpus/path_safety
   /out/flitzzip_cpio_fuzzer -runs=$runs -max_len=1048576 /out/corpus/cpio
+  /out/flitzzip_ar_fuzzer -runs=$runs -max_len=1048576 /out/corpus/ar
   /out/flitzzip_iso_fuzzer -runs=$runs -max_len=1048576 /out/corpus/iso
   /out/flitzzip_cab_header_fuzzer -runs=$runs -max_len=1048576 /out/corpus/cab
   /out/flitzzip_rpm_header_fuzzer -runs=$runs -max_len=1048576 /out/corpus/rpm

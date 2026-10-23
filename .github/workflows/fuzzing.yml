@@ -8,6 +8,7 @@ on:
       - fuzz/**
       - tools/test_fuzz_build.py
       - src/core/**
+      - src/ar/**
       - src/arc/**
       - src/arj/**
       - src/cab/**
