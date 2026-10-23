@@ -1046,6 +1046,72 @@ function Assert-WindowWorkAreaFit {
     Write-Information "Work-area fitting passed; notification coverage=$ExerciseEvents." -InformationAction Continue
 }
 
+# Purpose: Fingerprint only a static notice body, excluding clocks, tabs, borders and scrollbar hover.
+# Inputs: Path is a window capture; Dpi/Offset map the supplied client-DIP rectangle into that image.
+# Outputs: Returns the SHA-256 digest of its canonical pixel-format crop; invalid bounds fail.
+function Get-NoticeBodyDigest {
+    param([string]$Path, [int]$Dpi, $Offset, [int]$Left, [int]$Top, [int]$Right, [int]$Bottom)
+
+    $scale = [double]$Dpi / 96.0
+    $rect = [Drawing.Rectangle]::FromLTRB(
+        $Offset.X + [int][Math]::Round($Left * $scale), $Offset.Y + [int][Math]::Round($Top * $scale),
+        $Offset.X + [int][Math]::Round($Right * $scale), $Offset.Y + [int][Math]::Round($Bottom * $scale))
+    $image = [Drawing.Bitmap]::new($Path)
+    $crop = $null
+    $stream = [IO.MemoryStream]::new()
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        if ($rect.Width -le 0 -or $rect.Height -le 0 -or $rect.Left -lt 0 -or $rect.Top -lt 0 -or
+            $rect.Right -gt $image.Width -or $rect.Bottom -gt $image.Height) {
+            throw 'License notice comparison rectangle is outside the captured image.'
+        }
+        $crop = $image.Clone($rect, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $crop.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
+        return [BitConverter]::ToString($sha.ComputeHash($stream.ToArray()))
+    } finally {
+        $sha.Dispose()
+        $stream.Dispose()
+        if ($crop) { $crop.Dispose() }
+        $image.Dispose()
+    }
+}
+
+# Purpose: Require real thumb drags to reach the same notice text as independent Home/End inputs.
+# Inputs: Handle/Dpi identify the owned modal; Viewport contains its canonical client-DIP boundaries.
+# Outputs: Returns endpoint captures; throws for inert scrolling, wrong endpoints or failed restoration.
+function Assert-LicenseNoticeDrag {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$BasePath, [string]$Extension,
+          [hashtable]$Viewport, [switch]$Compact)
+
+    $offset = Get-ClientCaptureOffset -Handle $Handle
+    $body = @{ Left = $Viewport.Left + 2; Top = $Viewport.Top + 2
+        Right = $Viewport.Right - 18; Bottom = $Viewport.Bottom - 2 }
+    $captureSize = if ($Compact) { @{ ExpectedDesignWidth = 960; ExpectedDesignHeight = 600 } } else { @{} }
+    $expected = @{}
+    foreach ($endpoint in @('Top', 'Bottom', 'DragBottom', 'DragTop')) {
+        if ($endpoint -eq 'Top') { Invoke-ClientKey -Handle $Handle -VirtualKey 0x24 }
+        elseif ($endpoint -eq 'Bottom') { Invoke-ClientKey -Handle $Handle -VirtualKey 0x23 }
+        else {
+            if ($endpoint -eq 'DragBottom') {
+                Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+                Start-Sleep -Milliseconds 200
+                $startY = $Viewport.Top + 8; $endY = $Viewport.Bottom + 32
+            } else { $startY = $Viewport.Bottom - 8; $endY = $Viewport.Top - 32 }
+            Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX ($Viewport.Right - 2) -EndX ($Viewport.Right - 2) -StartY $startY -EndY $endY
+        }
+        Start-Sleep -Milliseconds 220
+        $path = "$BasePath-$endpoint$Extension"
+        Save-FlitzZipScreenshot -Handle $Handle -Path $path @captureSize
+        $digest = Get-NoticeBodyDigest -Path $path -Dpi $Dpi -Offset $offset @body
+        if ($endpoint -eq 'Top' -or $endpoint -eq 'Bottom') { $expected[$endpoint] = $digest }
+        else {
+            $target = if ($endpoint -eq 'DragBottom') { 'Bottom' } else { 'Top' }
+            if ($digest -cne $expected[$target]) { throw "License thumb $endpoint did not restore the keyboard endpoint text." }
+        }
+    }
+    if ($expected.Top -ceq $expected.Bottom) { throw 'License notice Home and End displayed identical body pixels.' }
+}
+
 # Purpose: Exercise the compact Licenses modal using native buttons, tabs, and scrolling.
 # Inputs: Handle/Dpi identify a compact About page; BasePath/Extension name screenshots.
 # Outputs: Returns validated modal captures; closes through the real Close button before later form checks.
@@ -1063,6 +1129,7 @@ function Assert-CompactLicenseDialog {
         Save-FlitzZipScreenshot -Handle $Handle -Path $path -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
         Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left (165 + 136 * $tab) -Top 159 -Right (293 + 136 * $tab) -Bottom 193 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 42 -MinPixels 20
         Assert-DesignRectHasDetail -Path $path -Dpi $Dpi -Left 175 -Top 209 -Right 867 -Bottom 443 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+        Assert-LicenseNoticeDrag -Handle $Handle -Dpi $Dpi -BasePath "${BasePath}-Compact-Licenses-$tab-Drag" -Extension $Extension -Compact -Viewport @{ Left = 175; Top = 209; Right = 867; Bottom = 443 }
     }
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
     Start-Sleep -Milliseconds 200
@@ -1777,12 +1844,14 @@ try {
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $licenseDialogPath -Dpi $windowDpi -Left 260 -Top 120 -Right 940 -Bottom 650 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
     Assert-DesignRectHasColor -Path $licenseDialogPath -Dpi $windowDpi -Left 286 -Top 170 -Right 400 -Bottom 212 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 42 -MinPixels 20
+    $captures += Assert-LicenseNoticeDrag -Handle $windowHandle -Dpi $windowDpi -BasePath "${basePath}-About-Licenses-FlitzZip-Drag" -Extension $extension -Viewport @{ Left = 277; Top = 231; Right = 1005; Bottom = 581 }
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 450 -DesignY 198
     Start-Sleep -Milliseconds 120
     $licenseOtherDialogPath = "${basePath}-About-Licenses-Other$extension"
     $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $licenseOtherDialogPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $licenseOtherDialogPath -Dpi $windowDpi -Left 260 -Top 120 -Right 940 -Bottom 650 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+    $captures += Assert-LicenseNoticeDrag -Handle $windowHandle -Dpi $windowDpi -BasePath "${basePath}-About-Licenses-Other-Drag" -Extension $extension -Viewport @{ Left = 277; Top = 231; Right = 1005; Bottom = 581 }
     Invoke-ClientWheel -Handle $windowHandle -Dpi $windowDpi -DesignX 610 -DesignY 420 -Delta -120
     Start-Sleep -Milliseconds 80
     $licenseSmoothWheelPath = "${basePath}-About-Licenses-SmoothWheel$extension"
