@@ -75,6 +75,14 @@ RECT MainWindow::history_clear_button_rect(const RECT& area) const {
     return RECT{area.right - width, area.top, area.right, area.top + scale(34)};
 }
 
+// Purpose: Share History table geometry independently of GDI-dependent command sizing.
+// Inputs: Physical-pixel content bounds and cached monitor DPI.
+// Outputs: Returns table bounds without GDI, shell calls, allocation or borrowing UI state.
+RECT MainWindow::history_table_rect(const RECT& rect) const {
+    const RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
+    return RECT{area.left, area.top + scale(112), area.right, area.bottom - scale(118)};
+}
+
 // Purpose: Compute History page rectangles shared by rendering, scrolling, and hit testing.
 // Inputs: `rect` is the content area in physical pixels.
 // Outputs: Returns DPI-scaled History page filters, table, and details panel rectangles.
@@ -86,8 +94,7 @@ MainWindow::HistoryLayout MainWindow::history_layout(const RECT& rect) const {
     layout.status_filter = RECT{layout.area.left + scale(238), layout.area.top + scale(48),
                                 layout.area.left + scale(458), layout.area.top + scale(92)};
     layout.clear = history_clear_button_rect(layout.area);
-    layout.table =
-        RECT{layout.area.left, layout.area.top + scale(112), layout.area.right, layout.area.bottom - scale(118)};
+    layout.table = history_table_rect(rect);
     layout.details = RECT{layout.area.left, layout.table.bottom + scale(20), layout.area.right, layout.area.bottom};
     return layout;
 }

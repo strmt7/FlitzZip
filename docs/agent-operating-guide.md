@@ -924,6 +924,13 @@ manufacture a clean scan. Individual authorizations belong in review records.
   background and `WM_ERASEBKGND` path must use the app's dark background so the
   first visible frame never flashes white before custom painting.
 - Progress repaint requests must be coalesced so fast jobs or 200 Hz displays do not flood the message queue.
+- Changed pointer tracking must project only the values needed by the hovered
+  control, rather than clone queue, history and log storage on every move.
+  Borrow state only under its mutex and own values that survive unlocking.
+  Perform GDI measurement, shell folder discovery and native cursor updates
+  outside that state lock. Hover qualification must move the actual Windows
+  pointer, observe rendered results and restore its original position; synthetic
+  mouse messages alone do not establish native hover/leave tracking.
 - Tab transitions and toggle changes may use short non-blocking animations, but
   they must run on bounded timers, never block archive work, never grow memory
   usage, and remain visually stable when repaint cadence exceeds 200 Hz.

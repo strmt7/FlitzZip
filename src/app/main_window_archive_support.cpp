@@ -226,6 +226,13 @@ std::filesystem::path compression_output_path_for(const UiState& state) {
     return destination_directory_or_default(state) / compression_output_filename_for(state);
 }
 
+// Purpose: Resolve the canonical default extraction folder without holding UI state references.
+// Inputs: None; native known-folder resolution follows the shared startup policy.
+// Outputs: Returns the default extraction path or propagates folder-resolution failure.
+std::filesystem::path default_extraction_output_directory() {
+    return current_user_downloads_directory() / L"FlitzZip-extracted";
+}
+
 // Purpose: Resolve the visible extraction output path.
 // Inputs: `state` is the copied UI state.
 // Outputs: Returns the selected destination, or a Downloads-based extraction folder when none is selected.
@@ -233,7 +240,7 @@ std::filesystem::path extraction_output_path_for(const UiState& state) {
     if (!state.destination_directory.empty()) {
         return state.destination_directory;
     }
-    return current_user_downloads_directory() / L"FlitzZip-extracted";
+    return default_extraction_output_directory();
 }
 
 using CompatibilityExtractor = OperationStats (*)(const std::filesystem::path&, const std::filesystem::path&, bool,

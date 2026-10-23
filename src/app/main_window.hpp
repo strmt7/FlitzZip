@@ -103,6 +103,11 @@ class MainWindow {
     // Outputs: Updates mouse state and returns the handled Win32 result.
     LRESULT handle_mouse_leave();
 
+    // Purpose: Hit-test resize grips without copying queue, history or log storage.
+    // Inputs: Current pointer position and UI state, borrowed only while its mutex is held.
+    // Outputs: Returns grip eligibility; all native cursor operations occur after unlocking.
+    bool pointer_over_column_resize_grip();
+
     // Purpose: Update delayed text-tooltip tracking from the current mouse position.
     // Inputs: None; reads current page, eligible text cells, and mouse coordinates.
     // Outputs: Arms, hides, or preserves the tooltip timer based on ellipsized hover state.
@@ -113,26 +118,30 @@ class MainWindow {
     // Outputs: Returns true with cell/text set only for eligible truncated text targets.
     bool text_tooltip_candidate_at_mouse(RECT& cell, std::wstring& text);
 
-    // Purpose: Return the ellipsized Queue text under the current mouse, if any.
-    // Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
-    // Outputs: Returns true only for truncated Queue Name or Path cells.
-    bool queue_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text);
+    // Purpose: Own only the hovered value, deferring native folder lookup until after releasing the state lock.
+    // Inputs: A literal value or an explicit default-directory selection, plus physical-pixel text geometry.
+    // Outputs: No state, queue, history, cache or caller-buffer references escape the projection.
+    struct TextTooltipSource {
+        enum class Kind { Literal, CompressionDestination, ExtractionDestination };
+        RECT cell{};
+        std::wstring text;
+        Kind kind = Kind::Literal;
+    };
 
-    // Purpose: Return the ellipsized History text under the current mouse, if any.
-    // Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
-    // Outputs: Returns true only for truncated Archive name or Archive path cells.
-    bool history_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text);
+    // Purpose: Project the hovered Queue Name or Path without native calls or unrelated state copies.
+    // Inputs: State borrowed under its mutex and precomputed physical-pixel content bounds.
+    // Outputs: An owned value and cell, or no candidate; text measurement follows outside the lock.
+    std::optional<TextTooltipSource> queue_text_tooltip_source_at_mouse(const UiState& state, const RECT& content);
 
-    // Purpose: Return the ellipsized Compress/Extract field text under the current mouse, if any.
-    // Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
-    // Outputs: Returns true only for truncated Archive/Destination fields explicitly allowed by the UI contract.
-    bool field_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text);
+    // Purpose: Project the hovered History Archive name or Archive path without copying the history itself.
+    // Inputs: State borrowed under its mutex and precomputed physical-pixel content bounds.
+    // Outputs: An owned value and cell, or no candidate; text measurement follows outside the lock.
+    std::optional<TextTooltipSource> history_text_tooltip_source_at_mouse(const UiState& state, const RECT& content);
 
-    // Purpose: Check one form field value for delayed tooltip eligibility.
-    // Inputs: `field` is the full labeled field rectangle, `value` is the visible text, and `cell`/`text` receive data.
-    // Outputs: Returns true only when the mouse is over a truncated value cell.
-    bool tooltip_candidate_for_field(const RECT& field, const std::wstring& value, RECT& cell,
-                                     std::wstring& text) const;
+    // Purpose: Project only the hovered Compress/Extract value, without native folder lookup or GDI measurement.
+    // Inputs: State borrowed under its mutex and precomputed physical-pixel content bounds.
+    // Outputs: An owned literal or explicit default-directory selection; unrelated fields are not evaluated.
+    std::optional<TextTooltipSource> field_text_tooltip_source_at_mouse(const UiState& state, const RECT& content);
 
     // Purpose: Resolve the drawn value area inside a labeled field.
     // Inputs: `field` is the full labeled field rectangle and `select` reserves space for a dropdown arrow when true.
@@ -455,6 +464,11 @@ class MainWindow {
     // Inputs: `rect` is the content area in physical pixels.
     // Outputs: Returns DPI-scaled Settings page control rectangles.
     [[nodiscard]] SettingsLayout settings_layout(const RECT& rect) const;
+
+    // Purpose: Compute History table bounds without measuring native command text.
+    // Inputs: Physical-pixel content bounds and cached monitor DPI.
+    // Outputs: The shared table rectangle; safe to use while borrowing UI state under its mutex.
+    [[nodiscard]] RECT history_table_rect(const RECT& rect) const;
 
     // Purpose: Compute History page rectangles shared by rendering, scrolling, and hit testing.
     // Inputs: `rect` is the content area in physical pixels.
