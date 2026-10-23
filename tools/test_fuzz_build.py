@@ -136,6 +136,46 @@ class FuzzBuildTests(unittest.TestCase):
             self.assertEqual(result.returncode, 7, result.stderr)
             self.assertTrue(all("-c" in args for args in commands))
 
+    # Purpose: Keep local fuzz startup aligned with hosted dictionary loading and fail closed on missing inputs.
+    # Inputs: The actual smoke dispatch and owned executable fixtures. Outputs: Exact argv and failure propagation.
+    def test_smoke_loads_every_dictionary(self):
+        source = (ROOT / ".clusterfuzzlite/local_smoke.sh").read_text(encoding="utf-8")
+        dispatch = "set -euo pipefail\nruns=1\n" + source[source.index("run_fuzzer() {\n") :]
+        fixture = """#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+with Path(os.environ['COMMAND_LOG']).open('a', encoding='utf-8') as stream:
+    stream.write(json.dumps([Path(sys.argv[0]).name, args]) + '\\n')
+dictionary = [arg.removeprefix('-dict=') for arg in args if arg.startswith('-dict=')]
+sys.exit(0 if len(dictionary) == 1 and Path(dictionary[0]).is_file() else 17)
+"""
+        with tempfile.TemporaryDirectory(prefix="fuzz dispatch ") as temporary:
+            directory = Path(temporary)
+            log = directory / "calls.jsonl"
+            for name in TARGETS:
+                target = directory / f"flitzzip_{name}_fuzzer"
+                target.write_text(fixture, encoding="utf-8")
+                target.chmod(0o700)
+                target.with_suffix(".dict").write_text('entry="valid"\n', encoding="utf-8")
+            environment = os.environ | {"OUT": str(directory), "COMMAND_LOG": str(log)}
+            result = subprocess.run(
+                ["bash", "-c", dispatch], env=environment, capture_output=True, text=True, timeout=30, check=False
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual({name for name, _ in calls}, {f"flitzzip_{name}_fuzzer" for name in TARGETS})
+            self.assertEqual(len(calls), len(TARGETS))
+            for name, args in calls:
+                self.assertIn(f"-dict={directory / (name + '.dict')}", args)
+                self.assertIn("-runs=1", args)
+                self.assertIn("-max_len=4096" if name == "flitzzip_path_safety_fuzzer" else "-max_len=1048576", args)
+            (directory / "flitzzip_ar_fuzzer.dict").unlink()
+            failed = subprocess.run(
+                ["bash", "-c", dispatch], env=environment, capture_output=True, text=True, timeout=30, check=False
+            )
+            self.assertEqual(failed.returncode, 17, failed.stderr)
+
     # Purpose: Reject an incomplete SDK bridge before any SDK consumer is linked.
     # Inputs: Injected wire implementation compile failure. Outputs: No sevenzip, LZMA or lzip target links.
     def test_sdk_wire_failure_stops_consumers(self):

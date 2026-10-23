@@ -135,20 +135,28 @@ toc_encoded = zlib.compress(toc)
 header = b'xar!' + struct.pack('>HHQQI', 28, 1, len(toc_encoded), len(toc), 0)
 Path('/out/corpus/xar/nested-payload.xar').write_bytes(header + toc_encoded + encoded)
 PY
+# Purpose: Exercise each target with its production dictionary so malformed or missing inputs fail locally.
+# Inputs: Target basename, owned corpus and maximum input bytes; runs is the validated smoke iteration count.
+# Outputs: Runs the real sanitizer binary and fails on dictionary, sanitizer, parser or harness errors.
+run_fuzzer() {
+  local target="$OUT/$1"
+  "$target" -runs="$runs" -max_len="$3" -dict="$target.dict" "$2"
+}
+
 if [ "$runs" -gt 0 ]; then
-  /out/flitzzip_archive_index_fuzzer -runs=$runs -max_len=1048576 /out/corpus/archive_index
-  /out/flitzzip_path_safety_fuzzer -runs=$runs -max_len=4096 /out/corpus/path_safety
-  /out/flitzzip_cpio_fuzzer -runs=$runs -max_len=1048576 /out/corpus/cpio
-  /out/flitzzip_ar_fuzzer -runs=$runs -max_len=1048576 /out/corpus/ar
-  /out/flitzzip_iso_fuzzer -runs=$runs -max_len=1048576 /out/corpus/iso
-  /out/flitzzip_cab_header_fuzzer -runs=$runs -max_len=1048576 /out/corpus/cab
-  /out/flitzzip_rpm_header_fuzzer -runs=$runs -max_len=1048576 /out/corpus/rpm
-  /out/flitzzip_sevenzip_fuzzer -runs=$runs -max_len=1048576 /out/corpus/sevenzip
-  /out/flitzzip_lzma_fuzzer -runs=$runs -max_len=1048576 /out/corpus/lzma
-  /out/flitzzip_lzip_fuzzer -runs=$runs -max_len=1048576 /out/corpus/lzip
-  /out/flitzzip_arj_fuzzer -runs=$runs -max_len=1048576 /out/corpus/arj
-  /out/flitzzip_arc_fuzzer -runs=$runs -max_len=1048576 /out/corpus/arc
-  /out/flitzzip_macbinary_fuzzer -runs=$runs -max_len=1048576 /out/corpus/macbinary
-  /out/flitzzip_lha_fuzzer -runs=$runs -max_len=1048576 /out/corpus/lha
-  /out/flitzzip_xar_fuzzer -runs=$runs -max_len=1048576 /out/corpus/xar
+  run_fuzzer flitzzip_archive_index_fuzzer /out/corpus/archive_index 1048576
+  run_fuzzer flitzzip_path_safety_fuzzer /out/corpus/path_safety 4096
+  run_fuzzer flitzzip_cpio_fuzzer /out/corpus/cpio 1048576
+  run_fuzzer flitzzip_ar_fuzzer /out/corpus/ar 1048576
+  run_fuzzer flitzzip_iso_fuzzer /out/corpus/iso 1048576
+  run_fuzzer flitzzip_cab_header_fuzzer /out/corpus/cab 1048576
+  run_fuzzer flitzzip_rpm_header_fuzzer /out/corpus/rpm 1048576
+  run_fuzzer flitzzip_sevenzip_fuzzer /out/corpus/sevenzip 1048576
+  run_fuzzer flitzzip_lzma_fuzzer /out/corpus/lzma 1048576
+  run_fuzzer flitzzip_lzip_fuzzer /out/corpus/lzip 1048576
+  run_fuzzer flitzzip_arj_fuzzer /out/corpus/arj 1048576
+  run_fuzzer flitzzip_arc_fuzzer /out/corpus/arc 1048576
+  run_fuzzer flitzzip_macbinary_fuzzer /out/corpus/macbinary 1048576
+  run_fuzzer flitzzip_lha_fuzzer /out/corpus/lha 1048576
+  run_fuzzer flitzzip_xar_fuzzer /out/corpus/xar 1048576
 fi
