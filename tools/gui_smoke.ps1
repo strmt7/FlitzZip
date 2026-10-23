@@ -454,14 +454,13 @@ function Wait-GuiLogEvent {
     throw "GUI command did not report '$Message' within $TimeoutSeconds seconds."
 }
 
-# Purpose: Verify actual picker results through a GUI-created ZIP and an independent .NET reader.
+# Purpose: Verify actual input and destination picker results through a GUI-created ZIP and an independent .NET reader.
 # Inputs: Handle/Dpi identify the owned GUI; Destination and Expected contain only smoke-owned paths; BasePath/Extension locate the capture.
 # Outputs: Requires exactly the selected files and hashes, rejects cancelled/parent paths, and captures the result.
 function Assert-NativePickerArchive {
     param([IntPtr]$Handle, [int]$Dpi, [string]$Destination, [Collections.Generic.Dictionary[string, string]]$Expected, [string]$BasePath, [string]$Extension)
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
-    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 820 -DesignY 154 -Synchronous
     Select-CompressFormatIndex -Handle $Handle -Dpi $Dpi -Index 1
     $logPath = Join-Path (Join-Path ([IO.Path]::GetTempPath()) 'FlitzZip') 'flitzzip.log'
     $length = (Get-Item -LiteralPath $logPath).Length
