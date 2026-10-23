@@ -547,10 +547,10 @@ function Wait-GuiLogEvent {
     throw "GUI command did not report '$Message' within $TimeoutSeconds seconds."
 }
 
-# Purpose: Verify actual input and destination picker results through a GUI-created ZIP and an independent .NET reader.
+# Purpose: Verify selected inputs through a GUI-created ZIP and an independent .NET reader.
 # Inputs: Handle/Dpi identify the owned GUI; Destination and Expected contain only smoke-owned paths; BasePath/Extension locate the capture.
 # Outputs: Requires exactly the selected files and hashes, rejects cancelled/parent paths, and captures the result.
-function Assert-NativePickerArchive {
+function Assert-GuiCreatedZip {
     param([IntPtr]$Handle, [int]$Dpi, [string]$Destination, [Collections.Generic.Dictionary[string, string]]$Expected, [string]$BasePath, [string]$Extension)
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
@@ -564,27 +564,66 @@ function Assert-NativePickerArchive {
     try {
         $files = @($archive.Entries | Where-Object { $_.Name.Length -gt 0 })
         if ($files.Count -ne $Expected.Count -or $archive.Entries.Count -gt $Expected.Count + 1) {
-            throw 'Real Windows picker ZIP contains unexpected or missing entries.'
+            throw 'GUI-created ZIP contains unexpected or missing entries.'
         }
         $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach ($entry in $files) {
             if (-not $Expected.ContainsKey($entry.FullName) -or -not $seen.Add($entry.FullName)) {
-                throw 'Real Windows picker ZIP has an unexpected or duplicate file path.'
+                throw 'GUI-created ZIP has an unexpected or duplicate file path.'
             }
             $source = $Expected[$entry.FullName]
-            if ($entry.Length -ne (Get-Item -LiteralPath $source).Length) { throw 'Real Windows picker ZIP changed a selected file length.' }
+            if ($entry.Length -ne (Get-Item -LiteralPath $source).Length) { throw 'GUI-created ZIP changed a selected file length.' }
             $stream = $entry.Open()
             try { $actual = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') } finally { $stream.Dispose() }
-            if ($actual -cne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash) { throw 'Real Windows picker ZIP changed selected file bytes.' }
+            if ($actual -cne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash) { throw 'GUI-created ZIP changed selected file bytes.' }
         }
         foreach ($entry in $archive.Entries) {
             if ($entry.Name.Length -eq 0 -and -not @($Expected.Keys | Where-Object { $_.StartsWith($entry.FullName, [StringComparison]::Ordinal) }).Count) {
-                throw 'Real Windows picker ZIP has an unexpected directory.'
+                throw 'GUI-created ZIP has an unexpected directory.'
             }
         }
     } finally { $sha.Dispose(); $archive.Dispose() }
-    Write-Information 'Real picker archive has exactly the three selected files and byte-exact independent readback.' -InformationAction Continue
-    Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-NativePicker-ArchiveReadback$Extension"
+    Write-Information "GUI-created ZIP has exactly $($Expected.Count) selected files and byte-exact independent readback." -InformationAction Continue
+    Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-ArchiveReadback$Extension"
+}
+
+# Purpose: Prove mixed Queue removal preserves unchecked paths and their unchecked state through later commands.
+# Inputs: Owned GUI/DPI, four distinct smoke files, isolated destination and screenshot prefix.
+# Outputs: Captures retained/unchanged/reselected rows and independently verifies the exact two retained ZIP members.
+function Assert-MixedQueueRemoval {
+    param([IntPtr]$Handle, [int]$Dpi, [string[]]$Paths, [string]$Destination, [string]$BasePath, [string]$Extension)
+
+    if ($Paths.Count -ne 4) { throw 'Mixed Queue removal requires exactly four fixture files.' }
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
+    Invoke-FileDrop -Handle $Handle -Dpi $Dpi -Paths $Paths
+    foreach ($y in @(216, 284)) {
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 138 -DesignY $y -Synchronous
+    }
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 474 -DesignY 91 -Synchronous
+    $offset = Get-ClientCaptureOffset -Handle $Handle
+    foreach ($state in @('Retained', 'NoSelection')) {
+        if ($state -eq 'NoSelection') {
+            Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 474 -DesignY 91 -Synchronous
+        }
+        $path = "${BasePath}-Queue-Mixed-$state$Extension"
+        Save-FlitzZipScreenshot -Handle $Handle -Path $path
+        foreach ($y in @(146, 182, 216)) {
+            Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left 130 -Top ($y - 8) -Right 146 -Bottom ($y + 8) -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 54 -ExpectedGreen 72 -ExpectedBlue 78 -Tolerance 2 -MinPixels 8
+        }
+    }
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 138 -DesignY 146 -Synchronous
+    $selected = "${BasePath}-Queue-Mixed-Reselected$Extension"
+    Save-FlitzZipScreenshot -Handle $Handle -Path $selected
+    foreach ($y in @(146, 182, 216)) {
+        Assert-DesignRectHasColor -Path $selected -Dpi $Dpi -Left 130 -Top ($y - 8) -Right 146 -Bottom ($y + 8) -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 28 -ExpectedBlue 52 -Tolerance 20 -MinPixels 20
+    }
+    $expected = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+    foreach ($index in @(1, 3)) { $expected.Add([IO.Path]::GetFileName($Paths[$index]), $Paths[$index]) }
+    [IO.File]::Delete((Join-Path $Destination 'FlitzZip-output.zip'))
+    Assert-GuiCreatedZip -Handle $Handle -Dpi $Dpi -Destination $Destination -Expected $expected -BasePath "${BasePath}-Queue-Mixed" -Extension $Extension
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
 }
 
 # Purpose: Verify legacy preference/effort migration, obsolete no-op removal and current-key precedence through actual GUI loads and Apply.
@@ -1378,6 +1417,94 @@ function Assert-CompactOverwritePrompt {
     }
 }
 
+# Purpose: Verify the rendered overwrite modal focus or the restored Extract heading after dismissal.
+# Inputs: Owned window/DPI, expected focus (Cancel/Allow/Closed), and unique screenshot path.
+# Outputs: Returns the capture; throws if the expected native visual state is absent.
+function Assert-OverwriteKeyboardFrame {
+    param([IntPtr]$Handle, [int]$Dpi, [ValidateSet('Cancel', 'Allow', 'Closed')][string]$Focus, [string]$Path)
+
+    Save-FlitzZipScreenshot -Handle $Handle -Path $Path
+    $offset = Get-ClientCaptureOffset -Handle $Handle
+    if ($Focus -eq 'Closed') {
+        Assert-DesignRectHasDetail -Path $Path -Dpi $Dpi -Left 116 -Top 74 -Right 350 -Bottom 110 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+    } else {
+        # Independent 1200x760 design oracle: the focus border is above its action button.
+        $left = if ($Focus -eq 'Cancel') { 830 } else { 680 }
+        Assert-DesignRectHasColor -Path $Path -Dpi $Dpi -Left $left -Top 456 -Right ($left + 70) -Bottom 460 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 99 -ExpectedGreen 130 -ExpectedBlue 140 -Tolerance 2 -MinPixels 10
+    }
+}
+
+# Purpose: Prove overwrite cancellation preserves the destination and approval restores exact archive bytes.
+# Inputs: Isolated destination, expected payload SHA-256, and unchanged unrelated sentinel SHA-256.
+# Outputs: Throws on extra/missing entries, changed sentinel, or wrong payload bytes.
+function Assert-OverwriteDestination {
+    param([string]$Directory, [string]$PayloadHash, [string]$SentinelHash)
+
+    $entries = @(Get-ChildItem -LiteralPath $Directory -Recurse -Force)
+    $names = @($entries | Select-Object -ExpandProperty Name | Sort-Object)
+    if ($entries.Count -ne 2 -or @($entries | Where-Object PSIsContainer).Count -ne 0 -or
+        ($names -join '|') -cne 'drag-drop-input.txt|existing-output.txt' -or
+        (Get-FileHash -LiteralPath (Join-Path $Directory 'drag-drop-input.txt')).Hash -cne $PayloadHash -or
+        (Get-FileHash -LiteralPath (Join-Path $Directory 'existing-output.txt')).Hash -cne $SentinelHash) {
+        throw 'Overwrite confirmation changed the destination inventory or failed independent payload readback.'
+    }
+}
+
+# Purpose: Qualify native overwrite keyboard cancellation, modal isolation, navigation and per-job approval.
+# Inputs: Extract page with Ask policy and one archive; isolated destination/source/settings and capture paths.
+# Outputs: Returns captures; proves cancellation preserves bytes and approval affects only its job.
+function Assert-KeyboardOverwriteConfirmation {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$Directory, [string]$SourcePath,
+          [string]$SettingsPath, [string]$BasePath, [string]$Extension)
+
+    $payload = Join-Path $Directory 'drag-drop-input.txt'
+    Set-Content -LiteralPath $payload -Value 'Unapproved replacement sentinel' -NoNewline
+    $beforeHash = (Get-FileHash -LiteralPath $payload).Hash
+    $sourceHash = (Get-FileHash -LiteralPath $SourcePath).Hash
+    $sentinelHash = (Get-FileHash -LiteralPath (Join-Path $Directory 'existing-output.txt')).Hash
+    if ($beforeHash -ceq $sourceHash) { throw 'Overwrite fixture must differ from the archive payload.' }
+    $frame = @{ Handle = $Handle; Dpi = $Dpi }
+    foreach ($key in @(0x0D, 0x20, 0x1B)) {
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
+        Assert-OverwriteKeyboardFrame @frame -Focus Cancel -Path "${BasePath}-Overwrite-Key-$key-Open$Extension"
+        Invoke-ClientKey -Handle $Handle -VirtualKey $key
+        Assert-OverwriteKeyboardFrame @frame -Focus Closed -Path "${BasePath}-Overwrite-Key-$key-Closed$Extension"
+        Assert-OverwriteDestination -Directory $Directory -PayloadHash $beforeHash -SentinelHash $sentinelHash
+    }
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x41
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+    Assert-OverwriteKeyboardFrame @frame -Focus Cancel -Path "${BasePath}-Overwrite-Isolated$Extension"
+    $focus = 'Cancel'
+    foreach ($key in @(0x09, 0x25, 0x27, 0x26, 0x28)) {
+        Invoke-ClientKey -Handle $Handle -VirtualKey $key
+        $focus = if ($focus -eq 'Cancel') { 'Allow' } else { 'Cancel' }
+        Assert-OverwriteKeyboardFrame @frame -Focus $focus -Path "${BasePath}-Overwrite-Navigation-$key$Extension"
+    }
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x1B
+    Assert-OverwriteKeyboardFrame @frame -Focus Closed -Path "${BasePath}-Overwrite-Navigation-Cancelled$Extension"
+    Assert-OverwriteDestination -Directory $Directory -PayloadHash $beforeHash -SentinelHash $sentinelHash
+    $log = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
+    foreach ($key in @(0x0D, 0x20)) {
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
+        Assert-OverwriteKeyboardFrame @frame -Focus Cancel -Path "${BasePath}-Overwrite-Approval-$key-Open$Extension"
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x09
+        Assert-OverwriteKeyboardFrame @frame -Focus Allow -Path "${BasePath}-Overwrite-Approval-$key-Focused$Extension"
+        $length = (Get-Item -LiteralPath $log).Length
+        Invoke-ClientKey -Handle $Handle -VirtualKey $key
+        Wait-GuiLogEvent -Path $log -PreviousLength $length -Message 'Extract: completed'
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 2 -Synchronous
+        Assert-OverwriteKeyboardFrame @frame -Focus Closed -Path "${BasePath}-Overwrite-Approval-$key-Complete$Extension"
+        Assert-OverwriteDestination -Directory $Directory -PayloadHash $sourceHash -SentinelHash $sentinelHash
+        # A new job must ask again, default to Cancel, and retain the previous successful output.
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
+        Assert-OverwriteKeyboardFrame @frame -Focus Cancel -Path "${BasePath}-Overwrite-Approval-$key-Reopened$Extension"
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+        Assert-OverwriteKeyboardFrame @frame -Focus Closed -Path "${BasePath}-Overwrite-Approval-$key-Rejected$Extension"
+        Assert-OverwriteDestination -Directory $Directory -PayloadHash $sourceHash -SentinelHash $sentinelHash
+    }
+}
+
 # Purpose: Exercise the native legacy-name selector and verify real extraction paths and payloads.
 # Inputs: The smoke window, native-test-exported CPIO fixture, shared output root, and capture naming.
 # Outputs: Returns normal/compact captures; throws on missing menu, lost selection, or wrong extracted bytes.
@@ -1602,7 +1729,7 @@ try {
         $nativeExtension = [IO.Path]::GetExtension($ScreenshotPath)
         $nativePickerCaptures = @(Assert-NativePickerQueue -Exe $exe -Root $smokeRoot -BasePath $nativeBasePath -Extension $nativeExtension -VerifyQueue {
             param($Handle, $Dpi, $Destination, $Expected)
-            Assert-NativePickerArchive -Handle $Handle -Dpi $Dpi -Destination $Destination -Expected $Expected -BasePath $nativeBasePath -Extension $nativeExtension
+            Assert-GuiCreatedZip -Handle $Handle -Dpi $Dpi -Destination $Destination -Expected $Expected -BasePath $nativeBasePath -Extension $nativeExtension
         })
         # The picker scenario changes its own compression choice; the all-page run starts with default smoke preferences.
         Remove-Item -LiteralPath $smokeSettingsFile -Force -ErrorAction SilentlyContinue
@@ -1655,6 +1782,7 @@ try {
     if ($OperationSummaryOnly) { $captures | Format-Table -AutoSize; return }
 
     $captures += Assert-KeyboardQueueSelection -Handle $windowHandle -Dpi $windowDpi -InputPath $smokeInput -BasePath $basePath -Extension $extension
+    $captures += Assert-MixedQueueRemoval -Handle $windowHandle -Dpi $windowDpi -Paths (@($smokeInput) + $overflowFiles[0..2]) -Destination $smokeDestination -BasePath $basePath -Extension $extension
 
     # Keep the directory visible: appending it below the overflow files never renders its
     # asynchronous total and leaves the folder-size worker outside this integration check.
@@ -1929,6 +2057,7 @@ try {
         (Get-Content -Raw -LiteralPath (Join-Path $extractOutput 'existing-output.txt')) -cne 'Existing extraction output') {
         throw 'Cancelling compact overwrite confirmation modified the destination.'
     }
+    $captures += Assert-KeyboardOverwriteConfirmation -Handle $windowHandle -Dpi $windowDpi -Directory $extractOutput -SourcePath $smokeInput -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
     Start-Sleep -Milliseconds 300
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Extract-Overwrite-Revert" -OpenX 900 -OpenY 225 -SelectX 900 -SelectY 300 -MenuLeft 657 -MenuTop 250 -MenuRight 1158 -MenuBottom 318 -BasePath $basePath -Extension $extension
 
