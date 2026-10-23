@@ -229,9 +229,17 @@ Assert-Selector $gpuPlan.scope.touchesPerformance "GPU codec changes must retain
 Assert-Selector (($gpuPlan.requiredLocalCommands | Where-Object id -eq 'unit-tests').command -match 'native_component_tests\.ps1') 'reviewed dictionary mechanism must execute its canonical component cohort'
 Assert-Selector (-not (Test-Workflow -Plan $gpuPlan -Name "benchmark-graph")) "GPU source alone must not wait for a path-filtered graph workflow"
 
+foreach ($path in @('tools/flitzzip_verification.psm1', 'tools/native_ci.ps1', 'tools/ci_native_plan.ps1')) {
+    $routing = Get-FlitzZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $routing -Id 'security-scan') "routing owns security admission: $path"
+    Assert-Selector ((Test-Workflow -Plan $routing -Name 'security') -and $routing.postPushAuditRequired) `
+        "routing changes retain hosted analysis and exact-source audit: $path"
+}
+
 foreach ($case in @(
     @('.github/workflows/fuzzing.yml', $true), @('.clusterfuzzlite/build.sh', $true),
     @('tools/test_fuzz_build.py', $true), @('fuzz/archive_index_fuzzer.cpp', $true),
+    @('src/ar/ar_adapter.cpp', $true), @('src/ar/ar_reader.hpp', $true),
     @('src/core/checksum.cpp', $true), @('src/iso/iso_adapter.cpp', $true),
     @('third_party/miniz/miniz.c', $true), @('src/gpu/hip_codec.hip.cpp', $false),
     @('src/app/main_window.cpp', $false), @('src/zip/zip_adapter.cpp', $false),

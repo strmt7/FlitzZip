@@ -100,13 +100,46 @@ foreach ($case in @(
     @{ path = 'tools/native_coverage_report.py'; build = $false; mode = 'none'; matrix = $false },
     @{ path = 'tools/native-coverage-toolchain.json'; build = $false; mode = 'none'; matrix = $false },
     @{ path = 'tools/test_native_coverage.py'; build = $false; mode = 'none'; matrix = $false },
+    @{ path = 'fuzz/flitzzip.dict'; build = $false; mode = 'none'; matrix = $false },
+    @{ path = 'fuzz/flitzzip_ar_fuzzer.options'; build = $false; mode = 'none'; matrix = $false },
+    @{ path = '.clusterfuzzlite/local_smoke.sh'; build = $false; mode = 'none'; matrix = $false },
     @{ path = 'docs/design.md'; build = $false; mode = 'none'; matrix = $false }
 )) {
     $plan = Get-FlitzZipHostedNativePlan -Paths @($case.path)
     Assert-NativeCi ($plan.build -eq $case.build -and $plan.testMode -eq $case.mode -and
         $plan.formatMatrix -eq $case.matrix -and -not $plan.gpuExecutionQualified) "canonical native projection: $($case.path)"
     Assert-NativeCi (-not $plan.coverage) "Release lane does not duplicate symbols-based coverage: $($case.path)"
+    Assert-NativeCi ($plan.build -or ($plan.testMode -eq 'none' -and -not $plan.formatMatrix)) `
+        "native consumers must retain their build producer: $($case.path)"
 }
+foreach ($path in @('fuzz/flitzzip.dict', 'fuzz/flitzzip_ar_fuzzer.options', '.clusterfuzzlite/local_smoke.sh')) {
+    $fuzz = Get-FlitzZipVerificationPlan -ChangedPath @($path)
+    $ids = @($fuzz.requiredLocalCommands | ForEach-Object id)
+    Assert-NativeCi ('short-fuzz-smoke' -in $ids -and 'security-scan' -in $ids) `
+        "fuzz-only work keeps its real sanitizer and security consumers: $path"
+}
+$mixedFuzz = Get-FlitzZipHostedNativePlan -Paths @('fuzz/flitzzip.dict', 'src/ar/ar_adapter.cpp')
+Assert-NativeCi ($mixedFuzz.build -and $mixedFuzz.testMode -eq 'full' -and $mixedFuzz.formatMatrix) `
+    'mixed parser and fuzz inputs retain product compilation, tests and interoperability'
+$orphanRejected = & (Get-Module flitzzip_verification) {
+    # Purpose: Supply an invalid consumer-only plan to the actual hosted projection.
+    # Inputs: The actual README-only, non-full intermediate projection. Outputs: An invalid matrix-only plan.
+    function Get-FlitzZipVerificationPlan {
+        param([string[]]$ChangedPath, [switch]$SuspectGlobalBug, [string]$Checkpoint)
+        if ($ChangedPath.Count -ne 1 -or $ChangedPath[0] -ne 'README.md' -or
+            $SuspectGlobalBug.IsPresent -or $Checkpoint -ne 'intermediate') {
+            throw 'Unexpected orphan-plan fixture context.'
+        }
+        [pscustomobject]@{ requiredLocalCommands = @([pscustomobject]@{ id = 'format-matrix-smoke' }) }
+    }
+    try {
+        [void](Get-FlitzZipHostedNativePlan -Paths @('README.md'))
+        return $false
+    } catch {
+        return $_.Exception.Message -eq 'Hosted native consumers require their build producer.'
+    }
+}
+Assert-NativeCi $orphanRejected 'an invalid future consumer-only plan must fail before any workload runs'
 foreach ($path in (@('.github/workflows/windows-ci.yml') + $collectorInputs)) {
     $collector = Get-FlitzZipHostedNativePlan -Paths @($path) -Configuration Debug
     Assert-NativeCi ($collector.build -and $collector.coverage -and $collector.testMode -eq 'none' -and

@@ -31,7 +31,7 @@ function Get-FlitzZipHostedWorkflowSelection {
 
 # Purpose: Project hosted native work from the canonical planner instead of repeating every product check.
 # Inputs: Paths describe the event range, Full selects broad work, and Configuration selects built outputs.
-# Outputs: Returns build/test/matrix decisions and the trusted native command; never launches a workload.
+# Outputs: Returns build/test/matrix decisions and the trusted command, or rejects an orphan consumer; launches no workload.
 function Get-FlitzZipHostedNativePlan {
     param([string[]]$Paths, [switch]$Full,
           [ValidateSet('Debug', 'Release', 'RelWithDebInfo')][string]$Configuration = 'Release')
@@ -57,11 +57,15 @@ function Get-FlitzZipHostedNativePlan {
         $command = Get-FlitzZipVerificationCommand -Id $command.id -Stage $command.stage `
             -Executable $command.executable -Arguments $arguments -Reason $command.reason -Requirement $command.requirement
     }
+    $formatMatrix = @($plan.requiredLocalCommands | Where-Object id -eq 'format-matrix-smoke').Count -gt 0
+    if (($mode -ne 'none' -or $formatMatrix) -and -not $build) {
+        throw 'Hosted native consumers require their build producer.'
+    }
     return [pscustomobject]@{
         build = $build
         coverage = $build -and $Configuration -eq 'Debug'
         testMode = $mode; testCommand = $command
-        formatMatrix = @($plan.requiredLocalCommands | Where-Object id -eq 'format-matrix-smoke').Count -gt 0
+        formatMatrix = $formatMatrix
         securityPolicy = @($plan.requiredLocalCommands | Where-Object id -eq 'security-scan').Count -gt 0
         configuration = $Configuration
         gpuExecutionQualified = $false
