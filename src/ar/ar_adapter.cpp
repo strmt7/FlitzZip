@@ -1,4 +1,5 @@
 #include "ar/ar_adapter.hpp"
+#include "ar/ar_reader.hpp"
 
 #include "core/file_manifest.hpp"
 #include "core/file_size.hpp"
@@ -21,6 +22,9 @@
 namespace flitzzip {
 namespace {
 
+using detail::ArEntryMetadata;
+using detail::ArScanResult;
+
 constexpr std::string_view kArGlobalMagic = "!<arch>\n";
 constexpr std::string_view kArMemberMagic = "`\n";
 constexpr std::size_t kArHeaderBytes = 60U;
@@ -35,24 +39,12 @@ struct ArRawHeader {
     std::uint64_t size = 0;
 };
 
-struct ArEntryMetadata {
-    std::string path;
-    std::uint64_t size = 0;
-    std::uint64_t payload_offset = 0;
-};
-
 // Purpose: Separate consumed name framing from the optional extractable member.
 // Inputs: The parser owns decoded path bytes and the exact raw BSD name extent.
 // Outputs: Lets metadata remain nonextracting without changing the next member's byte alignment.
 struct ArParsedMember {
     std::optional<ArEntryMetadata> entry;
     std::uint64_t name_bytes = 0;
-};
-
-struct ArScanResult {
-    std::vector<ArEntryMetadata> entries;
-    std::uint64_t total_file_bytes = 0;
-    std::uint64_t path_metadata_bytes = 0;
 };
 
 // Purpose: Add two AR byte counters while detecting unsigned wraparound.
@@ -110,15 +102,16 @@ void skip_file_bytes(std::istream& input, std::uint64_t size, const char* label)
 
 // Purpose: Verify that a declared AR member range is fully contained in the archive file.
 // Inputs: `member_start` is the current payload offset, `member_size` is the declared bytes, `archive_size` is the file
-// length, and `label` names diagnostics. Outputs: Throws before a later seek/read can move past EOF.
-void validate_member_extent(std::uint64_t member_start, std::uint64_t member_size, std::uint64_t archive_size,
-                            const char* label) {
+// length, and `label` names diagnostics. Outputs: Returns the validated padded end or throws before out-of-extent I/O.
+std::uint64_t validate_member_extent(std::uint64_t member_start, std::uint64_t member_size, std::uint64_t archive_size,
+                                     const char* label) {
     const auto payload_end = checked_add_ar_bytes(member_start, member_size, "AR member extent overflow");
     const auto padded_end =
         checked_add_ar_bytes(payload_end, ar_padding(member_size), "AR padded member extent overflow");
     if (padded_end > archive_size) {
         throw ArchiveError(std::string(label) + " extends past the end of the AR archive");
     }
+    return padded_end;
 }
 
 // Purpose: Trim right-side spaces from a fixed-width AR field.
@@ -295,7 +288,7 @@ std::string resolve_gnu_long_name(const std::string& string_table, std::uint64_t
 // optional GNU long names; `leading` identifies the first physical member. Outputs: Returns an optional file
 // and its separately consumed name extent; metadata
 // never becomes an extraction path, and only terminal BSD NUL padding is removed from the name.
-ArParsedMember parse_member_name_and_payload(std::ifstream& input, const ArRawHeader& raw,
+ArParsedMember parse_member_name_and_payload(std::istream& input, const ArRawHeader& raw,
                                              const std::string& string_table, bool leading) {
     const auto payload_start_pos = input.tellg();
     if (payload_start_pos == std::istream::pos_type(-1)) {
@@ -352,7 +345,7 @@ ArParsedMember parse_member_name_and_payload(std::ifstream& input, const ArRawHe
 // Purpose: Read a bounded GNU string-table member.
 // Inputs: `input` is positioned at the table payload and `size` is the table byte count.
 // Outputs: Returns table bytes or throws when the metadata is unreasonably large/truncated.
-std::string read_string_table(std::ifstream& input, std::uint64_t size) {
+std::string read_string_table(std::istream& input, std::uint64_t size) {
     if (size > kMaxArStringTableBytes) {
         throw ArchiveError("AR GNU string table exceeds FlitzZip resource limits");
     }
@@ -363,67 +356,16 @@ std::string read_string_table(std::ifstream& input, std::uint64_t size) {
     return table;
 }
 
-// Purpose: Scan a full AR archive and validate metadata before extraction.
-// Inputs: `archive_path` is the AR file to parse.
-// Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported
-// layout.
+// Purpose: Open the pinned filesystem archive and obtain its complete validated publication plan.
+// Inputs: archive_path is an existing regular archive and encoding selects member-name interpretation.
+// Outputs: Returns owned metadata or propagates open, extent, framing and validation failures.
 ArScanResult scan_ar(const std::filesystem::path& archive_path, ArchivePathEncoding encoding) {
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open AR archive: " + archive_path.string());
     }
-    std::array<char, 8> magic{};
-    read_exact(input, magic.data(), magic.size(), "AR global header");
-    if (std::string_view(magic.data(), magic.size()) != kArGlobalMagic) {
-        throw ArchiveError("unsupported or malformed AR global header");
-    }
-
-    ArScanResult result;
-    std::string string_table;
-    std::vector<ArchivePathValidationEntry> validation_entries;
-    std::uint32_t member_count = 0;
-    while (input.peek() != std::char_traits<char>::eof()) {
-        if (member_count >= kMaxArchiveEntries) {
-            throw ArchiveError("AR archive contains too many members");
-        }
-        ++member_count;
-        const auto raw = read_ar_header(input);
-        const auto member_start_pos = input.tellg();
-        if (member_start_pos == std::istream::pos_type(-1)) {
-            throw ArchiveError("failed to read AR member offset");
-        }
-        validate_member_extent(static_cast<std::uint64_t>(member_start_pos), raw.size, archive_size, "AR member");
-        if (raw.name == "//") {
-            string_table = read_string_table(input, raw.size);
-        } else {
-            auto parsed = parse_member_name_and_payload(input, raw, string_table, member_count == 1U);
-            auto& entry = parsed.entry;
-            const auto consumed = parsed.name_bytes;
-            if (entry.has_value()) {
-                entry->path = decode_archive_name(entry->path, encoding);
-                result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
-                    result.path_metadata_bytes, static_cast<std::uint64_t>(entry->path.size()) * 2U,
-                    "AR retained path metadata");
-                validation_entries.push_back(ArchivePathValidationEntry{
-                    .path = entry->path,
-                    .directory = false,
-                    .encoding = ArchivePathEncoding::Utf8,
-                });
-                result.total_file_bytes =
-                    checked_add_extracted_output_bytes(result.total_file_bytes, entry->size, "AR extracted payload");
-                result.entries.push_back(*entry);
-            }
-            if (consumed > raw.size) {
-                throw ArchiveError("AR member consumed more bytes than declared");
-            }
-            skip_file_bytes(input, raw.size - consumed, "AR member payload");
-        }
-        skip_file_bytes(input, ar_padding(raw.size), "AR member padding");
-    }
-
-    validate_archive_path_set(validation_entries);
-    return result;
+    return detail::scan_ar_stream(input, archive_size, encoding);
 }
 
 // Purpose: Copy a validated AR file payload into a temporary output file.
@@ -470,6 +412,77 @@ void extract_ar_file_payload(std::ifstream& input, const ArEntryMetadata& entry,
 }
 
 }  // namespace
+
+// Purpose: Validate the bounded archive stream through the same parser used by filesystem extraction.
+// Inputs: Borrowed input begins at zero; archive_size is independently established; encoding selects names.
+// Outputs: Returns owned metadata only after accounting for the complete extent; rejects premature EOF and I/O
+// failures.
+detail::ArScanResult detail::scan_ar_stream(std::istream& input, std::uint64_t archive_size,
+                                            ArchivePathEncoding encoding) {
+    std::array<char, 8> magic{};
+    if (archive_size < magic.size()) {
+        throw ArchiveError("AR global header is truncated");
+    }
+    read_exact(input, magic.data(), magic.size(), "AR global header");
+    if (std::string_view(magic.data(), magic.size()) != kArGlobalMagic) {
+        throw ArchiveError("unsupported or malformed AR global header");
+    }
+
+    ArScanResult result;
+    std::string string_table;
+    std::vector<ArchivePathValidationEntry> validation_entries;
+    std::uint32_t member_count = 0;
+    std::uint64_t offset = magic.size();
+    // An EOF probe cannot distinguish a complete archive from a shortened source.
+    // Consume the independently established extent; every expected header must actually be read.
+    while (offset < archive_size) {
+        if (archive_size - offset < kArHeaderBytes) {
+            throw ArchiveError("AR member header is truncated");
+        }
+        if (member_count >= kMaxArchiveEntries) {
+            throw ArchiveError("AR archive contains too many members");
+        }
+        ++member_count;
+        const auto raw = read_ar_header(input);
+        const auto member_start_pos = input.tellg();
+        const auto member_start = checked_add_ar_bytes(offset, kArHeaderBytes, "AR member offset overflow");
+        if (member_start_pos == std::istream::pos_type(-1) ||
+            static_cast<std::uint64_t>(member_start_pos) != member_start) {
+            throw ArchiveError("failed to read AR member offset");
+        }
+        const auto member_end = validate_member_extent(member_start, raw.size, archive_size, "AR member");
+        if (raw.name == "//") {
+            string_table = read_string_table(input, raw.size);
+        } else {
+            auto parsed = parse_member_name_and_payload(input, raw, string_table, member_count == 1U);
+            auto& entry = parsed.entry;
+            const auto consumed = parsed.name_bytes;
+            if (entry.has_value()) {
+                entry->path = decode_archive_name(entry->path, encoding);
+                result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+                    result.path_metadata_bytes, static_cast<std::uint64_t>(entry->path.size()) * 2U,
+                    "AR retained path metadata");
+                validation_entries.push_back(ArchivePathValidationEntry{
+                    .path = entry->path,
+                    .directory = false,
+                    .encoding = ArchivePathEncoding::Utf8,
+                });
+                result.total_file_bytes =
+                    checked_add_extracted_output_bytes(result.total_file_bytes, entry->size, "AR extracted payload");
+                result.entries.push_back(*entry);
+            }
+            if (consumed > raw.size) {
+                throw ArchiveError("AR member consumed more bytes than declared");
+            }
+            skip_file_bytes(input, raw.size - consumed, "AR member payload");
+        }
+        skip_file_bytes(input, ar_padding(raw.size), "AR member padding");
+        offset = member_end;
+    }
+
+    validate_archive_path_set(validation_entries);
+    return result;
+}
 
 // Purpose: Create a Unix AR archive from regular-file inputs.
 // Inputs: `sources` are caller-selected filesystem inputs, `output_archive` is the destination, and
