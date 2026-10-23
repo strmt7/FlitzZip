@@ -1037,9 +1037,10 @@ class MainWindow {
     bool remove_selected_queue_items();
 
     // Purpose: Start a Queue column resize drag.
-    // Inputs: `separator` identifies the boundary between adjacent resizable columns and `x` is the mouse coordinate.
-    // Outputs: Captures baseline column widths for subsequent mouse-move updates.
-    void begin_queue_column_resize(int separator, int x);
+    // Inputs: `separator` identifies the boundary between adjacent resizable columns and `x` is the mouse coordinate;
+    // physical_widths contains the fitted pixel extents. Outputs: Copies displayed physical_widths for subsequent
+    // physical pointer displacement; retains no borrowed geometry.
+    void begin_queue_column_resize(int separator, int x, const std::array<int, 4>& physical_widths);
 
     // Purpose: Update active Queue column resize drag.
     // Inputs: `x` is the current client mouse coordinate.
@@ -1052,9 +1053,10 @@ class MainWindow {
     void end_queue_column_resize();
 
     // Purpose: Start a History column resize drag using the same adjacent-column model as Queue.
-    // Inputs: `separator` identifies the boundary between adjacent resizable columns and `x` is the mouse coordinate.
-    // Outputs: Captures baseline column widths for subsequent mouse-move updates.
-    void begin_history_column_resize(int separator, int x);
+    // Inputs: `separator` identifies the boundary between adjacent resizable columns and `x` is the mouse coordinate;
+    // physical_widths contains the fitted pixel extents. Outputs: Copies displayed physical_widths for subsequent
+    // physical pointer displacement; retains no borrowed geometry.
+    void begin_history_column_resize(int separator, int x, const std::array<int, 5>& physical_widths);
 
     // Purpose: Update active History column resize drag.
     // Inputs: `x` is the current client mouse coordinate.
@@ -1065,6 +1067,11 @@ class MainWindow {
     // Inputs: None.
     // Outputs: Clears resize state and queues a repaint if a drag was active.
     void end_history_column_resize();
+
+    // Purpose: Cancel a column drag whose pixel geometry is being replaced.
+    // Inputs: GUI-thread capture and resize state; owns no borrowed column snapshot.
+    // Outputs: Releases owned capture and clears drag state before size or DPI changes.
+    void cancel_column_resize_for_geometry_change();
 
     // Purpose: Handle Queue page hit-testing and commands.
     // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
@@ -1418,12 +1425,12 @@ class MainWindow {
     ToggleId transition_toggle_ = ToggleId::None;
     bool transition_toggle_from_ = false;
     bool transition_toggle_to_ = false;
-    std::array<int, 4> queue_column_widths_{276, 100, 96, 468};
-    std::array<int, 4> queue_column_resize_start_{276, 100, 96, 468};
+    std::array<double, 4> queue_column_widths_{276, 100, 96, 468};
+    std::array<int, 4> queue_column_resize_start_{};
     int queue_column_resize_separator_ = -1;
     int queue_column_resize_start_x_ = 0;
-    std::array<int, 5> history_column_widths_{112, 100, 300, 410, 102};
-    std::array<int, 5> history_column_resize_start_{112, 100, 300, 410, 102};
+    std::array<double, 5> history_column_widths_{112, 100, 300, 410, 102};
+    std::array<int, 5> history_column_resize_start_{};
     int history_column_resize_separator_ = -1;
     int history_column_resize_start_x_ = 0;
     int queue_scroll_first_row_ = 0;

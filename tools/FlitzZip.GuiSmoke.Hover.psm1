@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 # Inputs: A trusted synchronous test action and its explicit arguments; native UI helpers are already loaded.
 # Outputs: Forwards action results, restores the original pointer and preserves an original failure on cleanup error.
 function Invoke-GuiPointerScope {
+    [CmdletBinding()]
     param([scriptblock]$Action, [object[]]$ArgumentList = @())
 
     [FlitzZipNativeUi+POINT]$previousPointer = New-Object FlitzZipNativeUi+POINT
@@ -13,34 +14,38 @@ function Invoke-GuiPointerScope {
     catch { $primaryFailure = $_; throw }
     finally {
         if (-not [FlitzZipNativeUi]::SetCursorPos($previousPointer.X, $previousPointer.Y)) {
-            if ($primaryFailure) { Write-Warning 'Could not restore the original desktop pointer; retaining the original test failure.' }
+            if ($primaryFailure) {
+                $primaryFailure.Exception.Data['PointerRestoreFailure'] = 'Could not restore the original desktop pointer.'
+                try { Write-Warning 'Could not restore the original desktop pointer; retaining the original test failure.' }
+                catch { throw $primaryFailure }
+            }
             else { throw 'Could not restore the original desktop pointer.' }
         }
     }
 }
 
-# Purpose: Locate an actual painted History resize separator without consulting product state or column arrays.
-# Inputs: Validated normal-size capture, monitor DPI/client origin and a narrow design-space search interval.
+# Purpose: Locate an actual painted table resize separator without consulting product state or column arrays.
+# Inputs: Validated normal-size capture, monitor DPI/client origin, header top and a narrow design-space search interval.
 # Outputs: Measured separator X in design pixels; rejects absent or ambiguous vertical border evidence.
-function Get-GuiHistorySeparator {
-    param([string]$Path, [int]$Dpi, [int]$OffsetX, [int]$OffsetY, [int]$Left, [int]$Right)
+function Get-GuiColumnSeparator {
+    param([string]$Path, [int]$Dpi, [int]$OffsetX, [int]$OffsetY, [int]$Left, [int]$Right, [int]$Top = 194)
 
     $bitmap = [Drawing.Bitmap]::FromFile($Path)
     try {
         $scale = $Dpi / 96.0
-        $top = $OffsetY + [int][Math]::Round(194 * $scale)
-        $bottom = $OffsetY + [int][Math]::Round(214 * $scale)
+        $pixelTop = $OffsetY + [int][Math]::Round($Top * $scale)
+        $pixelBottom = $OffsetY + [int][Math]::Round(($Top + 20) * $scale)
         $positions = [Collections.Generic.List[int]]::new()
         for ($x = $OffsetX + [int][Math]::Round($Left * $scale); $x -le $OffsetX + [int][Math]::Round($Right * $scale); ++$x) {
             $matching = 0
-            for ($y = $top; $y -lt $bottom; ++$y) {
+            for ($y = $pixelTop; $y -lt $pixelBottom; ++$y) {
                 $color = $bitmap.GetPixel($x, $y)
                 if ($color.R -eq 54 -and $color.G -eq 72 -and $color.B -eq 78) { ++$matching }
             }
             if ($matching -ge [int][Math]::Round(16 * $scale)) { $positions.Add($x) }
         }
         if ($positions.Count -eq 0 -or $positions[$positions.Count - 1] - $positions[0] -gt [Math]::Ceiling(2 * $scale)) {
-            throw 'A unique painted History separator was not observed.'
+            throw 'A unique painted table separator was not observed.'
         }
         return ($positions[0] - $OffsetX) / $scale
     } finally { $bitmap.Dispose() }
@@ -57,25 +62,25 @@ function Assert-GuiHistoryColumnResize {
         $offset = Get-ClientCaptureOffset -Handle $Handle
         $before = "$BasePath-History-Column-Before$Extension"
         Save-FlitzZipScreenshot -Handle $Handle -Path $before
-        $start = Get-GuiHistorySeparator -Path $before -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 320 -Right 370
+        $start = Get-GuiColumnSeparator -Path $before -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 320 -Right 370
         Invoke-ClientMove -Handle $Handle -Dpi $Dpi -DesignX 430 -DesignY 205
         Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX 430 -StartY 205 -EndX 468 -EndY 205
         $control = "$BasePath-History-Column-NonGrip$Extension"
         Save-FlitzZipScreenshot -Handle $Handle -Path $control
-        $unchanged = Get-GuiHistorySeparator -Path $control -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 320 -Right 370
+        $unchanged = Get-GuiColumnSeparator -Path $control -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 320 -Right 370
         if ([Math]::Abs($unchanged - $start) -gt 1) { throw 'Non-grip input unexpectedly moved the measured History boundary.' }
         $target = [int][Math]::Round($start) + 40
         Invoke-ClientMove -Handle $Handle -Dpi $Dpi -DesignX ([int][Math]::Round($start)) -DesignY 205
         Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX ([int][Math]::Round($start)) -StartY 205 -EndX $target -EndY 205
         $after = "$BasePath-History-AfterColumnResize$Extension"
         Save-FlitzZipScreenshot -Handle $Handle -Path $after
-        $moved = Get-GuiHistorySeparator -Path $after -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left ($target - 5) -Right ($target + 5)
+        $moved = Get-GuiColumnSeparator -Path $after -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left ($target - 5) -Right ($target + 5)
         if ([Math]::Abs($moved - $start - 40) -gt 1) { throw 'History column did not move by the independently requested drag distance.' }
         Invoke-ClientMove -Handle $Handle -Dpi $Dpi -DesignX ([int][Math]::Round($moved)) -DesignY 205
         Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX ([int][Math]::Round($moved)) -StartY 205 -EndX ([int][Math]::Round($start)) -EndY 205
         $restored = "$BasePath-History-Column-Restored$Extension"
         Save-FlitzZipScreenshot -Handle $Handle -Path $restored
-        $end = Get-GuiHistorySeparator -Path $restored -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 320 -Right 370
+        $end = Get-GuiColumnSeparator -Path $restored -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 320 -Right 370
         if ([Math]::Abs($end - $start) -gt 1) { throw 'History column reverse drag did not restore its measured boundary.' }
     }
 }
@@ -89,20 +94,20 @@ function Assert-GuiHistoryPathTooltip {
     $offset = Get-ClientCaptureOffset -Handle $Handle
     $before = "$Prefix-Wide$Extension"
     Save-FlitzZipScreenshot -Handle $Handle -Path $before
-    $start = Get-GuiHistorySeparator -Path $before -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 620 -Right 670
+    $start = Get-GuiColumnSeparator -Path $before -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 620 -Right 670
     $target = [int][Math]::Round($start) + 220
     Invoke-ClientMove -Handle $Handle -Dpi $Dpi -DesignX ([int][Math]::Round($start)) -DesignY 205
     Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX ([int][Math]::Round($start)) -StartY 205 -EndX $target -EndY 205
     $narrow = "$Prefix-Narrow$Extension"
     Save-FlitzZipScreenshot -Handle $Handle -Path $narrow
-    $moved = Get-GuiHistorySeparator -Path $narrow -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left ($target - 5) -Right ($target + 5)
+    $moved = Get-GuiColumnSeparator -Path $narrow -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left ($target - 5) -Right ($target + 5)
     if ([Math]::Abs($moved - $start - 220) -gt 1) { throw 'History path column was not actually narrowed.' }
     Assert-GuiTooltipCycle -Handle $Handle -Dpi $Dpi -X ($target + 40) -Y 238 -Prefix $Prefix -Extension $Extension
     Invoke-ClientMove -Handle $Handle -Dpi $Dpi -DesignX ([int][Math]::Round($moved)) -DesignY 205
     Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX ([int][Math]::Round($moved)) -StartY 205 -EndX ([int][Math]::Round($start)) -EndY 205
     $restored = "$Prefix-Restored$Extension"
     Save-FlitzZipScreenshot -Handle $Handle -Path $restored
-    $end = Get-GuiHistorySeparator -Path $restored -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 620 -Right 670
+    $end = Get-GuiColumnSeparator -Path $restored -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 620 -Right 670
     if ([Math]::Abs($end - $start) -gt 1) { throw 'History path column did not restore its measured boundary.' }
 }
 
@@ -242,4 +247,4 @@ function Assert-GuiTextTooltip {
     }
 }
 
-Export-ModuleMember -Function Assert-GuiTextTooltip, Assert-GuiHistoryColumnResize
+Export-ModuleMember -Function Assert-GuiTextTooltip, Assert-GuiHistoryColumnResize, Get-GuiColumnSeparator, Invoke-GuiPointerScope

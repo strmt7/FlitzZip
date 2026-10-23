@@ -1,5 +1,6 @@
 #include "app/main_window_impl.hpp"
 #include "app/form_layout.hpp"
+#include "app/table_columns.hpp"
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -106,22 +107,8 @@ MainWindow::QueueColumnLayout MainWindow::queue_column_layout(const RECT& table,
     QueueColumnLayout columns{};
     const int checkbox_width = scale(kQueueCheckboxColumnWidth);
     const int available = std::max(scale(360), static_cast<int>(table.right - table.left) - checkbox_width - scale(22));
-    const std::array<int, 4> minimums{scale(90), scale(70), scale(70), scale(120)};
-    std::array<int, 4> widths{};
-    int requested = 0;
-    for (std::size_t i = 0; i < widths.size(); ++i) {
-        widths[i] = std::max(minimums[i], scale(queue_column_widths_[i]));
-        requested += widths[i];
-    }
-    if (requested != available && requested > 0) {
-        const double ratio = static_cast<double>(available) / static_cast<double>(requested);
-        int used = 0;
-        for (std::size_t i = 0; i + 1U < widths.size(); ++i) {
-            widths[i] = std::max(minimums[i], static_cast<int>(std::round(static_cast<double>(widths[i]) * ratio)));
-            used += widths[i];
-        }
-        widths.back() = std::max(minimums.back(), available - used);
-    }
+    const auto widths = fit_table_columns(queue_column_widths_, kQueueColumnMinimums, available, dpi_);
+    columns.physical_widths = widths;
 
     const int checkbox_target_size = scale(24);
     const int checkbox_left = table.left + std::max(0, (checkbox_width - checkbox_target_size) / 2);
@@ -155,22 +142,8 @@ MainWindow::HistoryColumnLayout MainWindow::history_column_layout(const RECT& ta
     const int right_padding = scale(16);
     const int available =
         std::max(scale(360), static_cast<int>(table.right - table.left) - left_padding - right_padding);
-    const std::array<int, 5> minimums{scale(82), scale(78), scale(140), scale(160), scale(74)};
-    std::array<int, 5> widths{};
-    int requested = 0;
-    for (std::size_t i = 0; i < widths.size(); ++i) {
-        widths[i] = std::max(minimums[i], scale(history_column_widths_[i]));
-        requested += widths[i];
-    }
-    if (requested != available && requested > 0) {
-        const double ratio = static_cast<double>(available) / static_cast<double>(requested);
-        int used = 0;
-        for (std::size_t i = 0; i + 1U < widths.size(); ++i) {
-            widths[i] = std::max(minimums[i], static_cast<int>(std::round(static_cast<double>(widths[i]) * ratio)));
-            used += widths[i];
-        }
-        widths.back() = std::max(minimums.back(), available - used);
-    }
+    const auto widths = fit_table_columns(history_column_widths_, kHistoryColumnMinimums, available, dpi_);
+    columns.physical_widths = widths;
 
     int left = table.left + left_padding;
     columns.time = RECT{left, row.top, left + widths[0], row.bottom};

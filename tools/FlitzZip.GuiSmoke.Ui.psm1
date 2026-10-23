@@ -228,20 +228,43 @@ function Invoke-SidebarClick {
         [int]$PageIndex,
         [switch]$Synchronous
     )
-    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 43 -DesignY (93 + $PageIndex * 63) -Synchronous:$Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 43 -DesignY (93 + $PageIndex * 63) -Synchronous:($Synchronous -or -not $PSBoundParameters.ContainsKey('Synchronous'))
 }
 
-# Purpose: Deliver one acknowledged native mouse message without assuming a posted input was processed.
-# Inputs: Handle owns the test window; Message/KeyState/Position contain scalar Win32 mouse-message arguments.
-# Outputs: Waits at most five seconds for delivery and throws on failure or timeout.
-function Send-ClientMouseMessage {
-    param([IntPtr]$Handle, [uint32]$Message, [int]$KeyState, [IntPtr]$Position)
+# Purpose: Deliver acknowledged input to the owned cross-process window without an unbounded native wait.
+# Inputs: Handle identifies that window; scalar arguments carry input; Queued is only for a separately observed modal launch.
+# Outputs: Checks queue admission or five-second cross-thread completion; neither establishes a modal dialog's result.
+function Send-ClientInputMessage {
+    param([IntPtr]$Handle, [uint32]$Message, [IntPtr]$WParam, [IntPtr]$LParam, [switch]$Queued)
 
+    if ($Queued) {
+        if (-not [FlitzZipNativeUi]::PostMessage($Handle, $Message, $WParam, $LParam)) {
+            throw ('GUI input queue admission failed; message=0x{0:X4}; Win32 error {1}.' -f $Message,
+                [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+        }
+        return
+    }
     $result = [UIntPtr]::Zero
-    $sent = [FlitzZipNativeUi]::SendMessageTimeout($Handle, $Message, [IntPtr]$KeyState,
-        $Position, 0x0002, 5000, [ref]$result)
+    $sent = [FlitzZipNativeUi]::SendMessageTimeout($Handle, $Message, $WParam,
+        $LParam, 0x0002, 5000, [ref]$result)
     if ($sent -eq [IntPtr]::Zero) {
-        throw "GUI mouse input failed or timed out; Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())."
+        throw ('GUI input failed or timed out; message=0x{0:X4}; Win32 error {1}.' -f $Message,
+            [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+    }
+}
+
+# Purpose: Release acknowledged input without erasing an earlier press or action failure.
+# Inputs: Owned HWND, scalar release arguments, optional preceding ErrorRecord and explicit modal-launch queue mode.
+# Outputs: Throws a lone release failure; otherwise retains its diagnostic in the primary exception and warning.
+function Complete-ClientInputRelease {
+    param([IntPtr]$Handle, [uint32]$Message, [IntPtr]$WParam, [IntPtr]$LParam,
+        [Management.Automation.ErrorRecord]$PrimaryFailure, [switch]$Queued)
+    try { Send-ClientInputMessage -Handle $Handle -Message $Message -WParam $WParam -LParam $LParam -Queued:$Queued }
+    catch {
+        if ($null -eq $PrimaryFailure) { throw }
+        $PrimaryFailure.Exception.Data['InputReleaseFailure'] = $_.Exception.Message
+        try { Write-Warning 'Input release also failed; retaining the original press or action failure.' }
+        catch { throw $PrimaryFailure }
     }
 }
 
@@ -263,38 +286,34 @@ function Invoke-ClientMove {
     $position = ConvertTo-MouseLParam -X $point.X -Y $point.Y
     if (-not [FlitzZipNativeUi]::ClientToScreen($Handle, [ref]$point)) { throw 'Could not map the owned hover point.' }
     if (-not [FlitzZipNativeUi]::SetCursorPos($point.X, $point.Y)) { throw 'Could not move the native hover pointer.' }
-    Send-ClientMouseMessage -Handle $Handle -Message 0x0200 -KeyState 0 -Position $position
+    Send-ClientInputMessage -Handle $Handle -Message 0x0200 -WParam 0 -LParam $position
 }
 
 # Purpose: Click one client-coordinate point in the FlitzZip window.
 # Inputs: `Handle` is the FlitzZip HWND, `Dpi` is the window DPI, and design coordinates are 96-DPI client pixels.
-# Outputs: Posts mouse messages by default; Synchronous preserves mouse/key order with a five-second message bound.
+# Outputs: Requires bounded completion normally; ModalLaunch checks queue admission and requires the caller's bounded dialog oracle.
 function Invoke-ClientClick {
-    param(
-        [IntPtr]$Handle,
-        [int]$Dpi,
-        [int]$DesignX,
-        [int]$DesignY,
-        [switch]$Synchronous
-    )
+    [CmdletBinding()]
+    param([IntPtr]$Handle, [int]$Dpi, [int]$DesignX, [int]$DesignY, [switch]$Synchronous, [switch]$ModalLaunch)
+    if (($PSBoundParameters.ContainsKey('Synchronous') -and -not $Synchronous) -or ($ModalLaunch -and $Synchronous)) {
+        throw 'GUI click acknowledgement cannot be disabled.'
+    }
     $scale = [double]$Dpi / 96.0
     $x = [int][Math]::Round($DesignX * $scale)
     $y = [int][Math]::Round($DesignY * $scale)
     $lparam = ConvertTo-MouseLParam -X $x -Y $y
-    if ($Synchronous) {
-        foreach ($message in @(@(0x0201, 1), @(0x0202, 0))) {
-            Send-ClientMouseMessage -Handle $Handle -Message $message[0] -KeyState $message[1] -Position $lparam
-        }
-        return
+    $inputFailure = $null
+    try { Send-ClientInputMessage -Handle $Handle -Message 0x0201 -WParam 1 -LParam $lparam -Queued:$ModalLaunch }
+    catch { $inputFailure = $_; throw }
+    finally {
+        Complete-ClientInputRelease -Handle $Handle -Message 0x0202 -WParam 0 -LParam $lparam -PrimaryFailure $inputFailure -Queued:$ModalLaunch
     }
-    [void][FlitzZipNativeUi]::PostMessage($Handle, 0x0201, [IntPtr]1, $lparam)
-    [void][FlitzZipNativeUi]::PostMessage($Handle, 0x0202, [IntPtr]::Zero, $lparam)
 }
 
 # Purpose: Send one mouse-wheel message at a client-coordinate point in the FlitzZip window.
 # Inputs: `Handle` is the HWND, `Dpi` maps design pixels, coordinates are 96-DPI client pixels, and `Delta` is a
 # Win32 WHEEL_DELTA-style signed wheel value.
-# Outputs: Posts `WM_MOUSEWHEEL` with screen-coordinate LPARAM so app hit testing follows native routing.
+# Outputs: Requires bounded WM_MOUSEWHEEL completion with screen-coordinate LPARAM for native hit testing.
 function Invoke-ClientWheel {
     param(
         [IntPtr]$Handle,
@@ -312,32 +331,38 @@ function Invoke-ClientWheel {
     }
     $wparam = [IntPtr]([int64]((($Delta -band 0xffff) -shl 16)))
     $lparam = ConvertTo-MouseLParam -X $point.X -Y $point.Y
-    [void][FlitzZipNativeUi]::PostMessage($Handle, 0x020A, $wparam, $lparam)
+    Send-ClientInputMessage -Handle $Handle -Message 0x020A -WParam $wparam -LParam $lparam
 }
 
 # Purpose: Send one keyboard activation to the FlitzZip window.
 # Inputs: `Handle` is the HWND and `VirtualKey` is a Win32 VK_* code.
-# Outputs: Sends key-down and key-up messages synchronously for keyboard-accessibility smoke checks.
+# Outputs: Uses bounded press/release acknowledgements; failed release cannot hide an earlier press failure.
 function Invoke-ClientKey {
-    param(
-        [IntPtr]$Handle,
-        [int]$VirtualKey
-    )
-    [void][FlitzZipNativeUi]::SendMessage($Handle, 0x0100, [IntPtr]$VirtualKey, [IntPtr]::Zero)
-    [void][FlitzZipNativeUi]::SendMessage($Handle, 0x0101, [IntPtr]$VirtualKey, [IntPtr]::Zero)
+    [CmdletBinding()]
+    param([IntPtr]$Handle, [int]$VirtualKey)
+    $inputFailure = $null
+    try {
+        Send-ClientInputMessage -Handle $Handle -Message 0x0100 -WParam ([IntPtr]$VirtualKey) -LParam ([IntPtr]::Zero)
+    } catch { $inputFailure = $_; throw }
+    finally {
+        Complete-ClientInputRelease -Handle $Handle -Message 0x0101 -WParam ([IntPtr]$VirtualKey) -LParam ([IntPtr]::Zero) -PrimaryFailure $inputFailure
+    }
 }
 
 # Purpose: Drag one client-coordinate point to another in the FlitzZip window.
-# Inputs: `Handle` is the HWND, `Dpi` maps design pixels, and coordinates are 96-DPI client pixels.
-# Outputs: Delivers acknowledged, five-second-bounded mouse input and attempts release even after a failed press/move.
+# Inputs: Owned HWND, DPI and design coordinates; optional synchronous DuringDrag receives explicit arguments.
+# Outputs: Forwards action output, acknowledges bounded input and releases after any press/action/move failure.
 function Invoke-ClientDrag {
+    [CmdletBinding()]
     param(
         [IntPtr]$Handle,
         [int]$Dpi,
         [int]$StartX,
         [int]$StartY,
         [int]$EndX,
-        [int]$EndY
+        [int]$EndY,
+        [scriptblock]$DuringDrag,
+        [object[]]$DuringDragArgumentList = @()
     )
     $scale = [double]$Dpi / 96.0
     $startClientX = [int][Math]::Round($StartX * $scale)
@@ -348,19 +373,16 @@ function Invoke-ClientDrag {
     $end = ConvertTo-MouseLParam -X $endClientX -Y $endClientY
     $inputFailure = $null
     try {
-        Send-ClientMouseMessage -Handle $Handle -Message 0x0201 -KeyState 1 -Position $start
+        Send-ClientInputMessage -Handle $Handle -Message 0x0201 -WParam 1 -LParam $start
+        if ($null -ne $DuringDrag) { & $DuringDrag @DuringDragArgumentList }
         Start-Sleep -Milliseconds 60
-        Send-ClientMouseMessage -Handle $Handle -Message 0x0200 -KeyState 1 -Position $end
+        Send-ClientInputMessage -Handle $Handle -Message 0x0200 -WParam 1 -LParam $end
         Start-Sleep -Milliseconds 60
     } catch {
         $inputFailure = $_
         throw
     } finally {
-        try { Send-ClientMouseMessage -Handle $Handle -Message 0x0202 -KeyState 0 -Position $end }
-        catch {
-            if (-not $inputFailure) { throw }
-            Write-Warning "GUI drag release also failed after the original input failure: $($_.Exception.Message)"
-        }
+        Complete-ClientInputRelease -Handle $Handle -Message 0x0202 -WParam 0 -LParam $end -PrimaryFailure $inputFailure
     }
 }
 

@@ -40,7 +40,8 @@ function Invoke-NativePickerSelection {
     $isFolder = $Folder -or $Destination
     $x = if ($Destination) { 820 } elseif ($Folder) { 1032 } else { 918 }
     $y = if ($Destination) { 154 } else { 91 }
-    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $x -DesignY $y
+    # A modal handler completes only after this controller dismisses its owned dialog.
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $x -DesignY $y -ModalLaunch
     $deadline = [datetime]::UtcNow.AddSeconds(15)
     do {
         $popup = [FlitzZipPickerUi]::GetLastActivePopup($Handle)
