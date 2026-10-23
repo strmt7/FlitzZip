@@ -4,6 +4,7 @@
 #include "core/resource_limits.hpp"
 #include "gzip/gzip_adapter.hpp"
 #include "tar/tar_adapter.hpp"
+#include "tar/tar_reader.hpp"
 
 #include <algorithm>
 #include <array>
@@ -12,6 +13,7 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -101,11 +103,81 @@ void append_tar_fixture_record(std::ostream& output, const std::array<char, 512>
     REQUIRE_TRUE(output.good());
 }
 
-// Purpose: Test rejection before publication while retaining an unrelated existing destination file.
-// Inputs: One malformed TAR, its owned destination and optional Gzip transport.
-// Outputs: Product error with no new paths or changed bytes.
-void require_tar_fixture_rejected(const std::filesystem::path& archive, const std::filesystem::path& destination,
-                                  bool gzip = false) {
+// Purpose: Preserve normal file-style seeking while injecting an unavailable-byte boundary in RAM.
+// Inputs: Complete fixture bytes, the readable prefix extent and a choice of physical EOF or I/O failure.
+// Outputs: Supplies the prefix normally, records the attempted boundary read and optionally throws on that read.
+class TarBoundaryInput final : public std::stringbuf {
+  public:
+    // Purpose: Install a genuinely short readable stream without changing its independently declared archive extent.
+    // Inputs: Fixture bytes, an in-bounds readable boundary and the failure kind.
+    // Outputs: Owns a position-aware prefix or throws if the test geometry is invalid.
+    TarBoundaryInput(const std::string& bytes, std::size_t boundary, bool io_error)
+        : std::stringbuf(bytes.substr(0, boundary), std::ios::in | std::ios::binary), io_error_(io_error) {
+        REQUIRE_TRUE(boundary <= bytes.size());
+    }
+
+    // Purpose: Prove a rejection reached the injected read rather than failing an unrelated operation.
+    // Inputs: The completed parser attempt. Outputs: True after a read requests unavailable bytes.
+    bool boundary_read() const noexcept {
+        return boundary_read_;
+    }
+
+  protected:
+    // Purpose: Fail exactly when a real stream read crosses the readable prefix.
+    // Inputs: Writable caller storage and the requested byte count.
+    // Outputs: Returns the actual prefix count or throws an I/O error, as basic_istream expects.
+    std::streamsize xsgetn(char* destination, std::streamsize count) override {
+        const auto obtained = std::stringbuf::xsgetn(destination, count);
+        if (obtained < count) {
+            boundary_read_ = true;
+            if (io_error_) {
+                throw std::ios_base::failure("controlled TAR input read failure");
+            }
+        }
+        return obtained;
+    }
+
+  private:
+    bool io_error_;
+    bool boundary_read_ = false;
+};
+
+// Purpose: Independently serialize two file records with no optional end markers.
+// Inputs: None; payload and padding are bounded in-memory fixture data.
+// Outputs: Complete TAR bytes; the second header starts at byte 1024.
+std::string tar_reader_boundary_fixture() {
+    std::ostringstream output(std::ios::out | std::ios::binary);
+    append_tar_fixture_record(output, make_test_tar_header("before.txt", '0', 3), "abc");
+    REQUIRE_EQ(output.tellp(), std::ostream::pos_type(1024));
+    append_tar_fixture_record(output, make_test_tar_header("after.txt", '0', 5), "defgh");
+    return output.str();
+}
+
+// Purpose: Reject every incomplete next-header position after a valid entry without filesystem writes.
+// Inputs: A seekable or filtered reader and either physical EOF or a non-EOF input failure.
+// Outputs: Fails if the actual production scanner admits any incomplete publication plan.
+void require_tar_reader_boundary_failures(bool seekable, bool io_error) {
+    const auto bytes = tar_reader_boundary_fixture();
+    for (std::size_t unavailable = 1024U; unavailable < 1536U; ++unavailable) {
+        TarBoundaryInput buffer(bytes, unavailable, io_error);
+        std::istream input(&buffer);
+        bool rejected = false;
+        try {
+            (void)flitzzip::detail::scan_tar_stream(
+                input, seekable, seekable ? std::optional<std::uint64_t>(bytes.size()) : std::nullopt);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(buffer.boundary_read());
+        REQUIRE_TRUE(rejected);
+    }
+}
+
+// Purpose: Require a real TAR reader attempt to reject without changing the selected destination.
+// Inputs: An owned destination and a synchronous zero-argument extraction callback, borrowed only during this call.
+// Outputs: Product rejection, no new paths or changed sentinel bytes; test failure otherwise.
+template <typename Attempt>
+void require_tar_rejected_without_publication(const std::filesystem::path& destination, Attempt&& attempt) {
     std::filesystem::create_directories(destination);
     const auto sentinel = destination / "existing.txt";
     {
@@ -114,11 +186,7 @@ void require_tar_fixture_rejected(const std::filesystem::path& archive, const st
     }
     bool rejected = false;
     try {
-        if (gzip) {
-            (void)flitzzip::extract_tar_gzip(archive, destination, false);
-        } else {
-            (void)flitzzip::extract_tar(archive, destination, false);
-        }
+        attempt();
     } catch (const flitzzip::Error&) {
         rejected = true;
     }
@@ -133,6 +201,20 @@ void require_tar_fixture_rejected(const std::filesystem::path& archive, const st
     std::string content;
     input >> content;
     REQUIRE_EQ(content, "retain");
+}
+
+// Purpose: Test rejection before publication through either public TAR extraction adapter.
+// Inputs: One malformed TAR, its owned destination and optional Gzip transport.
+// Outputs: Product error with no new paths or changed bytes.
+void require_tar_fixture_rejected(const std::filesystem::path& archive, const std::filesystem::path& destination,
+                                  bool gzip = false) {
+    require_tar_rejected_without_publication(destination, [&] {
+        if (gzip) {
+            (void)flitzzip::extract_tar_gzip(archive, destination, false);
+        } else {
+            (void)flitzzip::extract_tar(archive, destination, false);
+        }
+    });
 }
 
 // Purpose: Recalculate only a fixture's checksum after independently mutating a wire field.
@@ -848,6 +930,145 @@ TEST_CASE(tar_extraction_refuses_overwrite_by_default) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
+}
+
+// Purpose: Prevent physical EOF from shortening a known TAR publication plan after a valid prefix.
+// Inputs: Every byte position in a second header, with the complete extent independently retained.
+// Outputs: All incomplete prefixes are rejected by the filesystem scanner's actual production implementation.
+TEST_CASE(tar_scan_rejects_premature_next_header_eof) {
+    require_tar_reader_boundary_failures(true, false);
+}
+
+// Purpose: Reject non-EOF header read failures in both filesystem and filtered TAR validation.
+// Inputs: Controlled I/O failure at each next-header position after a complete first entry.
+// Outputs: Neither reader returns a shortened successful plan.
+TEST_CASE(tar_scan_rejects_next_header_io_failure) {
+    require_tar_reader_boundary_failures(true, true);
+    require_tar_reader_boundary_failures(false, true);
+}
+
+// Purpose: Preserve supported clean termination independently of fault rejection.
+// Inputs: Two complete entries followed by no marker, one zero block or the canonical pair.
+// Outputs: Both readers retain every entry, exact payload extents and the complete total.
+TEST_CASE(tar_scan_preserves_clean_header_boundary_endings) {
+    for (const auto zero_blocks : {0U, 1U, 2U}) {
+        auto bytes = tar_reader_boundary_fixture();
+        bytes.append(zero_blocks * 512U, '\0');
+        for (const bool seekable : {false, true}) {
+            std::istringstream input(bytes, std::ios::in | std::ios::binary);
+            const auto plan = flitzzip::detail::scan_tar_stream(
+                input, seekable, seekable ? std::optional<std::uint64_t>(bytes.size()) : std::nullopt);
+            REQUIRE_EQ(plan.entries.size(), 2U);
+            REQUIRE_EQ(plan.total_file_bytes, 8U);
+            REQUIRE_EQ(plan.entries[0].path, "before.txt");
+            REQUIRE_EQ(plan.entries[1].path, "after.txt");
+            REQUIRE_EQ(plan.entries[0].size, 3U);
+            REQUIRE_EQ(plan.entries[1].size, 5U);
+            REQUIRE_EQ(plan.entries[1].payload_offset, seekable ? 1536U : 0U);
+        }
+    }
+}
+
+// Purpose: Reject stale stream state before it can be mistaken for an empty successful archive.
+// Inputs: Independently valid TAR bytes with each preexisting failure-state bit.
+// Outputs: No unreadable stream produces a publication plan in either reader mode.
+TEST_CASE(tar_scan_rejects_preexisting_stream_failure) {
+    const auto bytes = tar_reader_boundary_fixture();
+    for (const auto state : {std::ios::badbit, std::ios::failbit, std::ios::eofbit}) {
+        for (const bool seekable : {false, true}) {
+            std::istringstream input(bytes, std::ios::in | std::ios::binary);
+            input.setstate(state);
+            bool rejected = false;
+            try {
+                (void)flitzzip::detail::scan_tar_stream(
+                    input, seekable, seekable ? std::optional<std::uint64_t>(bytes.size()) : std::nullopt);
+            } catch (const flitzzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+        }
+    }
+}
+
+// Purpose: Require independently established bounds even when a readable file has no ordinary entries.
+// Inputs: An empty stream with missing bounds and a complete zero header with understated bounds.
+// Outputs: Seekable validation rejects absent or insufficient extents instead of admitting an empty plan.
+TEST_CASE(tar_scan_requires_truthful_seekable_bounds) {
+    for (const auto extent :
+         {std::optional<std::uint64_t>{}, std::optional<std::uint64_t>{0U}, std::optional<std::uint64_t>{511U}}) {
+        std::istringstream input(extent ? std::string(512U, '\0') : std::string{}, std::ios::in | std::ios::binary);
+        bool rejected = false;
+        try {
+            (void)flitzzip::detail::scan_tar_stream(input, true, extent);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
+
+// Purpose: Refuse second-pass metadata changes before the first file is published.
+// Inputs: An admitted two-file plan, independently replaced path/kind/size/encoding and forbidden entry types.
+// Outputs: Every changed stream rejects while preserving the original destination and leaving no staging files.
+TEST_CASE(tar_stream_extract_rejects_changed_metadata_before_publication) {
+    const auto root = test_temp_dir("tar-second-pass-metadata");
+    const auto original = tar_reader_boundary_fixture();
+    std::istringstream scan_input(original, std::ios::in | std::ios::binary);
+    const auto plan = flitzzip::detail::scan_tar_stream(scan_input, false);
+    std::vector<std::string> changed;
+    for (const auto& header : {make_test_tar_header("changed.txt", '0', 3), make_test_tar_header("before.txt", '5', 3),
+                               make_test_tar_header("before.txt", '0', 2), make_test_tar_header("before.txt", '1', 3),
+                               make_test_tar_header("before.txt", '2', 3), make_test_tar_header("before.txt", '3', 3),
+                               make_test_tar_header("before.txt", '4', 3), make_test_tar_header("before.txt", '6', 3),
+                               make_test_tar_header("before.txt", '?', 3)}) {
+        auto bytes = original;
+        std::copy(header.begin(), header.end(), bytes.begin());
+        changed.push_back(std::move(bytes));
+    }
+    std::ostringstream metadata(std::ios::out | std::ios::binary);
+    const auto pax = test_pax_record("path", "before.txt") + test_pax_record("hdrcharset", "ISO-IR 10646 2000 UTF-8");
+    append_tar_fixture_record(metadata, make_test_tar_header("PaxHeaders/change", 'x', pax.size()), pax);
+    changed.push_back(metadata.str() + original);
+    for (std::size_t index = 0; index < changed.size(); ++index) {
+        const auto destination = root / std::to_string(index);
+        std::istringstream input(changed[index], std::ios::in | std::ios::binary);
+        require_tar_rejected_without_publication(
+            destination, [&] { flitzzip::detail::extract_validated_tar_stream(input, plan, destination, false, {}); });
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Exercise real second-pass header/payload failures and cleanup after a reservation has been acquired.
+// Inputs: A valid admitted plan and physical EOF or I/O failure at each first-header/payload edge.
+// Outputs: No incomplete file, reservation or changed sentinel survives; valid reuse restores both exact payloads.
+TEST_CASE(tar_stream_extract_read_failure_cleans_unpublished_file) {
+    const auto root = test_temp_dir("tar-second-pass-input-failure");
+    const auto bytes = tar_reader_boundary_fixture();
+    std::istringstream scan_input(bytes, std::ios::in | std::ios::binary);
+    const auto plan = flitzzip::detail::scan_tar_stream(scan_input, false);
+    for (const bool io_error : {false, true}) {
+        for (const std::size_t boundary : {0U, 1U, 511U, 512U, 513U, 514U}) {
+            TarBoundaryInput buffer(bytes, boundary, io_error);
+            std::istream input(&buffer);
+            const auto destination = root / (std::to_string(io_error) + "-" + std::to_string(boundary));
+            require_tar_rejected_without_publication(destination, [&] {
+                flitzzip::detail::extract_validated_tar_stream(input, plan, destination, false, {});
+            });
+            REQUIRE_TRUE(buffer.boundary_read());
+            std::istringstream recovery(bytes, std::ios::in | std::ios::binary);
+            flitzzip::detail::extract_validated_tar_stream(recovery, plan, destination, false, {});
+            for (const auto& [name, expected] :
+                 std::array<std::pair<const char*, const char*>, 2>{{{"before.txt", "abc"}, {"after.txt", "defgh"}}}) {
+                std::ifstream restored(destination / name, std::ios::binary);
+                REQUIRE_TRUE(restored.is_open());
+                REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), {}), expected);
+            }
+            REQUIRE_EQ(
+                std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+                3);
+        }
+    }
+    std::filesystem::remove_all(root);
 }
 
 // Purpose: Keep seekable and filtered TAR admission consistent at partial header/payload/padding boundaries.
