@@ -221,6 +221,20 @@ function Invoke-SidebarClick {
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 43 -DesignY (93 + $PageIndex * 63) -Synchronous:$Synchronous
 }
 
+# Purpose: Deliver one acknowledged native mouse message without assuming a posted input was processed.
+# Inputs: Handle owns the test window; Message/KeyState/Position contain scalar Win32 mouse-message arguments.
+# Outputs: Waits at most five seconds for delivery and throws on failure or timeout.
+function Send-ClientMouseMessage {
+    param([IntPtr]$Handle, [uint32]$Message, [int]$KeyState, [IntPtr]$Position)
+
+    $result = [UIntPtr]::Zero
+    $sent = [FlitzZipNativeUi]::SendMessageTimeout($Handle, $Message, [IntPtr]$KeyState,
+        $Position, 0x0002, 5000, [ref]$result)
+    if ($sent -eq [IntPtr]::Zero) {
+        throw "GUI mouse input failed or timed out; Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())."
+    }
+}
+
 # Purpose: Click one client-coordinate point in the FlitzZip window.
 # Inputs: `Handle` is the FlitzZip HWND, `Dpi` is the window DPI, and design coordinates are 96-DPI client pixels.
 # Outputs: Posts mouse messages by default; Synchronous preserves mouse/key order with a five-second message bound.
@@ -238,12 +252,7 @@ function Invoke-ClientClick {
     $lparam = ConvertTo-MouseLParam -X $x -Y $y
     if ($Synchronous) {
         foreach ($message in @(@(0x0201, 1), @(0x0202, 0))) {
-            $result = [UIntPtr]::Zero
-            $sent = [FlitzZipNativeUi]::SendMessageTimeout($Handle, $message[0], [IntPtr]$message[1],
-                $lparam, 0x0002, 5000, [ref]$result)
-            if ($sent -eq [IntPtr]::Zero) {
-                throw "GUI mouse input failed or timed out; Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())."
-            }
+            Send-ClientMouseMessage -Handle $Handle -Message $message[0] -KeyState $message[1] -Position $lparam
         }
         return
     }
@@ -289,7 +298,7 @@ function Invoke-ClientKey {
 
 # Purpose: Drag one client-coordinate point to another in the FlitzZip window.
 # Inputs: `Handle` is the HWND, `Dpi` maps design pixels, and coordinates are 96-DPI client pixels.
-# Outputs: Posts down/move/up mouse messages for resize and slider-style controls.
+# Outputs: Delivers acknowledged, five-second-bounded mouse input and attempts release even after a failed press/move.
 function Invoke-ClientDrag {
     param(
         [IntPtr]$Handle,
@@ -306,11 +315,22 @@ function Invoke-ClientDrag {
     $endClientY = [int][Math]::Round($EndY * $scale)
     $start = ConvertTo-MouseLParam -X $startClientX -Y $startClientY
     $end = ConvertTo-MouseLParam -X $endClientX -Y $endClientY
-    [void][FlitzZipNativeUi]::PostMessage($Handle, 0x0201, [IntPtr]1, $start)
-    Start-Sleep -Milliseconds 60
-    [void][FlitzZipNativeUi]::PostMessage($Handle, 0x0200, [IntPtr]1, $end)
-    Start-Sleep -Milliseconds 60
-    [void][FlitzZipNativeUi]::PostMessage($Handle, 0x0202, [IntPtr]::Zero, $end)
+    $inputFailure = $null
+    try {
+        Send-ClientMouseMessage -Handle $Handle -Message 0x0201 -KeyState 1 -Position $start
+        Start-Sleep -Milliseconds 60
+        Send-ClientMouseMessage -Handle $Handle -Message 0x0200 -KeyState 1 -Position $end
+        Start-Sleep -Milliseconds 60
+    } catch {
+        $inputFailure = $_
+        throw
+    } finally {
+        try { Send-ClientMouseMessage -Handle $Handle -Message 0x0202 -KeyState 0 -Position $end }
+        catch {
+            if (-not $inputFailure) { throw }
+            Write-Warning "GUI drag release also failed after the original input failure: $($_.Exception.Message)"
+        }
+    }
 }
 
 # Purpose: Inject a file-drop payload into the FlitzZip window.
