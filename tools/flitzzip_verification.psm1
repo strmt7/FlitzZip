@@ -336,10 +336,12 @@ function Get-FlitzZipVerificationScope {
     $touchesProductionSource = Test-FlitzZipAnyPath -Path $paths -Pattern @('^src/', '^CMakeLists\.txt$', '^cmake/', '^third_party/(?!upstream/)')
     $touchesArchiveParser = Test-FlitzZipAnyPath -Path $paths -Pattern @(
         '^src/(ar|arc|arj|base64|bzip2|cab|cpio|gzip|hqx|iso|lha|lzip|lzma|macbinary|rpm|sevenzip|tar|unix_compress|uue|wim|xar|xxe|xz|zip|zstd)/',
-        '^src/core/(archive|archive_format|archive_index|archive_name_encoding|file_manifest|file_publish|path_safety|result|progress)\.',
-        '^fuzz/'
+        '^src/core/(archive|archive_format|archive_index|archive_name_encoding|file_manifest|file_publish|path_safety|result|progress)\.'
     )
     $touchesSecurityBoundary = $touchesArchiveParser -or (Test-FlitzZipAnyPath -Path $paths -Pattern @(
+        '^fuzz/',
+        '^\.clusterfuzzlite/',
+        '^tools/(flitzzip_verification\.psm1|(native_ci|ci_native_plan)\.ps1)$',
         '^\.semgrepignore$',
         '^src/core/(defender_scan|integrity|path_safety|file_publish)\.',
         '^tools/(security_scan|github_post_push_audit|verify_change_hygiene|wait_relevant_workflows|release_workflow_policy|test_release_workflow_policy)\.ps1$',
@@ -584,7 +586,7 @@ function Get-FlitzZipLocalVerificationCommand {
         Add-FlitzZipVerificationCommand -List $local -Seen $seen -Command (Get-FlitzZipVerificationCommand -Id "compatibility-interop-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/compatibility_interop_smoke.ps1", "-Configuration", "Release") -Reason "compatibility archive changes must prove standard container outputs open in independent Windows readers")
         Add-FlitzZipVerificationCommand -List $local -Seen $seen -Command (Get-FlitzZipVerificationCommand -Id "format-matrix-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/format_matrix_smoke.ps1", "-Configuration", "Release") -Reason "archive format, CLI, parser, or broad changes must exercise every registered format's create/extract contract")
     }
-    if ($scope.touchesArchiveParser -or $scope.fullEscalationRequired -or (Test-FlitzZipAnyPath -Path $paths -Pattern @('^\.clusterfuzzlite/', '^tools/(fuzz|fuzz_resources)\.ps1$', '^tools/fuzz_memory\.py$'))) {
+    if ($scope.touchesArchiveParser -or $scope.fullEscalationRequired -or (Test-FlitzZipAnyPath -Path $paths -Pattern @('^fuzz/', '^\.clusterfuzzlite/', '^tools/(fuzz|fuzz_resources)\.ps1$', '^tools/fuzz_memory\.py$'))) {
         Add-FlitzZipVerificationCommand -List $local -Seen $seen -Command (Get-FlitzZipVerificationCommand -Id "short-fuzz-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/fuzz.ps1", "-Runs", "16") -Reason "archive parser or broad changes require a bounded sanitizer/fuzzer smoke")
     }
     if ($scope.touchesPackaging -or $scope.fullEscalationRequired -or
@@ -696,7 +698,7 @@ function Get-FlitzZipVerificationPlan {
     }
     $touchesHostedFuzzInputs = Test-FlitzZipAnyPath -Path $paths -Pattern @(
         '^\.github/workflows/fuzzing\.yml$', '^\.clusterfuzzlite/', '^fuzz/', '^tools/test_fuzz_build\.py$',
-        '^src/(core|arc|arj|cab|cpio|gzip|iso|lha|lzip|lzma|macbinary|rpm|sevenzip|xar)/',
+        '^src/(core|ar|arc|arj|cab|cpio|gzip|iso|lha|lzip|lzma|macbinary|rpm|sevenzip|xar)/',
         '^third_party/(miniz|lzma_sdk|lhasa)/'
     )
     if (($touchesHostedFuzzInputs -or $scope.fullEscalationRequired) -and $longRunningSeen.Add("fuzzing")) {

@@ -137,6 +137,9 @@ Tool contracts have explicit component/dependency patterns in the canonical
 planner. Production build inputs require a build; receipt fixture edits select
 receipt regressions without rebuilding unrelated codec code. Fuzz build and
 production resource changes retain their actual bounded sanitizer smoke.
+Fuzz dictionaries and options retain that sanitizer smoke and security checks;
+they do not change the product parser or require its format matrix. Every
+selected hosted native test or matrix consumer must retain its build producer.
 Content changes with timestamps no newer than the prior completed build or native outputs require
 clean compilation: copied or restored source must not qualify stale incremental
 objects. Ordinary newer edits retain incremental compilation. Deleted inputs also
