@@ -159,6 +159,14 @@ PATH_SAFETY_OBJECT="${CORE_OBJECTS[0]}"
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+  fuzz/ar_fuzzer.cpp \
+  src/ar/ar_adapter.cpp \
+  src/core/archive_name_encoding.cpp \
+  "${CORE_OBJECTS[@]}" \
+  -o "$OUT/flitzzip_ar_fuzzer" \
+  "$LIB_FUZZING_ENGINE"
+
+"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/iso_fuzzer.cpp \
   src/iso/iso_adapter.cpp \
   "${CORE_OBJECTS[@]}" \
@@ -278,6 +286,7 @@ mapfile -t MINIZ_CORE_OBJECTS < "$OUT/miniz-core-objects.list"
 cp fuzz/flitzzip.dict "$OUT/flitzzip_archive_index_fuzzer.dict"
 cp fuzz/flitzzip.dict "$OUT/flitzzip_path_safety_fuzzer.dict"
 cp fuzz/flitzzip.dict "$OUT/flitzzip_cpio_fuzzer.dict"
+cp fuzz/flitzzip.dict "$OUT/flitzzip_ar_fuzzer.dict"
 cp fuzz/flitzzip.dict "$OUT/flitzzip_iso_fuzzer.dict"
 cp fuzz/flitzzip.dict "$OUT/flitzzip_cab_header_fuzzer.dict"
 cp fuzz/flitzzip.dict "$OUT/flitzzip_rpm_header_fuzzer.dict"
@@ -291,10 +300,35 @@ cp fuzz/flitzzip.dict "$OUT/flitzzip_arc_fuzzer.dict"
 cp fuzz/flitzzip.dict "$OUT/flitzzip_macbinary_fuzzer.dict"
 cp fuzz/*.options "$OUT/"
 
+# Independent valid framing ensures a new target reaches member parsing immediately, including hosted runs.
+python3 - "$OUT/flitzzip_ar_fuzzer_seed_corpus.zip" <<'PY'
+from pathlib import Path
+import sys
+import zipfile
+# Purpose: Frame independent AR seeds. Inputs: Header name and payload bytes. Outputs: Complete padded member.
+def member(name, payload):
+    assert len(name) <= 16
+    header = (name.ljust(16) + b'0'.ljust(12) + b'0'.ljust(6) + b'0'.ljust(6)
+              + b'100644'.ljust(8) + str(len(payload)).encode().ljust(10) + b'`\n')
+    assert len(header) == 60
+    return header + payload + (b'\n' if len(payload) % 2 else b'')
+magic = b'!<arch>\n'
+seeds = {
+    'empty.ar': magic,
+    'ordinary.ar': magic + member(b'first.txt/', b'first') + member(b'second.txt/', b'second'),
+    'gnu.ar': magic + member(b'//', b'long member name.txt/\n') + member(b'/0', b'GNU payload'),
+    'bsd.ar': magic + member(b'#1/16', b'__.SYMDEF' + b'\0' * 7) + member(b'last.txt/', b'BSD payload'),
+}
+with zipfile.ZipFile(Path(sys.argv[1]), 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+    for name, data in seeds.items():
+        archive.writestr(zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0)), data)
+PY
+
 for target in \
   flitzzip_archive_index_fuzzer \
   flitzzip_path_safety_fuzzer \
   flitzzip_cpio_fuzzer \
+  flitzzip_ar_fuzzer \
   flitzzip_iso_fuzzer \
   flitzzip_cab_header_fuzzer \
   flitzzip_rpm_header_fuzzer \

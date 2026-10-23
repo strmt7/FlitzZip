@@ -1027,6 +1027,10 @@ if(FLITZZIP_BUILD_FUZZERS)
   target_link_libraries(flitzzip_cpio_fuzzer PRIVATE flitzzip_core)
   target_compile_definitions(flitzzip_cpio_fuzzer PRIVATE FLITZZIP_ENABLE_HIP=0)
 
+  add_executable(flitzzip_ar_fuzzer fuzz/ar_fuzzer.cpp)
+  target_link_libraries(flitzzip_ar_fuzzer PRIVATE flitzzip_core)
+  target_compile_definitions(flitzzip_ar_fuzzer PRIVATE FLITZZIP_ENABLE_HIP=0)
+
   add_executable(
     flitzzip_iso_fuzzer
     fuzz/iso_fuzzer.cpp
@@ -1100,6 +1104,8 @@ if(FLITZZIP_BUILD_FUZZERS)
                          PRIVATE -fsanitize=fuzzer,address,undefined)
   target_compile_options(flitzzip_cpio_fuzzer
                          PRIVATE -fsanitize=fuzzer,address,undefined)
+  target_compile_options(flitzzip_ar_fuzzer
+                         PRIVATE -fsanitize=fuzzer,address,undefined)
   target_compile_options(flitzzip_iso_fuzzer
                          PRIVATE -fsanitize=fuzzer,address,undefined)
   target_compile_options(flitzzip_cab_header_fuzzer
@@ -1127,6 +1133,8 @@ if(FLITZZIP_BUILD_FUZZERS)
   target_link_options(flitzzip_path_safety_fuzzer PRIVATE
                       -fsanitize=fuzzer,address,undefined)
   target_link_options(flitzzip_cpio_fuzzer PRIVATE
+                      -fsanitize=fuzzer,address,undefined)
+  target_link_options(flitzzip_ar_fuzzer PRIVATE
                       -fsanitize=fuzzer,address,undefined)
   target_link_options(flitzzip_iso_fuzzer PRIVATE
                       -fsanitize=fuzzer,address,undefined)
