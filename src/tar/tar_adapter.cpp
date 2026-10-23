@@ -1,4 +1,5 @@
 #include "tar/tar_adapter.hpp"
+#include "tar/tar_reader.hpp"
 
 #include "bzip2/bzip2_stream.hpp"
 #include "core/file_manifest.hpp"
@@ -36,19 +37,10 @@ struct TarHeaderName {
     std::string prefix;
 };
 
-struct TarEntryMetadata {
-    std::string path;
-    ArchivePathEncoding encoding = ArchivePathEncoding::HostCodePage;
-    bool directory = false;
-    std::uint64_t size = 0;
-    std::uint64_t payload_offset = 0;
-};
-
-struct TarScanResult {
-    std::vector<TarEntryMetadata> entries;
-    std::uint64_t total_file_bytes = 0;
-    std::uint64_t path_metadata_bytes = 0;
-};
+using detail::extract_validated_tar_stream;
+using detail::scan_tar_stream;
+using detail::TarEntryMetadata;
+using detail::TarScanResult;
 
 struct TarWriteStats {
     std::uint64_t input_bytes = 0;
@@ -393,6 +385,39 @@ bool is_zero_block(const std::array<char, kTarBlockSize>& header) {
     return std::ranges::all_of(header, [](char ch) { return ch == '\0'; });
 }
 
+// Purpose: Distinguish a complete TAR header, supported clean termination and an input failure in both passes.
+// Inputs: A readable borrowed stream, writable header storage and optional independently known absolute extent.
+// Outputs: Returns true for a nonzero header or false for a zero block/clean EOF; throws before admitting a short
+// header, bad stream state or premature physical EOF within a known extent.
+bool read_tar_header(std::istream& input, std::array<char, kTarBlockSize>& header,
+                     std::optional<std::uint64_t> archive_size = std::nullopt) {
+    if (!input.good()) {
+        throw ArchiveError("TAR header input is not readable");
+    }
+    std::optional<std::uint64_t> remaining;
+    if (archive_size) {
+        const auto position = input.tellg();
+        if (position < 0 || static_cast<std::uint64_t>(position) > *archive_size) {
+            throw ArchiveError("TAR header has no valid archive-bounded offset");
+        }
+        remaining = *archive_size - static_cast<std::uint64_t>(position);
+    }
+    input.read(header.data(), static_cast<std::streamsize>(header.size()));
+    if (input.bad() || (input.fail() && !input.eof())) {
+        throw ArchiveError("failed to read TAR header");
+    }
+    if (input.gcount() == 0) {
+        if (!input.eof() || remaining.value_or(0U) != 0U) {
+            throw ArchiveError("TAR header is truncated before the known archive extent");
+        }
+        return false;
+    }
+    if (input.gcount() != static_cast<std::streamsize>(header.size()) || (remaining && *remaining < header.size())) {
+        throw ArchiveError("TAR header is truncated");
+    }
+    return !is_zero_block(header);
+}
+
 // Purpose: Extract a NUL-terminated string from a fixed TAR header field.
 // Inputs: `header` is the source block and `offset`/`length` select the field.
 // Outputs: Returns the field bytes before the first NUL.
@@ -669,24 +694,22 @@ std::uint64_t bounded_tar_payload_offset(std::istream& input, std::uint64_t size
     return offset;
 }
 
+}  // namespace
+
 // Purpose: Scan a TAR stream and validate metadata before any extraction writes occur.
 // Inputs: `input` is positioned at the TAR start, `seekable` controls payload
 // skipping, and `archive_size` bounds seekable extents. Outputs: Returns validated metadata or throws on malformed,
 // unsafe, or resource-exhaustive records.
-TarScanResult scan_tar_stream(std::istream& input, bool seekable,
-                              std::optional<std::uint64_t> archive_size = std::nullopt) {
+detail::TarScanResult detail::scan_tar_stream(std::istream& input, bool seekable,
+                                              std::optional<std::uint64_t> archive_size) {
+    if (seekable && !archive_size) {
+        throw ArchiveError("seekable TAR scan requires a known archive extent");
+    }
     TarScanResult result;
     TarExtensionState extensions;
     for (;;) {
         std::array<char, kTarBlockSize> header{};
-        input.read(header.data(), static_cast<std::streamsize>(header.size()));
-        if (input.gcount() == 0) {
-            break;
-        }
-        if (input.gcount() != static_cast<std::streamsize>(header.size())) {
-            throw ArchiveError("TAR header is truncated");
-        }
-        if (is_zero_block(header)) {
+        if (!read_tar_header(input, header, seekable ? archive_size : std::nullopt)) {
             break;
         }
         validate_tar_checksum(header);
@@ -740,6 +763,8 @@ TarScanResult scan_tar_stream(std::istream& input, bool seekable,
     validate_archive_path_set(validation_entries);
     return result;
 }
+
+namespace {
 
 // Purpose: Scan a seekable TAR file and validate metadata before any extraction writes occur.
 // Inputs: `archive_path` is the TAR file to scan.
@@ -808,13 +833,15 @@ void require_matching_scanned_entry(const TarEntryMetadata& actual, const TarEnt
     }
 }
 
+}  // namespace
+
 // Purpose: Extract a non-seekable TAR stream after a separate validation pass has succeeded.
 // Inputs: `input` is positioned at the TAR start, `scanned` is the validated metadata, `destination` is the extraction
 // root, and `overwrite` controls replacement. Outputs: Restores entries into `destination` while re-checking
 // second-pass metadata against `scanned`.
-void extract_validated_tar_stream(std::istream& input, const TarScanResult& scanned,
-                                  const std::filesystem::path& destination, bool overwrite,
-                                  const ProgressCallback& progress_callback) {
+void detail::extract_validated_tar_stream(std::istream& input, const TarScanResult& scanned,
+                                          const std::filesystem::path& destination, bool overwrite,
+                                          const ProgressCallback& progress_callback) {
     ProgressState progress;
     progress.start(OperationKind::Extract, scanned.total_file_bytes, scanned.entries.size());
     TarExtensionState extensions;
@@ -822,14 +849,7 @@ void extract_validated_tar_stream(std::istream& input, const TarScanResult& scan
     std::size_t entry_index = 0;
     for (;;) {
         std::array<char, kTarBlockSize> header{};
-        input.read(header.data(), static_cast<std::streamsize>(header.size()));
-        if (input.gcount() == 0) {
-            break;
-        }
-        if (input.gcount() != static_cast<std::streamsize>(header.size())) {
-            throw ArchiveError("TAR header is truncated");
-        }
-        if (is_zero_block(header)) {
+        if (!read_tar_header(input, header)) {
             break;
         }
         validate_tar_checksum(header);
@@ -873,6 +893,8 @@ void extract_validated_tar_stream(std::istream& input, const TarScanResult& scan
         throw ArchiveError("TAR stream ended before all validated entries were extracted");
     }
 }
+
+namespace {
 
 // Purpose: Copy one scanned TAR file payload to a verified temporary file.
 // Inputs: `input` is the archive stream, `entry` supplies size and offset, and `target` is the final extraction path.
