@@ -24,6 +24,8 @@ from tools.native_coverage_report import normalize_report
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "tools/native-coverage-toolchain.json"
+BASE_COLLECTION_TIMEOUT_SECONDS = 900
+GUI_SCENARIO_TIMEOUT_SECONDS = 900
 SCENARIO_INPUTS = (
     "tools/native_coverage.py",
     "tools/native_coverage_report.py",
@@ -486,7 +488,9 @@ def run_scenarios(output: Path, hip_host: bool = False, include_gui: bool = Fals
     for name, arguments in scenarios:
         # Full suites launch many instrumented processes; retain the collector's
         # overall deadline and each matrix command's independent timeout.
-        timeout = 900 if name in {"registry", "cli-formats", "gui"} else 300
+        timeout = 900 if name in {"registry", "cli-formats"} else 300
+        if name == "gui":
+            timeout = GUI_SCENARIO_TIMEOUT_SECONDS
         run_checked(arguments, timeout, output / f"{name}-process.json")
     run_cli_admission(binary / "flitzzip_cli.exe", output, hip_host=hip_host)
 
@@ -521,7 +525,9 @@ def collect(collector: Path, lock: dict, output: Path, hip_host: bool = False, i
             *(["--hip-host"] if hip_host else []),
             *(["--gui"] if include_gui else []),
         ],
-        900,
+        # GUI qualification adds a bounded stage to the existing native/CLI
+        # transaction; it must not consume that transaction's entire deadline.
+        BASE_COLLECTION_TIMEOUT_SECONDS + (GUI_SCENARIO_TIMEOUT_SECONDS if include_gui else 0),
         output / "native-process.json",
     )
     if coverage_build(hip_host) != before or measurement_identity(include_gui) != identities:

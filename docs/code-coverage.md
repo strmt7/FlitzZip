@@ -83,6 +83,10 @@ uses the canonical bounded process runner, including its Windows PowerShell
 environment handling. It requires measured GUI entry points and records the
 GUI executable, PDB, scenario and imported UI helper identities. A smoke failure
 or a changed helper invalidates collection.
+The native/CLI collection keeps its 900-second outer deadline. Selecting GUI
+adds that stage's 900-second budget, giving the combined transaction a bounded
+1,800-second outer deadline. Individual scenario deadlines remain unchanged;
+timeouts and incomplete runs still fail qualification.
 The full smoke also opens real Windows multi-file and folder dialogs without
 selection-result overrides. It checks spaced and Unicode paths, cancellation
 with a populated filename field, unchanged Queue rendering, and a GUI-created

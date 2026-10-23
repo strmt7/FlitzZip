@@ -865,6 +865,30 @@ class CoverageTests(unittest.TestCase):
             self.assertEqual(run.call_args.args[0][-1], "gpu-info")
             self.assertEqual(run.call_args.args[2], self.root / "gpu-info-process.json")
 
+    # Purpose: Reserve the optional GUI stage's budget without shortening the existing native/CLI transaction.
+    # Inputs: CPU/HIP selections with and without GUI; the runner stops at its first profiled invocation.
+    # Outputs: The outer deadline is explicit, bounded and mode-specific; the actual stage flags remain intact.
+    def test_gui_collection_adds_its_stage_budget(self):
+        for hip_host, include_gui, expected_timeout in (
+            (False, False, 900),
+            (True, False, 900),
+            (False, True, 1800),
+            (True, True, 1800),
+        ):
+            with (
+                self.subTest(hip_host=hip_host, include_gui=include_gui),
+                patch.object(collector, "coverage_build", return_value={}),
+                patch.object(collector, "measurement_identity", return_value={}),
+                patch.object(collector, "run_checked", side_effect=RuntimeError("captured invocation")) as run,
+                self.assertRaisesRegex(RuntimeError, "captured invocation"),
+            ):
+                collector.collect(self.root / "collector.exe", {"files": {}}, self.root, hip_host, include_gui)
+            arguments, timeout, log = run.call_args.args
+            self.assertEqual(timeout, expected_timeout)
+            self.assertEqual("--gui" in arguments, include_gui)
+            self.assertEqual("--hip-host" in arguments, hip_host)
+            self.assertEqual(log, self.root / "native-process.json")
+
     # Purpose: Never label debugger coverage of a HIP-enabled executable as measured device instructions.
     # Inputs: A source-bound host report and explicit HIP selection.
     # Outputs: The child uses HIP mode; summary retains host scope and leaves device measurement false.
