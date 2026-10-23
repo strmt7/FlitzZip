@@ -32,13 +32,15 @@ function Assert-PickerWindowOwner {
 }
 
 # Purpose: Select or cancel real OS dialogs using owned controls rather than localized captions or injected results.
-# Inputs: Handle/Dpi/ProcessId identify the owned GUI; Folder selects the picker; Selection is an existing fixture path expression.
+# Inputs: Handle/Dpi/ProcessId identify the owned GUI; Folder/Destination select the picker; Selection is an existing fixture path expression.
 # Outputs: Returns only after the dialog closes and restores its owner, or throws after a bounded wait.
 function Invoke-NativePickerSelection {
-    param([IntPtr]$Handle, [int]$Dpi, [int]$ProcessId, [string]$Selection, [switch]$Folder, [switch]$Cancel)
+    param([IntPtr]$Handle, [int]$Dpi, [int]$ProcessId, [string]$Selection, [switch]$Folder, [switch]$Destination, [switch]$Cancel)
     Assert-PickerWindowOwner -Handle $Handle -ProcessId $ProcessId -ClassName 'FlitzZipMainWindow'
-    $x = if ($Folder) { 1032 } else { 918 }
-    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $x -DesignY 91
+    $isFolder = $Folder -or $Destination
+    $x = if ($Destination) { 820 } elseif ($Folder) { 1032 } else { 918 }
+    $y = if ($Destination) { 154 } else { 91 }
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $x -DesignY $y
     $deadline = [datetime]::UtcNow.AddSeconds(15)
     do {
         $popup = [FlitzZipPickerUi]::GetLastActivePopup($Handle)
@@ -47,7 +49,7 @@ function Invoke-NativePickerSelection {
     } while ([datetime]::UtcNow -lt $deadline)
     Assert-PickerWindowOwner -Handle $popup -ProcessId $ProcessId -ClassName '#32770'
     # Folder mode exposes edt1 directly; multi-file mode exposes cmb13's embedded edit.
-    $inputId = if ($Folder) { 1152 } else { 1148 }
+    $inputId = if ($isFolder) { 1152 } else { 1148 }
     $deadline = [datetime]::UtcNow.AddSeconds(10)
     do {
         $inputControl = [FlitzZipPickerUi]::GetDlgItem($popup, $inputId)
@@ -55,7 +57,7 @@ function Invoke-NativePickerSelection {
         Start-Sleep -Milliseconds 100
     } while ([datetime]::UtcNow -lt $deadline)
     $edit = $inputControl
-    if (-not $Folder) {
+    if (-not $isFolder) {
         Assert-PickerWindowOwner -Handle $inputControl -ProcessId $ProcessId -ClassName 'ComboBoxEx32'
         $inner = [FlitzZipPickerUi]::FindWindowEx($inputControl, [IntPtr]::Zero, 'ComboBox', $null)
         Assert-PickerWindowOwner -Handle $inner -ProcessId $ProcessId -ClassName 'ComboBox'
@@ -84,6 +86,21 @@ function Invoke-NativePickerSelection {
     Start-Sleep -Milliseconds 300
 }
 
+# Purpose: Exercise destination acceptance and cancellation before independently checking archive publication.
+# Inputs: Handle/Dpi/ProcessId identify the owned GUI; Destination/Cancelled are empty owned directories; BasePath/Extension locate captures.
+# Outputs: Returns both Compress-page captures; the caller must verify the resulting archive location and cancelled directory.
+function Assert-NativePickerDestination {
+    param([IntPtr]$Handle, [int]$Dpi, [int]$ProcessId, [string]$Destination, [string]$Cancelled, [string]$BasePath, [string]$Extension)
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
+    foreach ($cancel in @($false, $true)) {
+        $scenario = if ($cancel) { 'Destination-Cancel' } else { 'Destination-Accept' }
+        $selection = if ($cancel) { $Cancelled } else { $Destination }
+        Write-Information "Real Windows picker scenario: $scenario" -InformationAction Continue
+        Invoke-NativePickerSelection -Handle $Handle -Dpi $Dpi -ProcessId $ProcessId -Selection $selection -Destination -Cancel:$cancel
+        Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-NativePicker-$scenario$Extension"
+    }
+}
+
 # Purpose: Prove cancellation preserves all rendered Queue data, independently of product smoke-result hooks.
 # Inputs: Before/After are owned-window captures; Handle/Dpi map the Queue body to physical pixels.
 # Outputs: Throws on any changed Queue pixel; excludes the clock, toolbar hover and transient status strip.
@@ -104,7 +121,7 @@ function Assert-PickerQueueUnchanged {
     } finally { $first.Dispose(); $second.Dispose() }
 }
 
-# Purpose: Exercise real multi-file/folder acceptance and nonempty cancellation without inherited selection overrides.
+# Purpose: Exercise real input/destination picker acceptance and nonempty cancellation without selection overrides.
 # Inputs: Exe is the qualified GUI; Root is owned smoke storage; BasePath/Extension locate captures; VerifyQueue independently reads the resulting archive.
 # Outputs: Queue and archive captures with exact selection checks; always closes only this owned child process.
 function Assert-NativePickerQueue {
@@ -116,17 +133,18 @@ function Assert-NativePickerQueue {
     $decoy = Join-Path $fixture 'cancelled file must not appear.txt'
     $folder = Join-Path $fixture ('picked folder-' + [char]0x03A9)
     [void](New-Item -ItemType Directory -Path $folder)
-    $destination = Join-Path $fixture 'destination'
+    $destination = Join-Path $fixture ('accepted destination-' + [char]0x03A9)
     [void](New-Item -ItemType Directory -Path $destination)
+    $cancelledDestination = Join-Path $fixture 'cancelled destination must remain empty'
+    [void](New-Item -ItemType Directory -Path $cancelledDestination)
     foreach ($path in @($first, $second, $decoy, (Join-Path $folder 'nested.txt'))) {
         [IO.File]::WriteAllText($path, ('Native picker fixture: ' + [IO.Path]::GetFileName($path)))
     }
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $Exe
     $start.UseShellExecute = $false
-    foreach ($name in @('FLITZZIP_GUI_SMOKE_FILE_SELECTION', 'FLITZZIP_GUI_SMOKE_FOLDER_SELECTION', 'FLITZZIP_GUI_SMOKE_CLOSE_FILE')) { $start.EnvironmentVariables.Remove($name) }
+    foreach ($name in @('FLITZZIP_GUI_SMOKE_FILE_SELECTION', 'FLITZZIP_GUI_SMOKE_FOLDER_SELECTION', 'FLITZZIP_GUI_SMOKE_CLOSE_FILE', 'FLITZZIP_GUI_SMOKE_DESTINATION')) { $start.EnvironmentVariables.Remove($name) }
     $start.EnvironmentVariables['FLITZZIP_GUI_SMOKE_AUTO_CLOSE_MS'] = '120000'
-    $start.EnvironmentVariables['FLITZZIP_GUI_SMOKE_DESTINATION'] = $destination
     $owned = [Diagnostics.Process]::Start($start)
     $handle = [IntPtr]::Zero
     try {
@@ -141,6 +159,7 @@ function Assert-NativePickerQueue {
         if ($handle -eq [IntPtr]::Zero) { throw 'Native picker GUI did not show its window.' }
         Start-Sleep -Seconds 2
         $dpi = [int][FlitzZipNativeUi]::GetDpiForWindow($handle)
+        [void](Invoke-SmokeClientResize -Handle $handle -Dpi $dpi -Width 1200 -Height 760)
         $captures = @()
         $before = $null
         foreach ($scenario in @('Files-Accept', 'Files-Cancel', 'Folder-Accept', 'Folder-Cancel')) {
@@ -162,7 +181,11 @@ function Assert-NativePickerQueue {
         $expected = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
         foreach ($path in @($first, $second)) { $expected[[IO.Path]::GetFileName($path)] = $path }
         $expected[([IO.Path]::GetFileName($folder) + '/nested.txt')] = Join-Path $folder 'nested.txt'
+        $captures += Assert-NativePickerDestination -Handle $handle -Dpi $dpi -ProcessId $owned.Id -Destination $destination -Cancelled $cancelledDestination -BasePath $BasePath -Extension $Extension
         $captures += & $VerifyQueue $handle $dpi $destination $expected
+        if (@(Get-ChildItem -LiteralPath $cancelledDestination -Force).Count -ne 0) {
+            throw 'Cancelling the destination picker redirected archive publication.'
+        }
         return $captures
     } finally {
         if (-not $owned.HasExited) {
