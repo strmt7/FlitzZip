@@ -793,4 +793,11 @@ Assert-Selector (($runtimePlan.requiredLocalCommands.id -contains 'package-runti
     ($runtimePlan.requiredLocalCommands.id -notcontains 'unit-tests') -and
     ($runtimePlan.requiredLocalCommands.id -notcontains 'release-build')) 'isolated package runtime policy changes require their own actual contracts without rebuilding the product'
 
+foreach ($inputPath in @('tools/FlitzZip.GuiSmoke.Ui.psm1', 'tools/fixtures/gui_mouse_delivery_contract.ps1')) {
+    $deliveryPlan = Get-FlitzZipVerificationPlan -ChangedPath @($inputPath) -Checkpoint intermediate
+    Assert-Selector (Test-RequiredCommand -Plan $deliveryPlan -Id 'native-coverage-contracts') 'GUI mouse delivery inputs must select their actual acknowledgement and cleanup regression'
+    Assert-Selector (-not (Test-RequiredCommand -Plan $deliveryPlan -Id 'release-build')) 'GUI delivery contracts must not silently compile the product'
+    Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $inputPath) 'hosted tool contracts must admit both the actual GUI helper and its transport fixture'
+}
+
 Write-Output "Verification selector self-test passed."

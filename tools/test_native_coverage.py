@@ -7,6 +7,7 @@ import json
 import os
 import re
 import runpy
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -25,6 +26,31 @@ from tools.native_coverage_report import normalize_report, read_report, source_p
 
 
 class CoverageTests(unittest.TestCase):
+    # Purpose: Prevent asynchronous mouse injection from falsely passing an instrumented GUI scenario.
+    # Inputs: Unmodified PowerShell helper definitions and an isolated native-transport fault fixture.
+    # Outputs: Requires ordered bounded dispatch, DPI arguments, rejected acknowledgements and release cleanup.
+    @unittest.skipUnless(os.name == "nt", "The GUI input helpers use Windows PowerShell and Win32")
+    def test_gui_mouse_delivery_acknowledgement(self):
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(collector.ROOT / "tools/fixtures/gui_mouse_delivery_contract.ps1"),
+                "-SourcePath",
+                str(collector.ROOT / "tools/FlitzZip.GuiSmoke.Ui.psm1"),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("GUI mouse delivery contracts passed", result.stdout)
+
     # Purpose: Enforce the coverage XML byte boundary on the opened stream with small real files.
     # Inputs: A complete document exactly at a reduced test budget, followed by one excess byte.
     # Outputs: Exact-boundary XML parses; excess input fails without publishing a normalized report.

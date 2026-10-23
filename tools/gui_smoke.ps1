@@ -987,7 +987,7 @@ function Assert-HistoryScrollEndpoint {
 
 # Purpose: Resize only the owned smoke window using its actual native frame dimensions.
 # Inputs: Handle/Dpi identify the test window; Width/Height are required client DIPs.
-# Outputs: Returns prior outer dimensions and throws unless the exact requested client size is reached.
+# Outputs: Returns explicitly named prior window/client pixel dimensions; throws unless the requested client size is reached.
 function Invoke-SmokeClientResize {
     param([IntPtr]$Handle, [int]$Dpi, [int]$Width, [int]$Height)
 
@@ -995,16 +995,38 @@ function Invoke-SmokeClientResize {
     $client = New-Object FlitzZipNativeUi+RECT
     if (-not [FlitzZipNativeUi]::GetWindowRect($Handle, [ref]$window) -or
         -not [FlitzZipNativeUi]::GetClientRect($Handle, [ref]$client)) { throw 'Cannot inspect smoke viewport.' }
-    $old = @{ Width = $window.Right - $window.Left; Height = $window.Bottom - $window.Top }
+    $old = @{ WindowWidthPixels = $window.Right - $window.Left; WindowHeightPixels = $window.Bottom - $window.Top
+        ClientWidthPixels = $client.Right; ClientHeightPixels = $client.Bottom }
     $physicalWidth = [int][Math]::Round($Width * $Dpi / 96.0)
     $physicalHeight = [int][Math]::Round($Height * $Dpi / 96.0)
     if (-not [FlitzZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0,
-        ($physicalWidth + $old.Width - $client.Right), ($physicalHeight + $old.Height - $client.Bottom), 0x0016)) {
+        ($physicalWidth + $old.WindowWidthPixels - $client.Right), ($physicalHeight + $old.WindowHeightPixels - $client.Bottom), 0x0016)) {
         throw 'Cannot resize the owned smoke window.'
     }
     if (-not [FlitzZipNativeUi]::GetClientRect($Handle, [ref]$client) -or
         $client.Right -ne $physicalWidth -or $client.Bottom -ne $physicalHeight) { throw 'Client dimensions mismatch.' }
     return $old
+}
+
+# Purpose: Restore the owned window without applying DPI scaling to an already physical size.
+# Inputs: Handle is the test HWND; Snapshot is the pixel-dimension record from Invoke-SmokeClientResize.
+# Outputs: Restores the native outer size and requires exact original client pixels; failed Win32 operations throw.
+function Restore-SmokeWindowSize {
+    param([IntPtr]$Handle, [hashtable]$Snapshot)
+
+    if ($Snapshot.WindowWidthPixels -le 0 -or $Snapshot.WindowHeightPixels -le 0 -or
+        $Snapshot.ClientWidthPixels -le 0 -or $Snapshot.ClientHeightPixels -le 0) {
+        throw 'Cannot restore an invalid smoke window pixel snapshot.'
+    }
+    if (-not [FlitzZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0,
+        $Snapshot.WindowWidthPixels, $Snapshot.WindowHeightPixels, 0x0016)) {
+        throw 'Cannot restore the owned smoke window pixel dimensions.'
+    }
+    $client = New-Object FlitzZipNativeUi+RECT
+    if (-not [FlitzZipNativeUi]::GetClientRect($Handle, [ref]$client) -or
+        $client.Right -ne $Snapshot.ClientWidthPixels -or $client.Bottom -ne $Snapshot.ClientHeightPixels) {
+        throw 'Restored smoke client pixels do not match the original snapshot.'
+    }
 }
 
 # Purpose: Check the application's actual work-area fit, including notification-driven restoration.
@@ -1046,10 +1068,10 @@ function Assert-WindowWorkAreaFit {
     Write-Information "Work-area fitting passed; notification coverage=$ExerciseEvents." -InformationAction Continue
 }
 
-# Purpose: Fingerprint only a static notice body, excluding clocks, tabs, borders and scrollbar hover.
+# Purpose: Fingerprint only a static text body, excluding clocks, tabs, borders and scrollbar hover.
 # Inputs: Path is a window capture; Dpi/Offset map the supplied client-DIP rectangle into that image.
 # Outputs: Returns the SHA-256 digest of its canonical pixel-format crop; invalid bounds fail.
-function Get-NoticeBodyDigest {
+function Get-GuiTextBodyDigest {
     param([string]$Path, [int]$Dpi, $Offset, [int]$Left, [int]$Top, [int]$Right, [int]$Bottom)
 
     $scale = [double]$Dpi / 96.0
@@ -1063,7 +1085,7 @@ function Get-NoticeBodyDigest {
     try {
         if ($rect.Width -le 0 -or $rect.Height -le 0 -or $rect.Left -lt 0 -or $rect.Top -lt 0 -or
             $rect.Right -gt $image.Width -or $rect.Bottom -gt $image.Height) {
-            throw 'License notice comparison rectangle is outside the captured image.'
+            throw 'GUI text-body comparison rectangle is outside the captured image.'
         }
         $crop = $image.Clone($rect, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
         $crop.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
@@ -1074,6 +1096,25 @@ function Get-NoticeBodyDigest {
         if ($crop) { $crop.Dispose() }
         $image.Dispose()
     }
+}
+
+# Purpose: Wait for a visible text endpoint without repeating input or assuming animation completion from a delay.
+# Inputs: Handle/Dpi identify the owned window; Body/Offset select static text; ExpectedDigest is independently captured.
+# Outputs: Returns a matching capture or fails within a bounded observation loop, preserving the final mismatching image.
+function Save-GuiTextEndpoint {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$Path, $Offset, [hashtable]$Body,
+          [string]$ExpectedDigest, [switch]$Compact)
+
+    $captureSize = if ($Compact) { @{ ExpectedDesignWidth = 960; ExpectedDesignHeight = 600 } } else { @{} }
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    for ($attempt = 0; $attempt -lt 6 -and $timer.Elapsed.TotalSeconds -lt 8; ++$attempt) {
+        $capture = Save-FlitzZipScreenshot -Handle $Handle -Path $Path @captureSize
+        if ((Get-GuiTextBodyDigest -Path $Path -Dpi $Dpi -Offset $Offset @Body) -ceq $ExpectedDigest) {
+            return $capture
+        }
+        Start-Sleep -Milliseconds 80
+    }
+    throw "GUI text endpoint was not observed; final capture retained: $Path"
 }
 
 # Purpose: Require real thumb drags to reach the same notice text as independent Home/End inputs.
@@ -1094,15 +1135,20 @@ function Assert-LicenseNoticeDrag {
         else {
             if ($endpoint -eq 'DragBottom') {
                 Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
-                Start-Sleep -Milliseconds 200
+                Save-GuiTextEndpoint -Handle $Handle -Dpi $Dpi -Path "$BasePath-HomeReady$Extension" -Offset $offset -Body $body -ExpectedDigest $expected.Top -Compact:$Compact
                 $startY = $Viewport.Top + 8; $endY = $Viewport.Bottom + 32
             } else { $startY = $Viewport.Bottom - 8; $endY = $Viewport.Top - 32 }
             Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX ($Viewport.Right - 2) -EndX ($Viewport.Right - 2) -StartY $startY -EndY $endY
         }
-        Start-Sleep -Milliseconds 220
         $path = "$BasePath-$endpoint$Extension"
-        Save-FlitzZipScreenshot -Handle $Handle -Path $path @captureSize
-        $digest = Get-NoticeBodyDigest -Path $path -Dpi $Dpi -Offset $offset @body
+        if ($endpoint -eq 'DragBottom' -or $endpoint -eq 'DragTop') {
+            $target = if ($endpoint -eq 'DragBottom') { 'Bottom' } else { 'Top' }
+            Save-GuiTextEndpoint -Handle $Handle -Dpi $Dpi -Path $path -Offset $offset -Body $body -ExpectedDigest $expected[$target] -Compact:$Compact
+        } else {
+            Start-Sleep -Milliseconds 220
+            Save-FlitzZipScreenshot -Handle $Handle -Path $path @captureSize
+        }
+        $digest = Get-GuiTextBodyDigest -Path $path -Dpi $Dpi -Offset $offset @body
         if ($endpoint -eq 'Top' -or $endpoint -eq 'Bottom') { $expected[$endpoint] = $digest }
         else {
             $target = if ($endpoint -eq 'DragBottom') { 'Bottom' } else { 'Top' }
@@ -1110,6 +1156,82 @@ function Assert-LicenseNoticeDrag {
         }
     }
     if ($expected.Top -ceq $expected.Bottom) { throw 'License notice Home and End displayed identical body pixels.' }
+}
+
+# Purpose: Exercise actual History detail overflow using a successfully extracted long Unicode archive name.
+# Inputs: Handle/Dpi identify the owned window; fixture/output paths are isolated smoke storage; SourcePath supplies independent readback bytes.
+# Outputs: Returns compact detail-scroll captures; rejects inert wheel/drag input and restores the original window dimensions.
+function Assert-HistoryDetailsScroll {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$FixtureArchive, [string]$FixtureRoot,
+          [string]$SourcePath, [string]$OutputRoot, [string]$SettingsPath, [string]$BasePath, [string]$Extension)
+
+    $name = 'History details ' + ([string][char]0x754C * 170) + '.flzip'
+    $archive = Join-Path $FixtureRoot $name
+    Copy-Item -LiteralPath $FixtureArchive -Destination $archive -Force
+    Remove-GuiSmokeDirectory -Path $OutputRoot
+    New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 4 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1100 -DesignY 90 -Synchronous
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
+    Invoke-FileDrop -Handle $Handle -Dpi $Dpi -Paths @($archive)
+    Start-Sleep -Milliseconds 200
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 2 -Synchronous
+    $log = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
+    $length = (Get-Item -LiteralPath $log).Length
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
+    Wait-GuiLogEvent -Path $log -PreviousLength $length -Message 'Extract: completed'
+    $restored = Join-Path $OutputRoot 'drag-drop-input.txt'
+    if (-not (Test-Path -LiteralPath $restored) -or
+        (Get-FileHash -LiteralPath $restored).Hash -ne (Get-FileHash -LiteralPath $SourcePath).Hash) {
+        throw 'History scrolling fixture did not independently restore the real archive bytes.'
+    }
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 4 -Synchronous
+    foreach ($x in @(220, 390)) {
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $x -DesignY 145 -Synchronous
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+        $count = if ($x -eq 220) { 2 } else { 1 }
+        for ($index = 0; $index -lt $count; ++$index) { Invoke-ClientKey -Handle $Handle -VirtualKey 0x28 }
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+    }
+    $old = Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width 960 -Height 600
+    try {
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 420 -DesignY 239 -Synchronous
+        $offset = Get-ClientCaptureOffset -Handle $Handle
+        $body = @{ Left = 136; Top = 458; Right = 900; Bottom = 534 }
+        $expected = @{}
+        $positions = @(
+            @{ Action = 'Top'; Image = 'History-Details-Top' },
+            @{ Action = 'SmoothWheel'; Image = 'History-Details-SmoothWheel' },
+            @{ Action = 'DragTop'; Image = 'History-Details-DragTop' },
+            @{ Action = 'DragBottom'; Image = 'History-Details-DragBottom' })
+        foreach ($case in $positions) {
+            $position = $case.Action
+            if ($position -eq 'SmoothWheel') {
+                Invoke-ClientWheel -Handle $Handle -Dpi $Dpi -DesignX 650 -DesignY 490 -Delta -12000
+            } elseif ($position -eq 'DragTop') {
+                Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX 920 -StartY 528 -EndX 920 -EndY 432
+            } elseif ($position -eq 'DragBottom') {
+                Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX 920 -StartY 464 -EndX 920 -EndY 560
+            }
+            Start-Sleep -Milliseconds 220
+            $path = "${BasePath}-Compact-$($case.Image)$Extension"
+            Save-FlitzZipScreenshot -Handle $Handle -Path $path -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+            $digest = Get-GuiTextBodyDigest -Path $path -Dpi $Dpi -Offset $offset @body
+            if ($position -eq 'Top' -or $position -eq 'SmoothWheel') { $expected[$position] = $digest }
+            else {
+                $target = if ($position -eq 'DragTop') { 'Top' } else { 'SmoothWheel' }
+                if ($digest -cne $expected[$target]) { throw "History details $position did not restore the independent wheel endpoint." }
+            }
+            if ($position -eq 'Top') {
+                Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left 918 -Top 458 -Right 923 -Bottom 468 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 64 -ExpectedGreen 83 -ExpectedBlue 90 -Tolerance 12 -MinPixels 2
+            }
+        }
+        if ($expected.Top -ceq $expected.SmoothWheel) { throw 'History details wheel did not move the actual selected operation text.' }
+    } finally {
+        Restore-SmokeWindowSize -Handle $Handle -Snapshot $old
+    }
+    Write-Information 'History selected-operation overflow, independent archive readback, wheel and bidirectional thumb dragging passed.' -InformationAction Continue
 }
 
 # Purpose: Exercise the compact Licenses modal using native buttons, tabs, and scrolling.
@@ -1159,9 +1281,7 @@ function Assert-CompactOverwritePrompt {
         Save-FlitzZipScreenshot -Handle $Handle -Path $closedPath -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
         Assert-DesignRectHasDetail -Path $closedPath -Dpi $Dpi -Left 116 -Top 74 -Right 350 -Bottom 110 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
     } finally {
-        if (-not [FlitzZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $old.Width, $old.Height, 0x0016)) {
-            throw 'Cannot restore the smoke window after the overwrite prompt test.'
-        }
+        Restore-SmokeWindowSize -Handle $Handle -Snapshot $old
     }
 }
 
@@ -1183,9 +1303,7 @@ function Assert-LegacyNameExtraction {
     try {
         Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-NameEncoding$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
     } finally {
-        if (-not [FlitzZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $old.Width, $old.Height, 0x0016)) {
-            throw 'Cannot restore the smoke window after the encoding test.'
-        }
+        Restore-SmokeWindowSize -Handle $Handle -Snapshot $old
     }
     $logPath = Join-Path ([System.IO.Path]::GetTempPath()) 'FlitzZip/flitzzip.log'
     $length = (Get-Item -LiteralPath $logPath).Length
@@ -1300,9 +1418,7 @@ function Assert-CompactFormLayout {
         Write-Information 'Compact forms and popup selections passed at the actual host DPI.' -InformationAction Continue
     } finally {
         Invoke-ClientKey -Handle $Handle -VirtualKey 0x1B
-        if (-not [FlitzZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $old.Width, $old.Height, 0x0016)) {
-            throw 'Cannot restore the owned smoke window dimensions.'
-        }
+        Restore-SmokeWindowSize -Handle $Handle -Snapshot $old
     }
 }
 
@@ -1747,12 +1863,7 @@ try {
     $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $historyFailurePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasColor -Path $historyFailurePath -Dpi $windowDpi -Left 700 -Top 210 -Right 1138 -Bottom 470 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 236 -ExpectedGreen 73 -ExpectedBlue 73 -Tolerance 42 -MinPixels 4
-    Invoke-ClientWheel -Handle $windowHandle -Dpi $windowDpi -DesignX 650 -DesignY 670 -Delta -120
-    Start-Sleep -Milliseconds 80
-    $historyDetailsWheelPath = "${basePath}-History-Details-SmoothWheel$extension"
-    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $historyDetailsWheelPath
-    $offset = Get-ClientCaptureOffset -Handle $windowHandle
-    Assert-DesignRectHasDetail -Path $historyDetailsWheelPath -Dpi $windowDpi -Left 116 -Top 628 -Right 1138 -Bottom 716 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 5
+    $captures += Assert-HistoryDetailsScroll -Handle $windowHandle -Dpi $windowDpi -FixtureArchive $smokeArchive -FixtureRoot $smokeRoot -SourcePath $smokeInput -OutputRoot $extractOutput -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
     Invoke-ClientDrag -Handle $windowHandle -Dpi $windowDpi -StartX 430 -StartY 205 -EndX 468 -EndY 205
     Start-Sleep -Milliseconds 180
     $historyResizePath = "${basePath}-History-AfterColumnResize$extension"
