@@ -204,6 +204,7 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         fit_window_to_work_area();
         return 0;
     case WM_DPICHANGED: {
+        cancel_column_resize_for_geometry_change();
         back_buffer_.reset();
         dpi_ = HIWORD(wparam);
         rebuild_fonts();
@@ -215,6 +216,7 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         paint();
         return 0;
     case WM_SIZE:
+        cancel_column_resize_for_geometry_change();
         if (wparam == SIZE_MINIMIZED) {
             window_was_minimized_ = true;
             repaint_queued_ = false;

@@ -931,6 +931,14 @@ manufacture a clean scan. Individual authorizations belong in review records.
   outside that state lock. Hover qualification must move the actual Windows
   pointer, observe rendered results and restore its original position; synthetic
   mouse messages alone do not establish native hover/leave tracking.
+- Keyboard and pointer smoke helpers must use bounded native acknowledgements
+  against the owned window on another thread. Attempt release after a rejected
+  press; retain both the primary error and any cleanup failure, including when
+  warning preferences stop execution. Fault-controlled transport tests supplement
+  actual UI interaction and cannot establish product coverage on their own.
+  Modal-opening clicks require checked queue admission and a separate bounded
+  oracle for the owned dialog, its dismissal and restored owner; waiting for the
+  launching handler to finish before operating its dialog deadlocks the controller.
 - Tab transitions and toggle changes may use short non-blocking animations, but
   they must run on bounded timers, never block archive work, never grow memory
   usage, and remain visually stable when repaint cadence exceeds 200 Hz.

@@ -26,11 +26,11 @@ from tools.native_coverage_report import normalize_report, read_report, source_p
 
 
 class CoverageTests(unittest.TestCase):
-    # Purpose: Prevent asynchronous mouse injection from falsely passing an instrumented GUI scenario.
+    # Purpose: Reject unbounded keyboard waits and unacknowledged pointer input in an instrumented GUI scenario.
     # Inputs: Unmodified PowerShell helper definitions and an isolated native-transport fault fixture.
     # Outputs: Requires ordered bounded dispatch, DPI arguments, rejected acknowledgements and release cleanup.
     @unittest.skipUnless(os.name == "nt", "The GUI input helpers use Windows PowerShell and Win32")
-    def test_gui_mouse_delivery_acknowledgement(self):
+    def test_gui_input_delivery_acknowledgement(self):
         result = subprocess.run(
             [
                 "powershell.exe",

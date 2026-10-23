@@ -29,6 +29,7 @@ struct QueueColumnLayout {
     RECT type{};
     RECT path{};
     std::array<RECT, 3> resize_grips{};
+    std::array<int, 4> physical_widths{};
 };
 
 struct HistoryColumnLayout {
@@ -38,6 +39,7 @@ struct HistoryColumnLayout {
     RECT archive_path{};
     RECT status{};
     std::array<RECT, 4> resize_grips{};
+    std::array<int, 5> physical_widths{};
 };
 
 struct ExtractJobRequest {

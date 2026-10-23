@@ -66,7 +66,7 @@ bool MainWindow::handle_queue_click(const RECT& content, int x, int y) {
         const auto columns = queue_column_layout(columns_table, header_row);
         for (int separator = 0; separator < static_cast<int>(columns.resize_grips.size()); ++separator) {
             if (contains_point(columns.resize_grips[static_cast<std::size_t>(separator)], x, y)) {
-                begin_queue_column_resize(separator, x);
+                begin_queue_column_resize(separator, x, columns.physical_widths);
                 return true;
             }
         }
@@ -299,7 +299,7 @@ bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
         const auto columns = history_column_layout(columns_table, header_row);
         for (int separator = 0; separator < static_cast<int>(columns.resize_grips.size()); ++separator) {
             if (contains_point(columns.resize_grips[static_cast<std::size_t>(separator)], x, y)) {
-                begin_history_column_resize(separator, x);
+                begin_history_column_resize(separator, x, columns.physical_widths);
                 return true;
             }
         }

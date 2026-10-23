@@ -1,4 +1,5 @@
 #include "app/main_window_impl.hpp"
+#include "app/table_columns.hpp"
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -301,12 +302,12 @@ bool MainWindow::remove_selected_queue_items() {
 }
 
 // Purpose: Start resizing adjacent queue data columns.
-// Inputs: `separator` is the 0-2 data-column boundary and `x` is the initial mouse coordinate.
-// Outputs: Stores resize baseline state.
-void MainWindow::begin_queue_column_resize(int separator, int x) {
+// Inputs: `separator` selects adjacent columns; x is a physical mouse coordinate and physical_widths is fitted
+// geometry. Outputs: Copies fitted physical_widths for later pointer displacement; the caller retains its layout.
+void MainWindow::begin_queue_column_resize(int separator, int x, const std::array<int, 4>& physical_widths) {
     queue_column_resize_separator_ = std::clamp(separator, 0, 2);
     queue_column_resize_start_x_ = x;
-    queue_column_resize_start_ = queue_column_widths_;
+    queue_column_resize_start_ = physical_widths;
     SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
 }
 
@@ -317,16 +318,10 @@ void MainWindow::update_queue_column_resize(int x) {
     if (queue_column_resize_separator_ < 0) {
         return;
     }
-    constexpr std::array<int, 4> minimums{90, 70, 70, 120};
-    const int left_index = queue_column_resize_separator_;
-    const int right_index = left_index + 1;
-    const int delta =
-        std::lround(static_cast<double>(x - queue_column_resize_start_x_) * 96.0 / static_cast<double>(dpi_));
-    const int pair_total = queue_column_resize_start_[left_index] + queue_column_resize_start_[right_index];
-    const int left = std::clamp(queue_column_resize_start_[left_index] + delta, minimums[left_index],
-                                pair_total - minimums[right_index]);
-    queue_column_widths_[left_index] = left;
-    queue_column_widths_[right_index] = pair_total - left;
+    const auto displacement = static_cast<std::int64_t>(x) - queue_column_resize_start_x_;
+    queue_column_widths_ =
+        resize_table_columns(queue_column_resize_start_, kQueueColumnMinimums,
+                             static_cast<std::size_t>(queue_column_resize_separator_), displacement, dpi_);
     request_repaint();
 }
 
@@ -342,12 +337,12 @@ void MainWindow::end_queue_column_resize() {
 }
 
 // Purpose: Start resizing adjacent History data columns.
-// Inputs: `separator` is the 0-2 data-column boundary and `x` is the initial mouse coordinate.
-// Outputs: Stores resize baseline state.
-void MainWindow::begin_history_column_resize(int separator, int x) {
+// Inputs: `separator` selects adjacent columns; x is a physical mouse coordinate and physical_widths is fitted
+// geometry. Outputs: Copies fitted physical_widths for later pointer displacement; the caller retains its layout.
+void MainWindow::begin_history_column_resize(int separator, int x, const std::array<int, 5>& physical_widths) {
     history_column_resize_separator_ = std::clamp(separator, 0, 3);
     history_column_resize_start_x_ = x;
-    history_column_resize_start_ = history_column_widths_;
+    history_column_resize_start_ = physical_widths;
     SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
 }
 
@@ -358,17 +353,24 @@ void MainWindow::update_history_column_resize(int x) {
     if (history_column_resize_separator_ < 0) {
         return;
     }
-    constexpr std::array<int, 5> minimums{82, 78, 140, 160, 74};
-    const int left_index = history_column_resize_separator_;
-    const int right_index = left_index + 1;
-    const int delta =
-        std::lround(static_cast<double>(x - history_column_resize_start_x_) * 96.0 / static_cast<double>(dpi_));
-    const int pair_total = history_column_resize_start_[left_index] + history_column_resize_start_[right_index];
-    const int left = std::clamp(history_column_resize_start_[left_index] + delta, minimums[left_index],
-                                pair_total - minimums[right_index]);
-    history_column_widths_[left_index] = left;
-    history_column_widths_[right_index] = pair_total - left;
+    const auto displacement = static_cast<std::int64_t>(x) - history_column_resize_start_x_;
+    history_column_widths_ =
+        resize_table_columns(history_column_resize_start_, kHistoryColumnMinimums,
+                             static_cast<std::size_t>(history_column_resize_separator_), displacement, dpi_);
     request_repaint();
+}
+
+// Purpose: Cancel column capture before replacing the physical viewport or DPI mapping.
+// Inputs: Current GUI-thread drag state and HWND; other operations retain their normal ownership.
+// Outputs: Releases owned capture and clears pointer state only when a column drag is active.
+void MainWindow::cancel_column_resize_for_geometry_change() {
+    if (queue_column_resize_separator_ < 0 && history_column_resize_separator_ < 0) {
+        return;
+    }
+    if (GetCapture() == hwnd_) {
+        ReleaseCapture();
+    }
+    (void)handle_capture_changed();
 }
 
 // Purpose: Test whether a History row passes the active operation and status filters.

@@ -111,6 +111,97 @@ function Assert-KeyboardQueueSelection {
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
 }
 
+# Purpose: Verify Queue divider tracking through actual normal and compact painted geometry.
+# Inputs: Owned window/DPI and capture prefix; one admitted Queue row remains available to later smoke consumers.
+# Outputs: Requires exact bidirectional physical movement, restores viewport/pointer, and returns to Extract.
+function Assert-GuiQueueColumnResize {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$BasePath, [string]$Extension)
+
+    Invoke-GuiPointerScope -ArgumentList @($Handle, $Dpi, $BasePath, $Extension) -Action {
+        param([IntPtr]$Handle, [int]$Dpi, [string]$BasePath, [string]$Extension)
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+        foreach ($width in @(1200, 960)) {
+            $height = if ($width -eq 1200) { 760 } else { 600 }
+            $old = Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width $width -Height $height
+            try {
+                $offset = Get-ClientCaptureOffset -Handle $Handle
+                $left = if ($width -eq 1200) { 420 } else { 310 }
+                $right = if ($width -eq 1200) { 510 } else { 410 }
+                $prefix = "$BasePath-Queue-Column-$width"
+                $before = "$prefix-Before$Extension"
+                Save-FlitzZipScreenshot -Handle $Handle -Path $before -ExpectedDesignWidth $width -ExpectedDesignHeight $height
+                $start = Get-GuiColumnSeparator -Path $before -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left $left -Right $right -Top 136
+                Invoke-ClientMove -Handle $Handle -Dpi $Dpi -DesignX ([int][Math]::Round($start)) -DesignY 145
+                Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX ([int][Math]::Round($start)) -StartY 145 -EndX ([int][Math]::Round($start) - 40) -EndY 145
+                $after = "$prefix-Moved$Extension"
+                Save-FlitzZipScreenshot -Handle $Handle -Path $after -ExpectedDesignWidth $width -ExpectedDesignHeight $height
+                $moved = Get-GuiColumnSeparator -Path $after -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left ([int][Math]::Round($start) - 65) -Right ([int][Math]::Round($start) + 5) -Top 136
+                if ([Math]::Abs($moved - $start + 40) -gt 1) { throw 'Queue divider did not follow the physical pointer distance.' }
+                Invoke-ClientMove -Handle $Handle -Dpi $Dpi -DesignX ([int][Math]::Round($moved)) -DesignY 145
+                Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX ([int][Math]::Round($moved)) -StartY 145 -EndX ([int][Math]::Round($start)) -EndY 145
+                $restored = "$prefix-Restored$Extension"
+                Save-FlitzZipScreenshot -Handle $Handle -Path $restored -ExpectedDesignWidth $width -ExpectedDesignHeight $height
+                $end = Get-GuiColumnSeparator -Path $restored -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left $left -Right $right -Top 136
+                if ([Math]::Abs($end - $start) -gt 1) { throw 'Queue reverse drag did not restore its original painted boundary.' }
+            } finally { Restore-SmokeWindowSize -Handle $Handle -Snapshot $old }
+        }
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 2 -Synchronous
+    }
+}
+
+# Purpose: Reject stale drag geometry after a real captured gesture changes the viewport.
+# Inputs: Owned window/DPI and capture prefix; trusted helpers keep press/release ownership bounded.
+# Outputs: Proves active movement, cancellation of stale input and successful resizing after cancellation.
+function Assert-GuiResizeCaptureCancellation {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$BasePath, [string]$Extension)
+
+    Invoke-GuiPointerScope -ArgumentList @($Handle, $Dpi, $BasePath, $Extension) -Action {
+        param([IntPtr]$Handle, [int]$Dpi, [string]$BasePath, [string]$Extension)
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+        $old = Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width 1200 -Height 760
+        try {
+            $prefix = "$BasePath-Queue-Capture"
+            $offset = Get-ClientCaptureOffset -Handle $Handle
+            $before = "$prefix-Before$Extension"
+            Save-FlitzZipScreenshot -Handle $Handle -Path $before
+            $start = Get-GuiColumnSeparator -Path $before -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 420 -Right 510 -Top 136
+            $observation = @{}
+            Invoke-ClientMove -Handle $Handle -Dpi $Dpi -DesignX ([int][Math]::Round($start)) -DesignY 145
+            Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX ([int][Math]::Round($start)) -StartY 145 -EndX ([int][Math]::Round($start) + 80) -EndY 145 -DuringDrag {
+                param([IntPtr]$Handle, [int]$Dpi, [string]$Prefix, [string]$Extension, [double]$Start, [hashtable]$Observation)
+                Invoke-ClientMove -Handle $Handle -Dpi $Dpi -DesignX ([int][Math]::Round($Start) + 10) -DesignY 145
+                $offset = Get-ClientCaptureOffset -Handle $Handle
+                $active = "$Prefix-Active$Extension"
+                Save-FlitzZipScreenshot -Handle $Handle -Path $active
+                $moved = Get-GuiColumnSeparator -Path $active -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 420 -Right 520 -Top 136
+                if ([Math]::Abs($moved - $Start - 10) -gt 1) { throw 'The cancellation control never established an active column drag.' }
+                [void](Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width 960 -Height 600)
+                $resized = "$Prefix-Viewport$Extension"
+                Save-FlitzZipScreenshot -Handle $Handle -Path $resized -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+                $offset = Get-ClientCaptureOffset -Handle $Handle
+                $Observation.Boundary = Get-GuiColumnSeparator -Path $resized -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 310 -Right 420 -Top 136
+            } -DuringDragArgumentList @($Handle, $Dpi, $prefix, $Extension, $start, $observation)
+            $released = "$prefix-Released$Extension"
+            Save-FlitzZipScreenshot -Handle $Handle -Path $released -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+            $offset = Get-ClientCaptureOffset -Handle $Handle
+            $end = Get-GuiColumnSeparator -Path $released -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 310 -Right 420 -Top 136
+            if (-not $observation.ContainsKey('Boundary') -or [Math]::Abs($end - $observation.Boundary) -gt 1) {
+                throw 'A stale captured move resized columns after the viewport changed.'
+            }
+            [void](Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width 1200 -Height 760)
+            $restoring = [int][Math]::Round($start) + 10
+            Invoke-ClientMove -Handle $Handle -Dpi $Dpi -DesignX $restoring -DesignY 145
+            Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX $restoring -StartY 145 -EndX ([int][Math]::Round($start)) -EndY 145
+            $reused = "$prefix-Reused$Extension"
+            Save-FlitzZipScreenshot -Handle $Handle -Path $reused
+            $offset = Get-ClientCaptureOffset -Handle $Handle
+            $end = Get-GuiColumnSeparator -Path $reused -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y -Left 420 -Right 510 -Top 136
+            if ([Math]::Abs($end - $start) -gt 1) { throw 'Capture cancellation prevented a subsequent valid resize.' }
+        } finally { Restore-SmokeWindowSize -Handle $Handle -Snapshot $old }
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 2 -Synchronous
+    }
+}
+
 # Purpose: Verify System, Queue, and History behavior contracts from GUI source.
 # Inputs: `SourceText` is the joined GUI source text.
 # Outputs: Throws when a visual or behavior regression boundary is missing.
@@ -1874,6 +1965,8 @@ try {
     $captures += Assert-HistoryDetailsScroll -Handle $windowHandle -Dpi $windowDpi -FixtureArchive $smokeArchive -FixtureRoot $smokeRoot -SourcePath $smokeInput -OutputRoot $extractOutput -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
     $captures += Assert-GuiHistoryColumnResize -Handle $windowHandle -Dpi $windowDpi -BasePath $basePath -Extension $extension
     $captures += Assert-GuiTextTooltip -Handle $windowHandle -Dpi $windowDpi -FixtureArchive $smokeArchive -FixtureRoot $smokeRoot -BasePath $basePath -Extension $extension
+    $captures += Assert-GuiQueueColumnResize -Handle $windowHandle -Dpi $windowDpi -BasePath $basePath -Extension $extension
+    $captures += Assert-GuiResizeCaptureCancellation -Handle $windowHandle -Dpi $windowDpi -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1100 -DesignY 90
     Start-Sleep -Milliseconds 250
 
