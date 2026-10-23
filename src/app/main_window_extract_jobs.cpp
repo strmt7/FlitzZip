@@ -160,7 +160,7 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
 // Purpose: Start a background extraction job from the current GUI queue.
 // Inputs: None; captures archive, destination, publication, security, and GPU options from synchronized UI state.
 // Outputs: Launches a worker job, updates progress/history/status, blocks unclean pre-scans, or requests repaint when
-// no archive is selected.
+// no archive is selected. Native default-folder discovery runs after unlocking and before any job starts.
 void MainWindow::start_extract() {
     ExtractJobRequest request;
     {
@@ -175,7 +175,7 @@ void MainWindow::start_extract() {
         request.validate_before_publish = state_.validate_before_publish;
         request.open_destination =
             applied_settings_.open_destination_after_operation || state_.open_destination_after_extract;
-        request.output = extraction_output_path_for(state_);
+        request.output = state_.destination_directory;
     }
     if (request.archives.empty()) {
         {
@@ -184,6 +184,9 @@ void MainWindow::start_extract() {
         }
         request_repaint();
         return;
+    }
+    if (request.output.empty()) {
+        request.output = default_extraction_output_directory();
     }
     if (!request.overwrite && extraction_destination_needs_confirmation(request.output)) {
         show_extract_overwrite_prompt(std::move(request));

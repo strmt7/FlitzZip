@@ -49,49 +49,48 @@ LRESULT MainWindow::handle_mouse_move(LPARAM lparam) {
     if (queue_column_resize_separator_ >= 0 || history_column_resize_separator_ >= 0) {
         SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
     } else {
-        UiState state;
-        {
-            std::lock_guard lock(mutex_);
-            state = state_;
-        }
-        if (state.extract_overwrite_prompt_visible || state.license_notices_dialog_visible) {
-            SetCursor(LoadCursor(nullptr, IDC_ARROW));
-            update_text_tooltip_tracking();
-            request_repaint();
-            return 0;
-        }
-        bool over_resize_grip = false;
-        if (state.page == Page::Queue) {
-            const auto layout = queue_layout(content_rect());
-            const int header_bottom = layout.table.top + scale(kQueueHeaderHeight);
-            if (mouse_position_.y >= layout.table.top && mouse_position_.y < header_bottom) {
-                const RECT header_row{layout.table.left, layout.table.top, layout.table.right, header_bottom};
-                const auto columns =
-                    queue_column_layout(queue_columns_table(layout.table, state.queued_paths.size()), header_row);
-                over_resize_grip = std::ranges::any_of(columns.resize_grips, [this](const RECT& grip) {
-                    return contains_point(grip, mouse_position_.x, mouse_position_.y);
-                });
-            }
-        }
-        if (state.page == Page::History) {
-            const auto layout = history_layout(content_rect());
-            const RECT table = layout.table;
-            const int header_bottom = table.top + scale(kQueueHeaderHeight);
-            if (mouse_position_.y >= table.top && mouse_position_.y < header_bottom) {
-                const auto visible = filtered_history_indices(state);
-                const RECT columns_table = history_columns_table(table, visible.size());
-                const RECT header_row{table.left, table.top, table.right, header_bottom};
-                const auto columns = history_column_layout(columns_table, header_row);
-                over_resize_grip = std::ranges::any_of(columns.resize_grips, [this](const RECT& grip) {
-                    return contains_point(grip, mouse_position_.x, mouse_position_.y);
-                });
-            }
-        }
+        const bool over_resize_grip = pointer_over_column_resize_grip();
         SetCursor(LoadCursor(nullptr, over_resize_grip ? IDC_SIZEWE : IDC_ARROW));
     }
     update_text_tooltip_tracking();
     request_repaint();
     return 0;
+}
+
+// Purpose: Resolve the column resize cursor without unrelated state copies or native window/GDI calls under lock.
+// Inputs: Current pointer position, cached DPI/layout and mutex-protected queue/history state.
+// Outputs: Returns true for an eligible Queue/History header grip; native cursor updates remain with the caller.
+bool MainWindow::pointer_over_column_resize_grip() {
+    const RECT content = content_rect();
+    std::lock_guard lock(mutex_);
+    if (state_.extract_overwrite_prompt_visible || state_.license_notices_dialog_visible) {
+        return false;
+    }
+    if (state_.page == Page::Queue) {
+        const auto layout = queue_layout(content);
+        const int header_bottom = layout.table.top + scale(kQueueHeaderHeight);
+        if (mouse_position_.y >= layout.table.top && mouse_position_.y < header_bottom) {
+            const RECT header_row{layout.table.left, layout.table.top, layout.table.right, header_bottom};
+            const auto columns =
+                queue_column_layout(queue_columns_table(layout.table, state_.queued_paths.size()), header_row);
+            return std::ranges::any_of(columns.resize_grips, [this](const RECT& grip) {
+                return contains_point(grip, mouse_position_.x, mouse_position_.y);
+            });
+        }
+    } else if (state_.page == Page::History) {
+        const RECT table = history_table_rect(content);
+        const int header_bottom = table.top + scale(kQueueHeaderHeight);
+        if (mouse_position_.y >= table.top && mouse_position_.y < header_bottom) {
+            const auto visible = filtered_history_indices(state_);
+            const RECT columns_table = history_columns_table(table, visible.size());
+            const RECT header_row{table.left, table.top, table.right, header_bottom};
+            const auto columns = history_column_layout(columns_table, header_row);
+            return std::ranges::any_of(columns.resize_grips, [this](const RECT& grip) {
+                return contains_point(grip, mouse_position_.x, mouse_position_.y);
+            });
+        }
+    }
+    return false;
 }
 
 // Purpose: Clear pointer hover state after the cursor leaves the client area.
@@ -148,40 +147,62 @@ bool MainWindow::text_tooltip_candidate_at_mouse(RECT& cell, std::wstring& text)
     if (!mouse_inside_client_ || primary_mouse_down_) {
         return false;
     }
-    UiState state;
+    const RECT content = content_rect();
+    std::optional<TextTooltipSource> source;
     {
         std::lock_guard lock(mutex_);
-        state = state_;
+        if (state_.extract_overwrite_prompt_visible || state_.license_notices_dialog_visible) {
+            return false;
+        }
+        source = queue_text_tooltip_source_at_mouse(state_, content);
+        if (!source) {
+            source = history_text_tooltip_source_at_mouse(state_, content);
+        }
+        if (!source) {
+            source = field_text_tooltip_source_at_mouse(state_, content);
+        }
     }
-    if (state.extract_overwrite_prompt_visible || state.license_notices_dialog_visible) {
+    if (!source) {
         return false;
     }
-    return queue_text_tooltip_candidate_at_mouse(state, cell, text) ||
-           history_text_tooltip_candidate_at_mouse(state, cell, text) ||
-           field_text_tooltip_candidate_at_mouse(state, cell, text);
+    cell = source->cell;
+    // Native folder lookup and GDI measurement can run only after the borrowed state has been released.
+    switch (source->kind) {
+    case TextTooltipSource::Kind::Literal:
+        text = std::move(source->text);
+        break;
+    case TextTooltipSource::Kind::CompressionDestination:
+        text = current_user_downloads_directory().wstring();
+        break;
+    case TextTooltipSource::Kind::ExtractionDestination:
+        text = default_extraction_output_directory().wstring();
+        break;
+    }
+    return text_overflows_cell(text, cell, tiny_font_);
 }
 
-// Purpose: Return the ellipsized Queue text under the current mouse, if any.
-// Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
-// Outputs: Returns true only for truncated Queue Name or Path cells.
-bool MainWindow::queue_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text) {
+// Purpose: Own only the hovered Queue value before releasing its borrowed state.
+// Inputs: Mutex-protected state and physical-pixel content bounds; layout uses cached UI-thread geometry.
+// Outputs: An owned text/cell projection or no candidate, with no GDI, shell calls or whole-state copy.
+std::optional<MainWindow::TextTooltipSource> MainWindow::queue_text_tooltip_source_at_mouse(const UiState& state,
+                                                                                            const RECT& content) {
     if (state.page != Page::Queue || state.queued_paths.empty()) {
-        return false;
+        return std::nullopt;
     }
-    const auto layout = queue_layout(content_rect());
+    const auto layout = queue_layout(content);
     const int header_bottom = layout.table.top + scale(kQueueHeaderHeight);
     const int row_height = scale(kQueueRowHeight);
     const RECT columns_table = queue_columns_table(layout.table, state.queued_paths.size());
     if (row_height <= 0 || mouse_position_.y < header_bottom || mouse_position_.y >= layout.table.bottom ||
         mouse_position_.x >= columns_table.right) {
-        return false;
+        return std::nullopt;
     }
     const int first_visible_row =
         std::clamp(queue_scroll_first_row_, 0, queue_max_scroll_offset(layout.table, state.queued_paths.size()));
     const int visible_index = (mouse_position_.y - header_bottom) / row_height;
     const int row_index = first_visible_row + visible_index;
     if (row_index < 0 || row_index >= static_cast<int>(state.queued_paths.size())) {
-        return false;
+        return std::nullopt;
     }
     const RECT row{columns_table.left, header_bottom + (visible_index * row_height), columns_table.right,
                    header_bottom + ((visible_index + 1) * row_height)};
@@ -191,45 +212,38 @@ bool MainWindow::queue_text_tooltip_candidate_at_mouse(const UiState& state, REC
     const RECT path_cell = inset_rect(columns.path, scale(8), 0);
     if (contains_point(name_cell, mouse_position_.x, mouse_position_.y)) {
         auto value = path.filename().wstring();
-        if (text_overflows_cell(value, name_cell, tiny_font_)) {
-            cell = name_cell;
-            text = std::move(value);
-            return true;
-        }
+        return TextTooltipSource{name_cell, std::move(value)};
     }
     if (contains_point(path_cell, mouse_position_.x, mouse_position_.y)) {
         auto value = path.wstring();
-        if (text_overflows_cell(value, path_cell, tiny_font_)) {
-            cell = path_cell;
-            text = std::move(value);
-            return true;
-        }
+        return TextTooltipSource{path_cell, std::move(value)};
     }
-    return false;
+    return std::nullopt;
 }
 
-// Purpose: Return the ellipsized History text under the current mouse, if any.
-// Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
-// Outputs: Returns true only for truncated Archive name or Archive path cells.
-bool MainWindow::history_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text) {
+// Purpose: Own only the hovered History value before releasing its borrowed state.
+// Inputs: Mutex-protected state and physical-pixel content bounds; layout uses cached UI-thread geometry.
+// Outputs: An owned text/cell projection or no candidate, with no GDI, shell calls or whole-history copy.
+std::optional<MainWindow::TextTooltipSource> MainWindow::history_text_tooltip_source_at_mouse(const UiState& state,
+                                                                                              const RECT& content) {
     if (state.page != Page::History || state.history.empty()) {
-        return false;
+        return std::nullopt;
     }
-    const RECT table = history_layout(content_rect()).table;
+    const RECT table = history_table_rect(content);
     const int header_bottom = table.top + scale(kQueueHeaderHeight);
     const int row_height = scale(kQueueRowHeight);
     const auto visible = filtered_history_indices(state);
     const RECT columns_table = history_columns_table(table, visible.size());
     if (row_height <= 0 || mouse_position_.y < header_bottom || mouse_position_.y >= table.bottom ||
         mouse_position_.x >= columns_table.right) {
-        return false;
+        return std::nullopt;
     }
     const int first_visible_row =
         std::clamp(history_scroll_first_row_, 0, history_max_scroll_offset(table, visible.size()));
     const int visible_index = (mouse_position_.y - header_bottom) / row_height;
     const int filtered_index = first_visible_row + visible_index;
     if (filtered_index < 0 || filtered_index >= static_cast<int>(visible.size())) {
-        return false;
+        return std::nullopt;
     }
     const RECT row{columns_table.left, header_bottom + (visible_index * row_height), columns_table.right,
                    header_bottom + ((visible_index + 1) * row_height)};
@@ -239,56 +253,50 @@ bool MainWindow::history_text_tooltip_candidate_at_mouse(const UiState& state, R
     const RECT path_cell = inset_rect(columns.archive_path, scale(8), 0);
     if (contains_point(name_cell, mouse_position_.x, mouse_position_.y)) {
         auto value = widen(entry.archive_name);
-        if (text_overflows_cell(value, name_cell, tiny_font_)) {
-            cell = name_cell;
-            text = std::move(value);
-            return true;
-        }
+        return TextTooltipSource{name_cell, std::move(value)};
     }
     if (contains_point(path_cell, mouse_position_.x, mouse_position_.y)) {
         auto value = widen(entry.archive_path);
-        if (text_overflows_cell(value, path_cell, tiny_font_)) {
-            cell = path_cell;
-            text = std::move(value);
-            return true;
-        }
+        return TextTooltipSource{path_cell, std::move(value)};
     }
-    return false;
+    return std::nullopt;
 }
 
-// Purpose: Return the ellipsized Compress/Extract field text under the current mouse, if any.
-// Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
-// Outputs: Returns true only for truncated Archive/Destination fields explicitly allowed by the UI contract.
-bool MainWindow::field_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text) {
-    const RECT content = content_rect();
+// Purpose: Project only the hovered form value without native folder lookup or text measurement.
+// Inputs: Mutex-protected state, cached layout and physical-pixel content bounds.
+// Outputs: Owned text/cell or an explicit default-directory selection; no unrelated field evaluation.
+std::optional<MainWindow::TextTooltipSource> MainWindow::field_text_tooltip_source_at_mouse(const UiState& state,
+                                                                                            const RECT& content) {
+    RECT archive_field{};
+    RECT destination_field{};
     if (state.page == Page::Compress) {
         const auto layout = compress_layout(content);
-        return tooltip_candidate_for_field(layout.archive_name, compression_output_filename_for(state), cell, text) ||
-               tooltip_candidate_for_field(layout.destination, destination_directory_or_default(state).wstring(), cell,
-                                           text);
-    }
-    if (state.page == Page::Extract) {
+        archive_field = layout.archive_name;
+        destination_field = layout.destination;
+    } else if (state.page == Page::Extract) {
         const auto layout = extract_layout(content);
-        const auto archive = selected_extract_archive_text(selected_extract_archive_paths(state));
-        return tooltip_candidate_for_field(layout.archive, archive, cell, text) ||
-               tooltip_candidate_for_field(layout.destination, extraction_output_path_for(state).wstring(), cell, text);
+        archive_field = layout.archive;
+        destination_field = layout.destination;
+    } else {
+        return std::nullopt;
     }
-    return false;
-}
-
-// Purpose: Check one form field value for delayed tooltip eligibility.
-// Inputs: `field` is the full labeled field rectangle, `value` is the visible text, and `cell`/`text` receive data.
-// Outputs: Returns true only when the mouse is over a truncated value cell.
-bool MainWindow::tooltip_candidate_for_field(const RECT& field, const std::wstring& value, RECT& cell,
-                                             std::wstring& text) const {
-    const RECT value_cell = field_value_cell(field, false);
-    if (!contains_point(value_cell, mouse_position_.x, mouse_position_.y) ||
-        !text_overflows_cell(value, value_cell, tiny_font_)) {
-        return false;
+    const RECT archive_cell = field_value_cell(archive_field, false);
+    if (contains_point(archive_cell, mouse_position_.x, mouse_position_.y)) {
+        auto value = state.page == Page::Compress
+                         ? compression_output_filename_for(state)
+                         : selected_extract_archive_text(selected_extract_archive_paths(state));
+        return TextTooltipSource{archive_cell, std::move(value)};
     }
-    cell = value_cell;
-    text = value;
-    return true;
+    const RECT destination_cell = field_value_cell(destination_field, false);
+    if (!contains_point(destination_cell, mouse_position_.x, mouse_position_.y)) {
+        return std::nullopt;
+    }
+    if (!state.destination_directory.empty()) {
+        return TextTooltipSource{destination_cell, state.destination_directory.wstring()};
+    }
+    const auto kind = state.page == Page::Compress ? TextTooltipSource::Kind::CompressionDestination
+                                                   : TextTooltipSource::Kind::ExtractionDestination;
+    return TextTooltipSource{destination_cell, {}, kind};
 }
 
 // Purpose: Resolve the drawn value area inside a labeled field.

@@ -3,7 +3,8 @@ param(
     [string]$Configuration = "Release",
     [string]$ScreenshotPath = "",
     [switch]$CompactOnly,
-    [switch]$OperationSummaryOnly
+    [switch]$OperationSummaryOnly,
+    [switch]$HoverOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -378,6 +379,7 @@ foreach ($requiredSmokeExercise in @('About-Licenses-SmoothWheel', 'History-Deta
 
 Import-Module (Join-Path $PSScriptRoot "FlitzZip.GuiSmoke.Ui.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "FlitzZip.GuiSmoke.Pickers.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "FlitzZip.GuiSmoke.Hover.psm1") -Force
 
 # Purpose: Check sparse-detail detection independently of any product window or host font/DPI.
 # Inputs: None; creates one owned temporary image.
@@ -1503,7 +1505,7 @@ $process = $null
 $windowHandle = [IntPtr]::Zero
 try {
     $nativePickerCaptures = @()
-    if (-not $CompactOnly -and -not $OperationSummaryOnly) {
+    if (-not $CompactOnly -and -not $OperationSummaryOnly -and -not $HoverOnly) {
         Assert-PublicationSettingsMigration -Exe $exe -SettingsPath $smokeSettingsFile
         $nativeBasePath = Join-Path (Split-Path -Parent $ScreenshotPath) ([IO.Path]::GetFileNameWithoutExtension($ScreenshotPath))
         $nativeExtension = [IO.Path]::GetExtension($ScreenshotPath)
@@ -1548,6 +1550,12 @@ try {
 
     if ($CompactOnly) {
         $captures += Assert-CompactFormLayout -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
+        $captures | Format-Table -AutoSize
+        return
+    }
+
+    if ($HoverOnly) {
+        $captures += Assert-GuiTextTooltip -Handle $windowHandle -Dpi $windowDpi -FixtureArchive $smokeArchive -FixtureRoot $smokeRoot -BasePath $basePath -Extension $extension -SkipHistory
         $captures | Format-Table -AutoSize
         return
     }
@@ -1864,12 +1872,8 @@ try {
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasColor -Path $historyFailurePath -Dpi $windowDpi -Left 700 -Top 210 -Right 1138 -Bottom 470 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 236 -ExpectedGreen 73 -ExpectedBlue 73 -Tolerance 42 -MinPixels 4
     $captures += Assert-HistoryDetailsScroll -Handle $windowHandle -Dpi $windowDpi -FixtureArchive $smokeArchive -FixtureRoot $smokeRoot -SourcePath $smokeInput -OutputRoot $extractOutput -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
-    Invoke-ClientDrag -Handle $windowHandle -Dpi $windowDpi -StartX 430 -StartY 205 -EndX 468 -EndY 205
-    Start-Sleep -Milliseconds 180
-    $historyResizePath = "${basePath}-History-AfterColumnResize$extension"
-    $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $historyResizePath
-    $offset = Get-ClientCaptureOffset -Handle $windowHandle
-    Assert-DesignRectHasDetail -Path $historyResizePath -Dpi $windowDpi -Left 116 -Top 200 -Right 1138 -Bottom 260 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 5
+    $captures += Assert-GuiHistoryColumnResize -Handle $windowHandle -Dpi $windowDpi -BasePath $basePath -Extension $extension
+    $captures += Assert-GuiTextTooltip -Handle $windowHandle -Dpi $windowDpi -FixtureArchive $smokeArchive -FixtureRoot $smokeRoot -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1100 -DesignY 90
     Start-Sleep -Milliseconds 250
 

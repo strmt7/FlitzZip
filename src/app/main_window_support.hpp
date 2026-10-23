@@ -128,6 +128,11 @@ bool smoke_close_requested();
 // Outputs: Returns a Downloads-like known folder path; never falls back to the process current directory.
 std::filesystem::path current_user_downloads_directory();
 
+// Purpose: Resolve the default extraction directory through the same known-folder policy as the visible form.
+// Inputs: None; performs native folder discovery and must be called without the UI state mutex held.
+// Outputs: Returns the default extraction path or propagates folder-resolution failure.
+std::filesystem::path default_extraction_output_directory();
+
 // Purpose: Convert a shell HDROP payload into filesystem paths.
 // Inputs: drop is a valid HDROP handle owned by the caller.
 // Outputs: Returns every nonempty path advertised by the shell payload.

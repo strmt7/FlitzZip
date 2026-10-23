@@ -41,6 +41,16 @@ public static class FlitzZipNativeUi {
     [DllImport("user32.dll")]
     public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
 
+    // Purpose: Read the desktop pointer for reversible GUI testing. Inputs: Writable point.
+    // Outputs: Current screen coordinates or false on unavailable input desktop.
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetCursorPos(out POINT point);
+
+    // Purpose: Move the actual native pointer during an owned-window hover test. Inputs: Screen coordinates.
+    // Outputs: Moves the pointer or returns false; callers restore the original point when testing finishes.
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetCursorPos(int x, int y);
+
     [DllImport("user32.dll")]
     public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, int flags);
 
@@ -233,6 +243,27 @@ function Send-ClientMouseMessage {
     if ($sent -eq [IntPtr]::Zero) {
         throw "GUI mouse input failed or timed out; Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())."
     }
+}
+
+# Purpose: Move the test pointer with acknowledged native delivery and no pressed button.
+# Inputs: Owned Handle, positive window Dpi and 96-DPI client design coordinates.
+# Outputs: Moves the real pointer, then acknowledges WM_MOUSEMOVE within five seconds; does not click or capture.
+function Invoke-ClientMove {
+    param([IntPtr]$Handle, [int]$Dpi, [int]$DesignX, [int]$DesignY)
+
+    if ($Dpi -le 0) { throw 'Pointer movement requires a positive window DPI.' }
+    [FlitzZipNativeUi+POINT]$point = New-Object FlitzZipNativeUi+POINT
+    $point.X = [int][Math]::Round($DesignX * $Dpi / 96.0)
+    $point.Y = [int][Math]::Round($DesignY * $Dpi / 96.0)
+    [FlitzZipNativeUi+RECT]$client = New-Object FlitzZipNativeUi+RECT
+    if (-not [FlitzZipNativeUi]::GetClientRect($Handle, [ref]$client) -or
+        $point.X -lt 0 -or $point.Y -lt 0 -or $point.X -ge $client.Right -or $point.Y -ge $client.Bottom) {
+        throw 'Pointer movement must stay inside the owned client rectangle.'
+    }
+    $position = ConvertTo-MouseLParam -X $point.X -Y $point.Y
+    if (-not [FlitzZipNativeUi]::ClientToScreen($Handle, [ref]$point)) { throw 'Could not map the owned hover point.' }
+    if (-not [FlitzZipNativeUi]::SetCursorPos($point.X, $point.Y)) { throw 'Could not move the native hover pointer.' }
+    Send-ClientMouseMessage -Handle $Handle -Message 0x0200 -KeyState 0 -Position $position
 }
 
 # Purpose: Click one client-coordinate point in the FlitzZip window.
@@ -791,4 +822,4 @@ function Invoke-DropdownExercise {
 }
 
 
-Export-ModuleMember -Function Assert-DesignRectHasColor, Assert-DesignRectHasDetail, Assert-FixedWindowStyle, Assert-QueueEmptyMessageCentered, Assert-FlitzZipVisibleForCapture, Assert-VisualStructure, ConvertTo-MouseLParam, Get-ClientCaptureOffset, Get-SampledUniqueColorCount, Get-ValidatedScreenWindowCapture, Invoke-ClientClick, Invoke-ClientDrag, Invoke-ClientKey, Invoke-ClientWheel, Invoke-DropdownExercise, Invoke-FileDrop, Invoke-SidebarClick, Request-FlitzZipRedraw, Save-FlitzZipScreenshot, Show-FlitzZipForeground, Test-ColorNear
+Export-ModuleMember -Function Assert-DesignRectHasColor, Assert-DesignRectHasDetail, Assert-FixedWindowStyle, Assert-QueueEmptyMessageCentered, Assert-FlitzZipVisibleForCapture, Assert-VisualStructure, ConvertTo-MouseLParam, Get-ClientCaptureOffset, Get-SampledUniqueColorCount, Get-ValidatedScreenWindowCapture, Invoke-ClientClick, Invoke-ClientDrag, Invoke-ClientKey, Invoke-ClientMove, Invoke-ClientWheel, Invoke-DropdownExercise, Invoke-FileDrop, Invoke-SidebarClick, Request-FlitzZipRedraw, Save-FlitzZipScreenshot, Show-FlitzZipForeground, Test-ColorNear

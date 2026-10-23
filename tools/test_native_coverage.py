@@ -51,6 +51,31 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("GUI mouse delivery contracts passed", result.stdout)
 
+    # Purpose: Reject false visual evidence from flat, short or ambiguous borders and off-content tooltip pixels.
+    # Inputs: Actual observer definitions and independent images at multiple monitor DPIs and client offsets.
+    # Outputs: Requires correct measured geometry, content selection and rejection through a bounded real child.
+    @unittest.skipUnless(os.name == "nt", "GUI paint observers use Windows PowerShell and System.Drawing")
+    def test_gui_hover_observation_boundaries(self):
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(collector.ROOT / "tools/fixtures/gui_hover_observation_contract.ps1"),
+                "-SourcePath",
+                str(collector.ROOT / "tools/FlitzZip.GuiSmoke.Hover.psm1"),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Actual hover paint helpers passed", result.stdout)
+
     # Purpose: Enforce the coverage XML byte boundary on the opened stream with small real files.
     # Inputs: A complete document exactly at a reduced test budget, followed by one excess byte.
     # Outputs: Exact-boundary XML parses; excess input fails without publishing a normalized report.
@@ -696,6 +721,7 @@ class CoverageTests(unittest.TestCase):
                 (True, "tools/gui_smoke.ps1"),
                 (True, "tools/FlitzZip.GuiSmoke.Ui.psm1"),
                 (True, "tools/FlitzZip.GuiSmoke.Pickers.psm1"),
+                (True, "tools/FlitzZip.GuiSmoke.Hover.psm1"),
                 (True, "tools/process_environment.ps1"),
             ):
                 target = self.root / name

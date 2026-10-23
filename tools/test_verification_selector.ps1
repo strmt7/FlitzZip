@@ -280,7 +280,7 @@ $guiHelperPlan = Get-FlitzZipVerificationPlan -ChangedPath @("tools/FlitzZip.Gui
 Assert-Selector $guiHelperPlan.scope.touchesGui "GUI smoke helpers must be classified as GUI changes"
 Assert-Selector (Test-RequiredCommand -Plan $guiHelperPlan -Id "gui-smoke") "GUI smoke helper changes must exercise the GUI"
 Assert-Selector (Test-Workflow -Plan $guiHelperPlan -Name "windows-ci") "GUI smoke helper changes must select Windows CI"
-foreach ($driver in @('tools/gui_smoke.ps1', 'tools/FlitzZip.GuiSmoke.Ui.psm1', 'tools/FlitzZip.GuiSmoke.Pickers.psm1')) {
+foreach ($driver in @('tools/gui_smoke.ps1', 'tools/FlitzZip.GuiSmoke.Ui.psm1', 'tools/FlitzZip.GuiSmoke.Pickers.psm1', 'tools/FlitzZip.GuiSmoke.Hover.psm1')) {
     $driverPlan = Get-FlitzZipVerificationPlan -ChangedPath @($driver)
     foreach ($id in @('scanner-preflight', 'gui-native-receipt', 'gui-smoke')) {
         Assert-Selector (Test-RequiredCommand -Plan $driverPlan -Id $id) "GUI driver retains real qualification: $driver / $id"
@@ -793,7 +793,7 @@ Assert-Selector (($runtimePlan.requiredLocalCommands.id -contains 'package-runti
     ($runtimePlan.requiredLocalCommands.id -notcontains 'unit-tests') -and
     ($runtimePlan.requiredLocalCommands.id -notcontains 'release-build')) 'isolated package runtime policy changes require their own actual contracts without rebuilding the product'
 
-foreach ($inputPath in @('tools/FlitzZip.GuiSmoke.Ui.psm1', 'tools/fixtures/gui_mouse_delivery_contract.ps1')) {
+foreach ($inputPath in @('tools/FlitzZip.GuiSmoke.Ui.psm1', 'tools/FlitzZip.GuiSmoke.Pickers.psm1', 'tools/FlitzZip.GuiSmoke.Hover.psm1', 'tools/fixtures/gui_mouse_delivery_contract.ps1', 'tools/fixtures/gui_hover_observation_contract.ps1')) {
     $deliveryPlan = Get-FlitzZipVerificationPlan -ChangedPath @($inputPath) -Checkpoint intermediate
     Assert-Selector (Test-RequiredCommand -Plan $deliveryPlan -Id 'native-coverage-contracts') 'GUI mouse delivery inputs must select their actual acknowledgement and cleanup regression'
     Assert-Selector (-not (Test-RequiredCommand -Plan $deliveryPlan -Id 'release-build')) 'GUI delivery contracts must not silently compile the product'
