@@ -2,11 +2,12 @@
 
 ## Individual Decision
 
-The decision below describes its original reviewed source checkpoint. The
-surface-provider and failure-boundary tests have since changed this translation
-unit and its implementation context. Its ledger entries are inactive until fresh
-CPU and HIP-host reports establish the current exact source and location; a
-historical dismissal does not admit a reproduced finding.
+Fresh CPU and HIP-host analyses of commit
+`0597068a6407375687e5c364de4b43dec9d3d21e` both report the current condition
+at line 177, columns 37 through 49. The changed surface provider, failure tests,
+registration and caller context were individually re-reviewed before renewing
+the current exact-source ledger entries. Earlier identities remain historical;
+they do not admit a reproduced finding.
 
 ### Alert 8431
 
@@ -26,8 +27,8 @@ the original destination pixels survive and that the process's GDI resource coun
 returns to its baseline. The final valid frame requires the ninth allocation and
 successful readback, followed by explicit release. A single iteration cannot
 satisfy these final assertions. The complete HIP-enabled Release registry passed
-this regression during qualification of the preceding source checkpoint, and
-the reviewed test, back-buffer implementation and test macros are unchanged.
+all 1,045 cases at the reviewed checkpoint, including this regression and the
+new independently validated native-failure and live-owner rejection controls.
 
 This is an individually proven false positive under the maintainer's existing
 authorization. The reason for CodeQL's incorrect inferred range has not been

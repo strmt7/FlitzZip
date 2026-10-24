@@ -52,7 +52,7 @@ class CacheAllocationRefusal final {
 };
 #endif
 
-enum class CacheAction { Find, Complete, Invalidate, Duplicate };
+enum class CacheAction { Find, Complete, FailQueued, Invalidate, Duplicate };
 
 // Purpose: Exercise the display worker's actual cache operations with pre-existing storage.
 // Inputs: One operation over a long key; Debug MSVC independently calibrates and arms real CRT allocation refusal.
@@ -61,7 +61,7 @@ void require_cache_operation_without_allocation(CacheAction action) {
     const auto path = std::filesystem::path("folder-cache") / std::string(200, 'q');
     FolderSizeCache cache;
     REQUIRE_TRUE(cache.enqueue(path));
-    const auto task = cache.take_next();
+    const auto task = action == CacheAction::FailQueued ? cache.find(path) : cache.take_next();
 #if defined(_MSC_VER) && defined(_DEBUG)
     bool calibrated = false;
     {
@@ -89,6 +89,10 @@ void require_cache_operation_without_allocation(CacheAction action) {
             case CacheAction::Complete:
                 correct = cache.complete(task, 147U) && task->bytes == 147U;
                 break;
+            case CacheAction::FailQueued:
+                correct =
+                    cache.fail_queued(task) && task->state == FolderSizeTask::State::Failed && !cache.has_pending();
+                break;
             case CacheAction::Invalidate:
                 cache.invalidate(path);
                 correct = task->cancelled.load() && !cache.find(path);
@@ -115,6 +119,77 @@ TEST_CASE(folder_size_cache_lookup_borrows_the_native_key_under_allocation_failu
 // Purpose: Publish after traversal without a second allocation failure; inputs: ready task; outputs: exact byte count.
 TEST_CASE(folder_size_cache_completion_does_not_allocate_after_traversal) {
     require_cache_operation_without_allocation(CacheAction::Complete);
+}
+
+// Purpose: Retire refused worker admission using the task's existing storage, including under heap refusal.
+// Inputs: Current queued task and independently calibrated Debug CRT allocation refusal.
+// Outputs: Explicit Failed state and no remaining pending work without allocating at the failure boundary.
+TEST_CASE(folder_size_cache_failed_worker_admission_retires_queued_work_without_allocation) {
+    require_cache_operation_without_allocation(CacheAction::FailQueued);
+}
+
+// Purpose: Isolate a refused task from its siblings and keep failure final until ordinary queue invalidation.
+// Inputs: One issued task and three queued paths; refuse the middle path, then invalidate and re-add it.
+// Outputs: No failed task is issued, the sibling retains ownership, and re-addition receives a fresh task.
+TEST_CASE(folder_size_cache_failed_admission_preserves_siblings_and_readd_ownership) {
+    FolderSizeCache cache;
+    REQUIRE_TRUE(cache.enqueue("inflight"));
+    const auto inflight = cache.take_next();
+    REQUIRE_TRUE(cache.enqueue("front"));
+    const auto front = cache.find("front");
+    REQUIRE_TRUE(cache.enqueue("refused"));
+    REQUIRE_TRUE(cache.enqueue("retained"));
+    const auto failed = cache.find("refused");
+    const auto sibling = cache.find("retained");
+    REQUIRE_TRUE(!cache.fail_queued(inflight));
+    REQUIRE_TRUE(inflight->state == FolderSizeTask::State::Pending);
+    REQUIRE_TRUE(cache.fail_queued(failed));
+    REQUIRE_TRUE(failed->state == FolderSizeTask::State::Failed);
+    REQUIRE_EQ(failed->bytes, 0U);
+    REQUIRE_TRUE(!cache.enqueue("refused"));
+    REQUIRE_TRUE(!cache.fail_queued(failed));
+    REQUIRE_EQ(cache.take_next(), front);
+    REQUIRE_EQ(cache.take_next(), sibling);
+    REQUIRE_TRUE(!cache.take_next());
+    REQUIRE_TRUE(cache.complete(front, 11U));
+    REQUIRE_TRUE(cache.complete(sibling, 23U));
+    REQUIRE_TRUE(cache.complete(inflight, 19U));
+    cache.invalidate("refused");
+    REQUIRE_TRUE(cache.enqueue("refused"));
+    const auto renewed = cache.find("refused");
+    REQUIRE_TRUE(renewed != failed);
+    REQUIRE_TRUE(!cache.fail_queued(failed));
+    REQUIRE_EQ(cache.take_next(), renewed);
+    REQUIRE_TRUE(!cache.complete(failed, 99U));
+    REQUIRE_TRUE(cache.complete(renewed, 17U));
+    REQUIRE_EQ(renewed->bytes, 17U);
+    REQUIRE_EQ(sibling->bytes, 23U);
+    REQUIRE_EQ(inflight->bytes, 19U);
+    REQUIRE_EQ(front->bytes, 11U);
+}
+
+// Purpose: Reject unsupported failed-admission transitions without changing valid pending or issued owners.
+// Inputs: Null/foreign handles, cancelled and ready tasks, and an already issued owner.
+// Outputs: No invalid transition retires work or changes a task's recorded result.
+TEST_CASE(folder_size_cache_failed_admission_rejects_unowned_cancelled_and_finished_tasks) {
+    FolderSizeCache cache;
+    REQUIRE_TRUE(cache.enqueue("queued"));
+    const auto queued = cache.find("queued");
+    REQUIRE_TRUE(!cache.fail_queued(nullptr));
+    REQUIRE_TRUE(!cache.fail_queued(std::make_shared<FolderSizeTask>("queued")));
+    REQUIRE_TRUE(!cache.fail_queued(std::make_shared<FolderSizeTask>("missing")));
+    REQUIRE_TRUE(cache.enqueue("cancelled"));
+    const auto cancelled = cache.find("cancelled");
+    cache.invalidate("cancelled");
+    REQUIRE_TRUE(!cache.fail_queued(cancelled));
+    REQUIRE_EQ(cache.take_next(), queued);
+    REQUIRE_TRUE(!cache.fail_queued(queued));
+    REQUIRE_TRUE(queued->state == FolderSizeTask::State::Pending);
+    REQUIRE_TRUE(cache.complete(queued, 71U));
+    REQUIRE_TRUE(!cache.fail_queued(queued));
+    REQUIRE_EQ(queued->bytes, 71U);
+    REQUIRE_TRUE(queued->state == FolderSizeTask::State::Ready);
+    REQUIRE_TRUE(!cache.has_pending());
 }
 
 // Purpose: Preserve the nonthrowing metadata callback; inputs: issued task; outputs: cancellation and removal.

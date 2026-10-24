@@ -84,6 +84,24 @@ class FolderSizeCache {
         return true;
     }
 
+    // Purpose: Retire work whose native worker admission failed without scanning the normal completion path.
+    // Inputs: Exact current queued task, with no active worker holding it; caller holds the cache mutex.
+    // Outputs: Removes only that pending owner and records Failed without allocation; rejects issued/stale tasks.
+    bool fail_queued(const std::shared_ptr<FolderSizeTask>& task) noexcept {
+        if (!task || task->cancelled.load() || find(task->path) != task ||
+            task->state != FolderSizeTask::State::Pending) {
+            return false;
+        }
+        const auto queued = std::find(pending_.begin(), pending_.end(), task);
+        if (queued == pending_.end()) {
+            return false;
+        }
+        pending_.erase(queued);
+        task->state = FolderSizeTask::State::Failed;
+        task->bytes = 0U;
+        return true;
+    }
+
     // Purpose: Invalidate without allocating; inputs: former folder key; outputs: cancels pending/in-flight stale
     // sizes.
     void invalidate(const std::filesystem::path& path) noexcept {

@@ -19,10 +19,10 @@
 namespace flitzzip::app {
 
 // Purpose: Construct a main window controller with default UI state.
-// Inputs: launcher outlives the controller and supplies native thread admission.
+// Inputs: launcher outlives the controller and supplies archive-job and folder-worker admission.
 // Outputs: Initializes lazy metadata callbacks only; the native HWND is created by `run`.
 MainWindow::MainWindow(const JobThreadLauncher& launcher)
-    : worker_(launcher),
+    : thread_launcher_(launcher), worker_(launcher),
       queue_metadata_(read_queue_file_metadata, [this](const std::filesystem::path& path, bool kind_changed) {
           if (kind_changed) {
               std::lock_guard lock(folder_size_mutex_);

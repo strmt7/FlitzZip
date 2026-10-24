@@ -29,22 +29,32 @@ std::wstring MainWindow::queue_entry_size_text(const std::filesystem::path& path
         }
     }
 
-    enqueue_folder_size_if_needed(path);
-    return L"...";
+    return enqueue_folder_size_if_needed(path) ? L"..." : L"--";
 }
 
 // Purpose: Enqueue one folder-size scan when the Queue first renders a folder.
 // Inputs: `path` is a queued directory path.
-// Outputs: Starts the low-priority folder-size worker if needed and records pending cache state.
-void MainWindow::enqueue_folder_size_if_needed(const std::filesystem::path& path) {
-    {
-        std::lock_guard lock(folder_size_mutex_);
-        if (!folder_size_cache_.enqueue(path)) {
-            return;
+// Outputs: True for admitted work; startup failure retires its queued task as Failed until normal invalidation.
+bool MainWindow::enqueue_folder_size_if_needed(const std::filesystem::path& path) {
+    std::shared_ptr<FolderSizeTask> task;
+    try {
+        {
+            std::lock_guard lock(folder_size_mutex_);
+            if (!folder_size_cache_.enqueue(path)) {
+                return folder_size_cache_.find(path)->state != FolderSizeTask::State::Failed;
+            }
+            task = folder_size_cache_.find(path);
         }
+        start_folder_size_worker();
+    } catch (...) {
+        // Optional display work must not escape through native drawing. Existing storage records startup refusal;
+        // failed allocation before admission has no task to retain and may recover on a later display request.
+        std::lock_guard lock(folder_size_mutex_);
+        static_cast<void>(folder_size_cache_.fail_queued(task));
+        return false;
     }
-    start_folder_size_worker();
     folder_size_cv_.notify_one();
+    return true;
 }
 
 // Purpose: Start the single folder-size background worker.
@@ -56,7 +66,7 @@ void MainWindow::start_folder_size_worker() {
         return;
     }
     folder_size_stop_.store(false);
-    folder_size_worker_ = std::thread([this] {
+    folder_size_worker_ = thread_launcher_.launch([this] {
         (void)SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
         (void)SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
         while (!folder_size_stop_.load()) {

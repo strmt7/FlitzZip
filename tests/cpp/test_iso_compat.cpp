@@ -498,3 +498,115 @@ TEST_CASE(iso_cancellation_preserves_destination_and_allows_reuse) {
     REQUIRE_EQ(read_text_file(destination / "ROOT.TXT"), "root payload\n");
     REQUIRE_EQ(read_text_file(destination / "DIR" / "README"), "nested payload\n");
 }
+
+namespace {
+
+// Purpose: Require ISO admission failure before progress, then prove source release and same-destination reuse.
+// Inputs: Owned archive/destination, independently mutated bytes, complete good bytes and exact rejection category.
+// Outputs: Preserves two caller files and the full destination inventory; restoring the archive recovers exact
+// payloads.
+void require_iso_admission_failure_and_recovery(const std::filesystem::path& archive,
+                                                const std::filesystem::path& destination,
+                                                std::span<const unsigned char> changed,
+                                                std::span<const unsigned char> original, std::string_view diagnostic) {
+    write_iso_boundary_bytes(archive, changed);
+    std::filesystem::create_directory(destination);
+    std::ofstream(destination / "ROOT.TXT", std::ios::binary) << "retain original root";
+    std::ofstream(destination / "sentinel.txt", std::ios::binary) << "retain unrelated caller data";
+    unsigned callbacks = 0;
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_iso(archive, destination, true,
+                                    [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
+    } catch (const flitzzip::ArchiveError& error) {
+        REQUIRE_TRUE(std::string_view(error.what()).find(diagnostic) != std::string_view::npos);
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(callbacks, 0U);
+    REQUIRE_EQ(read_text_file(destination / "ROOT.TXT"), "retain original root");
+    REQUIRE_EQ(read_text_file(destination / "sentinel.txt"), "retain unrelated caller data");
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+               2);
+    // Rewriting the same source must succeed only after the failed extraction releases its archive pin.
+    write_iso_boundary_bytes(archive, original);
+    const auto stats = flitzzip::extract_iso(archive, destination, true);
+    REQUIRE_EQ(stats.entries, 3U);
+    REQUIRE_EQ(stats.output_bytes,
+               std::string_view("root payload\n").size() + std::string_view("nested payload\n").size());
+    REQUIRE_EQ(read_text_file(destination / "ROOT.TXT"), "root payload\n");
+    REQUIRE_EQ(read_text_file(destination / "DIR" / "README"), "nested payload\n");
+    REQUIRE_EQ(read_text_file(destination / "sentinel.txt"), "retain unrelated caller data");
+    REQUIRE_EQ(count_regular_files(destination), 3U);
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+               3);
+}
+
+}  // namespace
+
+// Purpose: Reject partially aliased and empty ISO directory extents without reinterpreting admitted metadata bytes.
+// Inputs: The independent 64 KiB ISO with adjacent root/child sectors, then one-field both-endian mutations.
+// Outputs: Specific admission errors preserve caller files and staging inventory; original adjacency remains
+// extractable.
+TEST_CASE(iso_partial_directory_overlap_and_empty_extent_preserve_destination) {
+    const auto root = test_temp_dir("iso-partial-directory-overlap");
+    const auto archive = root / "input.iso";
+    const auto original = iso_boundary_fixture(archive);
+    constexpr std::size_t root_record = 16U * 2048U + 156U;
+    constexpr std::size_t child_record = 20U * 2048U + 68U;
+    REQUIRE_EQ(original.at(root_record + 10U), 0U);
+    REQUIRE_EQ(original.at(root_record + 11U), 8U);
+    REQUIRE_EQ(original.at(child_record + 2U), 21U);
+
+    auto overlapping = original;
+    // Root [20*2048,22*2048) now contains the child [21*2048,22*2048); no exact-offset cycle is used.
+    put_both_endian_u32(overlapping, root_record + 10U, 2U * 2048U);
+    require_iso_admission_failure_and_recovery(archive, root / "overlap", overlapping, original,
+                                               "directory extents overlap or reinterpret the same bytes");
+
+    auto empty = original;
+    put_both_endian_u32(empty, child_record + 10U, 0U);
+    require_iso_admission_failure_and_recovery(archive, root / "empty", empty, original,
+                                               "ISO directory extent is empty");
+}
+
+// Purpose: Reject identifiers emptied by numeric-version/trailing-dot normalization while preserving nonnumeric
+// suffixes. Inputs: Independent canonical member records for FILE;A, ;1 and .;1, replacing only the final root file
+// record. Outputs: FILE;A keeps exact name/bytes; empty normalized names cannot publish, and complete original bytes
+// recover.
+TEST_CASE(iso_normalized_empty_identifiers_reject_and_nonnumeric_versions_preserve_names) {
+    const auto root = test_temp_dir("iso-normalized-empty-identifiers");
+    const auto archive = root / "input.iso";
+    const auto original = iso_boundary_fixture(archive);
+    constexpr std::size_t file_record = 20U * 2048U + 104U;
+    REQUIRE_EQ(original.at(file_record + 32U), std::string_view("ROOT.TXT;1").size());
+    // Purpose: Substitute one independently serialized record. Inputs: Exact raw identifier. Outputs: Bounded ISO
+    // bytes.
+    const auto with_identifier = [&](std::string_view name) {
+        auto bytes = original;
+        const auto record = make_iso_record(kTestIsoRootFileSector,
+                                            static_cast<std::uint32_t>(std::string_view("root payload\n").size()), 0U,
+                                            iso_identifier(name));
+        const auto capacity = static_cast<std::size_t>(original.at(file_record));
+        REQUIRE_TRUE(record.size() <= capacity && file_record + capacity <= bytes.size());
+        const auto first = bytes.begin() + static_cast<std::ptrdiff_t>(file_record);
+        std::fill_n(first, capacity, 0U);
+        std::copy(record.begin(), record.end(), first);
+        return bytes;
+    };
+    write_iso_boundary_bytes(archive, with_identifier("FILE;A"));
+    const auto valid_output = root / "nonnumeric";
+    const auto valid = flitzzip::extract_iso(archive, valid_output, false);
+    REQUIRE_EQ(valid.entries, 3U);
+    REQUIRE_EQ(read_text_file(valid_output / "FILE;A"), "root payload\n");
+    REQUIRE_EQ(read_text_file(valid_output / "DIR" / "README"), "nested payload\n");
+    REQUIRE_TRUE(!std::filesystem::exists(valid_output / "FILE"));
+    REQUIRE_TRUE(!std::filesystem::exists(valid_output / "ROOT.TXT"));
+    REQUIRE_EQ(count_regular_files(valid_output), 2U);
+
+    unsigned index = 0;
+    for (const std::string_view name : {";1", ".;1"}) {
+        require_iso_admission_failure_and_recovery(archive, root / std::to_string(index++), with_identifier(name),
+                                                   original, "ISO identifier normalizes to an empty name");
+    }
+}
