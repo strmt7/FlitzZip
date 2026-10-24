@@ -29,9 +29,12 @@ QueueFileMetadata read_queue_file_metadata(const std::filesystem::path& path) {
     return {QueueFileKind::File, ec ? std::nullopt : std::optional<std::uintmax_t>(bytes)};
 }
 
-// Purpose: Store worker callbacks; inputs: nonempty reader and optional notifier; outputs: lazy, idle cache.
-QueueMetadataCache::QueueMetadataCache(Reader reader, Notify notify)
-    : reader_(std::move(reader)), notify_(std::move(notify)) {
+// Purpose: Store callbacks and borrowed admission boundaries without starting optional work.
+// Inputs: Reader, Notify and launcher/resource outliving this cache, its worker and queued storage.
+// Outputs: Lazy cache; actual native work and queue allocations remain owned through final teardown.
+QueueMetadataCache::QueueMetadataCache(Reader reader, Notify notify, const JobThreadLauncher& launcher,
+                                       std::pmr::memory_resource& pending_resource)
+    : launcher_(launcher), reader_(std::move(reader)), notify_(std::move(notify)), pending_(&pending_resource) {
     if (!reader_) {
         throw std::invalid_argument("Queue metadata requires a reader");
     }
@@ -66,7 +69,9 @@ void QueueMetadataCache::synchronize(std::span<const std::filesystem::path> path
     std::erase_if(pending_, [this](const auto& entry) { return !entries_.contains(entry->path); });
 }
 
-// Purpose: Return cached metadata and schedule expired reads; inputs: queued path/time; outputs: never reads disk here.
+// Purpose: Return cached metadata and schedule expired reads without filesystem I/O on the caller.
+// Inputs: Current path and monotonic time. Outputs: Failed admission reports Unavailable for this row lifetime,
+// clears stale values and publishes no phantom work; an acquired idle worker remains owned for other rows.
 QueueFileMetadata QueueMetadataCache::get(const std::filesystem::path& path, Clock::time_point now) {
     std::lock_guard lock(mutex_);
     const auto found = entries_.find(path);
@@ -74,13 +79,24 @@ QueueFileMetadata QueueMetadataCache::get(const std::filesystem::path& path, Clo
         return {};
     }
     auto& entry = found->second;
+    if (entry->admission_failed) {
+        return entry->value;
+    }
     constexpr auto refresh_interval = std::chrono::seconds(2);
     if (!entry->pending &&
         (entry->value.kind == QueueFileKind::Pending || now - entry->completed >= refresh_interval)) {
-        if (!worker_.joinable()) {
-            worker_ = std::thread([this] { run(); });
+        try {
+            if (!worker_.joinable()) {
+                worker_ = launcher_.launch([this] { run(); });
+            }
+            pending_.push_back(entry);
+        } catch (...) {
+            // Native launch and strong queue insertion precede pending publication. A refusal makes this
+            // row explicitly unavailable; other rows and any acquired idle worker remain owned.
+            entry->value = {QueueFileKind::Unavailable, {}};
+            entry->admission_failed = true;
+            return entry->value;
         }
-        pending_.push_back(entry);
         entry->pending = true;
         ready_.notify_one();
     }
