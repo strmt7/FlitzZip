@@ -607,6 +607,63 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in self.messages()], [11, 12])
         self.assertEqual(self.messages()[-1]["error"]["code"], -32600)
 
+    def test_stdio_rejects_nonfinite_numbers_before_initialization(self) -> None:
+        """Purpose: Keep invalid numeric frames from consuming a valid client's initialization state.
+        Inputs: Non-JSON constants or overflowing exponents nested inside initialization capabilities.
+        Outputs: A parse error with null ID, then successful initialization on the same real stdio session.
+        """
+        parameters = {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "numeric-boundary-client", "version": "1"},
+        }
+        request = {"jsonrpc": "2.0", "id": "after-invalid", "method": "initialize", "params": parameters}
+        valid = json.dumps(request)
+        for token in ("NaN", "Infinity", "-Infinity", "1e9999", "-1e9999"):
+            malformed = valid.replace('"capabilities": {}', '"capabilities": {"experimental": [' + token + "]}")
+            with self.subTest(token=token):
+                process = subprocess.run(
+                    [sys.executable, "-B", str(Path(flitzzip_mcp.__file__))],
+                    input=malformed + "\n" + valid + "\n",
+                    text=True,
+                    encoding="utf-8",
+                    capture_output=True,
+                    timeout=10,
+                    check=True,
+                )
+                self.assertEqual(process.stderr, "")
+                rejected, initialized = [json.loads(line) for line in process.stdout.splitlines()]
+                self.assertIsNone(rejected["id"])
+                self.assertEqual(rejected["error"], {"code": -32700, "message": "invalid JSON"})
+                self.assertEqual(initialized["id"], "after-invalid")
+                self.assertEqual(initialized["result"]["protocolVersion"], parameters["protocolVersion"])
+
+    def test_stdio_preserves_valid_numeric_and_string_capabilities(self) -> None:
+        """Purpose: Distinguish unsupported numbers from legal extension data without narrowing capabilities.
+        Inputs: Finite extrema, exponent underflow, ordinary decimals and strings spelling forbidden constants.
+        Outputs: Each independent real session initializes successfully with its original string request ID.
+        """
+        for token in ("1e308", "-1e308", "-0.0", "1.25e-6", "1e-9999", '"NaN"', '"Infinity"'):
+            payload = (
+                '{"jsonrpc":"2.0","id":"valid-number","method":"initialize","params":'
+                '{"protocolVersion":"2025-11-25","clientInfo":{"name":"numeric-control","version":"1"},'
+                '"capabilities":{"experimental":[' + token + "]}}}\n"
+            )
+            with self.subTest(token=token):
+                process = subprocess.run(
+                    [sys.executable, "-B", str(Path(flitzzip_mcp.__file__))],
+                    input=payload,
+                    text=True,
+                    encoding="utf-8",
+                    capture_output=True,
+                    timeout=10,
+                    check=True,
+                )
+                self.assertEqual(process.stderr, "")
+                (initialized,) = [json.loads(line) for line in process.stdout.splitlines()]
+                self.assertEqual(initialized["id"], "valid-number")
+                self.assertEqual(initialized["result"]["protocolVersion"], "2025-11-25")
+
     def test_stdio_recovers_after_parse_error(self) -> None:
         """Purpose: Exercise stdio; inputs: bad JSON then discovery; outputs: error followed by a valid result."""
         request = {
