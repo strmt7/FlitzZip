@@ -14,13 +14,12 @@ range-checked narrowing conversion. An approximate comparison would admit
 invalid fractions. The complete parser, declaration and numeric regression
 test files are unchanged from the previous reviewed context.
 
-The only changed previously bound input is
-`src/app/main_window_archive_support.cpp`. Its extraction-path refactoring
-moves the existing `current_user_downloads_directory() / L"FlitzZip-extracted"`
-expression into `default_extraction_output_directory()` and calls that helper
-from the existing extraction-path function. It changes no settings parser,
-integer consumer, bounds, scalar representation or conversion. Every numeric
-settings caller in that file remains unchanged.
+The current extraction controller passes typed settings into owned jobs. Path
+selection, worker lifetime and diagnostic refactoring do not change this pure
+numeric admission boundary. `integer()` first checks the stored scalar's type,
+finiteness, exact integrality and representability as `int`, then narrows and
+clamps it. Exact equality is intentional for a stored numeric value; this is
+not an approximate physical measurement or an arbitrary-precision JSON claim.
 
 The required-HIP Release build and all seven CTest targets passed for these
 native source bytes, including the settings regressions for fractional values,

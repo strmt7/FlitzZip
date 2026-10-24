@@ -301,7 +301,7 @@ class RocmBootstrapTests(unittest.TestCase):
         Outputs: Requires rejection before the redirected request.
         """
         with self.assertRaisesRegex(ValueError, "redirects"):
-            redirected = "https://example.invalid/".replace("https", "http", 1)
+            redirected = "http://example.invalid/"
             NoRedirect().redirect_request(None, None, 302, "Found", {}, redirected)
 
     def test_download_rejects_timeout_excess_short_bytes_and_bad_hash(self):

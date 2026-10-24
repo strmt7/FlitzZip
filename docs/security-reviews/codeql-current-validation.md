@@ -12,12 +12,14 @@ artifacts. All seven Release CTest suites and the source-bound Debug registry
 passed; the latter executed the registered native tests with HIP enabled.
 These results qualify the exercised consumers, not universal correctness.
 
-For every retained decision, the complete finding source and relevant context
-were rechecked. The previous context still matches except for the numeric
-settings decision: its caller file gained log-field escaping and an error check
-for an invalid settings parent, and the workflow gained verified Semgrep
-dependency submission. Neither change alters numeric conversion or CodeQL's
-query/build configuration. The revised ledger binds those current bytes.
+Each decision requires current source, caller, test and scanner evidence. The
+stream seek changes validate signed offsets without retaining caller buffers;
+the synchronous compression guards below still clear their borrowed pointers on
+every exit. Diagnostic path encoding does not extend a source's lifetime.
+Development-only HIP profiling cannot be installed as a product build and does
+not change the normal archive ownership boundaries. The workflow's declared
+contract-test dependency bootstrap changes no CodeQL query or analysis job.
+The ledger binds the reviewed bytes; final hosted acceptance remains separate.
 
 ## Individual Decisions
 
@@ -114,6 +116,7 @@ complete source-bound registry also passed. These observations contradict the
 reported reachability result; the precise internal cause of CodeQL's inference
 has not been established. Removing the helper or its registration would remove
 useful coverage. Neither code relocation, inlining, rule suppression nor a
-production change is warranted by this diagnostic. This decision covers only
-the exact helper, call site, registration, runner, writer and scanner identities
-bound in the ledger. Original CPU and HIP-host results remain retained.
+production change is warranted by this diagnostic. The current source-location
+requalification remains pending under the [TAR review](codeql-tar-reader-context.md);
+the previous decision cannot admit the changed translation unit. Original CPU
+and HIP-host results remain retained.

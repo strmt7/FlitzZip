@@ -87,19 +87,6 @@ typed object and fills an exact destination span; its lock is owned by RAII.
 
 The flagged C allocator is enabled only by the combined `FLITZZIP_MINIZ_FUZZ_ALLOCATOR` and `FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION` configuration. Its free/realloc family matches. This deliberately makes allocations visible to ASan; production Windows allocation uses its separate HeapAlloc/HeapFree/HeapReAlloc contract. Removing the sanitizer path would weaken testing.
 
-### Alert 822
-
-**Win32 rename request copy.** `DS121708` in `src/core/file_publish.cpp`;
-the ledger records the exact current coordinates.
-
-`windows_api_path` rejects embedded NULs and normalized paths of 32767 or more wchar_t elements before request geometry is calculated. Consequently byte multiplication, request addition and DWORD conversions are bounded on Windows x64. The request allocates the header offset, the complete path and a terminator; only the path bytes are copied into its variable-length filename region. Publication pins identities and checks the API result.
-
-This decision concerns the copy's bounds. The separate directory-creation race
-is repaired by opening each child relative to its pinned parent with reparse
-resolution rejected. The review context includes that helper and the executable
-live-handle junction, concurrent-publication and Unicode controls. An unchanged
-bounded copy does not establish that every operation in its source file is safe.
-
 ### Alert 823
 
 **Bounded virtual ZIP read fixture.** `DS121708` at `tests/cpp/test_zip_compat.cpp:113`.
@@ -263,7 +250,8 @@ The value is the SHA-256 field for the public AMD HTTPS distribution in the ROCm
 
 ### Alert 1743
 
-**Rejected insecure redirect fixture.** `DS137138` at `tools/test_bootstrap_rocm_sdk.py:140`.
+**Rejected insecure redirect fixture.** `DS137138` in
+`tools/test_bootstrap_rocm_sdk.py`; the ledger binds its current exact location.
 
 The HTTP URL is passed directly to `NoRedirect.redirect_request` inside `assertRaisesRegex`. No network request is made. The fixture verifies that redirects are rejected before following an insecure destination; changing it to HTTPS would remove this negative case.
 

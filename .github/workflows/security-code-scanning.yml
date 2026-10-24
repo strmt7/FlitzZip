@@ -304,6 +304,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python -m pip install --require-hashes --only-binary=:all: -r .github/requirements/requirements-contracts.txt
           python -m unittest tools.test_semgrep_installation tools.test_semgrep_distribution tools.test_scanner_dependency_snapshot
           python -m tools.semgrep_distribution --output "$RUNNER_TEMP/semgrep-distribution"
           python -m venv "$RUNNER_TEMP/semgrep"
