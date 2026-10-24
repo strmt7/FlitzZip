@@ -880,6 +880,23 @@ def iter_bounded_request_lines() -> Iterator[str]:
         yield line
 
 
+def reject_json_constant(value: str) -> object:
+    """Purpose: Reject Python JSON extensions before protocol state changes.
+    Inputs: A nonstandard numeric constant token. Outputs: Always raises a parse error.
+    """
+    raise ValueError(f"nonstandard JSON numeric constant: {value}")
+
+
+def parse_json_float(value: str) -> float:
+    """Purpose: Preserve finite JSON numbers without silently admitting infinity through overflow.
+    Inputs: A syntactically valid JSON floating-point token. Outputs: A finite float or a range error.
+    """
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("JSON number exceeds the supported finite range")
+    return number
+
+
 def main() -> int:
     """Purpose: Process newline-delimited JSON-RPC requests until stdin closes.
     Inputs: stdin supplies one JSON object per line.
@@ -893,9 +910,11 @@ def main() -> int:
             if not line.strip():
                 continue
             try:
-                server.handle(json.loads(line))
+                request = json.loads(line, parse_constant=reject_json_constant, parse_float=parse_json_float)
             except (ValueError, RecursionError):
                 respond(None, error={"code": -32700, "message": "invalid JSON"})
+                continue
+            server.handle(request)
     finally:
         server.close()
     return 0
