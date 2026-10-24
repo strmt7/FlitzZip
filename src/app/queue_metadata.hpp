@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/input_limits.hpp"
+#include "app/background_job.hpp"
 
 #include <chrono>
 #include <condition_variable>
@@ -8,6 +9,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <memory_resource>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -41,8 +43,12 @@ class QueueMetadataCache final {
     using Reader = std::function<QueueFileMetadata(const std::filesystem::path&)>;
     using Notify = std::function<void(const std::filesystem::path&, bool)>;
 
-    // Purpose: Configure a lazy cache; inputs: reader and optional notification with kind-change flag; outputs: no I/O.
-    explicit QueueMetadataCache(Reader reader, Notify notify = {});
+    // Purpose: Configure a lazy cache without changing reader or notification semantics.
+    // Inputs: Reader, optional Notify, and borrowed launcher/resource that outlive cache destruction and join.
+    // Outputs: No I/O; refused optional admission stays Unavailable until removal/re-addition.
+    explicit QueueMetadataCache(Reader reader, Notify notify = {},
+                                const JobThreadLauncher& launcher = JobThreadLauncher::native(),
+                                std::pmr::memory_resource& pending_resource = *std::pmr::new_delete_resource());
     QueueMetadataCache(const QueueMetadataCache&) = delete;
     QueueMetadataCache& operator=(const QueueMetadataCache&) = delete;
 
@@ -52,7 +58,8 @@ class QueueMetadataCache final {
     // Purpose: Match queue membership; inputs: at most kMaxQueueItems paths; outputs: cancels obsolete publications.
     void synchronize(std::span<const std::filesystem::path> paths);
 
-    // Purpose: Read without filesystem I/O; inputs: queued path and monotonic time; outputs: snapshot and lazy refresh.
+    // Purpose: Read cached metadata and admit optional refresh without filesystem I/O on the caller.
+    // Inputs: Queued path and monotonic time. Outputs: Snapshot; failed admission is Unavailable until re-add.
     [[nodiscard]] QueueFileMetadata get(const std::filesystem::path& path, Clock::time_point now = Clock::now());
 
     // Purpose: End the worker before its callback owner is destroyed; inputs: none; outputs: idempotent owner-thread
@@ -65,18 +72,20 @@ class QueueMetadataCache final {
         QueueFileMetadata value;
         Clock::time_point completed{};
         bool pending = false;
+        bool admission_failed = false;
     };
 
     // Purpose: Consume queued metadata reads; inputs: owned synchronized queue; outputs: publishes current results
     // only.
     void run();
 
+    const JobThreadLauncher& launcher_;
     Reader reader_;
     Notify notify_;
     std::mutex mutex_;
     std::condition_variable ready_;
     std::unordered_map<std::filesystem::path, std::shared_ptr<Entry>> entries_;
-    std::deque<std::shared_ptr<Entry>> pending_;
+    std::pmr::deque<std::shared_ptr<Entry>> pending_;
     std::thread worker_;
     bool stopped_ = false;
 };
