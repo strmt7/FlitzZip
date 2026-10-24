@@ -37,6 +37,24 @@ class CrawlerContracts(unittest.TestCase):
         self.assertEqual(len(versions), 1)
         self.assertGreaterEqual(tuple(map(int, versions[0])), (13, 0, 0))
 
+    # Purpose: Prevent repaired decoder, Windows soft-lock and wheel-installation vulnerabilities from returning.
+    # Inputs: Active runtime/build locks and the published first fixed stable versions; no parent constraints change.
+    # Outputs: Rejects missing, duplicate or vulnerable pins; installation and consumer tests qualify compatibility.
+    def test_runtime_and_builder_advisory_floors(self):
+        cases = (
+            (tool.LOCK, "brotli", (1, 2, 1), "GHSA-9v8h-qqgm-4m35"),
+            (tool.LOCK, "filelock", (4, 2, 1), "GHSA-567q-5qvw-pf92 / GHSA-9vhv-jxww-xfm5 / GHSA-v4x8-3wr5-3wq8"),
+            (tool.ROOT / "tools/requirements/python-build.txt", "setuptools", (84, 1, 0), "GHSA-xmj3-9gf7-h52w"),
+        )
+        for path, package, fixed, advisory in cases:
+            with self.subTest(package=package, advisory=advisory):
+                versions = re.findall(
+                    rf"(?m)^{re.escape(package)}==([0-9]+)\.([0-9]+)\.([0-9]+)(?=\s|$)",
+                    path.read_text(encoding="utf-8"),
+                )
+                self.assertEqual(len(versions), 1)
+                self.assertGreaterEqual(tuple(map(int, versions[0])), fixed)
+
     def test_lock_resolution_uses_an_empty_environment_and_preserves_failures(self):
         """Purpose: Detect masked dependency conflicts. Inputs: Resolver outcomes. Outputs: Isolation checks."""
         for failure in (False, True):
