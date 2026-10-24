@@ -620,7 +620,10 @@ class ProtocolTests(unittest.TestCase):
         request = {"jsonrpc": "2.0", "id": "after-invalid", "method": "initialize", "params": parameters}
         valid = json.dumps(request)
         for token in ("NaN", "Infinity", "-Infinity", "1e9999", "-1e9999"):
-            malformed = valid.replace('"capabilities": {}', '"capabilities": {"experimental": [' + token + "]}")
+            malformed = valid.replace(
+                '"capabilities": {}',
+                '"capabilities": {"experimental": {"flitzzip.numericBoundary": {"value": ' + token + "}}}",
+            )
             with self.subTest(token=token):
                 process = subprocess.run(
                     [sys.executable, "-B", str(Path(flitzzip_mcp.__file__))],
@@ -647,7 +650,7 @@ class ProtocolTests(unittest.TestCase):
             payload = (
                 '{"jsonrpc":"2.0","id":"valid-number","method":"initialize","params":'
                 '{"protocolVersion":"2025-11-25","clientInfo":{"name":"numeric-control","version":"1"},'
-                '"capabilities":{"experimental":[' + token + "]}}}\n"
+                '"capabilities":{"experimental":{"flitzzip.numericBoundary":{"value":' + token + "}}}}}\n"
             )
             with self.subTest(token=token):
                 process = subprocess.run(

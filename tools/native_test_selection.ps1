@@ -133,8 +133,12 @@ function Get-FlitzZipNativeTestSelection {
     }
     foreach ($test in @($inventory | Where-Object { $_.source -in $testSources })) { [void]$selected.Add($test.name) }
     if (-not $selected.Count) { throw 'Native component selection is empty; review changed mechanisms.' }
-    $hipSources = @('tests/cpp/test_flzip_gpu_prefix.cpp', 'tests/cpp/test_gpu_block_batch.cpp',
-        'tests/cpp/test_dictionary_matcher.cpp', 'tests/cpp/test_sparse_pattern_block.cpp')
+    # Classify actual changed sources conservatively, including newly registered device suites.
+    # A build guard or capability probe can skip assertions; admission must surround their execution.
+    $hipSources = @($testSources | Where-Object {
+        $text = Get-Content -LiteralPath (Join-Path $Root $_) -Raw
+        $text -match '(?m)^\s*#\s*(?:if|ifdef|ifndef|elif)\b[^\r\n]*\bFLITZZIP_ENABLE_HIP\b|\b(?:query_gpu_info|hip_kernel_api|hip_device_available|require_hip_device_ready)\s*\('
+    })
     return [pscustomobject]@{ mode = 'component'; components = @($components | ForEach-Object { $_.id }) + $testSources
         tests = @($selected | Sort-Object); requireHip = (@($components | Where-Object { $_.requireHip }).Count -gt 0 -or @($testSources | Where-Object { $_ -in $hipSources }).Count -gt 0) }
 }

@@ -2,6 +2,12 @@
 
 ## Individual Decision
 
+The decision below describes its original reviewed source checkpoint. The
+surface-provider and failure-boundary tests have since changed this translation
+unit and its implementation context. Its ledger entries are inactive until fresh
+CPU and HIP-host reports establish the current exact source and location; a
+historical dismissal does not admit a reproduced finding.
+
 ### Alert 8431
 
 CodeQL 2.27.3 reports `cpp/constant-comparison` at the retry-loop condition in

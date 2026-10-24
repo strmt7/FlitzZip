@@ -4,6 +4,7 @@
 
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 
 namespace {
 
@@ -57,6 +58,85 @@ class TestSurface {
     HBITMAP bitmap_ = nullptr;
     HGDIOBJ original_ = nullptr;
 };
+
+enum class SurfaceFailure { None, CreateDc, CreateBitmap, SelectNull, SelectError, SaveState, RestoreState };
+
+// Purpose: Refuse one instance's external API operation while successful acquisitions remain real Win32 objects.
+// Inputs: A selected native refusal; the buffer owns this provider and all acquired objects.
+// Outputs: Records borrowed handle identities for independent release checks without owning or deleting them.
+class RefusingSurfaceNative final : public flitzzip::app::GdiBackBufferNative {
+  public:
+    SurfaceFailure failure = SurfaceFailure::None;
+    mutable HDC acquired_dc = nullptr;
+    mutable HBITMAP acquired_bitmap = nullptr;
+
+    // Purpose: Control memory-context admission. Inputs: Borrowed destination. Outputs: Real owned DC or refusal.
+    HDC create_dc(HDC target) const noexcept override {
+        acquired_dc = failure == SurfaceFailure::CreateDc ? nullptr : GdiBackBufferNative::create_dc(target);
+        return acquired_dc;
+    }
+
+    // Purpose: Control bitmap admission. Inputs: Borrowed target and dimensions. Outputs: Real bitmap or refusal.
+    HBITMAP create_bitmap(HDC target, int width, int height) const noexcept override {
+        acquired_bitmap = failure == SurfaceFailure::CreateBitmap
+                              ? nullptr
+                              : GdiBackBufferNative::create_bitmap(target, width, height);
+        return acquired_bitmap;
+    }
+
+    // Purpose: Refuse bitmap selection before changing native state. Inputs: Owned DC/bitmap. Outputs: Native prior
+    // object, null or HGDI_ERROR.
+    HGDIOBJ select_bitmap(HDC dc, HBITMAP bitmap) const noexcept override {
+        if (failure == SurfaceFailure::SelectNull) {
+            return nullptr;
+        }
+        return failure == SurfaceFailure::SelectError ? HGDI_ERROR : GdiBackBufferNative::select_bitmap(dc, bitmap);
+    }
+
+    // Purpose: Refuse state acquisition before drawing. Inputs: Owned live DC. Outputs: Native level or zero.
+    int save_state(HDC dc) const noexcept override {
+        return failure == SurfaceFailure::SaveState ? 0 : GdiBackBufferNative::save_state(dc);
+    }
+
+    // Purpose: Refuse restoration without consuming the native saved level. Inputs: Owned DC and level.
+    // Outputs: Native result; a refused restore leaves state owned by the DC until its actual deletion.
+    BOOL restore_state(HDC dc, int state) const noexcept override {
+        return failure == SurfaceFailure::RestoreState ? FALSE : GdiBackBufferNative::restore_state(dc, state);
+    }
+};
+
+// Purpose: Check actual native disposal rather than type metadata retained in deleted GDI handle values.
+// Inputs: Last borrowed DC/bitmap identities, without allocating another GDI object before the checks.
+// Outputs: Rejects a still-usable DC or bitmap; GetObjectW must read a real BITMAP, not just query its type size.
+void require_surface_handles_released(HDC dc, HBITMAP bitmap) {
+    if (dc) {
+        POINT origin{};
+        REQUIRE_TRUE(GetDCOrgEx(dc, &origin) == FALSE);
+    }
+    if (bitmap) {
+        BITMAP description{};
+        REQUIRE_EQ(GetObjectW(bitmap, sizeof(description), &description), 0);
+    }
+}
+
+// Purpose: Validate the operational release probes against successfully acquired live native objects.
+// Inputs: Borrowed current surface identities. Outputs: Both handle operations must succeed before cleanup.
+void require_surface_live(const RefusingSurfaceNative& calls) {
+    REQUIRE_TRUE(calls.acquired_dc != nullptr && calls.acquired_bitmap != nullptr);
+    POINT origin{};
+    REQUIRE_TRUE(GetDCOrgEx(calls.acquired_dc, &origin) != FALSE);
+    BITMAP description{};
+    REQUIRE_EQ(GetObjectW(calls.acquired_bitmap, sizeof(description), &description),
+               static_cast<int>(sizeof(description)));
+}
+
+// Purpose: Check native disposal independently of the buffer's internal allocation counter.
+// Inputs: Last borrowed identities and process GDI count with only the destination live.
+// Outputs: Rejects retained handles or other leaked GDI ownership.
+void require_surface_released(const RefusingSurfaceNative& calls, DWORD baseline) {
+    REQUIRE_EQ(GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS), baseline);
+    require_surface_handles_released(calls.acquired_dc, calls.acquired_bitmap);
+}
 
 }  // namespace
 
@@ -200,6 +280,132 @@ TEST_CASE(gdi_back_buffer_invalidates_monitor_identity_and_preserves_destination
     REQUIRE_EQ(buffer.allocation_count(), 2U);
     REQUIRE_TRUE(buffer.render(target.dc, 100, 80, monitor, [](HDC) {}));
     REQUIRE_EQ(buffer.allocation_count(), 2U);
+}
+
+// Purpose: Prove each release oracle rejects a retained real owner without leaking the negative-control objects.
+// Inputs: Actual memory-only DC/bitmap owned by one buffer, probed separately before and after reset.
+// Outputs: Both live-handle assertions fail independently, then actual cleanup satisfies all release oracles.
+TEST_CASE(gdi_back_buffer_release_oracles_reject_live_objects_and_accept_actual_cleanup) {
+    TestSurface target;
+    const auto baseline = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+    auto provider = std::make_unique<RefusingSurfaceNative>();
+    auto& calls = *provider;
+    flitzzip::app::GdiBackBuffer buffer(std::move(provider));
+    REQUIRE_TRUE(buffer.render(target.dc, 90, 80, nullptr, [](HDC) {}));
+    require_surface_live(calls);
+    for (const bool bitmap : {false, true}) {
+        bool rejected = false;
+        try {
+            require_surface_handles_released(bitmap ? nullptr : calls.acquired_dc,
+                                             bitmap ? calls.acquired_bitmap : nullptr);
+        } catch (const std::runtime_error& error) {
+            rejected =
+                std::string_view(error.what()).find(bitmap ? "GetObjectW" : "GetDCOrgEx") != std::string_view::npos;
+        }
+        REQUIRE_TRUE(rejected);
+        require_surface_live(calls);
+    }
+    buffer.reset();
+    require_surface_released(calls, baseline);
+}
+
+// Purpose: Release old and partially acquired surfaces when a resized frame cannot acquire its native resources.
+// Inputs: Four per-instance API refusals, real memory-only Win32 objects and a previously presented frame.
+// Outputs: No callback/publication on refusal, unchanged destination pixels, released handles and successful reuse.
+TEST_CASE(gdi_back_buffer_recovers_from_each_surface_acquisition_refusal) {
+    TestSurface target;
+    const auto baseline = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+    for (const auto failure : {SurfaceFailure::CreateDc, SurfaceFailure::CreateBitmap, SurfaceFailure::SelectNull,
+                               SurfaceFailure::SelectError}) {
+        auto provider = std::make_unique<RefusingSurfaceNative>();
+        auto& calls = *provider;
+        flitzzip::app::GdiBackBuffer buffer(std::move(provider));
+        const auto original = RGB(18, 49, 201);
+        REQUIRE_TRUE(buffer.render(target.dc, 80, 70, nullptr,
+                                   [original](HDC dc) { REQUIRE_TRUE(SetPixelV(dc, 3, 4, original)); }));
+        REQUIRE_EQ(GetPixel(target.dc, 3, 4), original);
+        require_surface_live(calls);
+        calls.failure = failure;
+        bool invoked = false;
+        REQUIRE_TRUE(!buffer.render(target.dc, 90, 80, nullptr, [&](HDC) { invoked = true; }));
+        REQUIRE_TRUE(!invoked);
+        REQUIRE_EQ(GetPixel(target.dc, 3, 4), original);
+        REQUIRE_EQ(buffer.allocation_count(), 1U);
+        require_surface_released(calls, baseline);
+        calls.failure = SurfaceFailure::None;
+        REQUIRE_TRUE(buffer.render(target.dc, 90, 80, nullptr,
+                                   [](HDC dc) { REQUIRE_TRUE(SetPixelV(dc, 3, 4, RGB(91, 23, 62))); }));
+        REQUIRE_EQ(GetPixel(target.dc, 3, 4), RGB(91, 23, 62));
+        require_surface_live(calls);
+        REQUIRE_EQ(buffer.allocation_count(), 2U);
+        buffer.reset();
+        require_surface_released(calls, baseline);
+    }
+}
+
+// Purpose: Prevent presentation after failed drawing-state acquisition or restoration and release all native owners.
+// Inputs: Real off-screen surfaces and independent per-instance SaveDC/RestoreDC refusal.
+// Outputs: The callback runs only after state acquisition; failure preserves destination pixels and permits reuse.
+TEST_CASE(gdi_back_buffer_recovers_from_native_state_refusal_without_presentation) {
+    TestSurface target;
+    const auto baseline = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+    for (const auto failure : {SurfaceFailure::SaveState, SurfaceFailure::RestoreState}) {
+        auto provider = std::make_unique<RefusingSurfaceNative>();
+        auto& calls = *provider;
+        flitzzip::app::GdiBackBuffer buffer(std::move(provider));
+        const auto original = RGB(40, 50, 60);
+        REQUIRE_TRUE(SetPixelV(target.dc, 3, 4, original));
+        calls.failure = failure;
+        bool invoked = false;
+        REQUIRE_TRUE(!buffer.render(target.dc, 90, 80, nullptr, [&](HDC dc) {
+            invoked = true;
+            REQUIRE_TRUE(SetPixelV(dc, 3, 4, RGB(200, 150, 100)));
+        }));
+        REQUIRE_TRUE(invoked == (failure == SurfaceFailure::RestoreState));
+        REQUIRE_EQ(GetPixel(target.dc, 3, 4), original);
+        require_surface_released(calls, baseline);
+        calls.failure = SurfaceFailure::None;
+        REQUIRE_TRUE(buffer.render(target.dc, 90, 80, nullptr,
+                                   [](HDC dc) { REQUIRE_TRUE(SetPixelV(dc, 3, 4, RGB(10, 20, 30))); }));
+        REQUIRE_EQ(GetPixel(target.dc, 3, 4), RGB(10, 20, 30));
+        require_surface_live(calls);
+        buffer.reset();
+        require_surface_released(calls, baseline);
+    }
+}
+
+// Purpose: Preserve a drawing exception even when native restoration also fails during unwinding.
+// Inputs: One identity-bearing thrown pointer, refused RestoreDC and actual owned memory DC/bitmap.
+// Outputs: Exact original exception, unchanged destination, no retained handles and a later correctly painted frame.
+TEST_CASE(gdi_back_buffer_preserves_callback_exception_when_native_restoration_fails) {
+    TestSurface target;
+    const auto baseline = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+    auto provider = std::make_unique<RefusingSurfaceNative>();
+    auto& calls = *provider;
+    flitzzip::app::GdiBackBuffer buffer(std::move(provider));
+    const auto original = RGB(111, 92, 73);
+    REQUIRE_TRUE(SetPixelV(target.dc, 3, 4, original));
+    calls.failure = SurfaceFailure::RestoreState;
+    int marker = 73;
+    bool matched = false;
+    try {
+        (void)buffer.render(target.dc, 90, 80, nullptr, [&](HDC dc) {
+            REQUIRE_TRUE(SetPixelV(dc, 3, 4, RGB(80, 70, 60)));
+            throw &marker;
+        });
+    } catch (const int* error) {
+        matched = error == &marker;
+    }
+    REQUIRE_TRUE(matched);
+    REQUIRE_EQ(GetPixel(target.dc, 3, 4), original);
+    require_surface_released(calls, baseline);
+    calls.failure = SurfaceFailure::None;
+    REQUIRE_TRUE(
+        buffer.render(target.dc, 90, 80, nullptr, [](HDC dc) { REQUIRE_TRUE(SetPixelV(dc, 3, 4, RGB(51, 61, 71))); }));
+    REQUIRE_EQ(GetPixel(target.dc, 3, 4), RGB(51, 61, 71));
+    require_surface_live(calls);
+    buffer.reset();
+    require_surface_released(calls, baseline);
 }
 
 // Purpose: Restore borrowed native drawing state during exceptions without replaying an already consumed snapshot.
