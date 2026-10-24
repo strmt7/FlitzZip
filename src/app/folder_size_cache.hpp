@@ -18,6 +18,11 @@ namespace flitzzip::app {
 // Outputs: Retains the path and cooperative cancellation flag until all task holders release it.
 struct FolderSizeTask {
     enum class State { Pending, Ready, Failed };
+    // Purpose: Acquire the final path before publishing a task or mutating cache ownership.
+    // Inputs: Borrowed folder path, copied into this task.
+    // Outputs: Fully initialized task; allocation failure propagates without default-path noexcept construction.
+    explicit FolderSizeTask(const std::filesystem::path& folder) : path(folder) {}
+
     std::filesystem::path path;
     std::atomic_bool cancelled = false;
     State state = State::Pending;
@@ -43,8 +48,7 @@ class FolderSizeCache {
         if (entries_.contains(key)) {
             return false;
         }
-        auto task = std::make_shared<FolderSizeTask>();
-        task->path = path;
+        auto task = std::make_shared<FolderSizeTask>(path);
         pending_.push_back(task);
         try {
             entries_.emplace(key, task);

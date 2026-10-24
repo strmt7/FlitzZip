@@ -8,9 +8,10 @@
 namespace flitzzip {
 
 // Purpose: Stream-decompress an `.lz` lzip file through `std::istream` with bounded LZMA SDK state.
-// Inputs: Construct with `archive_path`; callers read uncompressed bytes through the `std::istream` interface.
+// Inputs: Construct with a regular `archive_path`; callers read through `std::istream` while its source stays pinned.
 // Outputs: Provides concatenated member payload bytes and validates lzip CRC32, data size, member size, and EOS markers
 // when drained.
+// Rejects mutable/reparse sources and retains the source/parent locks until reader destruction, including after finish.
 class LzipInputStream final : public std::istream {
   public:
     explicit LzipInputStream(const std::filesystem::path& archive_path);

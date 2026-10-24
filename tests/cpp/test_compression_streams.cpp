@@ -1,8 +1,10 @@
 #include "test_util.hpp"
 #include "test_stream_failure.hpp"
+#include "test_source_session.hpp"
 
 #include "bzip2/bzip2_stream.hpp"
 #include "bzip2/bzip2_adapter.hpp"
+#include "base64/base64_adapter.hpp"
 #include "core/result.hpp"
 #include "core/path_text.hpp"
 #include "core/bounded_text_io.hpp"
@@ -10,9 +12,13 @@
 #include "gzip/gzip_adapter.hpp"
 #include "lzma/bounded_sdk_allocator.hpp"
 #include "miniz.h"
+#include "xz/xz_stream.hpp"
 #include "zstd/zstd_stream.hpp"
 #include "zstd/zstd_adapter.hpp"
 #include "zstd/zstd_runtime.hpp"
+#include "zip/zip_adapter.hpp"
+#include "uue/uue_adapter.hpp"
+#include "xxe/xxe_adapter.hpp"
 
 #include <array>
 #include <fstream>
@@ -22,22 +28,196 @@
 #include <thread>
 #include <sstream>
 
+namespace {
+
+enum class CreatedSourceFormat { Flzip, Zip, Base64, Uue, Xxe };
+
+// Purpose: Select an explicitly CPU-only, small-memory native correctness workload without changing product defaults.
+// Inputs: overwrite controls only the owned fixture's target replacement. Outputs: Standard-mode bounded decode
+// options.
+flitzzip::ExtractOptions source_session_cpu_options(bool overwrite) {
+    flitzzip::ExtractOptions options;
+    options.gpu_required = false;
+    options.force_cpu = true;
+    options.overwrite = overwrite;
+    options.chunk_size = 64U * 1024U;
+    options.block_size = 4U * 1024U;
+    options.worker_count = 1U;
+    options.max_inflight_chunks = 1U;
+    return options;
+}
+
+// Purpose: Exercise raw native/compatibility APIs without inheriting the CLI's separate source session.
+// Inputs: An owned standard-mode format and whether to exercise its supported read-only verifier.
+// Outputs: Exact fixture bytes, real write exclusion, typed failure cleanup and successful source reuse.
+void require_created_archive_source_session(CreatedSourceFormat format, bool verification) {
+    const auto root = test_temp_dir("created-source-session-" + std::to_string(static_cast<int>(format)) +
+                                    (verification ? "-verify" : "-extract"));
+    const auto source = root / "payload";
+    const std::string expected = "public archive readers must retain one immutable source identity\n";
+    {
+        std::ofstream output(source, std::ios::binary);
+        output << expected;
+        REQUIRE_TRUE(output.good());
+    }
+    auto archive = root / "payload";
+    flitzzip_test::ArchiveExtractor extractor = nullptr;
+    switch (format) {
+    case CreatedSourceFormat::Flzip: {
+        archive += ".flzip";
+        const auto cpu = source_session_cpu_options(false);
+        flitzzip::CompressOptions options;
+        options.gpu_required = false;
+        options.force_cpu = true;
+        options.chunk_size = cpu.chunk_size;
+        options.block_size = cpu.block_size;
+        options.worker_count = cpu.worker_count;
+        options.max_inflight_chunks = cpu.max_inflight_chunks;
+        options.verify_after_write = true;
+        REQUIRE_EQ(flitzzip::compress_flzip({source}, archive, options).input_bytes, expected.size());
+        extractor = [](const std::filesystem::path& input, const std::filesystem::path& output, bool overwrite,
+                       const flitzzip::ProgressCallback& callback) {
+            return flitzzip::extract_flzip(input, output, source_session_cpu_options(overwrite), callback);
+        };
+        break;
+    }
+    case CreatedSourceFormat::Zip:
+        archive += ".zip";
+        (void)flitzzip::compress_zip({source}, archive, 5, {}, true);
+        extractor = &flitzzip::extract_zip;
+        break;
+    case CreatedSourceFormat::Base64:
+        archive += ".b64";
+        (void)flitzzip::compress_base64_file(source, archive);
+        extractor = &flitzzip::extract_base64_file;
+        break;
+    case CreatedSourceFormat::Uue:
+        archive += ".uue";
+        (void)flitzzip::compress_uue_file(source, archive);
+        extractor = &flitzzip::extract_uue_file;
+        break;
+    case CreatedSourceFormat::Xxe:
+        archive += ".xxe";
+        (void)flitzzip::compress_xxe_file(source, archive);
+        extractor = &flitzzip::extract_xxe_file;
+        break;
+    }
+    REQUIRE_TRUE(extractor != nullptr);
+    if (verification) {
+        REQUIRE_TRUE(format == CreatedSourceFormat::Zip || format == CreatedSourceFormat::Flzip);
+        flitzzip_test::require_archive_verification_source_session(
+            archive, expected.size(), [&](const flitzzip::ProgressCallback& callback) {
+                return format == CreatedSourceFormat::Zip
+                           ? flitzzip::verify_zip(archive, callback)
+                           : flitzzip::verify_flzip(archive, source_session_cpu_options(false), callback);
+            });
+    } else {
+        flitzzip_test::require_archive_source_session(archive, root, "payload", expected, extractor);
+    }
+}
+
+// Purpose: Prepare a real compatibility stream for shared public extraction ownership assertions.
+// Inputs: One codec selector and a unique owned fixture label; expected plaintext remains independently retained.
+// Outputs: A complete reader lifetime, admission and recovery check for the selected actual format.
+void require_compressed_source_session(int codec, const char* name) {
+    const auto root = test_temp_dir(name);
+    const auto source = root / "payload";
+    const std::string expected = "source ownership must survive decoder work and callback unwinding\n";
+    {
+        std::ofstream output(source, std::ios::binary);
+        output << expected;
+        REQUIRE_TRUE(output.good());
+    }
+    const auto archive = root / (codec == 0 ? "payload.gz" : codec == 1 ? "payload.bz2" : "payload.zst");
+    flitzzip_test::ArchiveExtractor extractor = nullptr;
+    if (codec == 0) {
+        (void)flitzzip::compress_gzip_file(source, archive);
+        extractor = &flitzzip::extract_gzip_file;
+    } else if (codec == 1) {
+        (void)flitzzip::compress_bzip2_file(source, archive);
+        extractor = &flitzzip::extract_bzip2_file;
+    } else {
+        (void)flitzzip::compress_zstd({source}, archive);
+        extractor = &flitzzip::extract_zstd_file;
+    }
+    flitzzip_test::require_archive_source_session(archive, root, "payload", expected, extractor);
+}
+
+}  // namespace
+
+// Purpose: Check native source lifetime. Inputs: A tiny CPU fixture. Outputs: Exact extraction and lock recovery.
+TEST_CASE(archive_source_session_flzip) {
+    require_created_archive_source_session(CreatedSourceFormat::Flzip, false);
+}
+
+// Purpose: Check ZIP source lifetime. Inputs: A tiny compatibility fixture. Outputs: Exact extraction and lock
+// recovery.
+TEST_CASE(archive_source_session_zip) {
+    require_created_archive_source_session(CreatedSourceFormat::Zip, false);
+}
+
+// Purpose: Check Base64 source lifetime. Inputs: A tiny text fixture. Outputs: Exact extraction and lock recovery.
+TEST_CASE(archive_source_session_base64) {
+    require_created_archive_source_session(CreatedSourceFormat::Base64, false);
+}
+
+// Purpose: Check UUencode source lifetime. Inputs: A tiny text fixture. Outputs: Exact extraction and lock recovery.
+TEST_CASE(archive_source_session_uue) {
+    require_created_archive_source_session(CreatedSourceFormat::Uue, false);
+}
+
+// Purpose: Check XXencode source lifetime. Inputs: A tiny text fixture. Outputs: Exact extraction and lock recovery.
+TEST_CASE(archive_source_session_xxe) {
+    require_created_archive_source_session(CreatedSourceFormat::Xxe, false);
+}
+
+// Purpose: Check native verification lifetime. Inputs: A tiny CPU fixture. Outputs: Read-only lock and failure
+// recovery.
+TEST_CASE(archive_source_session_verify_flzip) {
+    require_created_archive_source_session(CreatedSourceFormat::Flzip, true);
+}
+
+// Purpose: Check ZIP verification lifetime. Inputs: A tiny verified fixture. Outputs: Read-only lock and failure
+// recovery.
+TEST_CASE(archive_source_session_verify_zip) {
+    require_created_archive_source_session(CreatedSourceFormat::Zip, true);
+}
+
+// Purpose: Check Gzip source admission/lifetime. Inputs: A small real stream. Outputs: Exact recovery and sharing
+// proof.
+TEST_CASE(single_stream_source_session_gzip) {
+    require_compressed_source_session(0, "gzip-source-session");
+}
+
+// Purpose: Check Bzip2 source admission/lifetime. Inputs: A small real stream. Outputs: Exact recovery and sharing
+// proof.
+TEST_CASE(single_stream_source_session_bzip2) {
+    require_compressed_source_session(1, "bzip2-source-session");
+}
+
+// Purpose: Check Zstandard source lifetime. Inputs: A small real stream. Outputs: Exact recovery and sharing proof.
+TEST_CASE(single_stream_source_session_zstandard) {
+    require_compressed_source_session(2, "zstandard-source-session");
+}
+
 // Purpose: Preserve the original file-size failure when compressed-stream filenames cannot use the host code page.
-// Inputs: A missing Unicode/supplementary filename through the shared Gzip, Bzip2, and Zstandard readers.
+// Inputs: A missing Unicode/supplementary filename through Gzip, Bzip2, Zstandard and XZ readers.
 // Outputs: Requires ArchiveError with the intact UTF-8 filename, not an unrelated narrowing exception.
 TEST_CASE(compression_stream_missing_unicode_file_diagnostics) {
     const auto root = test_temp_dir("compression-stream-missing-unicode");
     const auto missing = root / std::filesystem::path(u8"\u538b\u7f29-\U0001f4e6.bin");
     const auto filename = flitzzip::path_diagnostic_utf8(missing.filename());
-    for (int codec = 0; codec < 3; ++codec) {
+    for (int codec = 0; codec < 4; ++codec) {
         bool rejected = false;
         try {
             if (codec == 0) {
                 flitzzip::GzipInputStream input(missing);
             } else if (codec == 1) {
                 flitzzip::Bzip2InputStream input(missing);
-            } else {
+            } else if (codec == 2) {
                 flitzzip::ZstdInputStream input(missing);
+            } else {
+                flitzzip::XzInputStream input(missing);
             }
         } catch (const flitzzip::ArchiveError& error) {
             REQUIRE_TRUE(std::string_view(error.what()).find(filename) != std::string_view::npos);
@@ -74,9 +254,9 @@ TEST_CASE(compression_stream_unicode_create_failure_diagnostics) {
 }
 
 #ifdef _WIN32
-// Purpose: Preserve the original open error for a Unicode file locked against readers.
+// Purpose: Preserve actionable source-admission refusal for a Unicode file held against readers.
 // Inputs: One temporary, exclusively held Windows file with a Unicode/supplementary filename.
-// Outputs: Requires intact UTF-8 ArchiveError diagnostics from all three readers and releases the owned lock.
+// Outputs: Requires intact UTF-8 SecurityError diagnostics and the actual sharing error from all three readers.
 TEST_CASE(compression_stream_unicode_locked_file_diagnostics) {
     const auto root = test_temp_dir("compression-stream-unicode-locked-file");
     const auto path = root / std::filesystem::path(u8"\u538b\u7f29-\U0001f4e6.bin");
@@ -100,8 +280,9 @@ TEST_CASE(compression_stream_unicode_locked_file_diagnostics) {
             } else {
                 flitzzip::ZstdInputStream input(path);
             }
-        } catch (const flitzzip::ArchiveError& error) {
+        } catch (const flitzzip::SecurityError& error) {
             REQUIRE_TRUE(std::string_view(error.what()).find(filename) != std::string_view::npos);
+            REQUIRE_TRUE(std::string_view(error.what()).find("Windows error 32") != std::string_view::npos);
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
@@ -373,12 +554,16 @@ std::string make_stream_partition_fixture() {
 }
 
 // Purpose: Write one valid codec stream, verify byte counts and close semantics, and reject writes after close.
-// Inputs: Output type, test-owned path, immutable input, level 1-9, and whole versus fragmented write selection.
+// Inputs: Output type, test-owned path, immutable input, level 1-9, and whole versus fragmented bulk/single writes.
 // Outputs: Requires accurate counters, safe caller-buffer reuse, idempotent close, and unchanged post-close bytes.
 template <typename OutputStream>
 void write_partitioned_stream(const std::filesystem::path& path, const std::string& input, int level, bool fragmented) {
     OutputStream output(path, level);
     output.exceptions(std::ios::badbit | std::ios::failbit);
+    const auto initial_output_bytes = output.output_bytes();
+    output.write("", 0);
+    REQUIRE_EQ(output.input_bytes(), 0U);
+    REQUIRE_EQ(output.output_bytes(), initial_output_bytes);
     constexpr std::array<std::size_t, 6> partitions{1U, 3U, 8191U, 65535U, 65536U, 65537U};
     std::vector<char> scratch(partitions.back());
     std::size_t offset = 0;
@@ -388,7 +573,11 @@ void write_partitioned_stream(const std::filesystem::path& path, const std::stri
             std::min(input.size() - offset, fragmented ? partitions[partition++ % partitions.size()] : input.size());
         if (fragmented) {
             std::copy_n(input.data() + offset, count, scratch.data());
-            output.write(scratch.data(), static_cast<std::streamsize>(count));
+            if (count == 1U) {
+                output.put(scratch.front());
+            } else {
+                output.write(scratch.data(), static_cast<std::streamsize>(count));
+            }
             std::fill(scratch.begin(), scratch.end(), static_cast<char>(0xA5));
         } else {
             output.write(input.data() + offset, static_cast<std::streamsize>(count));
@@ -533,6 +722,46 @@ void require_stream_read_failure(const std::string& codec, std::size_t checksum_
             }
         }
         require_sticky_decoder_failure<InputStream>(archive);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Prevent physical truncation of an admitted source and reject pre-existing shortened streams permanently.
+// Inputs: Matching stream types and codec label; a bounded mixed corpus and only test-owned file mutations.
+// Outputs: Real sharing denial with unchanged active bytes, terminal corruption after release, and exact valid reuse.
+template <typename OutputStream, typename InputStream> void require_stream_source_truncation(const std::string& codec) {
+    const auto root = test_temp_dir("stream-source-truncation-" + codec);
+    const auto archive = root / "input";
+    const auto payload = make_stream_partition_fixture();
+    {
+        OutputStream output(archive, 5);
+        output.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+        output.close();
+    }
+    const auto original = read_stream_fixture(archive);
+    REQUIRE_TRUE(original.size() > 65536U);
+    {
+        InputStream input(archive);
+        REQUIRE_EQ(input.input_bytes(), original.size());
+        std::error_code mutation_error;
+        std::filesystem::resize_file(archive, 0, mutation_error);
+        REQUIRE_EQ(mutation_error.value(), static_cast<int>(ERROR_SHARING_VIOLATION));
+        REQUIRE_EQ(read_stream_fixture(archive), original);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()), payload);
+        input.finish();
+    }
+    std::filesystem::resize_file(archive, original.size() / 2U);
+    require_sticky_decoder_failure<InputStream>(archive);
+    {
+        std::ofstream restored(archive, std::ios::binary | std::ios::trunc);
+        restored.exceptions(std::ios::badbit | std::ios::failbit);
+        restored.write(original.data(), static_cast<std::streamsize>(original.size()));
+        restored.close();
+    }
+    {
+        InputStream input(archive);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()), payload);
+        input.finish();
     }
     std::filesystem::remove_all(root);
 }
@@ -739,6 +968,15 @@ TEST_CASE(compression_stream_gzip_read_failure_is_terminal) {
 // Outputs: Requires immediate decoder errors and repeated rejection after stream-state resets.
 TEST_CASE(compression_stream_zstd_read_failure_is_terminal) {
     require_stream_read_failure<flitzzip::ZstdOutputStream, flitzzip::ZstdInputStream>("zstd", 4U);
+}
+
+// Purpose: Refuse truncation during decoding and retain terminal corruption rejection after the source is released.
+// Inputs: Three bounded codec files, real Windows resize attempts and independently shortened closed-source frames.
+// Outputs: Active bytes remain exact; malformed frames reject permanently and subsequent valid streams decode.
+TEST_CASE(compression_stream_source_truncation_is_terminal) {
+    require_stream_source_truncation<flitzzip::GzipOutputStream, flitzzip::GzipInputStream>("Gzip");
+    require_stream_source_truncation<flitzzip::Bzip2OutputStream, flitzzip::Bzip2InputStream>("Bzip2");
+    require_stream_source_truncation<flitzzip::ZstdOutputStream, flitzzip::ZstdInputStream>("Zstandard");
 }
 
 // Purpose: Establish byte-for-byte equivalence between standalone Gzip and the stream used by container wrappers.

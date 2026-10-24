@@ -34,11 +34,12 @@ void checked_add_lzip_adapter_bytes(std::uint64_t& total, std::uint64_t bytes, c
 }  // namespace
 
 // Purpose: Extract a single lzip payload through bounded decoding and verified file publication.
-// Inputs: `archive_path`, `destination`, overwrite policy, and optional progress callback describe the operation.
+// Inputs: `archive_path` stays pinned through publication; `destination`, overwrite policy and callback select output.
 // Outputs: Returns extraction telemetry or throws before retaining a partial or unverified file.
 OperationStats extract_lzip_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                  bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
+    LzipInputStream input(archive_path);
     const auto entry_name = single_stream_entry_name(archive_path, {{".tlz", ".tar"}, {".lz", ""}});
     create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, entry_name, ArchivePathEncoding::Utf8);
@@ -46,7 +47,6 @@ OperationStats extract_lzip_file(const std::filesystem::path& archive_path, cons
         throw SecurityError("refusing to overwrite existing lzip extraction target: " + path_diagnostic_utf8(target));
     }
 
-    LzipInputStream input(archive_path);
     ProgressState progress;
     progress.start(OperationKind::Extract, input.input_bytes(), 1);
     progress.set_current(entry_name);

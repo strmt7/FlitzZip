@@ -326,7 +326,7 @@ void MainWindow::open_pending_operation_destination() {
     std::filesystem::path destination;
     {
         std::lock_guard lock(mutex_);
-        if (state_.active_operation != OperationKind::Idle || worker_running_.load()) {
+        if (state_.active_operation != OperationKind::Idle || worker_.running()) {
             return;
         }
         destination = operation_destination_.take();
@@ -353,19 +353,6 @@ void MainWindow::open_pending_operation_destination() {
     } catch (const std::exception& error) {
         append_log_entry(LogSeverity::Warning, std::string("Open destination failed: ") + error.what());
     }
-}
-
-// Purpose: Advance the compression level selection by one visible option.
-// Inputs: None.
-// Outputs: Updates the synchronized UI state and queues repaint.
-void MainWindow::cycle_compression_level() {
-    {
-        std::lock_guard lock(mutex_);
-        state_.compression_level_index =
-            (state_.compression_level_index + 1) % compression_selection_count(neutron_selection_available(state_));
-        state_.status = "Compression level changed";
-    }
-    request_repaint();
 }
 
 // Purpose: Start a background compression job from the current GUI queue.

@@ -5,6 +5,7 @@
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
 
+#include <array>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -109,6 +110,43 @@ TEST_CASE(base64_extracts_raw_payload_by_extension) {
                                                            '4',
                                                        }));
     std::filesystem::remove_all(root);
+}
+
+// Purpose: Preserve native Unicode filenames for raw payloads without interpreting them as legacy wire metadata.
+// Inputs: Independent Base64 bytes for three known binary octets and ASCII, accented and supplementary filenames.
+// Outputs: Exact native names/bytes, overwrite refusal without mutation, successful reuse and no staging debris.
+TEST_CASE(base64_raw_native_unicode_filenames_preserve_bytes_and_overwrite_policy) {
+    const auto root = test_temp_dir("base64-raw-native-unicode");
+    const std::array names{std::filesystem::path(u8"plain.b64"), std::filesystem::path(u8"caf\u00e9.b64"),
+                           std::filesystem::path(u8"\u65e5\u672c-\U0001F4C1.b64")};
+    const std::vector<unsigned char> expected{0x00, 0xff, 0x80};
+    unsigned ordinal = 0;
+    for (const auto& name : names) {
+        const auto archive = root / name;
+        write_text_file(archive, "AP+A\n");
+        const auto destination = root / ("out-" + std::to_string(ordinal++));
+        const auto target = destination / name.stem();
+        const auto first = flitzzip::extract_base64_file(archive, destination, false);
+        REQUIRE_EQ(first.entries, 1U);
+        REQUIRE_EQ(first.output_bytes, expected.size());
+        REQUIRE_EQ(read_binary_file(target), expected);
+        bool rejected = false;
+        try {
+            (void)flitzzip::extract_base64_file(archive, destination, false);
+        } catch (const flitzzip::SecurityError& error) {
+            REQUIRE_TRUE(std::string_view(error.what()).find(flitzzip::path_diagnostic_utf8(target.filename())) !=
+                         std::string_view::npos);
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(read_binary_file(target), expected);
+        const auto replaced = flitzzip::extract_base64_file(archive, destination, true);
+        REQUIRE_EQ(replaced.output_bytes, expected.size());
+        REQUIRE_EQ(read_binary_file(target), expected);
+        REQUIRE_EQ(static_cast<std::size_t>(std::distance(std::filesystem::directory_iterator(destination),
+                                                          std::filesystem::directory_iterator{})),
+                   1U);
+    }
 }
 
 // Purpose: Verify Base64 extraction rejects hostile embedded output paths before publishing.

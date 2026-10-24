@@ -1,4 +1,5 @@
 #include "test_compat_fixture.hpp"
+#include "test_source_session.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -82,6 +83,22 @@ void write_unicode_wim_fixture(const std::filesystem::path& source, const std::f
 }
 
 }  // namespace
+
+// Purpose: Qualify source ownership and destination refusal through the real WIM library and publication path.
+// Inputs: One tiny image from the pinned independent writer, active source/destination handles and cancellation.
+// Outputs: Exact read-back, denied mutation, unchanged caller bytes, no staging debris and valid subsequent reuse.
+TEST_CASE(wim_source_and_destination_sessions_preserve_ownership) {
+    const auto root = test_temp_dir("wim-source-destination-sessions");
+    (void)flitzzip::extract_wim(wim_fixture_path("basic.wim"), root / "initialize", false);
+    const auto source = root / "source";
+    std::filesystem::create_directory(source);
+    const std::string expected = "independent WIM session fixture\n";
+    std::ofstream(source / "file.txt", std::ios::binary) << expected;
+    const auto archive = root / "one-file.wim";
+    write_unicode_wim_fixture(source, archive, 1);
+    flitzzip_test::require_archive_source_session(archive, root, "file.txt", expected, flitzzip::extract_wim);
+    std::filesystem::remove_all(root);
+}
 
 TEST_CASE(wim_fixture_extracts_with_native_adapter) {
     const auto root = test_temp_dir("wim-extract");

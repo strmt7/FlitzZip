@@ -3,6 +3,7 @@
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
+#include "core/resource_limits.hpp"
 #include "lha/lha_adapter.hpp"
 
 #include <array>
@@ -14,7 +15,10 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -85,10 +89,12 @@ constexpr std::array<unsigned char, 45> kPm2CopyTableOverreadFixture{
 
 // Purpose: Write an embedded LHA fixture to disk.
 // Inputs: `archive` is the destination and `bytes` are exact archive bytes.
-// Outputs: Creates or replaces a small LHA fixture.
+// Outputs: Creates or replaces a small LHA fixture; propagates write and close failures.
 void write_lha_fixture(const std::filesystem::path& archive, std::span<const unsigned char> bytes) {
     std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+    output.exceptions(std::ios::badbit | std::ios::failbit);
     output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    output.close();
 }
 
 // Purpose: Read a full text file for extraction equality checks.
@@ -157,6 +163,32 @@ std::vector<unsigned char> stored_lha_member(unsigned char level, bool wide = fa
         }
     }
     bytes.insert(bytes.end(), payload.begin(), payload.end());
+    return bytes;
+}
+
+// Purpose: Replace name/path extensions in the independently framed level-two stored member.
+// Inputs: Bounded filename and optional raw directory bytes. Outputs: Member with known payload/CRC and exact lengths.
+std::vector<unsigned char> named_level_two_lha_member(std::string_view name, std::string_view directory = {}) {
+    REQUIRE_TRUE(name.size() <= 4096U);
+    REQUIRE_TRUE(directory.size() <= flitzzip::kMaxArchivePathBytes + 1U);
+    const auto original = stored_lha_member(2);
+    std::vector<unsigned char> bytes(original.begin(), original.begin() + 24);
+    const std::pair<unsigned char, std::string_view> fields[] = {{2, directory}, {1, name}};
+    for (const auto& [type, data] : fields) {
+        if (type == 2 && data.empty()) {
+            continue;
+        }
+        const auto extension_size = data.size() + 3U;
+        bytes.push_back(static_cast<unsigned char>(extension_size & 0xFFU));
+        bytes.push_back(static_cast<unsigned char>(extension_size >> 8U));
+        bytes.push_back(type);
+        bytes.insert(bytes.end(), data.begin(), data.end());
+    }
+    bytes.insert(bytes.end(), {0, 0});
+    REQUIRE_TRUE(bytes.size() <= std::numeric_limits<std::uint16_t>::max());
+    bytes[0] = static_cast<unsigned char>(bytes.size() & 0xFFU);
+    bytes[1] = static_cast<unsigned char>(bytes.size() >> 8U);
+    bytes.insert(bytes.end(), original.begin() + 37, original.end());
     return bytes;
 }
 
@@ -278,6 +310,76 @@ TEST_CASE(lha_extraction_reads_nested_payload) {
     REQUIRE_TRUE(!stats.gpu_used);
     REQUIRE_EQ(read_text_file(output / "subdir" / "subdir2" / "hello.txt"), "hello world\n");
     flitzzip_test::export_compat_fixture(archive, output);
+}
+
+// Purpose: Qualify LHA name/path bounds before CRC work or destination publication with independently framed names.
+// Inputs: Valid control, then component/total/directory boundaries with deliberately corrupt payload CRC.
+// Outputs: In-bound names reach CRC rejection; excessive names fail earlier, and neither overwrite policy changes
+// output.
+TEST_CASE(lha_name_metadata_boundary_precedes_crc_and_publication) {
+    const auto root = test_temp_dir("lha-name-metadata-boundary");
+    const auto archive = root / "input.lzh";
+    auto control = named_level_two_lha_member("control.txt", "safe\xFF");
+    control.push_back(0);
+    write_lha_fixture(archive, control);
+    const auto stats = flitzzip::extract_lha(archive, root / "valid", false);
+    REQUIRE_EQ(stats.entries, 1U);
+    REQUIRE_EQ(read_text_file(root / "valid" / "safe" / "control.txt"), "hello world\n");
+    const auto output = root / "rejected";
+    std::filesystem::create_directories(output);
+    const auto sentinel = output / "existing.txt";
+    {
+        std::ofstream file(sentinel);
+        file.exceptions(std::ios::badbit | std::ios::failbit);
+        file << "retain";
+        file.close();
+    }
+    std::vector<std::pair<std::vector<unsigned char>, std::string_view>> cases;
+    for (const auto size : {flitzzip::kMaxArchivePathComponentBytes - 1U, flitzzip::kMaxArchivePathComponentBytes,
+                            flitzzip::kMaxArchivePathComponentBytes + 1U}) {
+        cases.emplace_back(named_level_two_lha_member(std::string(size, 'a')),
+                           size > flitzzip::kMaxArchivePathComponentBytes ? "LHA filename exceeds FlitzZip path limits"
+                                                                          : "LHA payload CRC or size check failed");
+    }
+    constexpr std::string_view leaf = "file.txt";
+    for (const auto size :
+         {flitzzip::kMaxArchivePathBytes - leaf.size(), flitzzip::kMaxArchivePathBytes - leaf.size() + 1U,
+          static_cast<std::size_t>(flitzzip::kMaxArchivePathBytes) + 1U}) {
+        std::string directory(size, 'd');
+        for (std::size_t offset = 1023U; offset < directory.size(); offset += 1024U) {
+            directory[offset] = static_cast<char>(0xFFU);
+        }
+        directory.back() = static_cast<char>(0xFFU);
+        const std::string_view expected =
+            size > flitzzip::kMaxArchivePathBytes
+                ? "LHA directory path exceeds FlitzZip path limits"
+                : (size + leaf.size() > flitzzip::kMaxArchivePathBytes ? "LHA member path exceeds FlitzZip path limits"
+                                                                       : "LHA payload CRC or size check failed");
+        cases.emplace_back(named_level_two_lha_member(leaf, directory), expected);
+    }
+    for (auto& [bytes, expected] : cases) {
+        bytes.back() ^= 1U;
+        bytes.push_back(0);
+        write_lha_fixture(archive, bytes);
+        for (const bool overwrite : {false, true}) {
+            bool rejected = false;
+            try {
+                (void)flitzzip::extract_lha(archive, output, overwrite);
+            } catch (const flitzzip::Error& error) {
+                if (std::string_view(error.what()).find(expected) == std::string_view::npos) {
+                    throw std::runtime_error("LHA name boundary expected " + std::string(expected) + "; received " +
+                                             error.what());
+                }
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+            REQUIRE_EQ(read_text_file(sentinel), "retain");
+            REQUIRE_EQ(std::distance(std::filesystem::recursive_directory_iterator(output),
+                                     std::filesystem::recursive_directory_iterator()),
+                       1);
+        }
+    }
+    std::filesystem::remove_all(root);
 }
 
 // Purpose: Verify LHA extraction refuses overwriting existing files unless explicitly allowed.

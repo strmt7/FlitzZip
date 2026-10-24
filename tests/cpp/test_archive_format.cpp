@@ -2,6 +2,7 @@
 
 #include "core/archive_format.hpp"
 #include "core/archive_index.hpp"
+#include "core/resource_limits.hpp"
 
 #include <array>
 #include <algorithm>
@@ -16,18 +17,22 @@ namespace {
 
 // Purpose: Write a small binary fixture for archive-format detection tests.
 // Inputs: `path` is the fixture location and `bytes` is the exact payload.
-// Outputs: Creates or replaces the fixture file.
+// Outputs: Creates or replaces the fixture file; propagates incomplete writes and close failures.
 void write_fixture(const std::filesystem::path& path, std::span<const unsigned char> bytes) {
     std::ofstream output(path, std::ios::binary);
+    output.exceptions(std::ios::badbit | std::ios::failbit);
     output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    output.close();
 }
 
 // Purpose: Write a small text fixture for archive-format detection tests.
 // Inputs: `path` is the fixture location and `text` is the exact payload.
-// Outputs: Creates or replaces the fixture file.
+// Outputs: Creates or replaces the fixture file; propagates incomplete writes and close failures.
 void write_text_fixture(const std::filesystem::path& path, const std::string& text) {
     std::ofstream output(path, std::ios::binary);
+    output.exceptions(std::ios::badbit | std::ios::failbit);
     output.write(text.data(), static_cast<std::streamsize>(text.size()));
+    output.close();
 }
 
 // Purpose: Write a minimal native archive shell for format-detection tests.
@@ -36,6 +41,7 @@ void write_text_fixture(const std::filesystem::path& path, const std::string& te
 void write_minimal_flzip_fixture(const std::filesystem::path& path, std::uint32_t version = flitzzip::kFlitzZipVersion,
                                  std::span<const unsigned char> prefix = {}) {
     std::ofstream output(path, std::ios::binary);
+    output.exceptions(std::ios::badbit | std::ios::failbit);
     if (!prefix.empty()) {
         output.write(reinterpret_cast<const char*>(prefix.data()), static_cast<std::streamsize>(prefix.size()));
     }
@@ -48,6 +54,7 @@ void write_minimal_flzip_fixture(const std::filesystem::path& path, std::uint32_
     flitzzip::write_u32(output, version);
     flitzzip::write_u64(output, index_offset);
     flitzzip::write_u64(output, index_size);
+    output.close();
 }
 
 // Purpose: Update a CRC-16/XMODEM register for MacBinary format-detection fixtures.
@@ -116,6 +123,57 @@ TEST_CASE(flzip_rename_preserves_existing_archive_bytes) {
     }
     REQUIRE_EQ(flitzzip::parse_archive_format_token("flzip").value(), flitzzip::ArchiveFormat::FlitzZip);
     REQUIRE_EQ(flitzzip::parse_archive_format_token("FLZIP").value(), flitzzip::ArchiveFormat::FlitzZip);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Prevent an impossible native footer from overriding a recognizable leading format signature.
+// Inputs: Literal version-one native framing after a Gzip marker, then independently mutated footer extents.
+// Outputs: Valid native framing wins; every invalid extent or magic falls back to the leading Gzip signature.
+TEST_CASE(archive_format_native_footer_extents_do_not_mask_other_signatures) {
+    const auto root = test_temp_dir("archive-format-footer-extents");
+    const auto path = root / "candidate.data";
+    constexpr std::array<unsigned char, 40> valid{0x1F, 0x8B, 0,   0,   'S', 'U', 'Z', 'P', 1, 0, 0, 0, 0, 0,
+                                                  0,    0,    'S', 'U', 'Z', 'F', 1,   0,   0, 0, 4, 0, 0, 0,
+                                                  0,    0,    0,   0,   12,  0,   0,   0,   0, 0, 0, 0};
+    write_fixture(path, valid);
+    REQUIRE_EQ(flitzzip::detect_archive_format(path), flitzzip::ArchiveFormat::FlitzZip);
+    struct Mutation {
+        std::size_t field_offset;
+        std::uint64_t value;
+    };
+    const Mutation mutations[] = {
+        {32U, 11U}, {32U, flitzzip::kMaxArchiveIndexBytes + 1U}, {24U, 41U}, {32U, 17U}, {24U, 5U}, {24U, 0U}};
+    for (const auto& mutation : mutations) {
+        auto bytes = valid;
+        for (unsigned shift = 0; shift < 64U; shift += 8U) {
+            bytes[mutation.field_offset + shift / 8U] = static_cast<unsigned char>((mutation.value >> shift) & 0xFFU);
+        }
+        write_fixture(path, bytes);
+        REQUIRE_EQ(flitzzip::detect_archive_format(path), flitzzip::ArchiveFormat::Gzip);
+    }
+    for (const std::size_t offset : {4U, 16U, 20U}) {
+        auto bytes = valid;
+        bytes[offset] = 0;
+        write_fixture(path, bytes);
+        REQUIRE_EQ(flitzzip::detect_archive_format(path), flitzzip::ArchiveFormat::Gzip);
+    }
+    write_fixture(path, valid);
+    REQUIRE_EQ(flitzzip::detect_archive_format(path), flitzzip::ArchiveFormat::FlitzZip);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Keep CRLF transfer probes distinct and avoid inferring XXencode from a header with no encoded row.
+// Inputs: Plain UUencode and XXencode transfer headers under an unrelated extension, including a header-only source.
+// Outputs: The two alphabets retain their format identities; the incomplete header is only a UUencode candidate.
+TEST_CASE(archive_format_transfer_probes_handle_crlf_and_header_only_input) {
+    const auto root = test_temp_dir("archive-format-transfer-lines");
+    const auto path = root / "candidate.data";
+    write_text_fixture(path, "begin 644 payload.txt\r\n`\r\nend\r\n");
+    REQUIRE_EQ(flitzzip::detect_archive_format(path), flitzzip::ArchiveFormat::Uue);
+    write_text_fixture(path, "begin 644 payload.txt\r\n+\r\nend\r\n");
+    REQUIRE_EQ(flitzzip::detect_archive_format(path), flitzzip::ArchiveFormat::Xxe);
+    write_text_fixture(path, "begin 644 payload.txt\r\n");
+    REQUIRE_EQ(flitzzip::detect_archive_format(path), flitzzip::ArchiveFormat::Uue);
     std::filesystem::remove_all(root);
 }
 
@@ -301,6 +359,28 @@ TEST_CASE(archive_format_does_not_false_positive_zip_based_containers) {
     REQUIRE_EQ(flitzzip::parse_archive_format_token("macbinary").value(), flitzzip::ArchiveFormat::MacBinary);
     REQUIRE_EQ(flitzzip::parse_archive_format_token("macbin").value(), flitzzip::ArchiveFormat::MacBinary);
     REQUIRE_EQ(flitzzip::parse_archive_format_token("swm").value(), flitzzip::ArchiveFormat::SplitWim);
+}
+
+// Purpose: Keep advertised format tokens unambiguous without confusing recognition with operation support.
+// Inputs: The public key-list API with and without automatic detection; independently specified canonical tokens.
+// Outputs: Exact delimiter/order contracts, parseable names and explicit unsupported-format capability checks.
+TEST_CASE(archive_format_key_list_distinguishes_registered_keys_from_capabilities) {
+    constexpr std::string_view expected =
+        "flzip, zip, zipx, 7z, rar, tar, tar.gz, tar.bz2, tar.xz, tar.lz, tar.zst, gz, z, b64, bz2, xz, "
+        "lzma, lz, zst, cab, iso, cpio, cpio.gz, ar, arj, arc, hqx, macbinary, xxe, uue, lha, wim, swm, xar, deb, rpm";
+    const auto explicit_keys = flitzzip::archive_format_key_list(false);
+    REQUIRE_EQ(explicit_keys, expected);
+    REQUIRE_EQ(flitzzip::archive_format_key_list(true), "auto, " + std::string(expected));
+    REQUIRE_TRUE(!flitzzip::parse_archive_format_token(explicit_keys).has_value());
+    REQUIRE_EQ(flitzzip::parse_archive_format_token("auto").value(), flitzzip::ArchiveFormat::Auto);
+    for (const auto token : {"flzip", "rar", "swm", "cab"}) {
+        REQUIRE_TRUE(flitzzip::parse_archive_format_token(token).has_value());
+    }
+    const auto& rar = flitzzip::archive_format_info(flitzzip::ArchiveFormat::Rar);
+    REQUIRE_TRUE(!rar.can_create && !rar.can_extract);
+    const auto& cab = flitzzip::archive_format_info(flitzzip::ArchiveFormat::Cab);
+    REQUIRE_TRUE(!cab.can_create && cab.can_extract);
+    REQUIRE_EQ(flitzzip::archive_format_key_list(false), explicit_keys);
 }
 
 TEST_CASE(archive_format_display_names_are_precise_user_facing_format_names) {

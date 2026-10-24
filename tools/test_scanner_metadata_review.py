@@ -239,6 +239,26 @@ class ScannerMetadataReviewTests(unittest.TestCase):
             self.assertFalse(review.public_value_matches(row, payload + b" ", region))
             self.assertFalse(review.public_value_matches(row, payload, {**region, "charOffset": offset + 1}))
 
+    def test_hip_reader_integrity_requires_exact_official_dependency_role(self):
+        """Purpose: Bind native reader pins. Inputs: Real manifest and role mutations. Outputs: Exact matches only."""
+        root = Path(__file__).resolve().parents[1]
+        name = "tools/hip-coverage-toolchain.json"
+        payload = (root / name).read_bytes()
+        manifest = json.loads(payload)
+        values = {manifest["revision"], manifest["zlib"]["sha256"]}
+        rows = [row for row in review.read_reviews(review.read_policy(root)) if row["path"] == name]
+        self.assertEqual({row["public_value"] for row in rows}, values)
+        for row in rows:
+            quoted = '"' + row["public_value"] + '"'
+            region = {"charOffset": payload.decode().index(quoted), "charLength": len(quoted)}
+            self.assertTrue(review.public_value_matches(row, payload, region))
+            self.assertFalse(review.public_value_matches(row, payload + b" ", region))
+            self.assertFalse(review.public_value_matches(row, payload, {**region, "charOffset": 0}))
+            wrong = payload.replace(b"https://github.com/madler/zlib", b"https://example.invalid/zlib")
+            modified = {**row, "input_sha256": hashlib.sha256(wrong).hexdigest()}
+            changed_region = {"charOffset": wrong.decode().index(quoted), "charLength": len(quoted)}
+            self.assertFalse(review.public_value_matches(modified, wrong, changed_region))
+
     def test_model_commit_requires_exact_official_metadata_role(self):
         """Purpose: Bind model provenance. Inputs: Typed roles and independent mutations. Outputs: Closed match."""
         value = hashlib.sha256(b"public model commit fixture").hexdigest()[:40]
@@ -883,6 +903,30 @@ class ScannerReviewCommandTests(unittest.TestCase):
             ):
                 review.main()
             match.assert_not_called()
+
+
+class ReviewEntryPointTests(unittest.TestCase):
+    def test_default_commit_uses_owned_checkout_and_keeps_empty_snapshot_unchanged(self):
+        """Purpose: Qualify actual module execution and default source identity without accepting any finding.
+        Inputs: Owned empty alert array and actual checkout HEAD. Outputs: Empty blocking result and unchanged input.
+        """
+        root = Path(review.__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "alerts.json"
+            snapshot.write_bytes(b"[]\n")
+            result = subprocess.run(
+                [sys.executable, "-B", "-m", "tools.scanner_metadata_review", "--hosted-alerts", str(snapshot)],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                json.loads(result.stdout), {"historically_reviewed": [], "blocking": [], "unresolved_count": 0}
+            )
+            self.assertEqual(snapshot.read_bytes(), b"[]\n")
 
 
 if __name__ == "__main__":

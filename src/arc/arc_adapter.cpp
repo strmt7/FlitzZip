@@ -1,6 +1,8 @@
 #include "arc/arc_adapter.hpp"
+#include "core/path_text.hpp"
 
 #include "core/file_size.hpp"
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limits.hpp"
@@ -232,7 +234,7 @@ ArcScanResult scan_arc(const std::filesystem::path& archive_path) {
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open ARC archive: " + archive_path.string());
+        throw ArchiveError("cannot open ARC archive: " + path_diagnostic_utf8(archive_path));
     }
 
     ArcScanResult result;
@@ -289,7 +291,7 @@ void extract_arc_file_payload(std::ifstream& input, const ArcEntryMetadata& entr
     try {
         std::ofstream output(temporary_target.file, std::ios::binary);
         if (!output) {
-            throw ArchiveError("failed to create temporary extracted file: " + target.string());
+            throw ArchiveError("failed to create temporary extracted file: " + path_diagnostic_utf8(target));
         }
         std::array<unsigned char, kArcIoBufferBytes> buffer{};
         std::uint64_t remaining = entry.size;
@@ -299,7 +301,7 @@ void extract_arc_file_payload(std::ifstream& input, const ArcEntryMetadata& entr
             read_exact(input, reinterpret_cast<char*>(buffer.data()), chunk, "ARC file payload");
             output.write(reinterpret_cast<const char*>(buffer.data()), static_cast<std::streamsize>(chunk));
             if (!output) {
-                throw ArchiveError("failed to write temporary extracted file: " + target.string());
+                throw ArchiveError("failed to write temporary extracted file: " + path_diagnostic_utf8(target));
             }
             crc = crc16_arc(std::span<const unsigned char>(buffer.data(), chunk), crc);
             remaining -= chunk;
@@ -309,7 +311,7 @@ void extract_arc_file_payload(std::ifstream& input, const ArcEntryMetadata& entr
         }
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize temporary extracted file: " + target.string());
+            throw ArchiveError("failed to finalize temporary extracted file: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
@@ -322,17 +324,19 @@ void extract_arc_file_payload(std::ifstream& input, const ArcEntryMetadata& entr
 }  // namespace
 
 // Purpose: Extract a bounded SEA ARC/ARK archive with second-pass CRC validation and verified publication.
-// Inputs: `archive_path`, `destination`, overwrite policy, and optional progress callback describe the operation.
+// Inputs: `requested_archive` is pinned across both passes; destination, overwrite and progress_callback select output.
 // Outputs: Returns extraction telemetry or throws before retaining any unverified file.
-OperationStats extract_arc(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+OperationStats extract_arc(const std::filesystem::path& requested_archive, const std::filesystem::path& destination,
                            bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
+    const auto archive_source = pin_source_file(requested_archive);
+    const auto& archive_path = archive_source.path();
     const auto scanned = scan_arc(archive_path);
     create_verified_directories(destination);
 
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open ARC archive: " + archive_path.string());
+        throw ArchiveError("cannot open ARC archive: " + path_diagnostic_utf8(archive_path));
     }
 
     ProgressState progress;
@@ -347,7 +351,7 @@ OperationStats extract_arc(const std::filesystem::path& archive_path, const std:
     }
 
     OperationStats stats;
-    stats.input_bytes = regular_file_size(archive_path);
+    stats.input_bytes = archive_source.size();
     stats.output_bytes = scanned.total_file_bytes;
     stats.entries = static_cast<std::uint64_t>(scanned.entries.size());
     stats.gpu_used = false;

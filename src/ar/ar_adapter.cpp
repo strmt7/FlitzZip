@@ -1,4 +1,5 @@
 #include "ar/ar_adapter.hpp"
+#include "core/path_text.hpp"
 #include "ar/ar_reader.hpp"
 
 #include "core/file_manifest.hpp"
@@ -208,7 +209,7 @@ std::array<char, kArHeaderBytes> make_bsd_ar_header(std::string_view path, std::
 void copy_file_to_ar(const std::filesystem::path& source, std::ostream& output, std::uint64_t expected_size) {
     std::ifstream input(source, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open file for AR archive: " + source.string());
+        throw ArchiveError("cannot open file for AR archive: " + path_diagnostic_utf8(source));
     }
     std::array<char, kArIoBufferBytes> buffer{};
     std::uint64_t remaining = expected_size;
@@ -216,7 +217,7 @@ void copy_file_to_ar(const std::filesystem::path& source, std::ostream& output, 
         const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
         input.read(buffer.data(), static_cast<std::streamsize>(chunk));
         if (input.gcount() != static_cast<std::streamsize>(chunk)) {
-            throw ArchiveError("failed to read file for AR archive: " + source.string());
+            throw ArchiveError("failed to read file for AR archive: " + path_diagnostic_utf8(source));
         }
         write_ar_bytes(output, buffer.data(), chunk);
         remaining -= chunk;
@@ -363,7 +364,7 @@ ArScanResult scan_ar(const std::filesystem::path& archive_path, ArchivePathEncod
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open AR archive: " + archive_path.string());
+        throw ArchiveError("cannot open AR archive: " + path_diagnostic_utf8(archive_path));
     }
     return detail::scan_ar_stream(input, archive_size, encoding);
 }
@@ -386,7 +387,7 @@ void extract_ar_file_payload(std::ifstream& input, const ArEntryMetadata& entry,
     try {
         std::ofstream output(temporary_target.file, std::ios::binary);
         if (!output) {
-            throw ArchiveError("failed to create temporary extracted file: " + target.string());
+            throw ArchiveError("failed to create temporary extracted file: " + path_diagnostic_utf8(target));
         }
         std::array<char, kArIoBufferBytes> buffer{};
         std::uint64_t remaining = entry.size;
@@ -395,13 +396,13 @@ void extract_ar_file_payload(std::ifstream& input, const ArEntryMetadata& entry,
             read_exact(input, buffer.data(), chunk, "AR file payload");
             output.write(buffer.data(), static_cast<std::streamsize>(chunk));
             if (!output) {
-                throw ArchiveError("failed to write temporary extracted file: " + target.string());
+                throw ArchiveError("failed to write temporary extracted file: " + path_diagnostic_utf8(target));
             }
             remaining -= chunk;
         }
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize temporary extracted file: " + target.string());
+            throw ArchiveError("failed to finalize temporary extracted file: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
@@ -506,7 +507,7 @@ OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
     FilePublishTransaction publication(output_archive);
     std::ofstream output(publication.staging_path(), std::ios::binary);
     if (!output) {
-        throw ArchiveError("cannot create AR archive: " + output_archive.string());
+        throw ArchiveError("cannot create AR archive: " + path_diagnostic_utf8(output_archive));
     }
     write_ar_bytes(output, kArGlobalMagic.data(), kArGlobalMagic.size());
 
@@ -531,7 +532,7 @@ OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
     }
     output.close();
     if (!output) {
-        throw ArchiveError("failed to finalize AR archive: " + output_archive.string());
+        throw ArchiveError("failed to finalize AR archive: " + path_diagnostic_utf8(output_archive));
     }
     publication.commit(true);
 
@@ -567,7 +568,7 @@ OperationStats extract_ar(const std::filesystem::path& archive_path, const std::
 
     std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open AR archive: " + archive_path.string());
+        throw ArchiveError("cannot open AR archive: " + path_diagnostic_utf8(archive_path));
     }
 
     ProgressState progress;

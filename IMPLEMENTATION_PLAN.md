@@ -6,6 +6,12 @@ Prepare a Windows x64, HIP-enabled beta candidate with source-bound verification
 and exact ZIP/MSI qualification. Publication requires the maintainer's green light.
 See [beta readiness](docs/beta-readiness.md) and [release qualification](docs/release.md).
 
+Use the [investigation skill](.agents/skills/flitzzip-test-investigation/SKILL.md)
+and its research-backed oracle selection for the immediate development phase:
+[meaningful coverage closure](docs/code-coverage.md#meaningful-tests). Accumulated
+final qualification follows coherent development batches; this ordering does not
+waive any release blocker or deferred improvement below.
+
 ## Engineering Priorities
 
 1. Preserve archive correctness, backward readability, safe extraction and explicit

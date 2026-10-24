@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <fstream>
+#include <future>
 
 using flitzzip::app::QueueFileKind;
 using flitzzip::app::QueueFileMetadata;
@@ -259,4 +260,46 @@ TEST_CASE(queue_metadata_refresh_observes_real_resize_delete_and_recreation) {
     await_metadata([&] { return cache.get(paths[0]).kind == QueueFileKind::Directory; });
     cache.stop();
     std::filesystem::remove_all(root);
+}
+
+// Purpose: Prevent notification borrowers from outliving the controller's owned native destination.
+// Inputs: Real filesystem metadata, a held notification callback, and asynchronous stop.
+// Outputs: Stop joins the callback before returning, is idempotent, and cannot admit a later notification.
+TEST_CASE(queue_metadata_stop_joins_inflight_notification_before_returning) {
+    const auto directory = test_temp_dir("metadata-notification-owner");
+    const auto path = directory / L"source.txt";
+    std::ofstream(path, std::ios::binary) << "metadata";
+    ReadGate callback_gate;
+    std::atomic_bool entered = false;
+    std::atomic_bool exited = false;
+    std::atomic_bool stopping = false;
+    std::atomic_uint calls = 0;
+    QueueMetadataCache cache(flitzzip::app::read_queue_file_metadata, [&](const auto&, bool) {
+        ++calls;
+        entered.store(true);
+        callback_gate.wait();
+        exited.store(true);
+    });
+    ReleaseReadGate release_on_setup_failure{callback_gate};
+    const std::filesystem::path paths[]{path};
+    cache.synchronize(paths);
+    REQUIRE_TRUE(cache.get(path).kind == QueueFileKind::Pending);
+    await_metadata([&] { return entered.load(); });
+    auto stopped = std::async(std::launch::async, [&] {
+        stopping.store(true);
+        cache.stop();
+    });
+    // Release before the future's blocking destructor if an assertion below fails.
+    ReleaseReadGate release_before_future_cleanup{callback_gate};
+    await_metadata([&] { return stopping.load(); });
+    REQUIRE_TRUE(stopped.wait_for(20ms) == std::future_status::timeout);
+    REQUIRE_TRUE(!exited.load());
+    callback_gate.release();
+    REQUIRE_TRUE(stopped.wait_for(5s) == std::future_status::ready);
+    stopped.get();
+    REQUIRE_TRUE(exited.load());
+    cache.stop();
+    cache.synchronize(paths);
+    REQUIRE_TRUE(cache.get(path).kind == QueueFileKind::Pending);
+    REQUIRE_EQ(calls.load(), 1U);
 }

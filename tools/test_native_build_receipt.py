@@ -89,6 +89,14 @@ class NativeBuildReceiptTests(unittest.TestCase):
             "\n".join(f"{key}:STRING={value}" for key, value in self.cache.items()), encoding="utf-8"
         )
 
+    # Purpose: Reject instrumented development objects before production receipt or package admission.
+    # Inputs: Otherwise valid build cache with an explicit coverage manifest. Outputs: No production qualification.
+    def test_device_coverage_build_cannot_qualify_a_production_package(self):
+        self.cache["FLITZZIP_HIP_COVERAGE_MANIFEST"] = str(self.root / "coverage.json")
+        self.write_cache()
+        with self.assertRaisesRegex(ValueError, "coverage builds cannot qualify production packages"):
+            receipt.configured_recipe(self.root, "Release")
+
     # Purpose: Prevent a receipt from qualifying a build with a different forced-header strategy.
     # Inputs: Successful nonexecutable fixture followed by a changed CMake PCH setting.
     # Outputs: Old qualification fails and the next build requires fresh compilation.

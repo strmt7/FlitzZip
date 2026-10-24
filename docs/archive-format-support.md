@@ -294,7 +294,8 @@ directory archive.
 Base64 support is extract-only when used as `.b64`. FlitzZip accepts a bounded
 `begin-base64` wrapper so the original file name can be validated on extraction,
 and it also accepts raw RFC-style `.b64` payloads by deriving the output filename
-from the archive path. It rejects invalid alphabet characters,
+from the archive path, preserving its native Unicode filename. Wrapper-header
+names retain the format's existing legacy encoding. It rejects invalid alphabet characters,
 partial quanta, malformed padding, payload data after padding, overlong lines,
 unsafe wrapper filenames, overwrite attempts, and trailing data after the
 wrapper trailer. Base64 has no intrinsic checksum, so optional SHA-256 remains
@@ -806,8 +807,8 @@ flowchart TD
     D --> E["Validate paths, entry kinds, sizes, and heap ranges"]
     E --> F["Validation decode pass for payloads"]
     F --> H["Publish directories and verified files"]
-    D -->|"unsafe or unsupported"| G
-    E -->|"unsafe or unsupported"| G
+    D -->|"invalid TOC"| G
+    E -->|"invalid metadata"| G
     F -->|"decode or size failure"| G
 ```
 
@@ -893,7 +894,13 @@ flowchart TD
 
 ## BinHex Security Contract
 
-The BinHex path is an in-process extract-only text decoder:
+The BinHex path is an in-process extract-only text decoder.
+
+Transfer text is limited to 2 GiB, including a preamble of at most 64 KiB.
+Encoded RLE work and complete decoded work each have a 1 GiB limit. Decoded
+work includes the filename header and all three CRC words; header admission
+reserves that framing before accepting fork lengths. The discarded resource
+fork is additionally limited to 256 MiB.
 
 1. Accept only a bounded preamble containing the standard BinHex 4.0 transfer
    comment followed by a payload-start colon.

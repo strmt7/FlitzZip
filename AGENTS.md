@@ -85,6 +85,7 @@ means its rules do not apply.
 | Tools, workflows, MCP, skills, agent routing | Non-Negotiable Boundaries; Security Rules; Git Workflow; `docs/engineering-learning-loop.md` |
 | Installer, packaging, release, versioning | Non-Negotiable Boundaries; Security Rules; Git Workflow; `docs/release.md` |
 | Refactoring | `docs/refactoring-governance.md`; run `tools/refactor_audit.ps1` before broad cleanup |
+| Bug investigation, intermittent failures, coverage gaps | `.agents/skills/flitzzip-test-investigation/SKILL.md`; `docs/debugging-strategy.md#investigation-contract`; `docs/code-coverage.md#meaningful-tests` |
 | New archive-product behavior | `docs/product-behavior-audit.md` and the affected domain rows; do not copy reference code/UI |
 | Documentation only | The domain rules for claims being changed; do not load unrelated source domains |
 | Commit, push, final handoff | Git Workflow; Agent Workflow; `docs/targeted-verification.md` |

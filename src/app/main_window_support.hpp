@@ -223,6 +223,8 @@ int dropdown_selected_index(const UiState& state, DropdownId id);
 COLORREF blend_color(COLORREF from, COLORREF to, double t);
 double ease_out(double t);
 std::wstring widen(const std::string& value);
+std::wstring diagnostic_text(const std::string& value);
+std::wstring history_detail_text(const HistoryEntry& entry);
 std::string human_bytes(double value);
 std::uint64_t filetime_ticks(const FILETIME& value);
 std::uint64_t sample_private_memory_bytes();

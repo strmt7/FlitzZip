@@ -1,6 +1,6 @@
 ---
 name: flitzzip-security
-description: Review and repair FlitzZip parser, filesystem, runtime, GPU lifetime and supply-chain boundaries with source-bound evidence and recurrence tests.
+description: Investigate FlitzZip security findings and repair parser, filesystem, loader, GPU lifetime and dependency trust boundaries with source-bound evidence.
 ---
 
 # FlitzZip Security
@@ -28,6 +28,13 @@ contracts, source admission and release gates.
 5. Follow the [source-remediation requirements](../../../docs/security-source-remediation-redesign.md)
    for closure. Historical approvals, passing policy tests and GitHub dismissal
    do not establish a source repair.
+
+Use `flitzzip-test-investigation` for the reproducer and rejection/recovery
+controls. Bound fuzz targets to the parser contract, reset per-input state and
+retain minimized failures as deterministic regressions. Tool support must match
+the actual compiler, platform and configuration; a sanitizer name alone proves
+no exercised boundary. Do not adopt example error macros that log and continue
+after a failed prerequisite. Preserve ownership through actual HIP completion.
 
 ## Boundary reading map
 

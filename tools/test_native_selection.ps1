@@ -208,6 +208,20 @@ try {
     Assert-NativeSelectionRejected { Get-FlitzZipNativeTestInventory -Root $fixtureRoot } 'no recognized cases'
     [IO.File]::WriteAllText((Join-Path $fixtureRoot 'CMakeLists.txt'), 'add_library(different_target OBJECT test.cpp)')
     Assert-NativeSelectionRejected { Get-FlitzZipNativeTestInventory -Root $fixtureRoot } 'Cannot resolve'
+    [IO.File]::WriteAllText((Join-Path $fixtureRoot 'CMakeLists.txt'), @'
+add_library(flitzzip_test_objects OBJECT
+  tests/cpp/test_sevenzip_compat.cpp
+  tests/cpp/test_sevenzip_ppmd.cpp
+  tests/cpp/test_fixture.cpp)
+'@)
+    [IO.File]::WriteAllText((Join-Path $fixtureTests 'test_sevenzip_compat.cpp'),
+        "TEST_CASE(sevenzip_input_bounds) {}`nTEST_CASE(shared_seek_bounds) {}")
+    [IO.File]::WriteAllText((Join-Path $fixtureTests 'test_sevenzip_ppmd.cpp'), 'TEST_CASE(decoder_owner_cleanup) {}')
+    [IO.File]::WriteAllText($fixtureSource, 'TEST_CASE(unrelated_codec) {}')
+    $ownedSevenzip = Get-FlitzZipNativeTestSelection -Paths @('third_party/lzma_sdk/C/7zArcIn.c') -Root $fixtureRoot
+    $ownedExpected = @('decoder_owner_cleanup', 'sevenzip_input_bounds', 'shared_seek_bounds')
+    Assert-NativeSelection ($ownedSevenzip.mode -eq 'component' -and -not $ownedSevenzip.requireHip -and
+        ($ownedSevenzip.tests -join '|') -ceq ($ownedExpected -join '|')) 'format-owned parser tests are complete regardless of names and exclude unrelated sources'
 } finally {
     $prefix = $ownedRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not [IO.Path]::GetFullPath($fixtureRoot).StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {

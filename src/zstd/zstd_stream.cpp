@@ -1,6 +1,6 @@
 #include "zstd/zstd_stream.hpp"
 
-#include "core/file_size.hpp"
+#include "core/file_manifest.hpp"
 #include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
@@ -295,11 +295,11 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
 class ZstdInputStream::Buffer final : public std::streambuf {
   public:
     // Purpose: Open and initialize a bounded Zstandard decompression stream.
-    // Inputs: `archive_path` is an existing `.zst`/`.zstd` stream.
+    // Inputs: `archive_path` is a regular `.zst`/`.zstd` source admitted as immutable before runtime initialization.
     // Outputs: Prepares the get area and decoder state, or throws on I/O/runtime failure.
     explicit Buffer(const std::filesystem::path& archive_path)
-        : file_(archive_path, std::ios::binary), archive_size_(regular_file_size(archive_path)),
-          compressed_remaining_(archive_size_) {
+        : source_(pin_source_file(archive_path)), file_(source_.path(), std::ios::binary),
+          archive_size_(source_.size()), compressed_remaining_(archive_size_) {
         if (!file_) {
             throw ArchiveError("cannot open Zstandard stream: " + path_diagnostic_utf8(archive_path));
         }
@@ -419,6 +419,7 @@ class ZstdInputStream::Buffer final : public std::streambuf {
         }
     }
 
+    PinnedSourceFile source_;
     std::ifstream file_;
     std::exception_ptr failure_;
     const ZstdRuntime& zstd_ = zstd_runtime();

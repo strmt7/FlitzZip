@@ -15,6 +15,19 @@ public static class FlitzZipNativeUi {
     public static bool RejectPointer;
     public static bool RejectClient;
     public static bool RejectPointerRead;
+    public static bool RejectDropAllocation;
+    public static bool RejectDropFree;
+    // Purpose: Model an independent owned payload. Inputs: Paths and scaled point. Outputs: Handle or allocation failure.
+    public static IntPtr CreateDropHandle(string[] paths, int x, int y) {
+        Calls.Add(String.Format("drop:{0}:{1}:{2}", paths.Length, x, y));
+        if (RejectDropAllocation) throw new InvalidOperationException("drop-allocation-failure");
+        return new IntPtr(900);
+    }
+    // Purpose: Verify rejected payload ownership. Inputs: Original handle. Outputs: Acknowledged free or retained failure.
+    public static IntPtr GlobalFree(IntPtr handle) {
+        Calls.Add("free:" + handle.ToInt64());
+        return RejectDropFree ? handle : IntPtr.Zero;
+    }
     public struct POINT { public int X; public int Y; }
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
     // Purpose: Supply independent client bounds. Inputs: Owned test HWND. Outputs: A fixed bounded rectangle.
@@ -66,7 +79,7 @@ public static class FlitzZipNativeUi {
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($SourcePath, [ref]$null, [ref]$errors)
 if ($errors.Count) { throw 'GUI helper source failed parsing.' }
-foreach ($name in @('ConvertTo-MouseLParam', 'Send-ClientMouseMessage', 'Send-ClientInputMessage', 'Complete-ClientInputRelease', 'Invoke-ClientDrag', 'Invoke-ClientClick', 'Invoke-ClientMove', 'Invoke-ClientKey', 'Invoke-ClientWheel')) {
+foreach ($name in @('Get-GuiSmokeWatchdogInterval', 'ConvertTo-MouseLParam', 'Send-ClientMouseMessage', 'Send-ClientInputMessage', 'Complete-ClientInputRelease', 'Invoke-ClientDrag', 'Invoke-ClientClick', 'Invoke-ClientMove', 'Invoke-ClientKey', 'Invoke-ClientWheel', 'Invoke-FileDrop')) {
     $definition = $ast.Find({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
     }, $true)
@@ -329,3 +342,124 @@ if (-not $rejected) { throw 'Pointer cleanup hid the primary failure under stopp
 Assert-DeliverySequence -Expected @('read-pointer', 'action', 'pointer:17:29')
 [FlitzZipNativeUi]::RejectPointer = $false
 'Pointer restoration preserves both errors under stopping warnings.'
+
+[FlitzZipNativeUi]::Calls.Clear()
+Invoke-FileDrop -Handle ([IntPtr]42) -Dpi 144 -Paths @('C:\first.txt', 'C:\second.txt')
+Assert-DeliverySequence -Expected @('drop:2:450:480', 'queued:42:563:900:0')
+foreach ($cleanupFails in @($false, $true)) {
+    [FlitzZipNativeUi]::RejectMessage = 563
+    [FlitzZipNativeUi]::RejectDropFree = $cleanupFails
+    [FlitzZipNativeUi]::Calls.Clear()
+    $rejected = $false
+    try { Invoke-FileDrop -Handle ([IntPtr]42) -Dpi 144 -Paths @() -WarningAction Stop }
+    catch {
+        if ($_.Exception.Message -notlike 'GUI input queue admission failed; message=0x0233;*') { throw }
+        if ($cleanupFails -ne $_.Exception.Data.Contains('DropPayloadCleanupFailure')) {
+            throw 'HDROP cleanup lost or invented a secondary failure.'
+        }
+        $rejected = $true
+    }
+    if (-not $rejected) { throw 'An undelivered HDROP payload was reported as accepted.' }
+    Assert-DeliverySequence -Expected @('drop:0:450:480', 'queued:42:563:900:0', 'free:900')
+}
+[FlitzZipNativeUi]::RejectMessage = 0
+[FlitzZipNativeUi]::RejectDropFree = $false
+[FlitzZipNativeUi]::RejectDropAllocation = $true
+[FlitzZipNativeUi]::Calls.Clear()
+$rejected = $false
+try { Invoke-FileDrop -Handle ([IntPtr]42) -Paths @('C:\input.txt') }
+catch { if (-not $_.Exception.Message.Contains('drop-allocation-failure')) { throw }; $rejected = $true }
+if (-not $rejected) { throw 'HDROP allocation failure was accepted.' }
+Assert-DeliverySequence -Expected @('drop:1:300:320')
+'HDROP delivery transfers or releases ownership exactly once and preserves both failures.'
+
+# Exercise actual picker readiness against delayed initialization without opening a window.
+Add-Type @'
+using System;
+using System.Text;
+public static class FlitzZipPickerUi {
+    public static int Attempts;
+    public static int VisibleAfter = 3, EnabledAfter = 4;
+    public static bool DelayInner, ForeignEdit, Closed;
+    // Purpose: Model child creation before readiness. Inputs: Dialog and ID. Outputs: Stable test HWND.
+    public static IntPtr GetDlgItem(IntPtr dialog, int id) { ++Attempts; return new IntPtr(id == 1152 ? 52 : 48); }
+    // Purpose: Model delayed edit creation. Inputs: Parent/class. Outputs: Child or no HWND yet.
+    public static IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string name) {
+        if (DelayInner && Attempts < 5) return IntPtr.Zero;
+        return new IntPtr(cls == "ComboBox" ? 49 : 50);
+    }
+    // Purpose: Model hidden initialization. Inputs: HWND. Outputs: Visibility at its independent threshold.
+    public static bool IsWindowVisible(IntPtr hwnd) { return Attempts >= VisibleAfter; }
+    // Purpose: Model an unready field. Inputs: HWND. Outputs: Enablement at its independent threshold.
+    public static bool IsWindowEnabled(IntPtr hwnd) { return Attempts >= EnabledAfter; }
+    // Purpose: Model modal destruction. Inputs: HWND. Outputs: Whether initialization can continue.
+    public static bool IsWindow(IntPtr hwnd) { return !Closed; }
+    // Purpose: Supply ownership evidence. Inputs: HWND. Outputs: Owner or foreign edit process.
+    public static uint GetWindowThreadProcessId(IntPtr hwnd, out uint owner) {
+        owner = ForeignEdit && (hwnd.ToInt32() == 50 || hwnd.ToInt32() == 52) ? 99u : 42u;
+        return 1;
+    }
+    // Purpose: Supply class identity. Inputs: HWND. Outputs: Dialog/container/edit class.
+    public static int GetClassName(IntPtr hwnd, StringBuilder name, int capacity) {
+        int id = hwnd.ToInt32();
+        string value = id == 10 ? "#32770" : id == 48 ? "ComboBoxEx32" : id == 49 ? "ComboBox" : "Edit";
+        name.Append(value); return value.Length;
+    }
+}
+'@
+$pickerPath = Join-Path (Split-Path -Parent $SourcePath) 'FlitzZip.GuiSmoke.Pickers.psm1'
+$pickerAst = [Management.Automation.Language.Parser]::ParseFile($pickerPath, [ref]$null, [ref]$errors)
+if ($errors.Count) { throw 'Native picker helper source failed parsing.' }
+foreach ($name in @('Assert-PickerWindowOwner', 'Wait-PickerInputControl')) {
+    $definition = $pickerAst.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+    }, $true)
+    if (-not $definition) { throw "Native picker readiness helper missing: $name" }
+    . ([ScriptBlock]::Create($definition.Extent.Text))
+}
+foreach ($folder in @($false, $true)) {
+    foreach ($delayedChild in @($false, $true)) {
+        foreach ($thresholds in @(@(3, 4), @(5, 1), @(1, 4))) {
+            [FlitzZipPickerUi]::Attempts = 0
+            [FlitzZipPickerUi]::DelayInner = $delayedChild
+            [FlitzZipPickerUi]::VisibleAfter = $thresholds[0]
+            [FlitzZipPickerUi]::EnabledAfter = $thresholds[1]
+            $actual = Wait-PickerInputControl -Dialog ([IntPtr]10) -ProcessId 42 -Folder $folder
+            $expectedHandle = if ($folder) { 52 } else { 50 }
+            $expectedPolls = [Math]::Max($thresholds[0], $thresholds[1])
+            if ($delayedChild -and -not $folder) { $expectedPolls = [Math]::Max($expectedPolls, 5) }
+            if ($actual.ToInt32() -ne $expectedHandle -or [FlitzZipPickerUi]::Attempts -ne $expectedPolls) {
+                throw 'Native picker admitted a hidden, disabled or uninitialized child control.'
+            }
+        }
+    }
+    [FlitzZipPickerUi]::Attempts = 0
+    [FlitzZipPickerUi]::ForeignEdit = $true
+    $rejected = $false
+    try { [void](Wait-PickerInputControl -Dialog ([IntPtr]10) -ProcessId 42 -Folder $folder) }
+    catch { if (-not $_.Exception.Message.Contains('ownership/class validation failed')) { throw }; $rejected = $true }
+    finally { [FlitzZipPickerUi]::ForeignEdit = $false }
+    if (-not $rejected) { throw 'Native picker admitted an edit from another process.' }
+}
+[FlitzZipPickerUi]::Attempts = 0
+[FlitzZipPickerUi]::Closed = $true
+$rejected = $false
+try { [void](Wait-PickerInputControl -Dialog ([IntPtr]10) -ProcessId 42 -Folder $true) }
+catch { if (-not $_.Exception.Message.Contains('closed before its input became interactive')) { throw }; $rejected = $true }
+if (-not $rejected) { throw 'Native picker waited on a destroyed dialog.' }
+'Native picker readiness rejects early, foreign and destroyed controls.'
+
+# The child fuse must not close an active scenario before the process owner's deadline.
+foreach ($budgetCase in @(@(900, 10000, 910000), @(17, 2000, 19000), @(3600, 60000, 3660000))) {
+    $actualBudget = Get-GuiSmokeWatchdogInterval -ScenarioTimeoutSeconds $budgetCase[0] -CleanupTimeoutMilliseconds $budgetCase[1]
+    if ($actualBudget -ne $budgetCase[2] -or $actualBudget -le ($budgetCase[0] * 1000)) {
+        throw 'GUI watchdog can terminate an active scenario before its owning deadline and cleanup grace.'
+    }
+}
+foreach ($invalidBudget in @(@(0, 10000), @(3601, 10000), @(900, 0), @(900, 60001))) {
+    $rejectedBudget = $false
+    try { [void](Get-GuiSmokeWatchdogInterval -ScenarioTimeoutSeconds $invalidBudget[0] -CleanupTimeoutMilliseconds $invalidBudget[1]) }
+    catch [Management.Automation.ParameterBindingException] { $rejectedBudget = $true }
+    if (-not $rejectedBudget) { throw 'GUI watchdog accepted an unbounded or nonpositive scenario/cleanup budget.' }
+}
+'GUI watchdog follows its owning scenario budget and retains bounded cleanup grace.'

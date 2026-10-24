@@ -1,6 +1,7 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 #include "test_stream_failure.hpp"
+#include "test_source_session.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -86,6 +87,17 @@ TEST_CASE(xz_extracts_single_file_fixture) {
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "payload.txt"), "Example XZ fixture payload.\nSecond line.\n");
     flitzzip_test::export_compat_fixture(archive, output);
+}
+
+// Purpose: Keep independently encoded XZ input immutable through successful and interrupted extraction.
+// Inputs: A small verified CRC64 fixture and real Windows sharing probes; no source bytes are modified.
+// Outputs: Refused active/concurrent writers, exact decoded bytes and source-lock release on every tested exit.
+TEST_CASE(single_stream_source_session_xz) {
+    const auto root = test_temp_dir("xz-source-session");
+    const auto archive = root / "payload.xz";
+    write_fixture(archive, kSingleFileXzFixture);
+    flitzzip_test::require_archive_source_session(
+        archive, root, "payload", "Example XZ fixture payload.\nSecond line.\n", &flitzzip::extract_xz_file);
 }
 
 // Purpose: Preserve native Unicode filenames while extracting independent xz fixtures.

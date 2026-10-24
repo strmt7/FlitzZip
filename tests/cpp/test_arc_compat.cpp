@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
+#include "test_source_session.hpp"
 
 #include "arc/arc_adapter.hpp"
 #include "core/archive_format.hpp"
@@ -184,6 +185,15 @@ TEST_CASE(arc_extracts_unpacked_files) {
     REQUIRE_EQ(read_text_file(output / "old.txt"), std::string("old"));
     flitzzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
+}
+
+// Purpose: Retain one ARC source identity across its metadata and payload passes.
+// Inputs: An independently framed stored entry. Outputs: Exact bytes, real sharing refusal and failure recovery.
+TEST_CASE(archive_source_session_arc) {
+    const auto root = test_temp_dir("arc-source-session");
+    const auto archive = root / "input.arc";
+    write_binary_file(archive, make_arc_archive({ArcFixtureEntry{.name = "payload", .payload = {'a', 'r', 'c'}}}));
+    flitzzip_test::require_archive_source_session(archive, root, "payload", "arc", &flitzzip::extract_arc);
 }
 
 // Purpose: Exercise ARC framing boundaries before payload parsing or destination publication.

@@ -652,6 +652,84 @@ TEST_CASE(path_safety_rejects_windows_unsafe_forms) {
     std::filesystem::remove_all(root);
 }
 
+// Purpose: Reject complete source-name metadata instead of silently accepting a prefix before an embedded NUL.
+// Inputs: Native relative paths retaining a NUL in ASCII, nested and supplementary-Unicode components.
+// Outputs: Security rejection for every complete invalid name, while adjacent valid source names remain unchanged.
+TEST_CASE(path_safety_source_names_reject_embedded_nul_without_truncation) {
+    for (const auto prefix : {L"file", L"dir/file", L"\u65e5\u672c/\U0001F4C1-file"}) {
+        std::wstring name(prefix);
+        const std::filesystem::path valid(name);
+        const auto expected = valid.generic_u8string();
+        REQUIRE_EQ(flitzzip::normalize_entry_name(valid),
+                   std::string(reinterpret_cast<const char*>(expected.data()), expected.size()));
+        name.push_back(L'\0');
+        name += L"hidden.txt";
+        const std::filesystem::path invalid(name);
+        REQUIRE_EQ(invalid.native().size(), name.size());
+        bool rejected = false;
+        try {
+            static_cast<void>(flitzzip::normalize_entry_name(invalid));
+        } catch (const flitzzip::SecurityError& error) {
+            rejected = std::string_view(error.what()).find("control character") != std::string_view::npos;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(invalid.native(), name);
+        REQUIRE_EQ(flitzzip::normalize_entry_name(valid),
+                   std::string(reinterpret_cast<const char*>(expected.data()), expected.size()));
+    }
+}
+
+// Purpose: Preserve source-name normalization while rejecting empty and traversing relative inputs.
+// Inputs: Dot, empty, nested and parent-traversal native paths without creating filesystem objects.
+// Outputs: Exact portable keys for valid paths and specific SecurityError rejection for invalid inputs.
+TEST_CASE(path_safety_source_names_enforce_relative_component_contract) {
+    for (const auto name : {L"", L".", L"./.", L"dir/../escape.txt", L"../escape.txt"}) {
+        bool rejected = false;
+        try {
+            static_cast<void>(flitzzip::normalize_entry_name(std::filesystem::path(name)));
+        } catch (const flitzzip::SecurityError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+    REQUIRE_EQ(flitzzip::normalize_entry_name(std::filesystem::path(L"./dir/./leaf.txt")), "dir/leaf.txt");
+    REQUIRE_EQ(flitzzip::normalize_entry_name(std::filesystem::path(L"dir//leaf.txt")), "dir/leaf.txt");
+}
+
+// Purpose: Enforce independent metadata byte, component-byte and nesting limits before any filesystem work.
+// Inputs: At-limit names and immediately over-limit neighbors, all constructed in bounded memory.
+// Outputs: Exact accepted keys at each limit and SecurityError rejection beyond each separate bound.
+TEST_CASE(path_safety_metadata_limits_preserve_inclusive_bounds) {
+    // Purpose: Observe public metadata rejection; inputs: complete bytes; outputs: SecurityError classification.
+    const auto rejects = [](const std::string& name) {
+        bool rejected = false;
+        try {
+            static_cast<void>(flitzzip::normalize_archive_path_key(name));
+        } catch (const flitzzip::SecurityError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    };
+    const std::string component(1024, 'a');
+    REQUIRE_EQ(flitzzip::normalize_archive_path_key(component), component);
+    rejects(component + 'a');
+    std::string deep = "a";
+    for (unsigned count = 1; count < 256; ++count) {
+        deep += "/a";
+    }
+    REQUIRE_EQ(flitzzip::normalize_archive_path_key(deep), deep);
+    rejects(deep + "/a");
+    std::string long_name;
+    for (unsigned count = 0; count < 32; ++count) {
+        if (count)
+            long_name += '/';
+        long_name.append(count == 31 ? 1024 : 1023, 'a');
+    }
+    REQUIRE_EQ(long_name.size(), 32768U);
+    REQUIRE_EQ(flitzzip::normalize_archive_path_key(long_name), long_name);
+    rejects(long_name + "/a");
+}
+
 // Purpose: Verify ordinary nested relative paths are accepted and joined safely.
 // Inputs: A destination root and nested archive entry path.
 // Outputs: Throws if the normalized target is not the expected child path.

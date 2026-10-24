@@ -1,4 +1,5 @@
 #include "xxe/xxe_adapter.hpp"
+#include "core/path_text.hpp"
 
 #include "core/bounded_text_io.hpp"
 #include "core/file_manifest.hpp"
@@ -204,12 +205,12 @@ OperationStats compress_xxe_file(const std::filesystem::path& source_file, const
                                  const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     if (!std::filesystem::is_regular_file(source_file)) {
-        throw ArchiveError("XXE compression requires one regular file: " + source_file.string());
+        throw ArchiveError("XXE compression requires one regular file: " + path_diagnostic_utf8(source_file));
     }
     std::error_code equivalent_error;
     if (std::filesystem::exists(output_archive) &&
         std::filesystem::equivalent(source_file, output_archive, equivalent_error) && !equivalent_error) {
-        throw SecurityError("refusing to overwrite the XXE source file: " + output_archive.string());
+        throw SecurityError("refusing to overwrite the XXE source file: " + path_diagnostic_utf8(output_archive));
     }
 
     const auto manifest = build_manifest({source_file});
@@ -224,14 +225,14 @@ OperationStats compress_xxe_file(const std::filesystem::path& source_file, const
 
     std::ifstream input(source_file, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open XXE source file: " + source_file.string());
+        throw ArchiveError("cannot open XXE source file: " + path_diagnostic_utf8(source_file));
     }
     const auto temporary = reserve_file_publish_target(output_archive);
     bool temporary_active = true;
     try {
         std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
         if (!output) {
-            throw ArchiveError("cannot create XXE archive: " + output_archive.string());
+            throw ArchiveError("cannot create XXE archive: " + path_diagnostic_utf8(output_archive));
         }
         write_xxe_line(output, "begin 644 " + entry_name);
         std::array<unsigned char, kXxePayloadBytesPerLine> buffer{};
@@ -244,7 +245,7 @@ OperationStats compress_xxe_file(const std::filesystem::path& source_file, const
                 publish_progress(progress, progress_callback);
             }
             if (input.bad()) {
-                throw ArchiveError("failed to read XXE source file: " + source_file.string());
+                throw ArchiveError("failed to read XXE source file: " + path_diagnostic_utf8(source_file));
             }
             if (input.eof()) {
                 break;
@@ -254,7 +255,7 @@ OperationStats compress_xxe_file(const std::filesystem::path& source_file, const
         write_xxe_line(output, "end");
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize XXE archive: " + output_archive.string());
+            throw ArchiveError("failed to finalize XXE archive: " + path_diagnostic_utf8(output_archive));
         }
         commit_verified_file(temporary, output_archive, true);
         cleanup_file_publish_target(temporary);
@@ -291,22 +292,26 @@ OperationStats compress_xxe(const std::vector<std::filesystem::path>& sources,
 }
 
 // Purpose: Extract one XXEncoded member with path-safe publication.
-// Inputs: `archive_path` is the `.xxe` stream, `destination` is the extraction root, `overwrite` controls replacement,
-// and `progress_callback` receives synchronous progress snapshots. Outputs: Returns operation statistics; throws on
-// malformed XXEncode data, unsafe header path, refused overwrite, or verified-file publication failures.
-OperationStats extract_xxe_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
-                                bool overwrite, const ProgressCallback& progress_callback) {
+// Inputs: `requested_archive` stays pinned through publication, `destination` is the extraction root, `overwrite`
+// controls replacement, and `progress_callback` receives synchronous progress snapshots. Outputs: Returns operation
+// statistics; throws on malformed XXEncode data, unsafe header path, refused overwrite, or verified-file publication
+// failures.
+OperationStats extract_xxe_file(const std::filesystem::path& requested_archive,
+                                const std::filesystem::path& destination, bool overwrite,
+                                const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto archive_size = regular_file_size(archive_path);
+    const auto archive_source = pin_source_file(requested_archive);
+    const auto& archive_path = archive_source.path();
+    const auto archive_size = archive_source.size();
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open XXE archive: " + archive_path.string());
+        throw ArchiveError("cannot open XXE archive: " + path_diagnostic_utf8(archive_path));
     }
     const auto header = read_xxe_header(input);
     create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, header.entry_name);
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing XXE extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing XXE extraction target: " + path_diagnostic_utf8(target));
     }
 
     ProgressState progress;
@@ -320,7 +325,7 @@ OperationStats extract_xxe_file(const std::filesystem::path& archive_path, const
     try {
         std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
         if (!output) {
-            throw ArchiveError("cannot create XXE extraction target: " + target.string());
+            throw ArchiveError("cannot create XXE extraction target: " + path_diagnostic_utf8(target));
         }
 
         std::string line;
@@ -337,7 +342,7 @@ OperationStats extract_xxe_file(const std::filesystem::path& archive_path, const
                 output.write(reinterpret_cast<const char*>(decoded.data()),
                              static_cast<std::streamsize>(decoded.size()));
                 if (!output) {
-                    throw ArchiveError("failed to write XXE extraction target: " + target.string());
+                    throw ArchiveError("failed to write XXE extraction target: " + path_diagnostic_utf8(target));
                 }
                 output_size = checked_add_extracted_output_bytes(
                     output_size, static_cast<std::uint64_t>(decoded.size()), "XXE output");
@@ -364,7 +369,7 @@ OperationStats extract_xxe_file(const std::filesystem::path& archive_path, const
         }
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize XXE extraction target: " + target.string());
+            throw ArchiveError("failed to finalize XXE extraction target: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);

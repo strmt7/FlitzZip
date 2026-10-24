@@ -1,4 +1,6 @@
 #include "app/main_window_impl.hpp"
+#include "app/gdi_dc_state.hpp"
+#include "app/history_publication.hpp"
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -40,6 +42,22 @@ void MainWindow::paint() {
     EndPaint(hwnd_, &ps);
 }
 
+// Purpose: Preserve the caller's GDI objects and drawing modes when Windows requests client-area printing.
+// Inputs: Exclusively borrowed target DC; native drawing may throw while constructing a frame.
+// Outputs: Draws only after saving state; scoped restoration covers exceptions and normal failure is reported.
+void MainWindow::print_client(HDC target) {
+    GdiDcState borrowed_state(target);
+    if (!borrowed_state.valid()) {
+        return;
+    }
+    RECT rect{};
+    GetClientRect(hwnd_, &rect);
+    layout_and_draw(target, rect);
+    if (!borrowed_state.restore()) {
+        append_log_entry(LogSeverity::Warning, "Could not restore caller-owned print device context state");
+    }
+}
+
 // Purpose: Draw the current frame using DPI-scaled layout regions.
 // Inputs: `dc` is the off-screen device context and `rect` is the client rectangle in physical pixels.
 // Outputs: Writes the shell, navigation, active page, overlays, and status strip into `dc`.
@@ -47,7 +65,10 @@ void MainWindow::layout_and_draw(HDC dc, const RECT& rect) {
     UiState state;
     {
         std::lock_guard lock(mutex_);
-        state = state_;
+        state = consume_ui_snapshot(state_);
+    }
+    if (state.history_details_reset_pending) {
+        reset_history_details_scroll_state();
     }
 
     fill_rect(dc, rect, kBg);
@@ -286,9 +307,9 @@ void MainWindow::draw_navigation(HDC dc, const RECT& rect, const UiState& state)
     }
 }
 
-// Purpose: Draw the persistent AMD GPU, operation progress, and local-clock status strip.
+// Purpose: Draw the persistent AMD GPU, operation status, progress, and local-clock strip.
 // Inputs: `dc` is the target, `rect` is the status-strip rectangle, and `state` is the copied UI state.
-// Outputs: Renders backend status, stable progress columns when active, and the user's locale-formatted time.
+// Outputs: Renders backend and operation feedback, stable progress columns, and the user's locale-formatted time.
 void MainWindow::draw_status_bar(HDC dc, const RECT& rect, const UiState& state) {
     fill_rect(dc, rect, kShell);
     draw_line(dc, rect.left, rect.top, rect.right, rect.top, kBorder);
@@ -306,6 +327,8 @@ void MainWindow::draw_status_bar(HDC dc, const RECT& rect, const UiState& state)
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_line(dc, rect.left + scale(220), rect.top + scale(8), rect.left + scale(220), rect.bottom - scale(8), kBorder);
     draw_line(dc, rect.left + scale(450), rect.top + scale(8), rect.left + scale(450), rect.bottom - scale(8), kBorder);
+    draw_text(dc, RECT{rect.left + scale(238), rect.top, rect.left + scale(432), rect.bottom},
+              diagnostic_text(state.status), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     if (progress_visible(state)) {
         const RECT progress_rect{rect.left + scale(468), rect.top, rect.left + scale(610), rect.bottom};

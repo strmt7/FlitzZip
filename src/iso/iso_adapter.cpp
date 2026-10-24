@@ -1,4 +1,5 @@
 #include "iso/iso_adapter.hpp"
+#include "core/path_text.hpp"
 
 #include "core/file_manifest.hpp"
 #include "core/file_size.hpp"
@@ -352,7 +353,7 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open ISO image: " + archive_path.string());
+        throw ArchiveError("cannot open ISO image: " + path_diagnostic_utf8(archive_path));
     }
 
     const auto volume = read_iso_volume(input, archive_size);
@@ -456,7 +457,7 @@ void extract_iso_file_payload(std::ifstream& input, const IsoEntryMetadata& entr
     try {
         std::ofstream output(temporary_target.file, std::ios::binary);
         if (!output) {
-            throw ArchiveError("failed to create temporary extracted file: " + target.string());
+            throw ArchiveError("failed to create temporary extracted file: " + path_diagnostic_utf8(target));
         }
         std::array<char, kIsoIoBufferBytes> buffer{};
         std::uint64_t remaining = entry.size;
@@ -465,13 +466,13 @@ void extract_iso_file_payload(std::ifstream& input, const IsoEntryMetadata& entr
             read_exact(input, buffer.data(), chunk, "ISO file payload");
             output.write(buffer.data(), static_cast<std::streamsize>(chunk));
             if (!output) {
-                throw ArchiveError("failed to write temporary extracted file: " + target.string());
+                throw ArchiveError("failed to write temporary extracted file: " + path_diagnostic_utf8(target));
             }
             remaining -= chunk;
         }
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize temporary extracted file: " + target.string());
+            throw ArchiveError("failed to finalize temporary extracted file: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
@@ -497,7 +498,7 @@ OperationStats extract_iso(const std::filesystem::path& archive_path, const std:
 
     std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open ISO image: " + archive_path.string());
+        throw ArchiveError("cannot open ISO image: " + path_diagnostic_utf8(archive_path));
     }
 
     ProgressState progress;

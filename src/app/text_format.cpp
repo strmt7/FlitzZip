@@ -31,6 +31,37 @@ std::wstring widen(const std::string& value) {
     return result;
 }
 
+// Purpose: Display opaque exception diagnostics without interpreting bytes through the host ANSI code page.
+// Inputs: UTF-8 text or arbitrary narrow exception bytes, bounded by the Win32 conversion limit.
+// Outputs: Preserves valid Unicode; explicitly labels malformed input and escapes its non-ASCII bytes exactly.
+std::wstring diagnostic_text(const std::string& value) {
+    if (value.empty()) {
+        return {};
+    }
+    if (value.size() > static_cast<std::size_t>(INT_MAX)) {
+        throw ArchiveError("diagnostic is too large for Win32 text conversion");
+    }
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), nullptr, 0) >
+        0) {
+        return widen(value);
+    }
+    if (GetLastError() != ERROR_NO_UNICODE_TRANSLATION) {
+        throw ArchiveError("diagnostic text conversion failed");
+    }
+    constexpr wchar_t hex[] = L"0123456789ABCDEF";
+    std::wstring result = L"[invalid UTF-8 bytes] ";
+    for (const unsigned char byte : value) {
+        if (byte >= 0x20 && byte <= 0x7E && byte != '\\') {
+            result.push_back(static_cast<wchar_t>(byte));
+        } else {
+            result += L"\\x";
+            result.push_back(hex[byte >> 4]);
+            result.push_back(hex[byte & 0x0F]);
+        }
+    }
+    return result;
+}
+
 // Purpose: Format a nonnegative byte count with binary units.
 // Inputs: `value` is a finite byte count or byte-per-second value.
 // Outputs: Returns a compact display string such as `1.5 MiB`, or throws for invalid telemetry.

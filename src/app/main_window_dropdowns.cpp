@@ -1,5 +1,7 @@
 #include "app/main_window_impl.hpp"
 
+#include "core/path_text.hpp"
+
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
@@ -123,8 +125,8 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
         state.io_drive_index = normalize_io_drive_index(option_index);
         feedback.io_drive_changed = true;
         feedback.add_log = true;
-        feedback.log_message =
-            "System I/O drive: " + std::filesystem::path(io_drive_option_text(state.io_drive_index)).string();
+        feedback.log_message = "System I/O drive: " +
+                               path_diagnostic_utf8(std::filesystem::path(io_drive_option_text(state.io_drive_index)));
         state.status = "I/O drive changed";
         break;
     default:

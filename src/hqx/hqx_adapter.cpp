@@ -1,4 +1,5 @@
 #include "hqx/hqx_adapter.hpp"
+#include "core/path_text.hpp"
 
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
@@ -164,7 +165,7 @@ class HqxExtractParser {
         }
         output_.close();
         if (!output_) {
-            throw ArchiveError("failed to finalize BinHex extraction target: " + target_.string());
+            throw ArchiveError("failed to finalize BinHex extraction target: " + path_diagnostic_utf8(target_));
         }
         commit_verified_file(temporary_, target_, overwrite_);
         cleanup_file_publish_target(temporary_);
@@ -214,7 +215,7 @@ class HqxExtractParser {
 
     // Purpose: Parse trusted-size header fields without validating the stored header CRC yet.
     // Inputs: `header_bytes_` contains exactly the decoded header body excluding the CRC.
-    // Outputs: Sets entry name and fork lengths, or throws on unsafe names or malformed lengths.
+    // Outputs: Sets entry name and fork lengths; rejects unsafe names or excessive complete decoded work.
     void parse_header_metadata() {
         const auto name_length = static_cast<std::size_t>(header_bytes_.front());
         const auto name_begin = header_bytes_.begin() + 1;
@@ -226,7 +227,11 @@ class HqxExtractParser {
         data_length_ = read_be_u32(header_bytes_, length_offset);
         resource_length_ = read_be_u32(header_bytes_, length_offset + 4U);
         const auto declared_work = static_cast<std::uint64_t>(data_length_) + resource_length_;
-        if (resource_length_ > kMaxHqxDiscardedResourceBytes || declared_work > kMaxHqxDecodedWorkBytes) {
+        // The RLE budget includes the header and all three CRC-16 words, even for empty forks.
+        constexpr std::uint64_t crc_work_bytes = 6U;
+        if (resource_length_ > kMaxHqxDiscardedResourceBytes ||
+            header_bytes_.size() > kMaxHqxDecodedWorkBytes - crc_work_bytes ||
+            declared_work > kMaxHqxDecodedWorkBytes - crc_work_bytes - header_bytes_.size()) {
             throw ArchiveError("BinHex declared fork work exceeds FlitzZip resource limits");
         }
     }
@@ -249,13 +254,14 @@ class HqxExtractParser {
         create_verified_directories(destination_);
         target_ = safe_join_archive_path(destination_, entry_name_);
         if (!overwrite_ && std::filesystem::exists(target_)) {
-            throw SecurityError("refusing to overwrite existing BinHex extraction target: " + target_.string());
+            throw SecurityError("refusing to overwrite existing BinHex extraction target: " +
+                                path_diagnostic_utf8(target_));
         }
         temporary_ = reserve_file_publish_target(target_);
         temporary_active_ = true;
         output_.open(temporary_.file, std::ios::binary | std::ios::trunc);
         if (!output_) {
-            throw ArchiveError("cannot create BinHex extraction target: " + target_.string());
+            throw ArchiveError("cannot create BinHex extraction target: " + path_diagnostic_utf8(target_));
         }
         progress_.set_current(entry_name_);
     }
@@ -269,7 +275,7 @@ class HqxExtractParser {
         }
         output_.put(static_cast<char>(byte));
         if (!output_) {
-            throw ArchiveError("failed to write BinHex extraction target: " + target_.string());
+            throw ArchiveError("failed to write BinHex extraction target: " + path_diagnostic_utf8(target_));
         }
         update_hqx_crc(data_crc_, byte);
         ++data_consumed_;
@@ -560,7 +566,7 @@ OperationStats extract_hqx_file(const std::filesystem::path& archive_path, const
     }
     std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open BinHex archive: " + archive_path.string());
+        throw ArchiveError("cannot open BinHex archive: " + path_diagnostic_utf8(archive_path));
     }
 
     ProgressState progress;

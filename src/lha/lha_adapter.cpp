@@ -1,4 +1,5 @@
 #include "lha/lha_adapter.hpp"
+#include "core/path_text.hpp"
 
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
@@ -92,7 +93,7 @@ class LhaReaderSession {
     explicit LhaReaderSession(const std::filesystem::path& archive_path) {
         input_ = std::make_unique<std::ifstream>(archive_path, std::ios::binary);
         if (!input_ || !*input_) {
-            throw ArchiveError("cannot open LHA archive: " + archive_path.string());
+            throw ArchiveError("cannot open LHA archive: " + path_diagnostic_utf8(archive_path));
         }
         stream_ = lha_input_stream_new(&kFlitzZipLhaInputStreamType, input_.get());
         if (stream_ == nullptr) {
@@ -258,7 +259,7 @@ void publish_lha_payload(LHAReader* reader, const LhaEntry& entry, const std::fi
     try {
         std::ofstream output(temporary.file, std::ios::binary);
         if (!output) {
-            throw ArchiveError("failed to create temporary LHA extraction target: " + target.string());
+            throw ArchiveError("failed to create temporary LHA extraction target: " + path_diagnostic_utf8(target));
         }
 
         std::array<unsigned char, kLhaReadBufferBytes> buffer{};
@@ -275,7 +276,7 @@ void publish_lha_payload(LHAReader* reader, const LhaEntry& entry, const std::fi
             }
             output.write(reinterpret_cast<const char*>(buffer.data()), static_cast<std::streamsize>(decoded));
             if (!output) {
-                throw ArchiveError("failed to write temporary LHA extraction target: " + target.string());
+                throw ArchiveError("failed to write temporary LHA extraction target: " + path_diagnostic_utf8(target));
             }
             written += static_cast<std::uint64_t>(decoded);
         }
@@ -285,7 +286,7 @@ void publish_lha_payload(LHAReader* reader, const LhaEntry& entry, const std::fi
 
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize temporary LHA extraction target: " + target.string());
+            throw ArchiveError("failed to finalize temporary LHA extraction target: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);

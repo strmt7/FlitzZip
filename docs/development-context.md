@@ -147,6 +147,11 @@ Apply the same discipline to all agent tool calls, including MCP and shell:
 - Choose exact paths/fields before printing. Use `rg --files`, `rg -l`, `rg -c`
   or bounded `rg -n` according to the question. Do not dump whole collections
   just to find one field. Match the combined output budget to batched reads.
+  Bound characters as well as rows: one JSON record or log line can exceed the
+  entire context budget. In PowerShell, pass wildcard filename filters with
+  `rg -g` rather than assuming shell expansion of a wildcard path.
+  Decode text artifacts explicitly as UTF-8; use Python's `-X utf8` for Windows
+  snippets that print Unicode rather than retrying an unchanged encoding failure.
 - Keep each command's exit status and every unresolved failure visible. Retain
   complete evidence before projecting it. Never pipe away failures, call a
   truncated output complete, or repeat an expensive command to retrieve text
@@ -206,6 +211,34 @@ and deferred work. After compaction, refresh volatile Git/process/service state;
 reuse unchanged evidence rather than restarting the whole investigation.
 
 ## Evidence And Research Basis
+
+### Skill Maintenance And Evaluation
+
+Keep a skill only when its trigger and decision rules improve a distinct workflow.
+The [official skill model](https://developers.openai.com/plugins/concepts/skills)
+loads discovery metadata before the full instructions; concise, discriminating
+descriptions therefore matter even when a skill is not selected.
+[Skill authoring](https://developers.openai.com/plugins/build/skills) recommends
+focused workflows and supporting resources only where needed. Shared repository
+policy stays in its canonical guide; skills route to it rather than copying it.
+
+Evaluate changes on representative direct and indirect requests, a neighboring
+request that should not activate the skill, and a failure or ambiguity case.
+Check actual decisions, commands, rejected stale evidence and resulting artifacts,
+not just the presence of prescribed words. Reuse existing contract tests for
+deterministic mechanics. Instruction-only edits need structural/link checks and
+serial scenario review; they do not justify new frameworks or native rebuilds.
+Apply the skill to real work and retain the result locally. A self-reviewed
+scenario is not an independent agent evaluation or proof of automatic activation.
+
+[OpenAI's skill-evaluation guidance](https://developers.openai.com/blog/eval-skills)
+supports behavior-based checks and explicit success criteria. Where harness token
+usage or command traces are available, compare them on comparable tasks; document
+size alone is not an efficiency benchmark. Model-specific [prompt guidance](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra)
+does not authorize removing repository safety rules, changing global settings or
+spawning workers. Keep mandatory tools and the single-agent boundary intact.
+
+### Context Evidence
 
 [Karpathy's April 2026 idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
 motivates reusable synthesis separate from underlying sources and a small

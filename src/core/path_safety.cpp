@@ -291,7 +291,7 @@ std::string normalize_entry_name(const std::filesystem::path& relative_path) {
         if (!out.empty()) {
             out.push_back('/');
         }
-        out.append(reinterpret_cast<const char*>(piece.c_str()));
+        out.append(reinterpret_cast<const char*>(piece.data()), piece.size());
     }
     if (out.empty()) {
         throw SecurityError("source relative path is empty");

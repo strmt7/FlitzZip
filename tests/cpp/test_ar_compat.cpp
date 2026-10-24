@@ -851,6 +851,74 @@ TEST_CASE(ar_long_name_numeric_fields_require_ascii_digits) {
     }
 }
 
+// Purpose: Reject malformed AR framing and GNU/BSD name extents before any valid prefix can be published.
+// Inputs: Independent headers and name tables, including empty, out-of-table and both overlong-name boundaries.
+// Outputs: RAM scanning and filesystem extraction agree on actionable errors and leave all output absent.
+TEST_CASE(ar_framing_and_long_name_extent_matrix_rejects_before_output) {
+    const auto root = test_temp_dir("ar-name-extent-matrix");
+    struct Case {
+        std::string name;
+        std::string table;
+        std::string payload;
+        std::string_view diagnostic;
+    };
+    const Case cases[] = {
+        {"#1/", "", "abc", "malformed AR BSD name length"},
+        {"#1/0", "", "abc", "AR BSD long-name size is invalid"},
+        {"#1/4", "", "abc", "AR BSD long-name size is invalid"},
+        {"#1/" + std::to_string(flitzzip::kMaxArchivePathBytes + 1U), "",
+         std::string(flitzzip::kMaxArchivePathBytes + 1U, 'x'), "AR BSD long-name size is invalid"},
+        {"/0", "", "abc", "AR long-name offset is outside the GNU string table"},
+        {"/6", "ok.o/\n", "abc", "AR long-name offset is outside the GNU string table"},
+        {"/99999999999999", "ok.o/\n", "abc", "AR long-name offset is outside the GNU string table"},
+        {"/0", "/\n", "abc", "AR GNU long-name entry is empty"},
+        {"/0", "\n", "abc", "AR GNU long-name entry is empty"},
+        {"/0", std::string(flitzzip::kMaxArchivePathBytes + 1U, 'x'), "abc",
+         "AR GNU long name exceeds FlitzZip path length limit"},
+        {"/0", std::string(flitzzip::kMaxArchivePathBytes + 2U, 'x') + "/\n", "abc",
+         "AR GNU long name exceeds FlitzZip path length limit"},
+    };
+    std::vector<std::pair<std::string, std::string_view>> fixtures;
+    for (const auto& item : cases) {
+        std::ostringstream output(std::ios::out | std::ios::binary);
+        output << "!<arch>\n";
+        write_ar_member(output, "valid.txt/", "prefix");
+        write_ar_member(output, "//", item.table);
+        write_ar_member(output, item.name, item.payload);
+        fixtures.emplace_back(output.str(), item.diagnostic);
+    }
+    auto malformed_header = make_ar_header("last.txt/", 0);
+    malformed_header[59] = 'x';
+    fixtures.emplace_back("!<arch>\n" + std::string(malformed_header.data(), malformed_header.size()),
+                          "malformed AR member terminator");
+    fixtures.emplace_back("!<arcH>\n", "unsupported or malformed AR global header");
+    for (std::size_t index = 0; index < fixtures.size(); ++index) {
+        const auto& [bytes, diagnostic] = fixtures[index];
+        std::istringstream input(bytes, std::ios::in | std::ios::binary);
+        bool rejected = false;
+        std::string actual_error;
+        try {
+            (void)flitzzip::detail::scan_ar_stream(input, bytes.size(), flitzzip::ArchivePathEncoding::Utf8);
+        } catch (const flitzzip::ArchiveError& error) {
+            actual_error = error.what();
+            rejected = std::string_view(error.what()).find(diagnostic) != std::string_view::npos;
+        }
+        if (!rejected) {
+            throw std::runtime_error("AR name-extent fixture " + std::to_string(index) + " expected " +
+                                     std::string(diagnostic) + "; received " + actual_error);
+        }
+        const auto archive = root / (std::to_string(index) + ".ar");
+        {
+            std::ofstream output(archive, std::ios::binary);
+            output.exceptions(std::ios::badbit | std::ios::failbit);
+            output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            output.close();
+        }
+        require_ar_rejection_before_output(archive, root / ("output-" + std::to_string(index)), diagnostic);
+    }
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Verify AR extraction refuses overwriting existing files unless explicitly allowed.
 // Inputs: An AR file entry and a preexisting output file of the same name.
 // Outputs: Throws if extraction overwrites while `overwrite` is false.

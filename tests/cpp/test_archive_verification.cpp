@@ -2,9 +2,11 @@
 #include "core/result.hpp"
 #include "test_flzip_helpers.hpp"
 #include "test_util.hpp"
+#include "test_source_session.hpp"
 
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -49,17 +51,34 @@ void require_unpublished_verification(const std::filesystem::path& root, const s
                existing ? 2 : 1);
 }
 
+// Purpose: Observe the one private output owned by this synchronous create operation without naming its directory.
+// Inputs: Owned root, original source and final destination. Outputs: The sole staged regular file, or test failure.
+std::filesystem::path verification_candidate(const std::filesystem::path& root, const std::filesystem::path& source,
+                                             const std::filesystem::path& archive) {
+    std::optional<std::filesystem::path> candidate;
+    for (const auto& item : std::filesystem::recursive_directory_iterator(root)) {
+        if (item.is_regular_file() && item.path() != source && item.path() != archive) {
+            REQUIRE_TRUE(!candidate);
+            candidate = item.path();
+        }
+    }
+    REQUIRE_TRUE(candidate.has_value());
+    return *candidate;
+}
+
 }  // namespace
 
 // Purpose: Reject corrupted staged native bytes without publishing a new file or replacing an existing archive.
-// Inputs: A deterministic raw-block source and one payload-bit fault injected before the first verification window.
-// Outputs: Requires an actual CRC mismatch from the production decoder and complete preservation/cleanup.
+// Inputs: A bounded raw-block source, a persisted producer-write fault before immutable read admission and both target
+// states. Outputs: Requires an actual CRC mismatch from the production decoder and complete preservation/cleanup.
 TEST_CASE(flzip_write_verification_crc_failure_preserves_destination) {
     for (const bool existing : {false, true}) {
         const auto root = test_temp_dir("flzip-write-verification-crc");
         const auto source = root / "source.bin";
         const auto archive = root / "output.flzip";
-        std::string payload(3U * flitzzip::kMinArchiveBlockBytes + 1U, '\0');
+        // Exceed the current write buffer so the fault targets actual file bytes rather than buffered producer memory.
+        // Both target states, failed candidates and successful retries together write less than the 64 MiB smoke cap.
+        std::string payload(5U * 1024U * 1024U + 1U, '\0');
         std::uint32_t state = 0x71F2A903U;
         for (auto& byte : payload) {
             state ^= state << 13U;
@@ -72,35 +91,77 @@ TEST_CASE(flzip_write_verification_crc_failure_preserves_destination) {
             std::ofstream(archive, std::ios::binary) << "existing archive bytes";
         }
         bool corrupted = false;
+        bool geometry_checked = false;
         bool rejected = false;
+        auto options = verification_compress_options();
+        options.chunk_size = 256U * 1024U;
         try {
-            static_cast<void>(
-                flitzzip::compress_flzip({source}, archive, verification_compress_options(), [&](const auto& snapshot) {
-                    if (corrupted || snapshot.operation != flitzzip::OperationKind::Verify) {
-                        return;
-                    }
-                    for (const auto& item : std::filesystem::recursive_directory_iterator(root)) {
-                        if (!item.is_regular_file() || item.path() == source || item.path() == archive) {
-                            continue;
-                        }
-                        REQUIRE_TRUE(!corrupted);
-                        const auto index = flitzzip_test::read_test_archive_index(item.path());
+            static_cast<void>(flitzzip::compress_flzip({source}, archive, options, [&](const auto& snapshot) {
+                if (snapshot.operation == flitzzip::OperationKind::Verify) {
+                    REQUIRE_TRUE(corrupted);
+                    if (!geometry_checked) {
+                        const auto index =
+                            flitzzip_test::read_test_archive_index(verification_candidate(root, source, archive));
                         REQUIRE_EQ(index.entries.size(), 1U);
                         REQUIRE_EQ(index.entries.front().blocks.front().kind, flitzzip::BlockKind::Raw);
-                        flitzzip_test::xor_archive_byte(item.path(), index.entries.front().payload_offset, 1U);
-                        corrupted = true;
+                        REQUIRE_EQ(index.entries.front().payload_offset, 0U);
+                        geometry_checked = true;
                     }
-                    REQUIRE_TRUE(corrupted);
-                }));
+                    return;
+                }
+                if (corrupted || snapshot.operation != flitzzip::OperationKind::Compress ||
+                    snapshot.processed_bytes != payload.size()) {
+                    return;
+                }
+                const auto candidate = verification_candidate(root, source, archive);
+                REQUIRE_TRUE(std::filesystem::file_size(candidate) > 0U);
+                {
+                    std::ifstream persisted(candidate, std::ios::binary);
+                    REQUIRE_EQ(persisted.get(), static_cast<unsigned char>(payload.front()));
+                }
+                flitzzip_test::xor_archive_byte(candidate, 0U, 1U);
+                corrupted = true;
+            }));
         } catch (const flitzzip::ArchiveError& error) {
             REQUIRE_EQ(std::string(error.what()), "CRC mismatch while verifying: source.bin");
             rejected = true;
         }
         REQUIRE_TRUE(corrupted);
+        REQUIRE_TRUE(geometry_checked);
         REQUIRE_TRUE(rejected);
         require_unpublished_verification(root, archive, existing);
+        REQUIRE_EQ(read_verification_fixture(source), payload);
+        REQUIRE_EQ(flitzzip::compress_flzip({source}, archive, options).input_bytes, payload.size());
+        REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(root), std::filesystem::directory_iterator{}), 2);
         std::filesystem::remove_all(root);
     }
+}
+
+// Purpose: Refuse candidate tampering once the producer has entered immutable read-back verification.
+// Inputs: A tiny CPU-only native create and real Windows write admission against its private candidate.
+// Outputs: Actual sharing denial throughout verification, normal successful publication and unchanged source bytes.
+TEST_CASE(flzip_write_verification_refuses_late_mutation) {
+    const auto root = test_temp_dir("flzip-readback-source-session");
+    const auto source = root / "source.bin";
+    const auto archive = root / "output.flzip";
+    const std::string payload(4097U, 'V');
+    std::ofstream(source, std::ios::binary) << payload;
+    unsigned probes = 0;
+    const auto result =
+        flitzzip::compress_flzip({source}, archive, verification_compress_options(), [&](const auto& snapshot) {
+            if (snapshot.operation == flitzzip::OperationKind::Verify) {
+                const auto candidate = verification_candidate(root, source, archive);
+                DWORD error = ERROR_SUCCESS;
+                REQUIRE_TRUE(!flitzzip_test::source_writer_available(candidate, error));
+                REQUIRE_EQ(error, static_cast<DWORD>(ERROR_SHARING_VIOLATION));
+                ++probes;
+            }
+        });
+    REQUIRE_TRUE(probes > 0U);
+    REQUIRE_EQ(result.input_bytes, payload.size());
+    REQUIRE_EQ(read_verification_fixture(source), payload);
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(root), std::filesystem::directory_iterator{}), 2);
+    std::filesystem::remove_all(root);
 }
 
 // Purpose: Withhold native output until every read-back progress callback has returned successfully.

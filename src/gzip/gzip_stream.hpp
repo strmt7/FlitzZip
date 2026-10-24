@@ -44,8 +44,9 @@ class GzipOutputStream final : public std::ostream {
 };
 
 // Purpose: Stream-decompress a single-member Gzip file through `std::istream`.
-// Inputs: Construct with `archive_path`; callers read uncompressed bytes through the `std::istream` interface.
+// Inputs: Construct with a regular `archive_path`; callers read through `std::istream` while its source stays pinned.
 // Outputs: Provides raw uncompressed bytes and validates CRC32/ISIZE when the stream is drained.
+// Rejects mutable/reparse sources and retains the source/parent locks until reader destruction, including after finish.
 class GzipInputStream final : public std::istream {
   public:
     explicit GzipInputStream(const std::filesystem::path& archive_path);

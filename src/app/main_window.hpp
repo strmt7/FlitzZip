@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/background_job.hpp"
 #include "app/cpu_sampling.hpp"
 #include "app/pdh_percentage_sampler.hpp"
 #include "app/dropdown_layout.hpp"
@@ -9,6 +10,7 @@
 #include "app/operation_summary.hpp"
 #include "app/operation_destination.hpp"
 #include "app/queue_metadata.hpp"
+#include "app/repaint_request.hpp"
 #include "app/system_layout.hpp"
 #include "app/main_window_layout.hpp"
 #include "app/main_window_state.hpp"
@@ -41,9 +43,9 @@ class QueueDropTarget;
 class MainWindow {
   public:
     // Purpose: Construct a main window controller with default UI state.
-    // Inputs: None.
+    // Inputs: launcher supplies native job admission and must outlive this controller.
     // Outputs: Initializes fields only; the native HWND is created by `run`.
-    MainWindow();
+    explicit MainWindow(const JobThreadLauncher& launcher = JobThreadLauncher::native());
 
     // Purpose: Join worker threads and release GDI font handles.
     // Inputs: None.
@@ -257,6 +259,11 @@ class MainWindow {
     // Inputs: None; obtains paint state from Win32.
     // Outputs: Renders one crisp frame and validates the paint region.
     void paint();
+
+    // Purpose: Render a native print/capture request without retaining caller-owned drawing state.
+    // Inputs: An exclusively borrowed DC, live for the entire call; invalid state admission draws nothing.
+    // Outputs: Restores selected objects and modes on completion or unwinding, and reports restoration failure.
+    void print_client(HDC target);
 
     // Purpose: Draw the current frame using DPI-scaled layout regions.
     // Inputs: `dc` is the off-screen device context and `rect` is the client rectangle in physical pixels.
@@ -1189,11 +1196,6 @@ class MainWindow {
     // Outputs: Launches Explorer or records a warning status when the shell action fails.
     void open_log_file_location();
 
-    // Purpose: Advance the visible compression level selection.
-    // Inputs: None; reads and mutates UI compression-level state.
-    // Outputs: Queues a repaint with the next compression level.
-    void cycle_compression_level();
-
     // Purpose: Start a background FlitzZip compression job from queued paths.
     // Inputs: None; reads queued paths from UI state.
     // Outputs: Launches a worker thread or no-ops when the queue is empty or another worker is running.
@@ -1229,6 +1231,21 @@ class MainWindow {
     // Outputs: Updates status/history/progress and queues repaints; catches worker exceptions into UI state.
     void run_job(std::function<void()> job, std::string label, OperationKind operation,
                  std::filesystem::path destination_to_open = {});
+
+    // Purpose: Execute an admitted operation. Inputs: captured work/category/preferences. Outputs: Worker result state.
+    void execute_job(const std::function<void()>& job, const std::string& failure_operation, bool show_summary);
+
+    // Purpose: Restore failed worker state. Inputs: original exception. Outputs: Idle state and visible diagnostic.
+    void report_worker_failure(std::exception_ptr failure);
+
+    // Purpose: Observe terminal worker failures. Inputs: controller thread. Outputs: One presentation per failure.
+    void consume_worker_failure();
+
+    // Purpose: Begin cooperative window close. Inputs: UI thread. Outputs: Keeps dispatching until work completes.
+    void request_window_close();
+
+    // Purpose: Finish a pending close. Inputs: UI thread. Outputs: Joins terminal work and destroys its window once.
+    bool complete_window_close();
 
     // Purpose: Open a successful job's captured destination on the UI thread.
     // Inputs: None; consumes synchronized completion state, independent of the current page or settings draft.
@@ -1269,11 +1286,6 @@ class MainWindow {
     // Inputs: `severity`, `operation`, and `message` describe the event without secrets.
     // Outputs: Persists the formatted log entry through the normal log-level and retention path.
     void append_operation_log(LogSeverity severity, std::string_view operation, std::string_view message);
-
-    // Purpose: Add an operation result line to the in-memory session history.
-    // Inputs: `line` is a display string and should not include secrets.
-    // Outputs: Mutates history state.
-    void append_history(const std::string& line);
 
     // Purpose: Add a structured operation result line to the in-memory session history.
     // Inputs: `operation`, `archive_name`, `archive_path`, `detail`, and `success` describe one completed operation.
@@ -1394,7 +1406,7 @@ class MainWindow {
     // Purpose: Coalesce paint requests from worker and UI threads.
     // Inputs: None.
     // Outputs: Posts at most one pending repaint message until the UI thread processes it.
-    void request_repaint();
+    void request_repaint() noexcept;
 
     // Purpose: Scale design-space pixels to current physical pixels.
     // Inputs: `value` is a 96-DPI design coordinate or size.
@@ -1411,9 +1423,10 @@ class MainWindow {
     UINT dpi_ = 96;
     std::mutex mutex_;
     UiState state_;
-    std::thread worker_;
-    std::atomic_bool worker_running_ = false;
-    std::atomic_bool repaint_queued_ = false;
+    BackgroundJob worker_;
+    std::string worker_failure_status_;
+    bool window_close_requested_ = false;
+    RepaintRequest repaint_request_;
     bool window_was_minimized_ = false;
     ULONG_PTR gdiplus_token_ = 0;
     Page transition_from_page_ = Page::Queue;

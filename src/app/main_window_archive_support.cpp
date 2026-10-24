@@ -1,5 +1,7 @@
 #include "app/main_window_support.hpp"
 
+#include "core/path_text.hpp"
+
 #include "app/log_policy.hpp"
 #include "app/log_retention.hpp"
 #include "app/settings_json.hpp"
@@ -328,7 +330,7 @@ OperationStats extract_detected_archive(ArchiveFormat archive_format, const std:
     }
 
     if (archive_format == ArchiveFormat::Unknown) {
-        throw ArchiveError("unable to detect archive format: " + archive.string());
+        throw ArchiveError("unable to detect archive format: " + path_diagnostic_utf8(archive));
     }
     if (const auto extractor = compatibility_extractor_for(archive_format); extractor != nullptr) {
         return extractor(archive, output, overwrite, progress_callback);

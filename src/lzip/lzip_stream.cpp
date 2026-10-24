@@ -2,7 +2,8 @@
 #include "lzma/bounded_sdk_allocator.hpp"
 
 #include "core/checksum.hpp"
-#include "core/file_size.hpp"
+#include "core/file_manifest.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
@@ -183,10 +184,11 @@ class ScopedLzipDecoder {
 class LzipInputStream::Buffer final : public std::streambuf {
   public:
     // Purpose: Open bounded compressed input without decoding or publishing payload bytes.
-    // Inputs: archive_path is the untrusted lzip source path.
-    // Outputs: Initializes an empty get area or throws ArchiveError if the source cannot be opened.
+    // Inputs: archive_path is the untrusted regular lzip source path.
+    // Outputs: Pins its identity through reader destruction and initializes the get area, or rejects unsafe input.
     explicit Buffer(const std::filesystem::path& archive_path)
-        : input_(archive_path, std::ios::binary), archive_size_(regular_file_size(archive_path)) {
+        : source_(pin_source_file(archive_path)), input_(source_.path(), std::ios::binary),
+          archive_size_(source_.size()) {
         if (!input_) {
             throw ArchiveError("cannot open lzip stream: " + path_diagnostic_utf8(archive_path));
         }
@@ -407,6 +409,7 @@ class LzipInputStream::Buffer final : public std::streambuf {
         }
     }
 
+    PinnedSourceFile source_;
     std::ifstream input_;
     std::exception_ptr failure_;
     std::uint64_t archive_size_ = 0;

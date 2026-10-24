@@ -1,4 +1,5 @@
 #include "rpm/rpm_adapter.hpp"
+#include "core/path_text.hpp"
 
 #include "bzip2/bzip2_stream.hpp"
 #include "core/file_manifest.hpp"
@@ -107,7 +108,7 @@ void copy_payload_tail(const std::filesystem::path& archive_path, const RpmPaylo
     assert_rpm_temporary_payload_budget(payload.size, "compressed RPM payload");
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open RPM package: " + archive_path.string());
+        throw ArchiveError("cannot open RPM package: " + path_diagnostic_utf8(archive_path));
     }
     seek_payload_offset(input, payload.offset, "RPM payload");
     std::ofstream output(target, std::ios::binary);
@@ -131,7 +132,7 @@ void materialize_cpio_payload(const std::filesystem::path& archive_path, const R
         assert_rpm_temporary_payload_budget(payload.size, "RPM CPIO payload");
         std::ifstream input(archive_path, std::ios::binary);
         if (!input) {
-            throw ArchiveError("cannot open RPM package: " + archive_path.string());
+            throw ArchiveError("cannot open RPM package: " + path_diagnostic_utf8(archive_path));
         }
         seek_payload_offset(input, payload.offset, "RPM payload");
         std::ofstream output(cpio_path, std::ios::binary);

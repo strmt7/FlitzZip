@@ -4,7 +4,9 @@ param(
     [string]$ScreenshotPath = "",
     [switch]$CompactOnly,
     [switch]$OperationSummaryOnly,
-    [switch]$HoverOnly
+    [switch]$HoverOnly,
+    [switch]$StatusFeedbackOnly,
+    [ValidateRange(1, 3600)][int]$ScenarioTimeoutSeconds = 900
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,12 +29,26 @@ function Get-GuiSourceText {
     return ($appSources | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join "`n"
 }
 
-# Purpose: Fail fast when GUI source reintroduces previously rejected user-facing labels.
-# Inputs: `SourceText` is the joined GUI source text.
-# Outputs: Throws with a precise remediation message when a banned GUI string appears.
+# Purpose: Inspect C++/resource string tokens without confusing comments, character literals or identifiers with UI text.
+# Inputs: Joined, compilable GUI source; this lexical check supplements actual native GUI assertions.
+# Outputs: String-token spellings only, retaining prefixes and escapes for the existing exact-label contracts.
+function Get-GuiLiteralText {
+    param([Parameter(Mandatory = $true)][string]$SourceText)
+
+    $tokenPattern = @'
+//(?:\\\r?\n|[^\r\n])*|/\*.*?(?:\*/|\z)|(?<literal>(?:u8|u|U|L)?R"(?<delimiter>[^\s()\\]{0,16})\(.*?\)\k<delimiter>"|(?:u8|u|U|L)?"(?:\\.|[^"\\])*")|(?<![\p{L}\p{N}_])(?:u8|u|U|L)?'(?:\\.|[^'\\\r\n])*'
+'@
+    $tokens = [regex]::Matches($SourceText, $tokenPattern, [Text.RegularExpressions.RegexOptions]::Singleline, [TimeSpan]::FromSeconds(5))
+    return (($tokens | Where-Object { $_.Groups['literal'].Success } | ForEach-Object { $_.Value }) -join "`n")
+}
+
+# Purpose: Fail fast when GUI literals reintroduce previously rejected user-facing labels.
+# Inputs: `SourceText` is the joined GUI source text; comments and non-string tokens are not UI labels.
+# Outputs: Throws with a precise remediation message when a banned literal appears.
 function Assert-GuiBlockedText {
     param([Parameter(Mandatory = $true)][string]$SourceText)
 
+    $literalText = Get-GuiLiteralText -SourceText $SourceText
     $blockedPatterns = @(
         @{ Pattern = ('\bleve' + 'ls\b'); Message = "GUI source must not use plural compression-setting wording; compression labels are named options." },
         @{ Pattern = ('Verbose ' + 'diagnostics'); Message = "GUI log level label must be 'Debug'." },
@@ -48,16 +64,16 @@ function Assert-GuiBlockedText {
         @{ Pattern = ('L"Det' + 'ails"'); Message = "The status bar must show the clock instead of the retired Details label." }
     )
     foreach ($rule in $blockedPatterns) {
-        if ($SourceText -cmatch $rule.Pattern) {
+        if ($literalText -cmatch $rule.Pattern) {
             throw $rule.Message
         }
     }
     foreach ($requiredLabel in @('L"1 week"', 'L"2 weeks"', 'L"1 month"')) {
-        if (-not $SourceText.Contains($requiredLabel)) {
+        if (-not $literalText.Contains($requiredLabel)) {
             throw "GUI log retention option missing required label $requiredLabel."
         }
     }
-    if ($SourceText -cmatch 'L"Session"') {
+    if ($literalText -cmatch 'L"Session"') {
         throw "History rows must use the real completion time, not the literal Session label."
     }
 }
@@ -109,6 +125,182 @@ function Assert-KeyboardQueueSelection {
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
+}
+
+# Purpose: Apply a smoke scenario's required diagnostic level through the actual Settings controls.
+# Inputs: Owned normal-size GUI, isolated settings file and validated log-level index.
+# Outputs: Persists and independently verifies the level without depending on a message it may filter out.
+function Set-GuiSmokeLogLevel {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [ValidateRange(0, 2)][int]$Index)
+    if (-not $PSCmdlet.ShouldProcess('Owned isolated GUI smoke settings', "Apply log level $Index")) { return }
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 700 -DesignY 384 -Synchronous
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+    for ($row = 0; $row -lt $Index; ++$row) { Invoke-ClientKey -Handle $Handle -VirtualKey 0x28 }
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666 -Synchronous
+    Assert-SettingsValue -Path $SettingsPath -Name 'logLevelIndex' -Expected $Index
+}
+
+# Purpose: Reject unusable, remote and misplaced native drops without changing queued inputs; enforce exact capacity.
+# Inputs: Owned normal-size Queue, one real local file, isolated log/settings and capture naming.
+# Outputs: Returns captures; checks rejection logs/rendered row stability and bounded capacity, then clears Queue.
+function Assert-QueueDropAdmission {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$InputPath, [string]$SettingsPath,
+        [string]$BasePath, [string]$Extension)
+    $originalLevel = ([IO.File]::ReadAllText($SettingsPath) | ConvertFrom-Json).logLevelIndex
+    $failure = $null
+    try {
+        # Successful drop admissions are Debug events; never inherit an unrelated scenario's logging state.
+        Set-GuiSmokeLogLevel -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath -Index 2
+        $log = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
+        $length = (Get-Item -LiteralPath $log).Length
+        Invoke-FileDrop -Handle $Handle -Dpi $Dpi -Paths @($InputPath)
+        Wait-GuiLogEvent -Path $log -PreviousLength $length -Message 'Shell drop added 1 queued item(s)'
+        $initial = "${BasePath}-Drop-Initial$Extension"
+        $captures = @(Save-FlitzZipScreenshot -Handle $Handle -Path $initial)
+        $offset = Get-ClientCaptureOffset -Handle $Handle
+        $bounds = @{ Dpi = $Dpi; Offset = $offset; Left = 122; Top = 132; Right = 1140; Bottom = 240 }
+        $expected = Get-GuiTextBodyDigest -Path $initial @bounds
+        $invalid = 'Shell drop rejected a remote, device, relative, or malformed path'
+        foreach ($case in @(@{ Name = 'Empty'; Paths = @(); Page = 0; X = 300; Message = 'Shell drop did not contain usable paths' },
+                @{ Name = 'Relative'; Paths = @('relative.txt'); Page = 0; X = 300; Message = $invalid },
+                @{ Name = 'Remote'; Paths = @('\\example.invalid\share\file.txt'); Page = 0; X = 300; Message = $invalid },
+                @{ Name = 'Device'; Paths = @('\\?\C:\file.txt'); Page = 0; X = 300; Message = $invalid },
+                @{ Name = 'Dot'; Paths = @($InputPath + '\..\file.txt'); Page = 0; X = 300; Message = $invalid },
+                @{ Name = 'Outside'; Paths = @($InputPath); Page = 0; X = 43; Message = 'Shell drop rejected outside the Queue table' },
+                @{ Name = 'Other-Page'; Paths = @($InputPath); Page = 1; X = 300; Message = 'Shell drop rejected outside the Queue table' })) {
+            Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex $case.Page -Synchronous
+            $length = (Get-Item -LiteralPath $log).Length
+            Invoke-FileDrop -Handle $Handle -Dpi $Dpi -Paths $case.Paths -DesignX $case.X
+            Wait-GuiLogEvent -Path $log -PreviousLength $length -Message $case.Message
+            Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+            $path = "${BasePath}-Drop-$($case.Name)$Extension"
+            $captures += Save-FlitzZipScreenshot -Handle $Handle -Path $path
+            if ((Get-GuiTextBodyDigest -Path $path @bounds) -cne $expected) {
+                throw "A rejected $($case.Name) shell drop changed the rendered Queue row."
+            }
+        }
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
+        $length = (Get-Item -LiteralPath $log).Length
+        Invoke-FileDrop -Handle $Handle -Dpi $Dpi -Paths (@($InputPath) * 4096)
+        Wait-GuiLogEvent -Path $log -PreviousLength $length -Message 'Shell drop added 4096 queued item(s)' -TimeoutSeconds 15
+        $length = (Get-Item -LiteralPath $log).Length
+        Invoke-FileDrop -Handle $Handle -Dpi $Dpi -Paths @($InputPath)
+        Wait-GuiLogEvent -Path $log -PreviousLength $length -Message 'Shell drop rejected because the Queue is full'
+        $captures += Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-Drop-Capacity$Extension"
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
+        $length = (Get-Item -LiteralPath $log).Length
+        Invoke-FileDrop -Handle $Handle -Dpi $Dpi -Paths @($InputPath)
+        Wait-GuiLogEvent -Path $log -PreviousLength $length -Message 'Shell drop added 1 queued item(s)'
+        $recovery = "${BasePath}-Drop-Recovery$Extension"
+        $captures += Save-FlitzZipScreenshot -Handle $Handle -Path $recovery
+        if ((Get-GuiTextBodyDigest -Path $recovery @bounds) -cne $expected) {
+            throw 'Queue drop admission did not recover after clearing a full Queue.'
+        }
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
+        return $captures
+    } catch { $failure = $_.Exception; throw }
+    finally {
+        try {
+            Set-GuiSmokeLogLevel -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath -Index $originalLevel
+            Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+        } catch {
+            if ($failure) { $failure.Data['DropLogSettingsRestoreFailure'] = $_.Exception.Message }
+            else { throw }
+        }
+    }
+}
+
+# Purpose: Keep keyboard selection inside the only visible History row at both arrow boundaries.
+# Inputs: Owned normal-size History page with exactly one filtered row, and capture naming.
+# Outputs: Proves row focus survives Up/Down and both activation keys without clearing history or navigating away.
+function Assert-HistoryKeyboardRow {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$BasePath, [string]$Extension)
+
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
+    foreach ($key in @(0x26, 0x28, 0x20, 0x0D)) { Invoke-ClientKey -Handle $Handle -VirtualKey $key }
+    $path = "${BasePath}-History-Keyboard-Row$Extension"
+    Save-FlitzZipScreenshot -Handle $Handle -Path $path
+    $offset = Get-ClientCaptureOffset -Handle $Handle
+    Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left 130 -Top 222 -Right 300 -Bottom 226 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 99 -ExpectedGreen 130 -ExpectedBlue 140 -Tolerance 2 -MinPixels 12
+    Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left 1 -Top 319 -Right 4 -Bottom 361 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 8 -MinPixels 100
+}
+
+# Purpose: Keep keyboard row identity correct while scrolling past both ends of the normal Queue viewport.
+# Inputs: Owned Queue containing the 72 ordered fixture paths, isolated ZIP destination and capture names.
+# Outputs: Independently reads exactly the 70 selected ZIP members after deselecting rows 54 and zero by keyboard.
+function Assert-QueueKeyboardScrolling {
+    param([IntPtr]$Handle, [int]$Dpi, [string[]]$Paths, [string]$Destination, [string]$BasePath, [string]$Extension)
+
+    if ($Paths.Count -ne 72) { throw 'Keyboard scrolling requires the complete ordered Queue fixture.' }
+    # The fixed 1200x760 design shows 15 rows: End focuses visible row 14, then 40 Down keys reach row 54.
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
+    foreach ($step in 1..40) { Invoke-ClientKey -Handle $Handle -VirtualKey 0x28 }
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x20
+    $offset = Get-ClientCaptureOffset -Handle $Handle
+    $bottom = "${BasePath}-Queue-Keyboard-Scrolled$Extension"
+    Save-FlitzZipScreenshot -Handle $Handle -Path $bottom
+    Assert-DesignRectHasColor -Path $bottom -Dpi $Dpi -Left 130 -Top 640 -Right 300 -Bottom 644 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 99 -ExpectedGreen 130 -ExpectedBlue 140 -Tolerance 2 -MinPixels 12
+    foreach ($step in 1..54) { Invoke-ClientKey -Handle $Handle -VirtualKey 0x26 }
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x20
+    $top = "${BasePath}-Queue-Keyboard-Returned$Extension"
+    Save-FlitzZipScreenshot -Handle $Handle -Path $top
+    Assert-DesignRectHasColor -Path $top -Dpi $Dpi -Left 130 -Top 164 -Right 300 -Bottom 168 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 99 -ExpectedGreen 130 -ExpectedBlue 140 -Tolerance 2 -MinPixels 12
+    $expected = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+    foreach ($index in 1..71) {
+        if ($index -ne 54) { $expected.Add([IO.Path]::GetFileName($Paths[$index]), $Paths[$index]) }
+    }
+    [IO.File]::Delete((Join-Path $Destination 'FlitzZip-output.zip'))
+    Assert-GuiCreatedZip -Handle $Handle -Dpi $Dpi -Destination $Destination -Expected $expected -BasePath "${BasePath}-Queue-Keyboard" -Extension $Extension
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+}
+
+# Purpose: Qualify keyboard access, tab isolation, scroll recovery and each close key in the native license modal.
+# Inputs: Owned normal-size About page, its settings/log path and screenshot naming.
+# Outputs: Pixel-verified modal states and restored text after Home; close keys retain the About page.
+function Assert-LicenseKeyboardNavigation {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$BasePath, [string]$Extension)
+
+    $log = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
+    $offset = Get-ClientCaptureOffset -Handle $Handle
+    $body = @{ Left = 300; Top = 250; Right = 940; Bottom = 550 }
+    foreach ($closeKey in @(0x0D, 0x20, 0x1B)) {
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
+        $length = (Get-Item -LiteralPath $log).Length
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x20
+        Wait-GuiLogEvent -Path $log -PreviousLength $length -Message 'License notices opened'
+        if ($closeKey -eq 0x0D) {
+            $initial = "${BasePath}-License-Keyboard-Initial$Extension"
+            Save-FlitzZipScreenshot -Handle $Handle -Path $initial
+            $expected = Get-GuiTextBodyDigest -Path $initial -Dpi $Dpi -Offset $offset @body
+            foreach ($step in @('Other', 'Returned', 'Bottom', 'Top')) {
+                $key = switch ($step) { 'Other' { 0x27 }; 'Returned' { 0x25 }; 'Bottom' { 0x23 }; 'Top' { 0x24 } }
+                Invoke-ClientKey -Handle $Handle -VirtualKey $key
+                if ($step -eq 'Top') {
+                    # Every scroll key remains modal; finish at the independently observed original text position.
+                    foreach ($scrollKey in @(0x28, 0x22, 0x21, 0x26, 0x24)) {
+                        Invoke-ClientKey -Handle $Handle -VirtualKey $scrollKey
+                    }
+                }
+                Start-Sleep -Milliseconds 220
+                $path = "${BasePath}-License-Keyboard-$step$Extension"
+                Save-FlitzZipScreenshot -Handle $Handle -Path $path
+                $actual = Get-GuiTextBodyDigest -Path $path -Dpi $Dpi -Offset $offset @body
+                $same = $step -in @('Returned', 'Top')
+                if (($actual -ceq $expected) -ne $same) { throw "License keyboard $step lost its text/tab state." }
+            }
+        }
+        $length = (Get-Item -LiteralPath $log).Length
+        Invoke-ClientKey -Handle $Handle -VirtualKey $closeKey
+        Wait-GuiLogEvent -Path $log -PreviousLength $length -Message 'License notices closed'
+        $path = "${BasePath}-License-Keyboard-Closed-$closeKey$Extension"
+        Save-FlitzZipScreenshot -Handle $Handle -Path $path
+        Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left 1 -Top 511 -Right 4 -Bottom 553 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 8 -MinPixels 100
+    }
 }
 
 # Purpose: Verify Queue divider tracking through actual normal and compact painted geometry.
@@ -283,6 +475,9 @@ function Assert-GuiSystemQueueContract {
 function Assert-GuiSecurityPickerContract {
     param([Parameter(Mandatory = $true)][string]$SourceText)
 
+    if ($SourceText -cmatch '\.string\s*\(') {
+        throw 'GUI filesystem paths must use explicit UTF-8 or native wide text, not locale-dependent path.string().'
+    }
     foreach ($requiredSecurityCall in @(
         'hash_path(output, IntegrityMode::Sha256)',
         'hash_path(archive_source.path(), IntegrityMode::Sha256)',
@@ -547,6 +742,101 @@ function Wait-GuiLogEvent {
     throw "GUI command did not report '$Message' within $TimeoutSeconds seconds."
 }
 
+# Purpose: Verify Unicode archive paths through real Security workers, hashing, failures and subsequent reuse.
+# Inputs: Owned GUI/settings, bounded valid archive, isolated fixture root and capture paths.
+# Outputs: Returns captures; requires exact completion outcomes and immutable inputs, then restores policy settings.
+function Assert-UnicodeSecurityReview {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$FixtureArchive,
+        [string]$FixtureRoot, [string]$BasePath, [string]$Extension)
+    $originalLogLevel = (Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json).logLevelIndex
+    $original = $null
+    $failure = $null
+    $points = @()
+    $captures = @()
+    $root = Join-Path $FixtureRoot 'security-unicode'
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    $name = 'archive-' + [char]::ConvertFromUtf32(0x1F9EA)
+    $first = Join-Path $root "$name.flzip"
+    $second = Join-Path $root "$name-two.flzip"
+    $invalid = Join-Path $root "$name-invalid.flzip"
+    Copy-Item -LiteralPath $FixtureArchive -Destination $first -Force
+    Copy-Item -LiteralPath $FixtureArchive -Destination $second -Force
+    [IO.File]::WriteAllText($invalid, 'Independent malformed archive')
+    $before = @(Get-ChildItem -LiteralPath $root -File | Get-FileHash | Sort-Object Path |
+        ForEach-Object { "$($_.Path)=$($_.Hash)" }) -join "`n"
+    $log = Join-Path (Split-Path -Parent $SettingsPath) 'flitzzip.log'
+    try {
+        Set-GuiSmokeLogLevel -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath -Index 2
+        # Applying Settings persists pending Compress choices; snapshot the live policy after that boundary.
+        $original = Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
+        foreach ($choice in @(@{ Name = 'integrityHashOptIn'; Expected = $true; Y = 376 },
+                @{ Name = 'defenderScanOptIn'; Expected = $false; Y = 412 },
+                @{ Name = 'gpuRequired'; Expected = $false; Y = 448 },
+                @{ Name = 'showOperationSummary'; Expected = $false; Y = 227 })) {
+            if ($original.($choice.Name) -ne $choice.Expected) {
+                Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY $choice.Y -Synchronous
+                $points += $choice.Y
+            }
+        }
+        Save-CompressionSmokeChoice -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath
+        Assert-SettingsValue -Path $SettingsPath -Name 'integrityHashOptIn' -Expected $true
+        Assert-SettingsValue -Path $SettingsPath -Name 'defenderScanOptIn' -Expected $false
+        Assert-SettingsValue -Path $SettingsPath -Name 'gpuRequired' -Expected $false
+        Assert-SettingsValue -Path $SettingsPath -Name 'showOperationSummary' -Expected $false
+        foreach ($case in @(@{ Name = 'Single'; Paths = @($first); Result = 'completed'; HashComplete = $true },
+                @{ Name = 'Malformed'; Paths = @($invalid); Result = 'failed'; HashComplete = $true },
+                @{ Name = 'Partial'; Paths = @($invalid, $first); Result = 'failed'; HashComplete = $false },
+                @{ Name = 'Multiple-Recovery'; Paths = @($first, $second); Result = 'completed'; HashComplete = $true })) {
+            Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+            Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
+            $length = (Get-Item -LiteralPath $log).Length
+            Invoke-FileDrop -Handle $Handle -Dpi $Dpi -Paths $case.Paths
+            Wait-GuiLogEvent -Path $log -PreviousLength $length -Message "Shell drop added $($case.Paths.Count) queued item(s)"
+            Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 3 -Synchronous
+            $length = (Get-Item -LiteralPath $log).Length
+            Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
+            Wait-GuiLogEvent -Path $log -PreviousLength $length -Message "Security: $($case.Result)" -TimeoutSeconds 15
+            $capture = "${BasePath}-Security-Unicode-$($case.Name)$Extension"
+            $captures += Save-FlitzZipScreenshot -Handle $Handle -Path $capture
+            $offset = Get-ClientCaptureOffset -Handle $Handle
+            $hashRgb = if ($case.HashComplete) { @(83, 210, 101) } else { @(237, 179, 61) }
+            Assert-DesignRectHasColor -Path $capture -Dpi $Dpi -Left 320 -Top 246 -Right 510 -Bottom 274 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed $hashRgb[0] -ExpectedGreen $hashRgb[1] -ExpectedBlue $hashRgb[2] -Tolerance 20 -MinPixels 4
+            foreach ($top in @(170, 208)) {
+                $rgb = if ($case.Result -eq 'completed') { @(83, 210, 101) } else { @(236, 73, 73) }
+                Assert-DesignRectHasColor -Path $capture -Dpi $Dpi -Left 320 -Top $top -Right 510 -Bottom ($top + 28) -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed $rgb[0] -ExpectedGreen $rgb[1] -ExpectedBlue $rgb[2] -Tolerance 20 -MinPixels 4
+            }
+        }
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 4 -Synchronous
+        $captures += Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-Security-Unicode-History$Extension"
+        $after = @(Get-ChildItem -LiteralPath $root -File | Get-FileHash | Sort-Object Path |
+            ForEach-Object { "$($_.Path)=$($_.Hash)" }) -join "`n"
+        if ($before -cne $after -or @(Get-ChildItem -LiteralPath $root).Count -ne 3) {
+            throw 'Security review changed its independent input bytes or published unexpected output.'
+        }
+    } catch { $failure = $_.Exception; throw }
+    finally {
+        try {
+            Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
+            foreach ($y in $points) {
+                Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY $y -Synchronous
+            }
+            Save-CompressionSmokeChoice -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath
+            if ($original) {
+                foreach ($name in @('integrityHashOptIn', 'defenderScanOptIn', 'gpuRequired', 'showOperationSummary')) {
+                    Assert-SettingsValue -Path $SettingsPath -Name $name -Expected $original.$name
+                }
+            }
+            Set-GuiSmokeLogLevel -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath -Index $originalLogLevel
+            Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
+        } catch {
+            if ($failure) { $failure.Data['SecuritySettingsRestoreFailure'] = $_.Exception.Message }
+            else { throw }
+        }
+    }
+    return $captures
+}
+
 # Purpose: Verify selected inputs through a GUI-created ZIP and an independent .NET reader.
 # Inputs: Handle/Dpi identify the owned GUI; Destination and Expected contain only smoke-owned paths; BasePath/Extension locate the capture.
 # Outputs: Requires exactly the selected files and hashes, rejects cancelled/parent paths, and captures the result.
@@ -597,6 +887,26 @@ function Assert-MixedQueueRemoval {
     Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
     Invoke-FileDrop -Handle $Handle -Dpi $Dpi -Paths $Paths
+    # Keyboard movement must keep focus on the selected row, not activate sidebar navigation.
+    $offset = Get-ClientCaptureOffset -Handle $Handle
+    $ready = "${BasePath}-Queue-Mixed-Keyboard-Ready$Extension"
+    Save-FlitzZipScreenshot -Handle $Handle -Path $ready
+    foreach ($y in @(182, 216, 250, 284)) {
+        Assert-DesignRectHasColor -Path $ready -Dpi $Dpi -Left 130 -Top ($y - 8) -Right 146 -Bottom ($y + 8) -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 28 -ExpectedBlue 52 -Tolerance 20 -MinPixels 20
+    }
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
+    foreach ($step in 1..2) { Invoke-ClientKey -Handle $Handle -VirtualKey 0x26 }
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x20
+    $keyboard = "${BasePath}-Queue-Mixed-Keyboard-Row1$Extension"
+    Save-FlitzZipScreenshot -Handle $Handle -Path $keyboard
+    Assert-DesignRectHasColor -Path $keyboard -Dpi $Dpi -Left 130 -Top 199 -Right 300 -Bottom 203 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 99 -ExpectedGreen 130 -ExpectedBlue 140 -Tolerance 2 -MinPixels 12
+    Assert-DesignRectHasColor -Path $keyboard -Dpi $Dpi -Left 130 -Top 208 -Right 146 -Bottom 224 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 54 -ExpectedGreen 72 -ExpectedBlue 78 -Tolerance 2 -MinPixels 8
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x28
+    $moved = "${BasePath}-Queue-Mixed-Keyboard-Row2$Extension"
+    Save-FlitzZipScreenshot -Handle $Handle -Path $moved
+    Assert-DesignRectHasColor -Path $moved -Dpi $Dpi -Left 130 -Top 233 -Right 300 -Bottom 237 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 99 -ExpectedGreen 130 -ExpectedBlue 140 -Tolerance 2 -MinPixels 12
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x26
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x20
     foreach ($y in @(216, 284)) {
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 138 -DesignY $y -Synchronous
     }
@@ -1017,13 +1327,16 @@ function Assert-OperationSummary {
 }
 
 # Purpose: Verify failed Apply and Restore Defaults keep the last successfully saved settings active.
-# Inputs: Handle/Dpi identify the smoke window; Path is its redirected temporary settings file.
+# Inputs: Handle/Dpi identify the window; Path is redirected settings; BasePath/Extension and Captures retain frames.
 # Outputs: Exercises both save failures and throws if navigation promotes unsaved settings.
 function Assert-SettingsSaveFailureRollback {
     param(
         [IntPtr]$Handle,
         [int]$Dpi,
-        [string]$Path
+        [string]$Path,
+        [string]$BasePath,
+        [string]$Extension,
+        [ref]$Captures
     )
 
     $original = Get-Content -Raw -LiteralPath $Path
@@ -1046,6 +1359,10 @@ function Assert-SettingsSaveFailureRollback {
             if ((Get-Content -Raw -LiteralPath $Path) -cne $original) {
                 throw "Failed $($command.Name) changed the persisted settings."
             }
+            $failureName = $command.Name.Replace(' ', '-')
+            $capture = Save-FlitzZipScreenshot -Handle $Handle -Path "${BasePath}-Settings-$failureName-Failure$Extension"
+            $Captures.Value += $capture
+            Assert-OperationStatusVisible -Handle $Handle -Dpi $Dpi -Path $capture.Path
         } finally {
             $lockedFile.Dispose()
         }
@@ -1061,6 +1378,21 @@ function Assert-SettingsSaveFailureRollback {
         }
         Write-Output "Settings save-failure rollback passed: $($command.Name)."
     }
+}
+
+# Purpose: Require visible operation feedback inside its dedicated status-strip column.
+# Inputs: Handle/Dpi identify the actual window; Path is its current native-rendered capture.
+# Outputs: Rejects a blank column without counting borders, the GPU indicator, progress fields or clock pixels.
+function Assert-OperationStatusVisible {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$Path)
+
+    [FlitzZipNativeUi+RECT]$client = New-Object FlitzZipNativeUi+RECT
+    if (-not [FlitzZipNativeUi]::GetClientRect($Handle, [ref]$client)) {
+        throw 'Cannot inspect the operation-status client geometry.'
+    }
+    $bottom = [int][Math]::Round($client.Bottom * 96.0 / $Dpi)
+    $offset = Get-ClientCaptureOffset -Handle $Handle
+    Assert-DesignRectHasDetail -Path $Path -Dpi $Dpi -Left 238 -Top ($bottom - 30) -Right 432 -Bottom ($bottom - 4) -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 2
 }
 
 # Purpose: Exercise History overflow through real rows and each pointer scrolling path.
@@ -1326,6 +1658,7 @@ function Assert-HistoryDetailsScroll {
         for ($index = 0; $index -lt $count; ++$index) { Invoke-ClientKey -Handle $Handle -VirtualKey 0x28 }
         Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
     }
+    Assert-HistoryKeyboardRow -Handle $Handle -Dpi $Dpi -BasePath $BasePath -Extension $Extension
     $old = Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width 960 -Height 600
     try {
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 420 -DesignY 239 -Synchronous
@@ -1427,6 +1760,8 @@ function Assert-OverwriteKeyboardFrame {
     $offset = Get-ClientCaptureOffset -Handle $Handle
     if ($Focus -eq 'Closed') {
         Assert-DesignRectHasDetail -Path $Path -Dpi $Dpi -Left 116 -Top 74 -Right 350 -Bottom 110 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+        # A heading alone also accepts Queue; require the independently located Extract rail selection.
+        Assert-DesignRectHasColor -Path $Path -Dpi $Dpi -Left 1 -Top 190 -Right 6 -Bottom 248 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 42 -MinPixels 20
     } else {
         # Independent 1200x760 design oracle: the focus border is above its action button.
         $left = if ($Focus -eq 'Cancel') { 830 } else { 680 }
@@ -1706,10 +2041,8 @@ $previousSmokeAutoClose = [Environment]::GetEnvironmentVariable("FLITZZIP_GUI_SM
 $previousSmokeCloseFile = [Environment]::GetEnvironmentVariable("FLITZZIP_GUI_SMOKE_CLOSE_FILE", "Process")
 $previousSmokeSettingsRedirect = [Environment]::GetEnvironmentVariable("FLITZZIP_GUI_SMOKE_SETTINGS_REDIRECT", "Process")
 $previousSmokeShellOpen = [Environment]::GetEnvironmentVariable("FLITZZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", "Process")
-$smokeAutoCloseMs = 300000
-if ($smokeAutoCloseMs -lt 240000) {
-    throw "GUI smoke auto-close timeout must leave enough time for the full tab/control pass."
-}
+$smokeCleanupTimeoutMs = 10000
+$smokeAutoCloseMs = Get-GuiSmokeWatchdogInterval -ScenarioTimeoutSeconds $ScenarioTimeoutSeconds -CleanupTimeoutMilliseconds $smokeCleanupTimeoutMs
 [Environment]::SetEnvironmentVariable("FLITZZIP_GUI_SMOKE_DESTINATION", $smokeDestination, "Process")
 [Environment]::SetEnvironmentVariable("FLITZZIP_GUI_SMOKE_FILE_SELECTION", $queuePickerSelection, "Process")
 [Environment]::SetEnvironmentVariable("FLITZZIP_GUI_SMOKE_FOLDER_SELECTION", (Resolve-Path -LiteralPath $smokeFolder).Path, "Process")
@@ -1723,7 +2056,7 @@ $process = $null
 $windowHandle = [IntPtr]::Zero
 try {
     $nativePickerCaptures = @()
-    if (-not $CompactOnly -and -not $OperationSummaryOnly -and -not $HoverOnly) {
+    if (-not $CompactOnly -and -not $OperationSummaryOnly -and -not $HoverOnly -and -not $StatusFeedbackOnly) {
         Assert-PublicationSettingsMigration -Exe $exe -SettingsPath $smokeSettingsFile
         $nativeBasePath = Join-Path (Split-Path -Parent $ScreenshotPath) ([IO.Path]::GetFileNameWithoutExtension($ScreenshotPath))
         $nativeExtension = [IO.Path]::GetExtension($ScreenshotPath)
@@ -1760,11 +2093,21 @@ try {
     Assert-WindowWorkAreaFit -Handle $windowHandle -Dpi $windowDpi
     Assert-WindowWorkAreaFit -Handle $windowHandle -Dpi $windowDpi -ExerciseEvents
     [void](Invoke-SmokeClientResize -Handle $windowHandle -Dpi $windowDpi -Width 1200 -Height 760)
+    # The smoke observes Debug events. Configure isolated test settings explicitly, never product defaults.
+    Set-GuiSmokeLogLevel -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -Index 2
+    Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 0 -Synchronous
     $captures = @($nativePickerCaptures)
     $pageNames = @("Queue", "Compress", "Extract", "Security", "History", "System", "Settings", "About")
     $basePath = Join-Path (Split-Path -Parent $ScreenshotPath) ([System.IO.Path]::GetFileNameWithoutExtension($ScreenshotPath))
     $extension = [System.IO.Path]::GetExtension($ScreenshotPath)
     $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path $ScreenshotPath
+
+    if ($StatusFeedbackOnly) {
+        Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 6 -Synchronous
+        Assert-SettingsSaveFailureRollback -Handle $windowHandle -Dpi $windowDpi -Path $smokeSettingsFile -BasePath $basePath -Extension $extension -Captures ([ref]$captures)
+        $captures | ConvertTo-Json
+        return
+    }
 
     if ($CompactOnly) {
         $captures += Assert-CompactFormLayout -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
@@ -1782,6 +2125,7 @@ try {
     if ($OperationSummaryOnly) { $captures | Format-Table -AutoSize; return }
 
     $captures += Assert-KeyboardQueueSelection -Handle $windowHandle -Dpi $windowDpi -InputPath $smokeInput -BasePath $basePath -Extension $extension
+    $captures += Assert-QueueDropAdmission -Handle $windowHandle -Dpi $windowDpi -InputPath $smokeInput -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
     $captures += Assert-MixedQueueRemoval -Handle $windowHandle -Dpi $windowDpi -Paths (@($smokeInput) + $overflowFiles[0..2]) -Destination $smokeDestination -BasePath $basePath -Extension $extension
 
     # Keep the directory visible: appending it below the overflow files never renders its
@@ -1830,6 +2174,7 @@ try {
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $bulkDropQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Assert-DesignRectHasDetail -Path $bulkDropQueuePath -Dpi $windowDpi -Left 1148 -Top 170 -Right 1166 -Bottom 640 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 3
+    $captures += Assert-QueueKeyboardScrolling -Handle $windowHandle -Dpi $windowDpi -Paths $bulkDropFiles -Destination $smokeDestination -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
     $emptyAfterBulkDropPath = "${basePath}-Queue-AfterBulkDropClear$extension"
@@ -2082,6 +2427,8 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     Start-Sleep -Milliseconds 250
 
+    $captures += Assert-UnicodeSecurityReview -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -FixtureArchive $smokeArchive -FixtureRoot $smokeRoot -BasePath $basePath -Extension $extension
+
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 4
     Start-Sleep -Milliseconds 250
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "History-Operation" -OpenX 220 -OpenY 145 -SelectX 220 -SelectY 246 -MenuLeft 116 -MenuTop 170 -MenuRight 336 -MenuBottom 300 -BasePath $basePath -Extension $extension
@@ -2164,7 +2511,7 @@ try {
     Start-Sleep -Milliseconds 250
     Assert-SettingsValue -Path $smokeSettingsFile -Name "logLevelIndex" -Expected 2
 
-    Assert-SettingsSaveFailureRollback -Handle $windowHandle -Dpi $windowDpi -Path $smokeSettingsFile
+    Assert-SettingsSaveFailureRollback -Handle $windowHandle -Dpi $windowDpi -Path $smokeSettingsFile -BasePath $basePath -Extension $extension -Captures ([ref]$captures)
 
     $captures += Assert-HistoryScrollEndpoint -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
     $captures += Assert-CompactFormLayout -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
@@ -2174,6 +2521,7 @@ try {
         Start-Sleep -Milliseconds 300
         $captures += Save-FlitzZipScreenshot -Handle $windowHandle -Path "${basePath}-$($pageNames[$index])$extension"
     }
+    $captures += Assert-LicenseKeyboardNavigation -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1070 -DesignY 594
     Start-Sleep -Milliseconds 180
     $licenseDialogPath = "${basePath}-About-Licenses$extension"
@@ -2208,7 +2556,7 @@ try {
         if ($windowHandle -ne [IntPtr]::Zero) {
             [void][FlitzZipNativeUi]::PostMessage($windowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
         }
-        if (-not $process.WaitForExit(10000)) {
+        if (-not $process.WaitForExit($smokeCleanupTimeoutMs)) {
             try {
                 Stop-Process -Id $process.Id -Force
             } catch {

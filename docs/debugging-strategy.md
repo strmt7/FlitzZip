@@ -1,29 +1,65 @@
 # Debugging Strategy
 
-This document defines the FlitzZip debugging workflow for native Windows C++
-defects. It is sanitized for repository use: it captures methods and evidence
-requirements without carrying external company names, proprietary wording, or
-tool-specific marketing language.
+This document defines investigation of native Windows C++, GUI, tool and GPU
+failures. Use it with change-aware verification; debugging evidence and release
+qualification answer different questions.
 
-## Source Categories Reviewed
+## Investigation Contract
 
-The strategy was built from public documentation reviewed on 2026-06-18:
+Before editing, establish the observable invariant, affected consumer and
+source/binary/input identities. Separate observations from hypotheses. A local
+note is enough; do not create another tracking system.
 
-- Native IDE debugger guidance for breakpoints, tracepoints, conditions, data
-  breakpoints, and call-stack inspection.
-- Native system debugger guidance for live user-mode debugging, crash dumps, and
-  time-travel traces.
-- Compiler sanitizer guidance for heap, stack, lifetime, and bounds defects.
-- Runtime verifier guidance for heap, handle, lock, COM, and API misuse.
-- Window/message inspection guidance for Win32 input, drag/drop, focus, and
-  command-routing defects.
-- Event-tracing guidance for CPU, I/O, GPU, timer, paint, and responsiveness
-  investigations.
-- Win32 message-queue guidance for mouse, keyboard, wheel, timer, and posted
-  application messages.
-- Static-analysis and lint guidance for C/C++, scripts, workflow files, and
-  build files.
-- Crash-dump collection guidance for repeatable local postmortem evidence.
+1. **Locate the first divergence.** Trace input and state transitions through the
+   public entry point. Distinguish invalid expectations, harness failures,
+   instrumentation limits and production defects. For intermittent failures,
+   retain the first failure and inspect ordering, shared state and completion.
+2. **Choose a discriminating experiment.** State what would reject the hypothesis.
+   Vary one relevant condition, bound execution and preserve raw failures.
+   Another unchanged retry is not an explanation.
+3. **Prove the boundary.** Follow [oracle selection](code-coverage.md#oracle-selection).
+   Check success, rejection, preserved caller state, released resources and valid
+   reuse. Exercise the public consumer when routing or ownership affects results.
+4. **Repair and challenge.** Fix the first violated production contract, inspect
+   siblings and demonstrate regression sensitivity where practical. Avoiding a
+   failing schedule or input alone does not establish a repair.
+5. **Qualify the conclusion.** Run selected direct consumers; retain pending
+   broader checks for final qualification. Record cause, evidence and limits.
+   A later pass does not establish the cause of an unreproduced report.
+
+### External Failure Controls
+
+Prefer real OS rejection, independently framed corrupt input and bounded stream
+failures. If those cannot reach the contract, use a narrow per-instance adapter
+around the external dependency. Preserve production API semantics and keep
+successful acquisitions real where feasible. Assert cleanup and successful reuse,
+not just a mock call count. Do not patch process imports, add mutable global
+hooks, exhaust host resources or expose a public bypass solely for testability.
+
+Match injected failures to the actual runtime and exception guarantee. A Debug
+library allocation inside a nonthrowing operation is not automatically a Release
+defect. Consult [exception safety](https://learn.microsoft.com/en-us/cpp/cpp/how-to-design-for-exception-safety)
+and [RAII ownership](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r1-manage-resources-automatically-using-resource-handles-and-raii-resource-acquisition-is-initialization),
+then qualify the production configuration needed to support the conclusion.
+
+## Research Basis And Tool Limits
+
+Read primary contracts for the version and platform actually used. These sources
+guide method selection; reading them does not qualify the product.
+
+| Source | Application in FlitzZip |
+| --- | --- |
+| [Google review guidance](https://google.github.io/eng-practices/review/reviewer/looking-for.html#tests) | Challenge whether assertions detect broken behavior; review tests as maintained code |
+| [LLVM regression guidance](https://llvm.org/docs/TestingGuide.html) | Reduce real failures to focused regression inputs |
+| [libFuzzer](https://llvm.org/docs/LibFuzzer.html#fuzz-target) and [OSS-Fuzz integration](https://google.github.io/oss-fuzz/advanced-topics/ideal-integration/) | Keep parser targets bounded and repeatable; replay retained inputs without requiring a new service |
+| [MSVC AddressSanitizer](https://learn.microsoft.com/en-us/cpp/sanitizers/asan) and [Application Verifier](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/application-verifier) | Select supported memory/API diagnostics; instrument only owned test processes |
+| [ThreadSanitizer platforms](https://clang.llvm.org/docs/ThreadSanitizer.html#supported-platforms) | Do not promise native Windows race coverage from an unsupported tool |
+| [Google flaky-test analysis](https://testing.googleblog.com/2016/05/flaky-tests-at-google-and-how-we.html) | Retries and quarantine can conceal genuine defects; they do not establish a repair |
+| [HIP errors](https://rocmdocs.amd.com/projects/HIP/en/latest/how-to/hip_runtime_api/error_handling.html) and [asynchronous execution](https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/hip_runtime_api/asynchronous.html) | Separate API/launch errors from completion and keep owners until work finishes; logging examples are not a recovery policy |
+
+Older reports describe their own systems, not FlitzZip failure rates. Keep raw
+research and diagnostics in local evidence; update rules when evidence changes
+engineering decisions.
 
 ## Principles
 

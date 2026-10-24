@@ -1,8 +1,9 @@
 #include "macbinary/macbinary_adapter.hpp"
+#include "core/path_text.hpp"
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
-#include "core/file_size.hpp"
+#include "core/file_manifest.hpp"
 #include "core/result.hpp"
 
 #include <array>
@@ -234,17 +235,20 @@ std::uint64_t copy_data_fork(std::ifstream& input, const MacBinaryHeader& header
 }  // namespace
 
 // Purpose: Extract the data fork from one MacBinary stream with path-safe publication.
-// Inputs: `archive_path` is the MacBinary stream, `destination` is the extraction root, `overwrite` controls
-// replacement, and `progress_callback` receives synchronous progress snapshots. Outputs: Returns operation statistics;
-// throws on malformed headers, unsafe names, truncated forks, refused overwrite, or verified-file publication failure.
-OperationStats extract_macbinary_file(const std::filesystem::path& archive_path,
+// Inputs: `requested_archive` stays pinned through publication, `destination` is the extraction root, `overwrite`
+// controls replacement, and `progress_callback` receives synchronous progress snapshots. Outputs: Returns operation
+// statistics; throws on malformed headers, unsafe names, truncated forks, refused overwrite, or verified-file
+// publication failure.
+OperationStats extract_macbinary_file(const std::filesystem::path& requested_archive,
                                       const std::filesystem::path& destination, bool overwrite,
                                       const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto archive_size = regular_file_size(archive_path);
+    const auto archive_source = pin_source_file(requested_archive);
+    const auto& archive_path = archive_source.path();
+    const auto archive_size = archive_source.size();
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open MacBinary archive: " + archive_path.string());
+        throw ArchiveError("cannot open MacBinary archive: " + path_diagnostic_utf8(archive_path));
     }
     const auto raw_header = read_macbinary_header(input);
     const auto header = parse_macbinary_header(raw_header, archive_size);
@@ -252,7 +256,8 @@ OperationStats extract_macbinary_file(const std::filesystem::path& archive_path,
     create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, header.entry_name);
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing MacBinary extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing MacBinary extraction target: " +
+                            path_diagnostic_utf8(target));
     }
 
     ProgressState progress;
@@ -265,7 +270,7 @@ OperationStats extract_macbinary_file(const std::filesystem::path& archive_path,
     try {
         std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
         if (!output) {
-            throw ArchiveError("cannot create MacBinary extraction target: " + target.string());
+            throw ArchiveError("cannot create MacBinary extraction target: " + path_diagnostic_utf8(target));
         }
         output_size = copy_data_fork(input, header, output, progress, progress_callback);
         if (archive_size >= output_size) {
@@ -274,7 +279,7 @@ OperationStats extract_macbinary_file(const std::filesystem::path& archive_path,
         }
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize MacBinary extraction target: " + target.string());
+            throw ArchiveError("failed to finalize MacBinary extraction target: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);

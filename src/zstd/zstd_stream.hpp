@@ -69,8 +69,9 @@ class ZstdOutputStream final : public std::ostream {
 };
 
 // Purpose: Stream-decompress a Zstandard file through `std::istream` with bounded window memory.
-// Inputs: Construct with `archive_path`; callers read uncompressed bytes through the `std::istream` interface.
+// Inputs: Construct with a regular `archive_path`; callers read through `std::istream` while its source stays pinned.
 // Outputs: Provides raw uncompressed bytes and validates Zstandard framing/checks when drained.
+// Rejects mutable/reparse sources and retains the source/parent locks until reader destruction, including after finish.
 class ZstdInputStream final : public std::istream {
   public:
     explicit ZstdInputStream(const std::filesystem::path& archive_path);

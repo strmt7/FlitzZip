@@ -216,10 +216,12 @@ separate from published performance claims. Before retiring material, identify
 its consumers, preserve an exact recoverable copy, repair links and verify those
 consumers. Archiving never retires source remediation, tests or scanner coverage.
 
-These rules were checked against official guidance on 2026-06-20: NIST SSDF,
-CISA Secure by Design, OWASP Secure Coding Practices, Microsoft SDL, GitHub
-Actions secure-use guidance, OpenSSF Scorecard, SLSA v1.2, the C++ Core
-Guidelines, and SEI CERT C++.
+The [research and adoption map](refactoring-governance.md#research-and-adoption)
+connects lifecycle, review, ownership and supply-chain guidance to concrete
+repository decisions. [Investigation contracts](debugging-strategy.md#investigation-contract)
+and [oracle selection](code-coverage.md#oracle-selection) govern failure analysis
+and meaningful tests. External guidance informs these rules; it does not prove
+product conformance, eliminate required verification or override maintainer intent.
 
 - Keep changes small, reviewable, and behavior-preserving unless the task
   explicitly asks for a behavior change.
@@ -581,6 +583,15 @@ tools\package.ps1 -Configuration Release
 ## Coding Standards
 
 - Use C++20, RAII, value types, `std::filesystem`, `std::span`, explicit integer widths, and clear ownership.
+- Keep filesystem paths in their native representation for I/O. Use
+  `path_diagnostic_utf8` for narrow progress, history and error text; never rely
+  on the host ANSI code page through `path.string()`.
+  Preserve explicit byte lengths when converting names for validation. A
+  null-terminated append can discard an embedded control character and its
+  suffix before the validator sees the complete untrusted name.
+- Resolve signed relative stream offsets with `checked_stream_seek_position`;
+  retain the destination stream type's representability check at the I/O boundary.
+  Never negate an untrusted signed offset to form its magnitude.
 - Represent binary format fixtures as typed byte arrays with explicit extents;
   compare exact bytes and independent read-back. Do not encode fixture payloads
   as opaque text tokens or weaken secret detection to accommodate them.
@@ -685,6 +696,15 @@ obfuscate a useful test, exclude a path/detector, or change verification to
 manufacture a clean scan. Individual authorizations belong in review records.
 
 - Validate all archive entry names with `safe_join_archive_path` before extraction.
+- For filesystem-backed decoding or verification, pin the archive's identity and parent chain before metadata admission,
+  and retain that ownership through final publication or exception cleanup.
+  A reader-owned stream keeps its source session until destruction, including
+  after `finish()`. Use the existing `PinnedSourceFile` boundary; reopening a
+  pathname or comparing its size alone does not prevent concurrent mutation.
+  Test real write-sharing denial, refusal before output creation, released locks
+  and successful reuse after interruption. Test public path-based backends directly:
+  a CLI or GUI caller's source session can mask a missing backend owner.
+  Registry/CLI tests complement those direct controls. Do not simulate immutability with retries.
 - Preserve explicit member/end/error outcomes at archive iterator boundaries.
   A null pointer or zero-byte read alone cannot prove successful completion.
   When the input extent is known, account for every expected member boundary;
@@ -923,7 +943,48 @@ manufacture a clean scan. Individual authorizations belong in review records.
 - Rendering must be double-buffered or otherwise flicker-free. The Win32 class
   background and `WM_ERASEBKGND` path must use the app's dark background so the
   first visible frame never flashes white before custom painting.
+- Treat printing/capture device contexts as borrowed native state. Preserve their
+  selected fonts, objects and drawing modes with an owned SaveDC/RestoreDC scope,
+  including exception unwinding. Draw only after state acquisition succeeds,
+  restore an explicit snapshot at most once, and never delete the caller's DC.
+  Keep an actual WM_PRINT/WM_PRINTCLIENT regression with independent caller state,
+  plus nested-state and exception cleanup controls. A correct retained back buffer
+  does not establish that a separate native print entry point preserves ownership.
+- Scope source checks for UI wording to string tokens. Comments, character
+  literals and identifiers do not establish a displayed label. Retain real
+  prohibited-label controls alongside harmless documentation, escaped/raw string
+  and required-label controls; lexical checks supplement native UI assertions.
+
+- Keep presentation offsets, drag state and animation state on the window thread.
+  Workers publish typed results and pending presentation requests under the shared
+  state mutex; consume each request together with its matching frame snapshot.
+  Do not let a worker mutate presentation fields merely because it holds the
+  shared-state mutex: timers and native input do not acquire that mutex for
+  window-owned fields. Retain successful and failed worker-result controls, a
+  coalesced publication/consumption test and a window-thread ownership check.
 - Progress repaint requests must be coalesced so fast jobs or 200 Hz displays do not flood the message queue.
+  Check native queue admission and keep rejected posts retryable. Releasing a
+  failed post must not clear ownership of a newer notification admitted after
+  acknowledgement. Retain failure and interleaving tests with real owned native
+  message delivery; do not exhaust the host's queues to induce rejection.
+- Treat worker preparation, native thread admission and result publication as
+  one owned lifecycle. Retain the original exception across thread boundaries,
+  restore admission after startup failure and contain completion failures before
+  they escape the thread entry. Terminal state is not proof that captured owners
+  have finished cleanup: join actual work before destroying its notification
+  window or borrowed state. Test controlled admission refusal, overlapping work,
+  failure consumption and successful reuse without exhausting host resources.
+  Route every normal close request, including automated close timers, through
+  cooperative cancellation. Keep the message pump responsive until actual work
+  releases borrowed state; retain a controlled active-close regression. Do not
+  infer responsiveness from an idle close or a workload that may already be done.
+  Bind nested orphan-window watchdogs to the owning scenario's deadline plus
+  cleanup grace. Never let a shorter child fuse invalidate legitimate active
+  work. Keep the outer timeout bounded, preserve failures and log watchdog closure
+  so a deadline mismatch is distinguishable from a product crash.
+  Render diagnostic text visibly. Opaque exception bytes must be labeled and
+  escaped when they are not valid UTF-8; never guess an ANSI code page or weaken
+  strict archive metadata validation to make an error message render.
 - Changed pointer tracking must project only the values needed by the hovered
   control, rather than clone queue, history and log storage on every move.
   Borrow state only under its mutex and own values that survive unlocking.
@@ -939,6 +1000,13 @@ manufacture a clean scan. Individual authorizations belong in review records.
   Modal-opening clicks require checked queue admission and a separate bounded
   oracle for the owned dialog, its dismissal and restored owner; waiting for the
   launching handler to finish before operating its dialog deadlocks the controller.
+  A created HWND is not proof of readiness: wait for owned, visible, enabled input
+  and acknowledged focus before supplying text. Scenarios using diagnostic logs
+  must explicitly apply and restore the required level through Settings; never
+  depend on logging state left by an earlier scenario.
+  Write-producing GUI probes must select their owned temporary destination before
+  starting work. A picker-result environment value does not select that destination
+  until the picker action runs; verify the resulting bytes in the intended root.
 - Tab transitions and toggle changes may use short non-blocking animations, but
   they must run on bounded timers, never block archive work, never grow memory
   usage, and remain visually stable when repaint cadence exceeds 200 Hz.

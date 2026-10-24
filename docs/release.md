@@ -274,7 +274,9 @@ The accepted states are:
 Exit `10` blocks a release because its binary is CPU-only. Exit `13` blocks
 qualification because a present device cannot admit its kernel module or other
 required GPU initialization, or runtime device enumeration failed (reported as
-`device_count=-1`). Only successful zero-device enumeration admits exit `12`.
+`device_count=-1`). A successful zero count or HIP's documented
+[no-device result](https://rocmdocs.amd.com/projects/HIP/en/latest/doxygen/html/group___device.html#ga8555d5c76d88c50ddbf54ae70b568394)
+admits exit `12`; neither admits a runtime or kernel initialization error.
 Missing or modified packaged DLLs independently
 block qualification, including on hosts where the AMD driver is absent.
 

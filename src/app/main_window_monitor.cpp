@@ -554,13 +554,12 @@ void MainWindow::rebuild_fonts() {
 // Purpose: Queue a coalesced repaint on the UI thread.
 // Inputs: None.
 // Outputs: Posts one repaint request when an HWND exists and no repaint is already queued.
-void MainWindow::request_repaint() {
+void MainWindow::request_repaint() noexcept {
     if (hwnd_ == nullptr) {
         return;
     }
-    if (!repaint_queued_.exchange(true)) {
-        PostMessageW(hwnd_, WM_APP + 1, 0, 0);
-    }
+    static_cast<void>(
+        repaint_request_.request([this]() noexcept { return PostMessageW(hwnd_, WM_APP + 1, 0, 0) != 0; }));
 }
 
 // Purpose: Convert design pixels to current monitor pixels.

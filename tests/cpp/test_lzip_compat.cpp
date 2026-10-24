@@ -1,6 +1,7 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 #include "test_stream_failure.hpp"
+#include "test_source_session.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -149,7 +150,8 @@ TEST_CASE(lzip_missing_unicode_source_reports_original_error) {
     try {
         flitzzip::LzipInputStream input(archive);
     } catch (const flitzzip::ArchiveError& error) {
-        rejected = std::string(error.what()) == "cannot read file size: " + flitzzip::path_diagnostic_utf8(archive);
+        rejected =
+            std::string_view(error.what()).find(flitzzip::path_diagnostic_utf8(archive)) != std::string_view::npos;
     }
     REQUIRE_TRUE(rejected);
     std::filesystem::remove_all(root);
@@ -210,6 +212,17 @@ TEST_CASE(lzip_extracts_single_file_fixture) {
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "payload.txt"), kSingleFileLzipPayload);
     flitzzip_test::export_compat_fixture(archive, output);
+}
+
+// Purpose: Keep independently encoded lzip input immutable through successful and interrupted extraction.
+// Inputs: A small verified lzip fixture and real OS sharing probes; no source bytes are changed.
+// Outputs: Refused active/concurrent writers, exact decoded bytes and source-lock release on every tested exit.
+TEST_CASE(single_stream_source_session_lzip) {
+    const auto root = test_temp_dir("lzip-source-session");
+    const auto archive = root / "payload.lz";
+    write_fixture(archive, kSingleFileLzipFixture);
+    flitzzip_test::require_archive_source_session(archive, root, "payload", kSingleFileLzipPayload,
+                                                  &flitzzip::extract_lzip_file);
 }
 
 // Purpose: Preserve native Unicode filenames while extracting independent lzip fixtures.

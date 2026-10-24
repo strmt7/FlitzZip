@@ -41,6 +41,33 @@ class FailedReadPipe:
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_local_character_budget_preserves_protocol_default_and_byte_bounds(self) -> None:
+        """Purpose: Separate local log retention from RPC clipping without removing byte bounds.
+        Inputs: UTF-8 text larger than a normal response, explicit local character budgets and a short byte tail.
+        Outputs: Default responses stay clipped; local text is exact; independent byte truncation remains visible.
+        """
+        text = "independent diagnostic " * 800 + "\u754c\U0001f9ea-tail"
+        payload = text.encode("utf-8")
+        default = flitzzip_mcp.BoundedOutput(65536, 65536)
+        default.append("stdout", payload)
+        rendered, truncated = default.render("stdout")
+        self.assertEqual(len(rendered), 12000)
+        self.assertTrue(rendered.endswith("\u754c\U0001f9ea-tail"))
+        self.assertTrue(truncated)
+        local = flitzzip_mcp.BoundedOutput(65536, 65536, character_limit=65536)
+        local.append("stdout", payload)
+        self.assertEqual(local.render("stdout"), (text, False))
+        small = flitzzip_mcp.BoundedOutput(65536, 4, character_limit=65536)
+        small.append("stdout", payload)
+        self.assertEqual(small.render("stdout"), ("tail", True))
+        exceeded = flitzzip_mcp.BoundedOutput(4, 4, character_limit=65536)
+        exceeded.append("stdout", payload)
+        self.assertTrue(exceeded.limit_exceeded.is_set())
+        self.assertEqual(exceeded.render("stdout"), ("tail", True))
+        for invalid in (0, -1, True, 1.5):
+            with self.subTest(character_limit=invalid), self.assertRaises(ValueError):
+                flitzzip_mcp.BoundedOutput(65536, 65536, character_limit=invalid)
+
     @unittest.skipUnless(os.name == "nt", "Windows suspended-thread admission contract")
     def test_primary_thread_admission_failures_close_only_owned_handles(self) -> None:
         """Purpose: Reject unavailable, ambiguous or changed primary threads without leaking enumeration handles.
@@ -640,7 +667,11 @@ class MemoryAdmissionTests(unittest.TestCase):
     def test_invalid_limits_cannot_disable_deadlines_or_start_children(self) -> None:
         """Purpose: Prevent unbounded checks; inputs: nonfinite deadlines or invalid byte limits; outputs: no child."""
         cases = [{"timeout_seconds": value} for value in (float("nan"), float("inf"), -float("inf"), 0, -1, True, "1")]
-        cases += [{name: value} for name in ("max_output_bytes", "response_tail_bytes") for value in (0, -1, True, 1.5)]
+        cases += [
+            {name: value}
+            for name in ("max_output_bytes", "response_tail_bytes", "response_max_characters")
+            for value in (0, -1, True, 1.5)
+        ]
         for limits in cases:
             with self.subTest(limits=limits), mock.patch.object(flitzzip_mcp.subprocess, "Popen") as child:
                 with self.assertRaises(ValueError):

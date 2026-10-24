@@ -188,3 +188,82 @@ TEST_CASE(publication_state_cancellation_is_atomic_per_file_and_retryable) {
         }
     }
 }
+
+// Purpose: Refuse directory-only spellings before reserving a file publication beside the caller's directory.
+// Inputs: An owned populated directory with an explicit trailing separator, then a normal file target.
+// Outputs: No staging or caller changes after refusal; the same parent still supports normal publication.
+TEST_CASE(publication_state_file_target_requires_a_filename_before_reservation) {
+    const auto root = test_temp_dir("publication-directory-target");
+    const auto directory = root / "nested";
+    std::filesystem::create_directory(directory);
+    std::ofstream(directory / "keep.txt", std::ios::binary) << "caller-owned";
+    bool refused = false;
+    try {
+        const flitzzip::FilePublishTransaction invalid(directory / "");
+    } catch (const flitzzip::SecurityError&) {
+        refused = true;
+    }
+    REQUIRE_TRUE(refused);
+    REQUIRE_EQ(publication_bytes(directory / "keep.txt"), "caller-owned");
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(root), std::filesystem::directory_iterator{}), 1);
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(directory), std::filesystem::directory_iterator{}), 1);
+    flitzzip::FilePublishTransaction valid(directory / "result.txt");
+    std::ofstream(valid.staging_path(), std::ios::binary) << "verified result";
+    valid.commit(false);
+    REQUIRE_EQ(publication_bytes(directory / "result.txt"), "verified result");
+    REQUIRE_EQ(publication_bytes(directory / "keep.txt"), "caller-owned");
+}
+
+// Purpose: Challenge actual inventory and publication transitions when a staged file disappears between checks.
+// Inputs: Tiny private trees and deletion at each observable checkpoint, discovered from a successful control.
+// Outputs: No caller data changes, no partial payload, at least one stale-inventory refusal and successful reuse.
+TEST_CASE(publication_state_disappearing_quarantine_entries_preserve_caller_and_recover) {
+    const auto root = test_temp_dir("publication-disappearing-entry");
+    int successful_checkpoints = 0;
+    int stale_inventory_refusals = 0;
+    for (int mutation = -1; mutation < successful_checkpoints; ++mutation) {
+        const auto destination = root / std::to_string(mutation);
+        std::filesystem::create_directories(destination);
+        std::ofstream(destination / "keep.txt", std::ios::binary) << "caller-owned";
+        std::filesystem::path staging;
+        int checkpoints = 0;
+        bool removed = false;
+        bool rejected = false;
+        try {
+            flitzzip::DirectoryPublishTransaction transaction(destination);
+            staging = transaction.staging_directory();
+            const auto payload = staging / "payload.txt";
+            std::ofstream(payload, std::ios::binary) << "complete verified payload";
+            transaction.publish(false, [&] {
+                if (checkpoints++ == mutation) {
+                    removed = std::filesystem::remove(payload);
+                }
+            });
+        } catch (const flitzzip::SecurityError&) {
+            rejected = true;
+            ++stale_inventory_refusals;
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        if (mutation < 0) {
+            successful_checkpoints = checkpoints;
+            REQUIRE_TRUE(successful_checkpoints > 1);
+            REQUIRE_TRUE(!rejected);
+        }
+        REQUIRE_TRUE(!std::filesystem::exists(staging));
+        REQUIRE_EQ(publication_bytes(destination / "keep.txt"), "caller-owned");
+        const auto published = destination / "payload.txt";
+        if (std::filesystem::exists(published)) {
+            REQUIRE_EQ(publication_bytes(published), "complete verified payload");
+        } else {
+            // Removal before inventory may leave a valid empty tree; an observed stale entry must be rejected.
+            REQUIRE_TRUE(removed || rejected);
+        }
+        flitzzip::DirectoryPublishTransaction retry(destination);
+        std::ofstream(retry.staging_directory() / "payload.txt", std::ios::binary) << "retry complete";
+        retry.publish(true);
+        REQUIRE_EQ(publication_bytes(published), "retry complete");
+        REQUIRE_EQ(publication_bytes(destination / "keep.txt"), "caller-owned");
+    }
+    REQUIRE_TRUE(stale_inventory_refusals > 0);
+}

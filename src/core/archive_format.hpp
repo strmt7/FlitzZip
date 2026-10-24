@@ -110,9 +110,9 @@ ArchiveFormat detect_archive_format(const std::filesystem::path& archive_path);
 // Outputs: Returns the extension-mapped format, or `ArchiveFormat::Unknown` for unsupported/excluded extensions.
 ArchiveFormat detect_archive_format_by_extension(const std::filesystem::path& archive_path);
 
-// Purpose: Render supported format keys for help text.
+// Purpose: Render registered format keys for help text, independently of create/extract capabilities.
 // Inputs: `include_auto` controls whether the synthetic `auto` token is listed.
-// Outputs: Returns a comma-separated token list.
+// Outputs: Returns a comma-separated token list excluding unknown; callers must check capability metadata separately.
 std::string archive_format_key_list(bool include_auto);
 
 }  // namespace flitzzip

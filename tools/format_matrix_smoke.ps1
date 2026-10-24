@@ -118,6 +118,38 @@ function Invoke-ExpectedMatrixFailure {
     }
 }
 
+# Purpose: Require every registered extractor to reject a mutable archive before destination creation.
+# Inputs: Format labels a valid owned archive; Arguments is its real extraction command with an absent OutputRoot.
+# Outputs: Proves exact source-lock refusal, unchanged archive bytes and no output; always releases the held writer.
+function Test-MatrixSourceAdmission {
+    param(
+        [string]$Format,
+        [string]$Archive,
+        [string]$OutputRoot,
+        [string[]]$Arguments
+    )
+
+    if (Test-Path -LiteralPath $OutputRoot) { throw "Source-admission fixture must start without output: $Format" }
+    $before = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash
+    $writer = $null
+    try {
+        $sharing = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+        $writer = [IO.File]::Open($Archive, [IO.FileMode]::Open, [IO.FileAccess]::Write, $sharing)
+        $result = Invoke-MatrixProcess -FilePath $cli -Arguments $Arguments
+    } finally {
+        if ($null -ne $writer) { $writer.Dispose() }
+    }
+    $message = $result.Output -join "`n"
+    if ($result.ExitCode -ne 1 -or $message -notmatch [regex]::Escape('cannot lock source file:') -or
+        @($result.Output | Where-Object { $_ -match '^entries=' }).Count -ne 0) {
+        throw "Mutable $Format source was not rejected at source admission: $message"
+    }
+    if (Test-Path -LiteralPath $OutputRoot) { throw "Mutable $Format source created extraction output." }
+    $after = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash
+    if ($before -cne $after) { throw "Source-admission probe changed the $Format archive." }
+    Write-Output "format_matrix source_admission=$Format status=passed output_created=false source_unchanged=true"
+}
+
 # Purpose: Reject invalid archive and resource arguments before publication or native execution.
 # Inputs: Root is an owned temporary fixture directory; all payloads together remain below 4 KiB.
 # Outputs: Checks exact failure causes, unchanged existing bytes and absence of unexpected output files.
@@ -614,6 +646,9 @@ function Test-MatrixExtractOnlyFormat {
     if ((Get-MatrixIdentifiedFormat -Archive $archive) -ne $Format.Key) {
         throw "CLI identification disagrees with the $($Format.Key) fixture."
     }
+    $blockedOutput = Join-Path $export 'source-admission-blocked'
+    Test-MatrixSourceAdmission -Format $Format.Key -Archive $archive -OutputRoot $blockedOutput `
+        -Arguments @('extract', '--format', $Format.Key, '--output', $blockedOutput, $archive)
     foreach ($mode in @('auto', $Format.Key)) {
         $output = Join-Path $export "extract-$mode"
         $arguments = @('extract', '--format', $mode, '--output', $output, $archive)
@@ -716,6 +751,7 @@ try {
                 $extractArgs += @("--force-cpu")
             }
             $extractArgs += @($archive)
+            Test-MatrixSourceAdmission -Format $format.Key -Archive $archive -OutputRoot $extractRoot -Arguments $extractArgs
             if ($format.Key -eq 'flzip') {
                 Invoke-ExpectedMatrixFailure -Arguments (@('extract', '--not-a-real-option') + $extractArgs[1..($extractArgs.Count - 1)]) `
                     -Label 'Unknown extraction option' -ExpectedText 'unknown extract argument'

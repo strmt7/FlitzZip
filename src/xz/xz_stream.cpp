@@ -1,4 +1,6 @@
 #include "xz/xz_stream.hpp"
+#include "core/file_manifest.hpp"
+#include "core/path_text.hpp"
 
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
@@ -8,7 +10,6 @@
 #include <cstdint>
 #include <exception>
 #include <fstream>
-#include <limits>
 #include <mutex>
 #include <streambuf>
 #include <string>
@@ -61,32 +62,18 @@ const char* xz_status_name(enum xz_ret status) {
     return "unknown status";
 }
 
-// Purpose: Read a filesystem file size into a 64-bit archive counter.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried.
-std::uint64_t xz_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read XZ file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("XZ file size exceeds FlitzZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
-
 }  // namespace
 
 class XzInputStream::Buffer final : public std::streambuf {
   public:
     // Purpose: Open a bounded Xz decoder and initialize its owned input/output buffers.
-    // Inputs: `archive_path` names untrusted compressed input; allocation follows codec resource limits.
+    // Inputs: `archive_path` names untrusted regular input; immutable source admission precedes decoder allocation.
     // Outputs: Creates decoding state or throws on open/initialization failure, without publishing files.
     explicit Buffer(const std::filesystem::path& archive_path)
-        : input_(archive_path, std::ios::binary), archive_size_(xz_file_size(archive_path)) {
+        : source_(pin_source_file(archive_path)), input_(source_.path(), std::ios::binary),
+          archive_size_(source_.size()) {
         if (!input_) {
-            throw ArchiveError("cannot open XZ stream: " + archive_path.string());
+            throw ArchiveError("cannot open XZ stream: " + path_diagnostic_utf8(archive_path));
         }
         initialize_xz_tables();
         decoder_ = xz_dec_init(XZ_DYNALLOC, kXzMaxDictionaryBytes);
@@ -224,6 +211,7 @@ class XzInputStream::Buffer final : public std::streambuf {
         }
     }
 
+    PinnedSourceFile source_;
     std::ifstream input_;
     std::exception_ptr failure_;
     std::uint64_t archive_size_ = 0;

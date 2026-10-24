@@ -412,13 +412,16 @@ class ChildContainment:
 class BoundedOutput:
     """Retain fixed stdout/stderr tails while accounting for aggregate child output."""
 
-    def __init__(self, output_limit: int, tail_limit: int) -> None:
+    def __init__(self, output_limit: int, tail_limit: int, *, character_limit: int = MAX_RESPONSE_CHARACTERS) -> None:
         """Purpose: Initialize fixed child-output accounting.
-        Inputs: output_limit caps aggregate bytes and tail_limit caps retained bytes per stream.
+        Inputs: output_limit caps aggregate bytes; tail_limit and character_limit bound each retained stream.
         Outputs: Creates synchronized tails and independent limit/read-failure signals.
         """
+        if any(type(value) is not int or value <= 0 for value in (output_limit, tail_limit, character_limit)):
+            raise ValueError("output retention requires positive integer limits")
         self.output_limit = output_limit
         self.tail_limit = tail_limit
+        self.character_limit = character_limit
         self.total_bytes = 0
         self.stream_bytes = {"stdout": 0, "stderr": 0}
         self.tails = {"stdout": bytearray(), "stderr": bytearray()}
@@ -464,8 +467,8 @@ class BoundedOutput:
             raw = bytes(self.tails[channel])
             byte_count = self.stream_bytes[channel]
         decoded = raw.decode("utf-8", errors="replace")
-        truncated = byte_count > len(raw) or len(decoded) > MAX_RESPONSE_CHARACTERS
-        return decoded[-MAX_RESPONSE_CHARACTERS:], truncated
+        truncated = byte_count > len(raw) or len(decoded) > self.character_limit
+        return decoded[-self.character_limit :], truncated
 
 
 def _drain_stream(stream: BinaryIO, channel: str, output: BoundedOutput) -> None:
@@ -527,12 +530,14 @@ def run_bounded_command(
     timeout_seconds: float = CHILD_TIMEOUT_SECONDS,
     max_output_bytes: int = MAX_CHILD_OUTPUT_BYTES,
     response_tail_bytes: int = MAX_RESPONSE_TAIL_BYTES,
+    response_max_characters: int = MAX_RESPONSE_CHARACTERS,
     cancellation: threading.Event | None = None,
     memory_limit_bytes: int | None = None,
     working_directory: Path | None = None,
 ) -> dict[str, object]:
     """Purpose: Run one allowlisted command with aggregate memory, process-tree, time, and streaming-output limits.
     Inputs: Fixed argv, positive limits and checkout-contained directory; cancellation stops only this tree.
+    Trusted local artifact consumers may request more retained characters; stdio tools retain the default response cap.
     Outputs: Returns bounded outcome and admitted job-memory bytes; output read failures raise after cleanup.
     No child runs before verified containment.
     """
@@ -544,11 +549,13 @@ def run_bounded_command(
         or max_output_bytes <= 0
         or type(response_tail_bytes) is not int
         or response_tail_bytes <= 0
+        or type(response_max_characters) is not int
+        or response_max_characters <= 0
     ):
-        raise ValueError("child command limits require a finite positive deadline and positive integer byte counts")
+        raise ValueError("child command limits require a finite positive deadline and positive integer output limits")
     admitted_bytes = admit_child_memory_bytes(memory_limit_bytes)
     child_directory = command_working_directory(working_directory)
-    output = BoundedOutput(max_output_bytes, response_tail_bytes)
+    output = BoundedOutput(max_output_bytes, response_tail_bytes, character_limit=response_max_characters)
     creation_options = {
         "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
         | subprocess.CREATE_NO_WINDOW

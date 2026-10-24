@@ -1,4 +1,5 @@
 #include "test_compat_fixture.hpp"
+#include "test_source_session.hpp"
 #include "test_util.hpp"
 
 #include "cab/cab_adapter.hpp"
@@ -346,7 +347,7 @@ TEST_CASE(cab_extraction_rejects_traversal_before_output) {
 
 // Purpose: Verify CAB extraction refuses overwriting existing files unless explicitly allowed.
 // Inputs: A CAB member path and a preexisting destination file of the same name.
-// Outputs: Throws `SecurityError` and preserves the existing file.
+// Outputs: Preserves caller bytes on default or OS refusal, cleans staging, then permits explicit valid replacement.
 TEST_CASE(cab_extraction_refuses_overwrite_by_default) {
     const auto root = test_temp_dir("cab-overwrite");
     const auto archive = root / "overwrite.cab";
@@ -363,6 +364,7 @@ TEST_CASE(cab_extraction_refuses_overwrite_by_default) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(read_text_file(output / "file.txt"), "old");
+    flitzzip_test::require_archive_destination_recovery(archive, output, "file.txt", "new", flitzzip::extract_cab);
 }
 
 // Purpose: Verify CAB metadata scanning rejects spanned cabinet sets.

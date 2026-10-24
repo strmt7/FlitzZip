@@ -14,25 +14,29 @@ namespace {
 
 #if defined(_MSC_VER) && defined(_DEBUG)
 thread_local bool refuse_cache_allocations = false;
+thread_local std::size_t cache_allocation_attempts = 0;
+thread_local std::size_t cache_allowed_allocations = 0;
 _CRT_ALLOC_HOOK previous_cache_allocation_hook = nullptr;
 
-// Purpose: Refuse only this test thread's allocations without exhausting memory.
-// Inputs: Native CRT allocation notification; the serial test owns hook registration.
-// Outputs: Refusal for allocation/reallocation while armed; otherwise preserves the preceding hook.
+// Purpose: Refuse only this test thread's selected heap requests without exhausting host memory.
+// Inputs: Native CRT notification; a serial, non-overlapping fixture owns registration and the prior hook.
+// Outputs: Refusal after the permitted budget; otherwise preserves the preceding hook.
 int __cdecl cache_allocation_hook(int kind, void* data, std::size_t bytes, int block, long request,
                                   const unsigned char* file, int line) {
-    if (refuse_cache_allocations && (kind == _HOOK_ALLOC || kind == _HOOK_REALLOC)) {
-        return FALSE;
-    }
+    if (refuse_cache_allocations && (kind == _HOOK_ALLOC || kind == _HOOK_REALLOC) &&
+        cache_allocation_attempts++ >= cache_allowed_allocations)
+        return 0;
     return previous_cache_allocation_hook
                ? previous_cache_allocation_hook(kind, data, bytes, block, request, file, line)
-               : TRUE;
+               : 1;
 }
 
 class CacheAllocationRefusal final {
   public:
-    // Purpose: Arm a bounded failure control; inputs: none; outputs: only this thread rejects new heap requests.
-    CacheAllocationRefusal() {
+    // Purpose: Arm bounded failure; inputs: successful allocation budget; outputs: this thread's owned hook.
+    explicit CacheAllocationRefusal(std::size_t allowed = 0) {
+        cache_allocation_attempts = 0;
+        cache_allowed_allocations = allowed;
         previous_cache_allocation_hook = _CrtSetAllocHook(cache_allocation_hook);
         refuse_cache_allocations = true;
     }
@@ -121,6 +125,63 @@ TEST_CASE(folder_size_cache_invalidation_does_not_allocate_in_metadata_callbacks
 // Purpose: Avoid redundant allocation for a queued path; inputs: existing long key; outputs: no duplicate admission.
 TEST_CASE(folder_size_cache_duplicate_admission_does_not_allocate) {
     require_cache_operation_without_allocation(CacheAction::Duplicate);
+}
+
+// Purpose: Require transactional cache admission at every real allocation failure, including after pending enqueue.
+// Inputs: Independently retained pending/in-flight tasks, a long new key and a calibrated Debug CRT failure sweep.
+// Outputs: No phantom task or changed prior owner after failure; immediate retry publishes exactly one new task.
+TEST_CASE(folder_size_cache_failed_admission_preserves_queue_ownership_and_recovers) {
+    const std::filesystem::path candidate = std::filesystem::path("candidate") / std::string(200U, 'r');
+    bool completed_sweep = false;
+    std::size_t failures = 0;
+    for (std::size_t allowed = 0; allowed < 32U; ++allowed) {
+        FolderSizeCache cache;
+        REQUIRE_TRUE(cache.enqueue("inflight"));
+        const auto inflight = cache.take_next();
+        REQUIRE_TRUE(cache.enqueue("pending"));
+        const auto pending = cache.find("pending");
+        bool rejected = false;
+        bool admitted = false;
+        {
+#if defined(_MSC_VER) && defined(_DEBUG)
+            CacheAllocationRefusal refusal(allowed);
+#endif
+            try {
+                admitted = cache.enqueue(candidate);
+            } catch (const std::bad_alloc&) {
+                rejected = true;
+            }
+        }
+        REQUIRE_EQ(cache.find("inflight"), inflight);
+        REQUIRE_EQ(cache.find("pending"), pending);
+        REQUIRE_TRUE(!inflight->cancelled.load() && !pending->cancelled.load());
+        REQUIRE_TRUE(cache.complete(inflight, 19U));
+        if (rejected) {
+            ++failures;
+            REQUIRE_TRUE(!admitted);
+            REQUIRE_TRUE(!cache.find(candidate));
+            REQUIRE_TRUE(cache.enqueue(candidate));
+        } else {
+            REQUIRE_TRUE(admitted);
+            completed_sweep = true;
+        }
+        REQUIRE_EQ(cache.take_next(), pending);
+        const auto added = cache.take_next();
+        REQUIRE_EQ(added, cache.find(candidate));
+        REQUIRE_EQ(added->path, candidate);
+        REQUIRE_TRUE(!cache.take_next());
+        REQUIRE_TRUE(!cache.has_pending());
+        REQUIRE_TRUE(cache.complete(added, 23U));
+        REQUIRE_EQ(inflight->bytes, 19U);
+        REQUIRE_EQ(added->bytes, 23U);
+        if (completed_sweep) {
+            break;
+        }
+    }
+    REQUIRE_TRUE(completed_sweep);
+#if defined(_MSC_VER) && defined(_DEBUG)
+    REQUIRE_TRUE(failures > 0U);
+#endif
 }
 
 TEST_CASE(folder_size_cache_invalidates_changed_kind_without_publishing_its_old_scan) {

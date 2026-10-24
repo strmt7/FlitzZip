@@ -12,9 +12,15 @@
 template <typename Stream> void require_sticky_decoder_failure(const std::filesystem::path& archive) {
     Stream input(archive);
     std::array<char, 4096> bytes{};
-    try {
-        input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-    } catch (const flitzzip::Error&) {
+    // A valid prefix may precede damage beyond the first output window.
+    // Bound decoded test work without confusing an early successful read with clean completion.
+    for (std::size_t reads = 0; input.good(); ++reads) {
+        REQUIRE_TRUE(reads < 16384U);
+        try {
+            input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        } catch (const flitzzip::Error&) {
+            break;
+        }
     }
     REQUIRE_TRUE(input.bad());
     for (int attempt = 0; attempt < 2; ++attempt) {

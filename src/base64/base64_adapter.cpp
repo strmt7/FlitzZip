@@ -1,4 +1,5 @@
 #include "base64/base64_adapter.hpp"
+#include "core/path_text.hpp"
 
 #include "core/bounded_text_io.hpp"
 #include "core/file_manifest.hpp"
@@ -202,13 +203,13 @@ std::string parse_begin_base64_line(const std::string& line) {
 
 // Purpose: Derive a safe raw Base64 output filename when no wrapper header exists.
 // Inputs: `archive_path` is the source `.b64` path.
-// Outputs: Returns a normalized single-file output name.
+// Outputs: Returns a validated UTF-8 name derived from the native path, not unmarked wire metadata.
 std::string raw_base64_output_name(const std::filesystem::path& archive_path) {
-    auto name = archive_path.stem().string();
+    const auto name = archive_path.stem();
     if (name.empty()) {
-        name = "decoded.bin";
+        return "decoded.bin";
     }
-    return normalize_archive_path_key(name);
+    return normalize_entry_name(name);
 }
 
 // Purpose: Scan to an optional Base64 wrapper begin line while bounding preamble tolerance.
@@ -294,12 +295,12 @@ OperationStats compress_base64_file(const std::filesystem::path& source_file,
                                     const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     if (!std::filesystem::is_regular_file(source_file)) {
-        throw ArchiveError("Base64 compression requires one regular file: " + source_file.string());
+        throw ArchiveError("Base64 compression requires one regular file: " + path_diagnostic_utf8(source_file));
     }
     std::error_code equivalent_error;
     if (std::filesystem::exists(output_archive) &&
         std::filesystem::equivalent(source_file, output_archive, equivalent_error) && !equivalent_error) {
-        throw SecurityError("refusing to overwrite the Base64 source file: " + output_archive.string());
+        throw SecurityError("refusing to overwrite the Base64 source file: " + path_diagnostic_utf8(output_archive));
     }
 
     const auto manifest = build_manifest({source_file});
@@ -314,14 +315,14 @@ OperationStats compress_base64_file(const std::filesystem::path& source_file,
 
     std::ifstream input(source_file, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open Base64 source file: " + source_file.string());
+        throw ArchiveError("cannot open Base64 source file: " + path_diagnostic_utf8(source_file));
     }
     const auto temporary = reserve_file_publish_target(output_archive);
     bool temporary_active = true;
     try {
         std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
         if (!output) {
-            throw ArchiveError("cannot create Base64 archive: " + output_archive.string());
+            throw ArchiveError("cannot create Base64 archive: " + path_diagnostic_utf8(output_archive));
         }
         write_base64_line(output, "begin-base64 644 " + entry_name);
         std::array<unsigned char, kBase64InputBytesPerLine> buffer{};
@@ -334,7 +335,7 @@ OperationStats compress_base64_file(const std::filesystem::path& source_file,
                 publish_progress(progress, progress_callback);
             }
             if (input.bad()) {
-                throw ArchiveError("failed to read Base64 source file: " + source_file.string());
+                throw ArchiveError("failed to read Base64 source file: " + path_diagnostic_utf8(source_file));
             }
             if (input.eof()) {
                 break;
@@ -343,7 +344,7 @@ OperationStats compress_base64_file(const std::filesystem::path& source_file,
         write_base64_line(output, "====");
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize Base64 archive: " + output_archive.string());
+            throw ArchiveError("failed to finalize Base64 archive: " + path_diagnostic_utf8(output_archive));
         }
         commit_verified_file(temporary, output_archive, true);
         cleanup_file_publish_target(temporary);
@@ -380,23 +381,27 @@ OperationStats compress_base64(const std::vector<std::filesystem::path>& sources
 }
 
 // Purpose: Decode one Base64 compatibility stream into a verified output file.
-// Inputs: `archive_path` is the encoded stream, `destination` is the extraction root, `overwrite` controls final-file
-// replacement, and `progress_callback` receives synchronous progress snapshots.
-// Outputs: Publishes the decoded file below `destination` and returns stats, or throws on malformed data or unsafe
-// path.
-OperationStats extract_base64_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
-                                   bool overwrite, const ProgressCallback& progress_callback) {
+// Inputs: `requested_archive` stays pinned through publication, `destination` is the extraction root, `overwrite`
+// controls final-file replacement, and `progress_callback` receives synchronous progress snapshots. Outputs: Publishes
+// the decoded file below `destination` and returns stats, or throws on malformed data or unsafe path.
+OperationStats extract_base64_file(const std::filesystem::path& requested_archive,
+                                   const std::filesystem::path& destination, bool overwrite,
+                                   const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto archive_size = regular_file_size(archive_path);
+    const auto archive_source = pin_source_file(requested_archive);
+    const auto& archive_path = archive_source.path();
+    const auto archive_size = archive_source.size();
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open Base64 archive: " + archive_path.string());
+        throw ArchiveError("cannot open Base64 archive: " + path_diagnostic_utf8(archive_path));
     }
     const auto header = read_base64_header_or_reset(input, archive_path);
     create_verified_directories(destination);
-    const auto target = safe_join_archive_path(destination, *header.entry_name);
+    // Raw names originate from the native filesystem; only wrapped names are legacy encoded metadata.
+    const auto name_encoding = header.wrapped ? ArchivePathEncoding::HostCodePage : ArchivePathEncoding::Utf8;
+    const auto target = safe_join_archive_path(destination, *header.entry_name, name_encoding);
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing Base64 extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing Base64 extraction target: " + path_diagnostic_utf8(target));
     }
 
     ProgressState progress;
@@ -410,14 +415,14 @@ OperationStats extract_base64_file(const std::filesystem::path& archive_path, co
     try {
         std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
         if (!output) {
-            throw ArchiveError("cannot create Base64 extraction target: " + target.string());
+            throw ArchiveError("cannot create Base64 extraction target: " + path_diagnostic_utf8(target));
         }
         output_size = decode_base64_body(input, header, output);
         progress.add_bytes(archive_size);
         publish_progress(progress, progress_callback);
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize Base64 extraction target: " + target.string());
+            throw ArchiveError("failed to finalize Base64 extraction target: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);

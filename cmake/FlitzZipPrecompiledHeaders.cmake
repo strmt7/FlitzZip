@@ -6,7 +6,7 @@ function(flitzzip_enable_precompiled_headers)
   if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     return()
   endif()
-  foreach(target IN ITEMS flitzzip_core flitzzip_test_objects FlitzZip)
+  foreach(target IN ITEMS flitzzip_core flitzzip_test_objects flitzzip_gui)
     if(TARGET "${target}")
       foreach(
         header IN

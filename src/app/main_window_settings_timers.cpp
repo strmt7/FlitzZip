@@ -1,6 +1,8 @@
 #include "app/main_window_impl.hpp"
 #include "app/settings_migration.hpp"
 
+#include "core/path_text.hpp"
+
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
@@ -48,7 +50,7 @@ void MainWindow::initialize_settings() {
 
 // Purpose: Save the current Settings draft as the applied snapshot.
 // Inputs: None; reads Settings fields from synchronized UI state.
-// Outputs: Writes the per-user config atomically and updates the applied snapshot.
+// Outputs: Writes the per-user config atomically, updates the applied snapshot and records its UTF-8 path.
 void MainWindow::apply_settings() {
     AppSettings draft;
     {
@@ -63,7 +65,7 @@ void MainWindow::apply_settings() {
         state_.status = "Settings applied";
     }
     reset_performance_timer(applied_settings_.performance_update_seconds);
-    append_history_entry("Settings", "Settings", settings_file_path().string(), "Saved and applied", true);
+    append_history_entry("Settings", "Settings", path_diagnostic_utf8(settings_file_path()), "Saved and applied", true);
     append_log_entry(LogSeverity::Information, "Settings applied and saved");
 }
 
@@ -127,6 +129,9 @@ LRESULT MainWindow::handle_timer(WPARAM wparam) {
         return 0;
     }
     if (wparam == kClockTimer) {
+        if (complete_window_close()) {
+            return 0;
+        }
         const auto current = current_user_time_text();
         if (current != last_clock_text_) {
             last_clock_text_ = current;
@@ -156,14 +161,15 @@ LRESULT MainWindow::handle_timer(WPARAM wparam) {
         return 0;
     }
     if (wparam == kSmokeAutoCloseTimer) {
-        DestroyWindow(hwnd_);
+        append_log_entry(LogSeverity::Information, "GUI smoke watchdog deadline reached");
+        request_window_close();
         return 0;
     }
     if (wparam == kSmokeClosePollTimer) {
         // The marker file gives the smoke harness a second shutdown path that
         // does not depend on external window activation.
         if (smoke_close_requested()) {
-            DestroyWindow(hwnd_);
+            request_window_close();
         }
         return 0;
     }

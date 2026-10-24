@@ -1,4 +1,5 @@
 #include "core/defender_scan.hpp"
+#include "core/path_text.hpp"
 
 #include "core/com_task_string.hpp"
 #include "core/result.hpp"
@@ -168,7 +169,7 @@ void ensure_scan_target_exists(const std::filesystem::path& path) {
     std::error_code ec;
     const bool exists = std::filesystem::exists(path, ec);
     if (ec || !exists) {
-        throw ArchiveError("Defender scan target does not exist: " + path.string());
+        throw ArchiveError("Defender scan target does not exist: " + path_diagnostic_utf8(path));
     }
 }
 
@@ -280,7 +281,8 @@ bool defender_scan_passed(const DefenderScanResult& result) noexcept {
 // Outputs: Returns normally only for a positive clean result; otherwise throws `SecurityError`.
 void require_clean_defender_scan(const DefenderScanResult& result, const std::filesystem::path& path) {
     if (!defender_scan_passed(result)) {
-        throw SecurityError("Microsoft Defender did not positively report the target as clean: " + path.string());
+        throw SecurityError("Microsoft Defender did not positively report the target as clean: " +
+                            path_diagnostic_utf8(path));
     }
 }
 

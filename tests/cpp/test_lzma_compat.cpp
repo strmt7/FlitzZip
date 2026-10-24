@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
+#include "test_source_session.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -11,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -158,6 +160,18 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
 
 }  // namespace
 
+// Purpose: Keep independently encoded LZMA input immutable through successful and interrupted public extraction.
+// Inputs: A small SDK-marked fixture and real Windows write-sharing probes; no source bytes are modified.
+// Outputs: Denied concurrent/active writers, exact decoded bytes and successful recovery with released source locks.
+TEST_CASE(single_stream_source_session_lzma) {
+    const auto root = test_temp_dir("lzma-source-session");
+    const auto archive = root / "payload.lzma";
+    write_fixture(archive, kKnownMarkedLzma);
+    flitzzip_test::require_archive_source_session(archive, root, "payload",
+                                                  "legacy LZMA must not silently truncate this payload\n",
+                                                  &flitzzip::extract_lzma_file);
+}
+
 // Purpose: Verify known-size LZMA termination using independently encoded streams rather than prefix length alone.
 // Inputs: Empty and nonempty upstream SDK fixtures, with and without their optional end marker.
 // Outputs: Requires exact bytes and telemetry, then rejects trailing data while preserving the existing destination.
@@ -238,6 +252,53 @@ TEST_CASE(lzma_declared_size_cannot_truncate_or_extend_payload) {
         REQUIRE_EQ(flitzzip::extract_lzma_file(archive, output, true).output_bytes, expected.size());
         REQUIRE_EQ(read_text_file(output / "payload"), expected);
     }
+}
+
+// Purpose: Preserve an existing destination when Windows refuses replacement, then permit valid reuse after release.
+// Inputs: An independent valid LZMA fixture and a real destination reader that deliberately denies delete sharing.
+// Outputs: Requires completed decoding, actionable publication refusal, unchanged caller data, cleanup and recovery.
+TEST_CASE(lzma_locked_destination_preserves_data_and_allows_recovery) {
+    const auto root = test_temp_dir("lzma-locked-destination");
+    const auto archive = root / "payload.lzma";
+    const auto output = root / "out";
+    const auto target = output / "payload";
+    const std::string expected = "legacy LZMA must not silently truncate this payload\n";
+    write_fixture(archive, kKnownUnmarkedLzma);
+    const auto original_source = flitzzip_test::source_session_fixture_bytes(archive);
+    std::filesystem::create_directory(output);
+    std::ofstream(target, std::ios::binary) << "original";
+    const auto reader = CreateFileW(target.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE_TRUE(reader != INVALID_HANDLE_VALUE);
+    std::unique_ptr<void, decltype(&CloseHandle)> reader_owner(reader, &CloseHandle);
+    unsigned callbacks = 0;
+    std::uint64_t processed = 0;
+    bool refused = false;
+    try {
+        (void)flitzzip::extract_lzma_file(archive, output, true, [&](const auto& progress) {
+            ++callbacks;
+            processed = progress.processed_bytes;
+        });
+    } catch (const flitzzip::ArchiveError& error) {
+        const std::string message(error.what());
+        REQUIRE_TRUE(message.find("failed to publish verified output:") != std::string::npos);
+        REQUIRE_TRUE(message.find("(Windows error 5)") != std::string::npos ||
+                     message.find("(Windows error 32)") != std::string::npos);
+        refused = true;
+    }
+    REQUIRE_TRUE(refused);
+    REQUIRE_TRUE(callbacks >= 2U);
+    REQUIRE_EQ(processed, original_source.size());
+    REQUIRE_EQ(read_text_file(target), "original");
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{}), 1);
+    REQUIRE_EQ(flitzzip_test::source_session_fixture_bytes(archive), original_source);
+    DWORD admission_error = ERROR_SUCCESS;
+    REQUIRE_TRUE(flitzzip_test::source_writer_available(archive, admission_error));
+    reader_owner.reset();
+    REQUIRE_EQ(flitzzip::extract_lzma_file(archive, output, true).output_bytes, expected.size());
+    REQUIRE_EQ(read_text_file(target), expected);
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{}), 1);
+    std::filesystem::remove_all(root);
 }
 
 // Purpose: Require complete range-coder termination even when an LZMA header declares zero output bytes.

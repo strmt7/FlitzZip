@@ -273,6 +273,12 @@ maintainer's authorization for exact proven false positives. The metadata ledger
 binds each value to the complete manifest; raw reports remain retained and no
 source-code rule is suppressed.
 
+The [HIP coverage provenance review](security-reviews/hip-coverage-provenance.md)
+identifies the public ROCm LLVM commit in the shared profiler toolchain manifest.
+Its exact value, complete manifest hash, official source URL and typed metadata
+role are required for admission. Build and qualification retain the same revision
+pin; source code and tests cannot inherit this metadata disposition.
+
 The [individual Crawl4AI public-example review](security-reviews/crawl4ai-public-proxies.md)
 records the maintainer's exact authorization for four historical URI examples
 and their public integrity identities. Its separate approval cohort preserves

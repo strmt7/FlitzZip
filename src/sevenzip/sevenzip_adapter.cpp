@@ -1,4 +1,6 @@
 #include "sevenzip/sevenzip_adapter.hpp"
+
+#include "core/stream_position.hpp"
 #include "lzma/bounded_sdk_allocator.hpp"
 
 #include "core/checksum.hpp"
@@ -145,7 +147,7 @@ SRes sevenzip_stream_read(ISeekInStreamPtr stream, void* buffer, std::size_t* si
 
 // Purpose: Seek the LZMA SDK input stream.
 // Inputs: `stream` is the SDK stream pointer, `position` is in/out offset, and `origin` is the seek origin.
-// Outputs: Mutates `position` with the resulting absolute offset and returns an SDK status.
+// Outputs: Resolves every signed offset without overflow, updates the absolute position, or returns an SDK error.
 SRes sevenzip_stream_seek(ISeekInStreamPtr stream, Int64* position, ESzSeek origin) {
     auto& self = sevenzip_stream_from_vtable(stream);
     std::uint64_t base = 0;
@@ -161,20 +163,16 @@ SRes sevenzip_stream_seek(ISeekInStreamPtr stream, Int64* position, ESzSeek orig
         return SZ_ERROR_PARAM;
     }
     const auto requested = *position;
-    if (requested < 0 && static_cast<std::uint64_t>(-requested) > base) {
-        return SZ_ERROR_PARAM;
-    }
-    const auto target =
-        requested < 0 ? base - static_cast<std::uint64_t>(-requested) : base + static_cast<std::uint64_t>(requested);
-    if (target > self.size || target > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
+    const auto target = checked_stream_seek_position(base, requested, self.size);
+    if (!target || *target > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
         return SZ_ERROR_PARAM;
     }
     self.input.clear();
-    self.input.seekg(static_cast<std::streamoff>(target), std::ios::beg);
+    self.input.seekg(static_cast<std::streamoff>(*target), std::ios::beg);
     if (!self.input) {
         return SZ_ERROR_READ;
     }
-    *position = static_cast<Int64>(target);
+    *position = static_cast<Int64>(*target);
     return SZ_OK;
 }
 

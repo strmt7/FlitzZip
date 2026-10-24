@@ -204,6 +204,7 @@ struct UiState {
     int log_level_index = 0;
     int log_retention_index = 0;
     int selected_history_index = -1;
+    bool history_details_reset_pending = false;
     int history_operation_filter_index = 0;
     int history_status_filter_index = 0;
     int io_drive_index = 0;

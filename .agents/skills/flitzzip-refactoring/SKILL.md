@@ -1,6 +1,6 @@
 ---
 name: flitzzip-refactoring
-description: Review and refactor FlitzZip architecture, ownership and large functions while preserving observable behavior and validating affected consumers.
+description: Refactor FlitzZip ownership, architecture and complex functions while preserving behavior and checking affected consumers.
 ---
 
 # FlitzZip Refactoring
@@ -22,6 +22,9 @@ coding, resource and security rules. Read
 3. Make a coherent change that removes a demonstrated problem. Keep provenance
    archives immutable; production dependency changes use their documented
    patch and regeneration mechanisms.
+   Separate mechanical movement from behavior changes when they can stand alone;
+   keep a repair and its regression together. Introduce an abstraction only when
+   it narrows a real boundary, removes duplication or enables meaningful testing.
 4. Retain an independent regression for a repaired defect and, where practical,
    demonstrate the original failure. Apply the
    [learning loop](../../../docs/engineering-learning-loop.md).

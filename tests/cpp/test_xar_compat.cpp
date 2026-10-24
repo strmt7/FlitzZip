@@ -14,8 +14,10 @@
 #include <fstream>
 #include <iterator>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -143,9 +145,10 @@ stored_xar_entry(std::string_view name,
 }
 
 // Purpose: Require malformed metadata to fail before modifying an existing destination.
-// Inputs: Bounded XML TOC, owned archive and destination paths. Outputs: Rejection and unchanged sentinel bytes.
+// Inputs: Bounded XML TOC, owned paths and optional expected error text. Outputs: Rejection and unchanged sentinel
+// bytes.
 void require_xar_metadata_rejected(const std::filesystem::path& archive, const std::filesystem::path& destination,
-                                   const std::string& toc) {
+                                   const std::string& toc, std::string_view expected_error = {}) {
     const std::array<unsigned char, 1> heap{'z'};
     write_xar_fixture(archive, toc, heap);
     std::filesystem::create_directories(destination);
@@ -157,7 +160,11 @@ void require_xar_metadata_rejected(const std::filesystem::path& archive, const s
     bool rejected = false;
     try {
         (void)flitzzip::extract_xar(archive, destination, false);
-    } catch (const flitzzip::Error&) {
+    } catch (const flitzzip::Error& error) {
+        if (!expected_error.empty() && std::string_view(error.what()).find(expected_error) == std::string_view::npos) {
+            throw std::runtime_error("XAR metadata expected " + std::string(expected_error) + "; received " +
+                                     error.what());
+        }
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -328,6 +335,60 @@ TEST_CASE(xar_xml_tokenizer_and_resource_boundaries_fail_closed) {
     }
     nested += suffix;
     require_xar_metadata_rejected(archive, output, nested);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Qualify XML depth and token-byte limits with valid controls at their exact inclusive boundaries.
+// Inputs: Independent XML metadata around a stored byte; no large payload or excessive filesystem work.
+// Outputs: Boundary documents restore exact bytes; excessive or structurally incomplete metadata preserves a sentinel.
+TEST_CASE(xar_xml_depth_and_token_extents_match_contract) {
+    const auto root = test_temp_dir("xar-xml-exact-boundaries");
+    const auto archive = root / "input.xar";
+    const auto entry = stored_xar_entry("file.txt");
+    const std::array<unsigned char, 1> heap{'z'};
+    constexpr std::size_t max_xml_depth = flitzzip::kMaxArchivePathComponents + 32U;
+    constexpr std::size_t max_tag_bytes = 1024U;
+    // Purpose: Frame unknown metadata at a chosen stack depth. Inputs: Nested meta count. Outputs: Complete XML.
+    const auto nested = [&](std::size_t count) {
+        std::string xml = "<xar><toc>";
+        for (std::size_t index = 0; index < count; ++index) {
+            xml += "<meta>";
+        }
+        for (std::size_t index = 0; index < count; ++index) {
+            xml += "</meta>";
+        }
+        return xml + entry + "</toc></xar>";
+    };
+    // Purpose: Build a well-formed token with an exact raw byte extent. Inputs: Tag bytes. Outputs: Complete XML.
+    const auto token = [&](std::size_t bytes) {
+        const std::string prefix = "meta a='";
+        REQUIRE_TRUE(bytes > prefix.size());
+        return "<xar><toc><" + prefix + std::string(bytes - prefix.size() - 1U, 'x') + "'></meta>" + entry +
+               "</toc></xar>";
+    };
+    const std::array<std::string, 4> valid{nested(max_xml_depth - 3U), nested(max_xml_depth - 2U),
+                                           token(max_tag_bytes - 1U), token(max_tag_bytes)};
+    for (std::size_t index = 0; index < valid.size(); ++index) {
+        write_xar_fixture(archive, valid[index], heap);
+        const auto destination = root / ("valid-" + std::to_string(index));
+        const auto stats = flitzzip::extract_xar(archive, destination, false);
+        REQUIRE_EQ(stats.entries, 1U);
+        REQUIRE_EQ(stats.output_bytes, 1U);
+        REQUIRE_EQ(count_regular_files(destination), 1U);
+        REQUIRE_EQ(read_text_file(destination / "file.txt"), "z");
+    }
+    const std::pair<std::string, std::string_view> invalid[] = {
+        {nested(max_xml_depth - 1U), "XAR XML nesting exceeds FlitzZip limits"},
+        {token(max_tag_bytes + 1U), "XAR TOC XML element exceeds FlitzZip metadata limits"},
+        {"<xar><toc><meta><xar/></meta></toc></xar>", "XAR root and toc elements cannot be nested or repeated"},
+        {"<xar><toc><meta><toc/></meta></toc></xar>", "XAR root and toc elements cannot be nested or repeated"},
+        {"<xar><toc><meta>", "XAR TOC ended with unclosed XML elements"},
+        {"<?xml version='1.0'?>", "XAR TOC is missing its xar/toc document structure"},
+        {"<xar><toc>" + stored_xar_entry("") + "</toc></xar>", "XAR file entry is missing a name"},
+    };
+    for (const auto& [toc, diagnostic] : invalid) {
+        require_xar_metadata_rejected(archive, root / "rejected", toc, diagnostic);
+    }
     std::filesystem::remove_all(root);
 }
 

@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
+#include "test_source_session.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -155,6 +156,15 @@ TEST_CASE(macbinary_extracts_data_fork_and_discards_resource_fork) {
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(1));
     flitzzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
+}
+
+// Purpose: Keep a MacBinary data-fork read bound to one immutable archive source.
+// Inputs: An independent small header/data fixture. Outputs: Exact bytes, real sharing refusal and failure recovery.
+TEST_CASE(archive_source_session_macbinary) {
+    const auto root = test_temp_dir("macbinary-source-session");
+    const auto archive = root / "input.bin";
+    write_binary_file(archive, make_macbinary_fixture("payload", {'m', 'a', 'c'}));
+    flitzzip_test::require_archive_source_session(archive, root, "payload", "mac", &flitzzip::extract_macbinary_file);
 }
 
 // Purpose: Verify extension-selected legacy MacBinary I extraction still works when no header CRC exists.

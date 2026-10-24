@@ -1,11 +1,13 @@
 #include "tar/tar_adapter.hpp"
 #include "tar/tar_reader.hpp"
+#include "tar/tar_header_fields.hpp"
 
 #include "bzip2/bzip2_stream.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_size.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
@@ -126,7 +128,7 @@ void discard_stream_bytes(std::istream& input, std::uint64_t size, const char* l
 void copy_file_to_tar(const std::filesystem::path& source, std::ostream& output, std::uint64_t expected_size) {
     std::ifstream input(source, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open file for TAR archive: " + source.string());
+        throw ArchiveError("cannot open file for TAR archive: " + path_diagnostic_utf8(source));
     }
     std::array<char, kTarIoBufferBytes> buffer{};
     std::uint64_t remaining = expected_size;
@@ -134,66 +136,11 @@ void copy_file_to_tar(const std::filesystem::path& source, std::ostream& output,
         const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
         input.read(buffer.data(), static_cast<std::streamsize>(chunk));
         if (input.gcount() != static_cast<std::streamsize>(chunk)) {
-            throw ArchiveError("failed to read file for TAR archive: " + source.string());
+            throw ArchiveError("failed to read file for TAR archive: " + path_diagnostic_utf8(source));
         }
         write_bytes(output, buffer.data(), chunk);
         remaining -= chunk;
     }
-}
-
-// Purpose: Fill a fixed-size TAR header string field.
-// Inputs: `header` is the mutable header block, `offset`/`length` select the field, and `value` is ASCII metadata.
-// Outputs: Copies the value and leaves trailing NUL bytes; throws when the value does not fit.
-void put_tar_string(std::array<char, kTarBlockSize>& header, std::size_t offset, std::size_t length,
-                    const std::string& value) {
-    if (value.size() > length) {
-        throw ArchiveError("TAR header field is too long: " + value);
-    }
-    std::copy(value.begin(), value.end(), header.begin() + static_cast<std::ptrdiff_t>(offset));
-}
-
-// Purpose: Write a positive TAR numeric field using octal or POSIX base-256 encoding.
-// Inputs: `header` is the mutable block, `offset`/`length` select the field, and `value` is the numeric value.
-// Outputs: Encodes the field in-place; throws when the value cannot fit.
-void put_tar_number(std::array<char, kTarBlockSize>& header, std::size_t offset, std::size_t length,
-                    std::uint64_t value) {
-    const auto octal_digits = length - 1U;
-    std::uint64_t octal_limit = 1;
-    for (std::size_t i = 0; i < octal_digits; ++i) {
-        if (octal_limit > std::numeric_limits<std::uint64_t>::max() / 8U) {
-            octal_limit = std::numeric_limits<std::uint64_t>::max();
-            break;
-        }
-        octal_limit *= 8U;
-    }
-    if (value < octal_limit) {
-        std::string encoded(octal_digits, '0');
-        auto remaining = value;
-        for (std::size_t i = 0; i < octal_digits; ++i) {
-            const auto index = octal_digits - i - 1U;
-            encoded[index] = static_cast<char>('0' + (remaining & 7U));
-            remaining >>= 3U;
-        }
-        std::copy(encoded.begin(), encoded.end(), header.begin() + static_cast<std::ptrdiff_t>(offset));
-        header[offset + length - 1U] = '\0';
-        return;
-    }
-
-    if (length < 2U) {
-        throw ArchiveError("TAR numeric field cannot fit value");
-    }
-    for (std::size_t i = 0; i < length; ++i) {
-        header[offset + i] = 0;
-    }
-    auto remaining = value;
-    for (std::size_t i = 0; i < length - 1U; ++i) {
-        header[offset + length - 1U - i] = static_cast<char>(remaining & 0xFFU);
-        remaining >>= 8U;
-    }
-    if (remaining != 0) {
-        throw ArchiveError("TAR numeric field cannot fit value");
-    }
-    header[offset] = static_cast<char>(0x80U);
 }
 
 // Purpose: Encode the TAR checksum field after all other header fields are populated.
@@ -206,7 +153,7 @@ void finalize_tar_checksum(std::array<char, kTarBlockSize>& header) {
     for (const auto byte : header) {
         checksum += static_cast<unsigned char>(byte);
     }
-    put_tar_number(header, 148, 7, checksum);
+    tar_detail::put_tar_number(std::span(header).subspan<148, 7>(), checksum);
     header[155] = ' ';
 }
 
@@ -241,18 +188,18 @@ std::array<char, kTarBlockSize> make_tar_header(const std::string& path, char ty
     }
 
     std::array<char, kTarBlockSize> header{};
-    put_tar_string(header, 0, 100, fields->name);
-    put_tar_number(header, 100, 8, mode);
-    put_tar_number(header, 108, 8, 0);
-    put_tar_number(header, 116, 8, 0);
-    put_tar_number(header, 124, 12, size);
-    put_tar_number(header, 136, 12, 0);
+    tar_detail::put_tar_string(std::span(header).subspan<0, 100>(), fields->name);
+    tar_detail::put_tar_number(std::span(header).subspan<100, 8>(), mode);
+    tar_detail::put_tar_number(std::span(header).subspan<108, 8>(), 0);
+    tar_detail::put_tar_number(std::span(header).subspan<116, 8>(), 0);
+    tar_detail::put_tar_number(std::span(header).subspan<124, 12>(), size);
+    tar_detail::put_tar_number(std::span(header).subspan<136, 12>(), 0);
     header[156] = typeflag;
-    put_tar_string(header, 257, 6, "ustar");
-    put_tar_string(header, 263, 2, "00");
-    put_tar_string(header, 265, 32, "flitzzip");
-    put_tar_string(header, 297, 32, "flitzzip");
-    put_tar_string(header, 345, 155, fields->prefix);
+    tar_detail::put_tar_string(std::span(header).subspan<257, 6>(), "ustar");
+    tar_detail::put_tar_string(std::span(header).subspan<263, 2>(), "00");
+    tar_detail::put_tar_string(std::span(header).subspan<265, 32>(), "flitzzip");
+    tar_detail::put_tar_string(std::span(header).subspan<297, 32>(), "flitzzip");
+    tar_detail::put_tar_string(std::span(header).subspan<345, 155>(), fields->prefix);
     finalize_tar_checksum(header);
     return header;
 }
@@ -772,7 +719,7 @@ namespace {
 TarScanResult scan_tar(const std::filesystem::path& archive_path) {
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open TAR archive: " + archive_path.string());
+        throw ArchiveError("cannot open TAR archive: " + path_diagnostic_utf8(archive_path));
     }
     return scan_tar_stream(input, true, regular_file_size(archive_path));
 }
@@ -784,14 +731,14 @@ TarScanResult scan_tar(const std::filesystem::path& archive_path) {
 void extract_tar_stream_file_payload(std::istream& input, const TarEntryMetadata& entry,
                                      const std::filesystem::path& target, bool overwrite) {
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing TAR extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing TAR extraction target: " + path_diagnostic_utf8(target));
     }
     const auto temporary_target = reserve_file_publish_target(target);
     bool temporary_active = true;
     try {
         std::ofstream output(temporary_target.file, std::ios::binary);
         if (!output) {
-            throw ArchiveError("cannot create TAR extraction target: " + temporary_target.file.string());
+            throw ArchiveError("cannot create TAR extraction target: " + path_diagnostic_utf8(temporary_target.file));
         }
         std::array<char, kTarIoBufferBytes> buffer{};
         std::uint64_t remaining = entry.size;
@@ -810,7 +757,7 @@ void extract_tar_stream_file_payload(std::istream& input, const TarEntryMetadata
         }
         output.close();
         if (!output) {
-            throw ArchiveError("failed to flush TAR extraction target: " + temporary_target.file.string());
+            throw ArchiveError("failed to flush TAR extraction target: " + path_diagnostic_utf8(temporary_target.file));
         }
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
@@ -902,14 +849,14 @@ namespace {
 void extract_tar_file_payload(std::ifstream& input, const TarEntryMetadata& entry, const std::filesystem::path& target,
                               bool overwrite) {
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing TAR extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing TAR extraction target: " + path_diagnostic_utf8(target));
     }
     const auto temporary_target = reserve_file_publish_target(target);
     bool temporary_active = true;
     try {
         std::ofstream output(temporary_target.file, std::ios::binary);
         if (!output) {
-            throw ArchiveError("cannot create TAR extraction target: " + temporary_target.file.string());
+            throw ArchiveError("cannot create TAR extraction target: " + path_diagnostic_utf8(temporary_target.file));
         }
         input.seekg(static_cast<std::streamoff>(entry.payload_offset), std::ios::beg);
         if (!input) {
@@ -928,7 +875,7 @@ void extract_tar_file_payload(std::ifstream& input, const TarEntryMetadata& entr
         }
         output.close();
         if (!output) {
-            throw ArchiveError("failed to flush TAR extraction target: " + temporary_target.file.string());
+            throw ArchiveError("failed to flush TAR extraction target: " + path_diagnostic_utf8(temporary_target.file));
         }
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
@@ -982,12 +929,12 @@ OperationStats compress_tar(const std::vector<std::filesystem::path>& sources,
     FilePublishTransaction publication(output_archive);
     std::ofstream output(publication.staging_path(), std::ios::binary);
     if (!output) {
-        throw ArchiveError("cannot create TAR archive: " + output_archive.string());
+        throw ArchiveError("cannot create TAR archive: " + path_diagnostic_utf8(output_archive));
     }
     const auto write_stats = write_tar_stream(manifest, output, progress_callback);
     output.close();
     if (!output) {
-        throw ArchiveError("failed to finalize TAR archive: " + output_archive.string());
+        throw ArchiveError("failed to finalize TAR archive: " + path_diagnostic_utf8(output_archive));
     }
     publication.commit(true);
 
@@ -1086,7 +1033,7 @@ OperationStats extract_tar(const std::filesystem::path& archive_path, const std:
 
     std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open TAR archive: " + archive_path.string());
+        throw ArchiveError("cannot open TAR archive: " + path_diagnostic_utf8(archive_path));
     }
     ProgressState progress;
     progress.start(OperationKind::Extract, scanned.total_file_bytes, scanned.entries.size());

@@ -45,6 +45,17 @@ Assert-CiContractPlan -Path 'tools/native_ci.ps1' -Required @('native-ci-contrac
 Assert-CiContractPlan -Path 'tools/native_coverage.py' -Required @('native-coverage-contracts')
 Assert-CiContractPlan -Path 'tools/native-coverage-toolchain.json' -Required @('native-coverage-contracts')
 Assert-CiContractPlan -Path 'tools/hip_coverage.py' -Required @('hip-coverage-contracts')
+foreach ($path in @('tools/hip_coverage_toolchain.py', 'tools/hip-coverage-toolchain.json')) {
+    Assert-CiContractPlan -Path $path -Required @('hip-coverage-contracts', 'scanner-metadata-review-tests', 'scanner-hosted-review-tests')
+}
+foreach ($path in @('tools/hip_coverage_registration.py', 'tools/test_hip_coverage_registration.py',
+        'tools/hip_coverage_product.py', 'tools/test_hip_coverage_product.py',
+        'tools/hip_coverage_measure.py', 'tools/hip_coverage_images.py', 'tools/test_hip_coverage_measure.py',
+        'tools/hip_profile_registration/build_product.ps1', 'tools/hip_profile_registration/hip_profile_lifecycle.cpp',
+        'tools/hip_registration_native_checks.py',
+        'tools/hip_profile_registration/CMakeLists.txt', 'tools/hip_profile_registration/hip_profile_registration.cpp')) {
+    Assert-CiContractPlan -Path $path -Required @('hip-coverage-contracts')
+}
 Assert-CiContractPlan -Path 'tools/fixtures/hip_coverage_probe.hip.cpp' -Required @('hip-coverage-contracts')
 Assert-CiContractPlan -Path '.github/workflows/rocm-qualification.yml' -Required @('native-ci-contracts', 'rocm-toolchain-tests')
 Assert-CiContractPlan -Path '.github/workflows/release.yml' -Required @('release-workflow-contracts')
