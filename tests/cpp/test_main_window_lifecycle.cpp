@@ -2,6 +2,8 @@
 #include "app/main_window_support.hpp"
 #include "app/form_layout.hpp"
 #include "app/history_publication.hpp"
+#include "app/gdi_dc_state.hpp"
+#include "app/table_columns.hpp"
 #include "test_environment.hpp"
 
 #include <fstream>
@@ -166,9 +168,18 @@ class ControllerFixture final {
     // Purpose: Drive normal native input into the hidden product controller.
     // Inputs: Owned HWND and one existing source. Outputs: Queued source, selected destination, Compress page.
     void prepare_compression(HWND window) const {
+        queue_path(window, input);
+        show_compression(window);
+        const auto layout = compression_layout(window);
+        click(window, midpoint(layout.destination));
+    }
+
+    // Purpose: Admit a real file or folder through the normal Queue drop boundary.
+    // Inputs: Owned Queue HWND and existing local path. Outputs: Complete native HDROP admission.
+    static void queue_path(HWND window, const std::filesystem::path& path) {
         const auto dpi = GetDpiForWindow(window);
         const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
-        const auto name = flitzzip::windows_regular_path(input).native();
+        const auto name = flitzzip::windows_regular_path(path).native();
         const auto bytes = sizeof(DROPFILES) + (name.size() + 2) * sizeof(wchar_t);
         HGLOBAL memory = GlobalAlloc(GHND, bytes);
         REQUIRE_TRUE(memory != nullptr);
@@ -183,9 +194,18 @@ class ControllerFixture final {
         std::copy(name.begin(), name.end(), reinterpret_cast<wchar_t*>(drop + 1));
         GlobalUnlock(memory);
         HiddenController::send(window, WM_DROPFILES, reinterpret_cast<WPARAM>(memory));
-        show_compression(window);
-        const auto layout = compression_layout(window);
-        click(window, midpoint(layout.destination));
+    }
+
+    // Purpose: End existing Queue lifetimes through its visible Clear action.
+    // Inputs: Owned Queue HWND. Outputs: Normal toolbar dispatch without private state access.
+    static void clear_queue(HWND window) {
+        RECT client{};
+        REQUIRE_TRUE(GetClientRect(window, &client) != FALSE);
+        const auto dpi = GetDpiForWindow(window);
+        const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
+        click(window, POINT{client.right - scale(flitzzip::app::kPageInsetX) - scale(36),
+                            scale(flitzzip::app::kTopBar) + scale(flitzzip::app::kPageInsetY) +
+                                scale(flitzzip::app::kPageHeaderHeight) / 2});
     }
 
     // Purpose: Activate the normal Compress button, allowing repeat attempts to expose stuck admission.
@@ -247,6 +267,126 @@ class ControllerFixture final {
     flitzzip_test::ScopedEnvironment suppress_shell_{L"FLITZZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN"};
     flitzzip_test::ScopedEnvironment auto_close_{L"FLITZZIP_GUI_SMOKE_AUTO_CLOSE_MS"};
     flitzzip_test::ScopedEnvironment close_file_{L"FLITZZIP_GUI_SMOKE_CLOSE_FILE"};
+};
+
+// Purpose: Own a bounded off-screen native capture without changing the desktop or retaining controller fonts.
+// Inputs: Positive client dimensions. Outputs: Independent 32-bit bitmap and memory DC, released on every exit.
+class QueueCapture final {
+  public:
+    // Purpose: Acquire a real memory-only target. Inputs: Pixel dimensions. Outputs: Owned DC/bitmap or assertion.
+    QueueCapture(int width, int height) : dc_(CreateCompatibleDC(nullptr), DeleteDC), bitmap_(nullptr, DeleteObject) {
+        REQUIRE_TRUE(dc_ != nullptr);
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -height;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        void* bits = nullptr;
+        bitmap_.reset(CreateDIBSection(dc_.get(), &info, DIB_RGB_COLORS, &bits, nullptr, 0));
+        REQUIRE_TRUE(bitmap_ != nullptr);
+        original_ = SelectObject(dc_.get(), bitmap_.get());
+        REQUIRE_TRUE(original_ != nullptr && original_ != HGDI_ERROR);
+    }
+    // Purpose: Detach storage before destruction. Inputs: Owned native objects. Outputs: No retained GDI objects.
+    ~QueueCapture() {
+        if (original_ && original_ != HGDI_ERROR) {
+            SelectObject(dc_.get(), original_);
+        }
+    }
+    // Purpose: Borrow the live capture DC. Inputs: None. Outputs: DC valid only through this owner's lifetime.
+    HDC dc() const noexcept {
+        return dc_.get();
+    }
+
+  private:
+    std::unique_ptr<std::remove_pointer_t<HDC>, decltype(&DeleteDC)> dc_;
+    std::unique_ptr<std::remove_pointer_t<HBITMAP>, decltype(&DeleteObject)> bitmap_;
+    HGDIOBJ original_ = nullptr;
+};
+
+// Purpose: Derive the first Queue size-cell from the public layout constants and the untouched column defaults.
+// Inputs: Owned native window. Outputs: Current-DPI text rectangle without accessing private controller state.
+RECT first_queue_size_cell(HWND window) {
+    using namespace flitzzip::app;
+    RECT client{};
+    REQUIRE_TRUE(GetClientRect(window, &client) != FALSE);
+    const auto dpi = GetDpiForWindow(window);
+    const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
+    const int table_left = scale(kRailWidth) + scale(kPageInsetX);
+    const int table_right = client.right - scale(kPageInsetX);
+    const int available = std::max(scale(360), table_right - table_left - scale(kQueueCheckboxColumnWidth) - scale(22));
+    const auto widths =
+        fit_table_columns(std::array<double, 4>{276, 100, 96, 468}, kQueueColumnMinimums, available, dpi);
+    const int left = table_left + scale(kQueueCheckboxColumnWidth) + widths[0];
+    const int top = scale(kTopBar) + scale(kPageInsetY) + scale(54) + scale(kQueueHeaderHeight);
+    return RECT{left + scale(8), top, left + widths[1] - scale(8), top + scale(kQueueRowHeight)};
+}
+
+// Purpose: Independently recognize one exact rendered Queue status using native reference glyphs.
+// Inputs: Actual captured frame, size-cell bounds, DPI and literal expected text; no product formatter is called.
+// Outputs: Exact RGB comparison against DrawTextW, excluding the scaled table border.
+bool queue_size_text_matches(HDC actual, const RECT& cell, UINT dpi, std::wstring_view expected) {
+    const int width = cell.right - cell.left;
+    const int height = cell.bottom - cell.top;
+    QueueCapture reference(width, height);
+    const int border = MulDiv(1, static_cast<int>(dpi), 96);
+    const auto background = GetPixel(actual, cell.left, cell.top + border);
+    REQUIRE_TRUE(background != CLR_INVALID);
+    SetDCBrushColor(reference.dc(), background);
+    RECT bounds{0, 0, width, height};
+    REQUIRE_TRUE(FillRect(reference.dc(), &bounds, static_cast<HBRUSH>(GetStockObject(DC_BRUSH))) != FALSE);
+    using OwnedFont = std::unique_ptr<std::remove_pointer_t<HFONT>, decltype(&DeleteObject)>;
+    OwnedFont font(CreateFontW(-MulDiv(9, static_cast<int>(dpi), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY,
+                               DEFAULT_PITCH, L"Segoe UI"),
+                   DeleteObject);
+    REQUIRE_TRUE(font != nullptr);
+    flitzzip::app::GdiDcState saved(reference.dc());
+    REQUIRE_TRUE(saved.valid());
+    REQUIRE_TRUE(SelectObject(reference.dc(), font.get()) != nullptr);
+    SetBkMode(reference.dc(), TRANSPARENT);
+    SetTextColor(reference.dc(), flitzzip::app::kMuted);
+    REQUIRE_TRUE(DrawTextW(reference.dc(), expected.data(), static_cast<int>(expected.size()), &bounds,
+                           DT_LEFT | DT_VCENTER | DT_SINGLELINE) != 0);
+    for (int y = border; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            if (GetPixel(actual, cell.left + x, cell.top + y) != GetPixel(reference.dc(), x, y)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Purpose: Refuse one folder worker before native acquisition, then retain real start/cleanup evidence.
+// Inputs: Owned task; this launcher outlives its controller. Outputs: One refusal or actual native owning thread.
+class FolderAdmissionLauncher final : public flitzzip::app::JobThreadLauncher {
+  public:
+    mutable std::atomic_uint attempts{0};
+    mutable std::promise<void> refused;
+    mutable std::promise<void> entered;
+    mutable std::promise<void> finished;
+    mutable std::atomic_bool measured{false};
+
+    // Purpose: Control external admission only. Inputs: Owned production task. Outputs: Real thread or refusal.
+    std::thread launch(std::function<void()> task) const override {
+        if (attempts.fetch_add(1) == 0U) {
+            refused.set_value();
+            throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again));
+        }
+        return JobThreadLauncher::launch([this, task = std::move(task)] {
+            const bool observe = !measured.exchange(true);
+            if (observe) {
+                entered.set_value();
+            }
+            task();
+            if (observe) {
+                finished.set_value();
+            }
+        });
+    }
 };
 
 // Purpose: Release controlled work before the controller destructor even when a regression assertion fails.
@@ -385,6 +525,70 @@ TEST_CASE(main_window_print_preserves_borrowed_device_context_state) {
     HiddenController::send(window, WM_CLOSE);
     controller.require_closed();
     REQUIRE_EQ(launcher.attempts.load(), 0U);
+}
+
+// Purpose: Contain refused folder-thread admission and keep failure final until the actual Queue lifetime changes.
+// Inputs: Real hidden Queue, a once-refusing launcher, memory-only printed frames and files of 17 and 23 bytes.
+// Outputs: Independently rendered -- persists without retries; re-addition runs the real worker, displays 40 B,
+// preserves caller bytes and joins actual native work before releasing the launcher.
+TEST_CASE(main_window_folder_admission_failure_is_unavailable_until_readd_and_joins_real_work) {
+    ControllerFixture fixture;
+    const auto folder = fixture.root / L"queued-folder";
+    REQUIRE_TRUE(std::filesystem::create_directory(folder));
+    {
+        std::ofstream(folder / "a.txt", std::ios::binary) << std::string(17, 'a');
+        std::ofstream(folder / "b.txt", std::ios::binary) << std::string(23, 'b');
+    }
+    FolderAdmissionLauncher launcher;
+    auto refused = launcher.refused.get_future();
+    auto entered = launcher.entered.get_future();
+    auto finished = launcher.finished.get_future();
+    HWND window = nullptr;
+    {
+        HiddenController controller(launcher);
+        window = controller.wait_window();
+        RECT client{};
+        REQUIRE_TRUE(GetClientRect(window, &client) != FALSE);
+        QueueCapture frame(client.right, client.bottom);
+        const auto dpi = GetDpiForWindow(window);
+        const auto cell = first_queue_size_cell(window);
+        ControllerFixture::queue_path(window, folder);
+        auto deadline = std::chrono::steady_clock::now() + 5s;
+        while (refused.wait_for(0s) != std::future_status::ready) {
+            REQUIRE_TRUE(std::chrono::steady_clock::now() < deadline);
+            HiddenController::send(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(frame.dc()), PRF_CLIENT);
+        }
+        for (unsigned repaint = 0; repaint < 3U; ++repaint) {
+            HiddenController::send(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(frame.dc()), PRF_CLIENT);
+            REQUIRE_TRUE(queue_size_text_matches(frame.dc(), cell, dpi, L"--"));
+            REQUIRE_TRUE(!queue_size_text_matches(frame.dc(), cell, dpi, L"..."));
+            HiddenController::send(window, WM_NULL);
+        }
+        REQUIRE_EQ(launcher.attempts.load(), 1U);
+        REQUIRE_TRUE(entered.wait_for(0s) == std::future_status::timeout);
+        ControllerFixture::clear_queue(window);
+        ControllerFixture::queue_path(window, folder);
+        bool completed_size = false;
+        deadline = std::chrono::steady_clock::now() + 5s;
+        do {
+            HiddenController::send(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(frame.dc()), PRF_CLIENT);
+            completed_size = queue_size_text_matches(frame.dc(), cell, dpi, L"40 B");
+        } while (!completed_size && std::chrono::steady_clock::now() < deadline);
+        REQUIRE_TRUE(completed_size);
+        REQUIRE_TRUE(entered.wait_for(0s) == std::future_status::ready);
+        REQUIRE_EQ(launcher.attempts.load(), 2U);
+        HiddenController::send(window, WM_NULL);
+        HiddenController::send(window, WM_CLOSE);
+        controller.require_closed();
+    }
+    REQUIRE_TRUE(finished.wait_for(0s) == std::future_status::ready);
+    REQUIRE_TRUE(IsWindow(window) == FALSE);
+    for (const auto& [name, expected] :
+         {std::pair{"a.txt", std::string(17, 'a')}, std::pair{"b.txt", std::string(23, 'b')}}) {
+        std::ifstream input(folder / name, std::ios::binary);
+        REQUIRE_EQ(std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>()), expected);
+    }
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(folder), std::filesystem::directory_iterator{}), 2);
 }
 
 // Purpose: Bind the selected result and its reset request to one synchronized publication, including coalescing.

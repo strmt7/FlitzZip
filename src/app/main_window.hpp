@@ -43,7 +43,7 @@ class QueueDropTarget;
 class MainWindow {
   public:
     // Purpose: Construct a main window controller with default UI state.
-    // Inputs: launcher supplies native job admission and must outlive this controller.
+    // Inputs: launcher supplies archive-job and folder-worker admission and must outlive this controller.
     // Outputs: Initializes fields only; the native HWND is created by `run`.
     explicit MainWindow(const JobThreadLauncher& launcher = JobThreadLauncher::native());
 
@@ -873,8 +873,8 @@ class MainWindow {
 
     // Purpose: Enqueue one folder-size scan when the Queue first renders a folder.
     // Inputs: `path` is a queued directory path.
-    // Outputs: Starts the low-priority folder-size worker if needed and records pending cache state.
-    void enqueue_folder_size_if_needed(const std::filesystem::path& path);
+    // Outputs: True for pending work; false for unavailable work, retained Failed until normal invalidation.
+    bool enqueue_folder_size_if_needed(const std::filesystem::path& path);
 
     // Purpose: Start the single folder-size background worker.
     // Inputs: None.
@@ -1423,6 +1423,7 @@ class MainWindow {
     UINT dpi_ = 96;
     std::mutex mutex_;
     UiState state_;
+    const JobThreadLauncher& thread_launcher_;
     BackgroundJob worker_;
     std::string worker_failure_status_;
     bool window_close_requested_ = false;

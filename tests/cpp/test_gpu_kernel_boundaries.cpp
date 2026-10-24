@@ -349,6 +349,182 @@ TEST_CASE(gpu_dictionary_encoder_independent_lz4_and_slot_guards) {
 #endif
 }
 
+// Purpose: Verify Neutron's conservative parse bound with independently enumerated match-interval unions.
+// Inputs: Five 513-position graphs cover no matches, overlap, final literals and invalid neighboring records.
+// Outputs: Exact uncovered-byte counts and literal prices, unchanged graphs and untouched bounds guards on HIP.
+TEST_CASE(gpu_neutron_match_graph_bounds_independent_interval_oracle) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    using namespace flitzzip;
+    using namespace flitzzip::dictionary;
+    using namespace flitzzip::hip_detail;
+    struct GraphCase {
+        std::array<Match, 513> matches{};
+        std::uint32_t uncovered;
+        std::uint32_t literal_price;
+    };
+    std::array<GraphCase, 5> cases{};
+    cases[0].uncovered = 513U;
+    cases[0].literal_price = 516U;
+    // [32,132) union [100,300) covers 268 bytes, leaving 245 unavoidable literals.
+    cases[1].matches[32] = {.distance = 16U, .length = 100U};
+    cases[1].matches[100] = {.distance = 1U, .length = 200U};
+    cases[1].uncovered = 245U;
+    cases[1].literal_price = 247U;
+    // A legal repeating match covers [1,508); byte zero and the five final literals remain uncovered.
+    cases[2].matches[1] = {.distance = 1U, .length = 512U};
+    cases[2].uncovered = 6U;
+    cases[2].literal_price = 7U;
+    // The endpoint, backward distance and minimum-length neighbors cannot create a legal match interval.
+    cases[3].matches[0] = {.distance = 1U, .length = 20U};
+    cases[3].matches[1] = {.distance = 2U, .length = 20U};
+    cases[3].matches[32] = {.distance = 0U, .length = 20U};
+    cases[3].matches[200] = {.distance = 1U, .length = 3U};
+    cases[3].matches[502] = {.distance = 1U, .length = 20U};
+    cases[3].uncovered = 513U;
+    cases[3].literal_price = 516U;
+    // [2,9) union [7,12) crosses several three-position lane partitions but covers exactly ten bytes.
+    cases[4].matches[2] = {.distance = 1U, .length = 7U};
+    cases[4].matches[7] = {.distance = 1U, .length = 5U};
+    cases[4].uncovered = 503U;
+    cases[4].literal_price = 506U;
+    for (const auto& test : cases) {
+        HipDeviceBuffer<Match> graph(sizeof(test.matches), "match-bound graph");
+        HipDeviceBuffer<optimal::EmitCursor> bounds(3U * sizeof(optimal::EmitCursor), "match-bound output");
+        REQUIRE_EQ(hipMemcpy(graph.get(), test.matches.data(), sizeof(test.matches), hipMemcpyHostToDevice),
+                   hipSuccess);
+        REQUIRE_EQ(hipMemset(bounds.get(), 0xA5, 3U * sizeof(optimal::EmitCursor)), hipSuccess);
+        optimal::State state{.matches = graph.get()};
+        std::uint32_t size = static_cast<std::uint32_t>(test.matches.size());
+        auto* output = bounds.get() + 1U;
+        void* arguments[]{&state, &size, &output};
+        REQUIRE_EQ(hipLaunchKernel(reinterpret_cast<const void*>(hip_kernel_api().neutron_bound_match_graphs), dim3(1),
+                                   dim3(kDictionaryKernelThreads), arguments, 0, nullptr),
+                   hipSuccess);
+        std::array<optimal::EmitCursor, 3> actual{};
+        REQUIRE_EQ(hipMemcpy(actual.data(), bounds.get(), sizeof(actual), hipMemcpyDeviceToHost), hipSuccess);
+        REQUIRE_EQ(actual[1].position, test.uncovered);
+        REQUIRE_EQ(actual[1].written, test.literal_price);
+        for (const auto guard : {0U, 2U}) {
+            REQUIRE_EQ(actual[guard].position, 0xA5A5A5A5U);
+            REQUIRE_EQ(actual[guard].written, 0xA5A5A5A5U);
+        }
+        std::array<Match, 513> unchanged{};
+        REQUIRE_EQ(hipMemcpy(unchanged.data(), graph.get(), sizeof(unchanged), hipMemcpyDeviceToHost), hipSuccess);
+        REQUIRE_EQ(unchanged, test.matches);
+        bounds.reset_checked("match-bound output release");
+        graph.reset_checked("match-bound graph release");
+    }
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+// Purpose: Preserve separately decoded windows while the shared materializer reconstructs neighboring simple blocks.
+// Inputs: Independently framed prefix/dictionary bytes, nonaligned payload offsets and nine short decoded windows.
+// Outputs: Exact mixed output, intact front/tail guards and unchanged payload/metadata through the production ABI.
+TEST_CASE(gpu_materializer_preserves_independent_decoder_windows) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    using namespace flitzzip;
+    using namespace flitzzip::hip_detail;
+    struct Plan {
+        BlockKind kind;
+        std::uint32_t length;
+        std::uint32_t period;
+    };
+    const std::array plans{Plan{BlockKind::Raw, 1U, 0U},
+                           Plan{BlockKind::GpuPrefix, 32U, 0U},
+                           Plan{BlockKind::GpuDictionary, 64U, 0U},
+                           Plan{BlockKind::Fill, 17U, 0U},
+                           Plan{BlockKind::Pattern, 513U, 3U},
+                           Plan{BlockKind::Raw, 769U, 0U},
+                           Plan{BlockKind::GpuPrefix, 32U, 0U},
+                           Plan{BlockKind::GpuDictionary, 64U, 0U},
+                           Plan{BlockKind::Pattern, 2605U, 257U}};
+    std::vector<std::byte> payload(11U, std::byte{0xD6}), expected, initial(32U, std::byte{0xA5});
+    std::vector<DeviceBlock> blocks;
+    for (const auto& plan : plans) {
+        const auto begin = payload.size();
+        const auto decoded = expected.size();
+        const bool separate = plan.kind == BlockKind::GpuPrefix || plan.kind == BlockKind::GpuDictionary;
+        if (plan.kind == BlockKind::GpuPrefix) {
+            // Thirty-two zero symbols use 96 static-prefix bits after one independent eight-byte offset table.
+            payload.insert(payload.end(), {std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{12},
+                                           std::byte{0}, std::byte{0}, std::byte{0}});
+            payload.insert(payload.end(), 12U, std::byte{0});
+        } else if (plan.kind == BlockKind::GpuDictionary) {
+            // One literal, a 58-byte offset-one match and five final literals independently reconstruct 64 bytes.
+            constexpr std::array<std::uint8_t, 11> wire{0x1F, 0x72, 1, 0, 39, 0x50, 0x72, 0x72, 0x72, 0x72, 0x72};
+            std::array<char, 64> independent{};
+            REQUIRE_EQ(LZ4_decompress_safe(reinterpret_cast<const char*>(wire.data()), independent.data(),
+                                           static_cast<int>(wire.size()), static_cast<int>(independent.size())),
+                       static_cast<int>(independent.size()));
+            REQUIRE_TRUE(std::all_of(independent.begin(), independent.end(), [](char byte) { return byte == 0x72; }));
+            payload.insert(payload.end(), {std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{11},
+                                           std::byte{0}, std::byte{0}, std::byte{0}});
+            for (const auto byte : wire) {
+                payload.push_back(std::byte{byte});
+            }
+        }
+        for (std::uint32_t position = 0; position < plan.length; ++position) {
+            const auto phase = plan.period ? position % plan.period : position;
+            const auto value = plan.kind == BlockKind::GpuPrefix       ? 0U
+                               : plan.kind == BlockKind::GpuDictionary ? 0x72U
+                               : plan.kind == BlockKind::Fill          ? 0x35U
+                                                                       : (phase * 73U + phase / 256U + 19U) & 255U;
+            expected.push_back(std::byte{static_cast<std::uint8_t>(value)});
+            initial.push_back(separate ? expected.back() : std::byte{0xA5});
+            if (plan.kind == BlockKind::Raw || (plan.kind == BlockKind::Pattern && position < plan.period)) {
+                payload.push_back(expected.back());
+            }
+        }
+        const auto fill = static_cast<std::uint8_t>(plan.kind == BlockKind::Fill ? 0x35U : 0U);
+        blocks.push_back({static_cast<std::uint8_t>(plan.kind), fill, 0U, plan.length, begin, decoded,
+                          static_cast<std::uint32_t>(payload.size() - begin)});
+        payload.insert(payload.end(), 7U, std::byte{0xD6});
+    }
+    REQUIRE_EQ(expected.size(), 4097U);
+    initial.insert(initial.end(), 32U, std::byte{0xA5});
+    HipDeviceBuffer<std::byte> source(payload.size(), "mixed materializer source");
+    HipDeviceBuffer<DeviceBlock> metadata(blocks.size() * sizeof(DeviceBlock), "mixed materializer plans");
+    HipDeviceBuffer<std::byte> output(initial.size(), "mixed materializer output");
+    REQUIRE_EQ(hipMemcpy(source.get(), payload.data(), payload.size(), hipMemcpyHostToDevice), hipSuccess);
+    REQUIRE_EQ(hipMemcpy(metadata.get(), blocks.data(), blocks.size() * sizeof(blocks[0]), hipMemcpyHostToDevice),
+               hipSuccess);
+    REQUIRE_EQ(hipMemcpy(output.get(), initial.data(), initial.size(), hipMemcpyHostToDevice), hipSuccess);
+    const auto* from = source.get();
+    const auto* descriptors = metadata.get();
+    auto count = static_cast<std::uint32_t>(blocks.size());
+    auto* to = output.get() + 32U;
+    auto length = expected.size();
+    void* arguments[]{&from, &descriptors, &count, &to, &length};
+    REQUIRE_EQ(hipLaunchKernel(reinterpret_cast<const void*>(hip_kernel_api().materialize_segments_kernel), dim3(2),
+                               dim3(256), arguments, 0, nullptr),
+               hipSuccess);
+    std::vector<std::byte> actual(initial.size());
+    REQUIRE_EQ(hipMemcpy(actual.data(), output.get(), actual.size(), hipMemcpyDeviceToHost), hipSuccess);
+    std::copy(expected.begin(), expected.end(), initial.begin() + 32U);
+    REQUIRE_EQ(actual, initial);
+    actual.resize(payload.size());
+    REQUIRE_EQ(hipMemcpy(actual.data(), source.get(), actual.size(), hipMemcpyDeviceToHost), hipSuccess);
+    REQUIRE_EQ(actual, payload);
+    const auto original_blocks = std::as_bytes(std::span(blocks));
+    actual.resize(original_blocks.size());
+    REQUIRE_EQ(hipMemcpy(actual.data(), metadata.get(), actual.size(), hipMemcpyDeviceToHost), hipSuccess);
+    REQUIRE_TRUE(std::equal(actual.begin(), actual.end(), original_blocks.begin()));
+    output.reset_checked("mixed materializer output release");
+    metadata.reset_checked("mixed materializer plans release");
+    source.reset_checked("mixed materializer source release");
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
 // Purpose: Verify dictionary GPU parsing against independent legal blocks and adjacent malformed wire boundaries.
 // Inputs: Small literal, overlapping-match and extended-length LZ4 blocks; bounded malformed neighbors.
 // Outputs: Exact success bytes or rejection, with per-segment guards and preserved input ownership.
