@@ -145,6 +145,49 @@ try {
     Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('template <typename Stream>',
         'void parse(Stream& input) {', '    input.read();', '}'))
     Test-AuditCase -Name 'template declaration retains its adjacent contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('template <typename Number>',
+        '    requires (sizeof(Number) == 8 || sizeof(Number) == 12)',
+        'int parse(Number value) {', '    return value;', '}'))
+    Test-AuditCase -Name 'constrained template retains its adjacent contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('template <typename Number>',
+        '    requires (sizeof(Number) == 8 || sizeof(Number) == 12)',
+        'int parse(Number value) {', '    return value;', '}')
+    Test-AuditCase -Name 'constrained template still requires documentation' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('template <typename Number>',
+        '    requires (sizeof(Number) == 8 ||', '              sizeof(Number) == 12)',
+        'int parse(Number value) {', '    return value;', '}'))
+    Test-AuditCase -Name 'wrapped constraint predicate retains its adjacent contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('int unrelated;',
+        'template <typename Number>', '    requires (sizeof(Number) == 8)',
+        'int parse(Number value) {', '    return value;', '}'))
+    Test-AuditCase -Name 'constraint cannot borrow an unrelated declarations contract' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('template <typename Number>',
+        '    requires std::is_integral_v<Number> && std::is_unsigned_v<Number>',
+        'int parse(Number value) {', '    return value;', '}')
+    Test-AuditCase -Name 'unparenthesized constraints cannot hide undocumented functions' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('template <typename Number>',
+        '    requires std::is_integral_v<Number> && std::is_unsigned_v<Number>',
+        'int parse(Number value) {', '    return value;', '}'))
+    Test-AuditCase -Name 'unparenthesized constrained template retains its contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('template <typename Number>',
+        'concept HasValue = requires(Number value) {', '    value.size();', '};')
+    Test-AuditCase -Name 'requires expressions in concepts are not ordinary functions' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('template <typename Number>',
+        'int parse(Number value) requires (sizeof(Number) > 1 && sizeof(Number) < 8) {', '    return value;', '}')
+    Test-AuditCase -Name 'trailing boolean constraints cannot hide undocumented functions' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('template <typename Number>',
+        'int parse(Number value) requires (sizeof(Number) > 1 && sizeof(Number) < 8) {', '    return value;', '}'))
+    Test-AuditCase -Name 'documented trailing boolean constraint retains its contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('template <typename Number>',
+        'int parse(Number value)', '    requires (sizeof(Number) > 1) {', '    return value;', '}'))
+    Test-AuditCase -Name 'wrapped trailing constraint retains its declarations contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('template <typename Number>',
+        'int parse(Number value)', '    requires (sizeof(Number) > 1 &&', '              sizeof(Number) < 8) {',
+        '    return value;', '}')
+    Test-AuditCase -Name 'wrapped trailing constraint cannot hide undocumented functions' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('int unrelated;', 'template <typename Number>',
+        'int parse(Number value)', '    requires (sizeof(Number) > 1) {', '    return value;', '}'))
+    Test-AuditCase -Name 'trailing constraint cannot borrow an unrelated declarations contract' -Options '-ChangedOnly' -Expected @($vendorPath)
     Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('std::string',
         'parse(std::string_view input,', '      std::string_view suffix = "bounded fixture") {',
         '    return std::string(input) + std::string(suffix);', '}'))
@@ -201,10 +244,20 @@ try {
         '    /* imaginary() { does not define a function } */',
         '    if (literal && raw) { return 1; }', '    return 0;', '}'))
     Test-AuditCase -Name 'comments, strings, raw strings and controls do not create functions' -Options '-ChangedOnly'
+    $attributedPath = 'src/attributed.hpp'
+    foreach ($declaration in @(
+            @('[[nodiscard("see operator[]")]] constexpr std::optional<int>', 'bounded()', '{', '    return 0;', '}'),
+            @('[[nodiscard]]', 'constexpr std::optional<int>', 'bounded()', '{', '    return 0;', '}'))) {
+        Write-AuditFixture -RelativePath $attributedPath -Lines ($contract + $declaration)
+        Test-AuditCase -Name 'C++20 attributes stay attached to a documented split return type' -Options '-ChangedOnly'
+        Write-AuditFixture -RelativePath $attributedPath -Lines $declaration
+        Test-AuditCase -Name 'C++20 attributes do not conceal a missing contract' -Options '-ChangedOnly' -Expected @($attributedPath)
+    }
+    Write-AuditFixture -RelativePath $attributedPath -Lines ($contract + @('[[nodiscard]] int bounded()', '{', '    return 0;', '}'))
     $controlPath = 'src/controls.cpp'
     $controls = $contract + @('int controls()', '{', '    int value = 0;',
         '    try {', '        value = 1;', '    } catch (...) {', '        value = 2;', '    }',
-        '    if (value) {', '        ++value;', '    } else if (!value) {', '        --value;',
+        '    [[likely]] if (value) {', '        ++value;', '    } else if (!value) {', '        --value;',
         '    } else {', '        value = 3;', '    }', '    return value;', '}')
     Write-AuditFixture -RelativePath $controlPath -Lines $controls
     Test-AuditCase -Name 'attached closing braces do not turn catch or else branches into functions' -Options '-ChangedOnly'
@@ -229,6 +282,19 @@ try {
     Invoke-FixtureGit -GitArguments @('commit', '--quiet', '-m', 'fixture inherited neighbor') | Out-Null
     Write-AuditFixture -RelativePath $neighbor -Lines ($contract + @('int added(void)', '{', '    return 1;', '}', '') + $inherited)
     Test-AuditCase -Name 'inserted helper and separator cannot implicate an unchanged neighbor' -Options '-ChangedOnly'
+    $modulePath = 'src/observer.psm1'
+    Write-AuditFixture -RelativePath $modulePath -Lines @('function Invoke-Observer {', '    return 1', '}')
+    Test-AuditCase -Name 'PowerShell module functions require contracts in full audits' -Expected @('.mirror/ignored.cpp', $unicodePath, $modulePath)
+    Test-AuditCase -Name 'untracked PowerShell module functions require contracts' -Options '-ChangedOnly' -Expected @($modulePath)
+    $moduleContract = @('# Purpose: Observe one controlled value.', '# Inputs: None.', '# Outputs: One integer.')
+    Write-AuditFixture -RelativePath $modulePath -Lines ($moduleContract + @('function Invoke-Observer {', '    return 1', '}'))
+    Test-AuditCase -Name 'documented PowerShell module functions pass' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $modulePath -Lines ($moduleContract + @('function Invoke-Observer {',
+        '    $literal = "function Fake-Function { }"', '    # function Another-Fake { }', '    return $literal', '}'))
+    Test-AuditCase -Name 'native PowerShell parser ignores declarations inside strings and comments' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $modulePath -Lines @('function Broken {')
+    Test-AuditCase -Name 'malformed modules fail before contract admission' -Options '-ChangedOnly' -OtherFindings @('invalid-syntax:src/observer.psm1')
+    Write-AuditFixture -RelativePath $modulePath -Lines ($moduleContract + @('function Invoke-Observer {', '    return 1', '}'))
 } finally {
     if (Test-Path -LiteralPath $fixture) {
         $resolved = [IO.Path]::GetFullPath((Get-Item -LiteralPath $fixture).FullName)

@@ -13,7 +13,7 @@ param(
 # Outputs: Prints parseable findings and exits nonzero only when `FailOnFindings` is set and findings exist.
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$sourceExtensions = @(".c", ".cc", ".cpp", ".h", ".hpp", ".ps1")
+$sourceExtensions = @(".c", ".cc", ".cpp", ".h", ".hpp", ".ps1", ".psm1")
 $skipFragments = @(
     "\.git\",
     "\build\",
@@ -370,7 +370,7 @@ function Get-CppConstructorStart {
 }
 
 # Purpose: Locate a C/C++ definition's signature for either same-line or next-line opening braces.
-# Inputs: Masked source lines and candidate brace line; control blocks and test registrations are excluded.
+# Inputs: Masked source lines and candidate brace line; attributes/constraints remain in declarations, controls are excluded.
 # Outputs: Signature start index, or -1 when the candidate is not a recognized function definition.
 function Get-CppFunctionStart {
     param([string[]]$Lines, [int]$Index)
@@ -382,24 +382,30 @@ function Get-CppFunctionStart {
     $start = $Index
     $balance = ([regex]::Matches($candidate, '\(')).Count - ([regex]::Matches($candidate, '\)')).Count
     # An initializer call is part of its constructor, not a separate function declaration.
-    if ($balance -lt 0 -or $candidate -eq '{' -or $candidate -match '^:(?!:)' -or $candidate -notmatch '\b[A-Za-z_]\w*\s*\(') {
+    if ($balance -lt 0 -or $candidate -eq '{' -or $candidate -match '^:(?!:)|^requires\b' -or
+        $candidate -notmatch '\b[A-Za-z_]\w*\s*\(') {
         for ($i = $Index - 1; $i -ge [Math]::Max(0, $Index - 12); --$i) {
             $line = $Lines[$i].Trim()
             if (-not $line) { continue }
             if ($line -match '[;{}]') { break }
             $start = $i
             $balance += ([regex]::Matches($line, '\(')).Count - ([regex]::Matches($line, '\)')).Count
-            if ($balance -eq 0 -and $line -match '\b[A-Za-z_]\w*\s*\(') { break }
+            if ($balance -eq 0 -and $line -notmatch '^requires\b' -and $line -match '\b[A-Za-z_]\w*\s*\(') { break }
         }
     }
     # clang-format can place a qualified return type on its own line when a
     # signature is long. It belongs to the declaration, not a documentation barrier.
     if ($start -gt 0) {
         $prefix = $Lines[$start - 1].Trim()
+        $prefix = [regex]::Replace($prefix, '\[\[[^\[\]]*\]\]', '').Trim()
         if ($prefix -match '^[A-Za-z_][\w:\s<>,*&]*$' -and $prefix -notmatch '(?<!:):(?!:)' -and
-            $prefix -notmatch '^(return|throw|break|continue|goto|if|else|for|while|switch|case|default)\b') {
+            $prefix -notmatch '^(return|throw|break|continue|goto|if|else|for|while|switch|case|default|requires|template|concept)\b') {
             --$start
         }
+    }
+    while ($start -gt [Math]::Max(0, $Index - 12) -and
+        $Lines[$start - 1].Trim() -match '^(\[\[[^\[\]]*\]\]\s*)+$') {
+        --$start
     }
     if ($start -gt 0 -and $Lines[$start - 1].Trim() -eq 'extern') {
         # The projection masks the linkage string; keep a separate extern "C"
@@ -407,12 +413,29 @@ function Get-CppFunctionStart {
         --$start
     }
     $signature = (($Lines[$start..$Index] -join ' ').Trim())
-    if ($signature -match '^\}?\s*(if|else|for|while|switch|catch|TEST_CASE)\b' -or
-        $signature -match '\]\s*\(' -or $signature -match '(^|\s)(==|!=|<=|>=|&&|\|\|)(\s|$)' -or
-        $signature -notmatch '\b[A-Za-z_]\w*\s*\([^;{}]*\)\s*(const\s*)?(noexcept\s*)?(->[^{}]*)?\{\s*$') {
+    $classification = [regex]::Replace($signature, '\[\[[^\[\]]*\]\]', '').Trim()
+    # A trailing constraint's boolean operators are predicates, not evidence of
+    # a control statement. Classify the declarator while retaining its full span.
+    $declaration = [regex]::Replace($signature, '\brequires\b[^{]*(?=\{\s*$)', '')
+    if ($classification -match '^\}?\s*(if|else|for|while|switch|catch|TEST_CASE)\b' -or
+        $classification -match '\bconcept\s+[A-Za-z_]\w*\s*=' -or
+        $declaration -match '\]\s*\(' -or $declaration -match '(^|\s)(==|!=|<=|>=|&&|\|\|)(\s|$)' -or
+        $declaration -notmatch '\b[A-Za-z_]\w*\s*\([^;{}]*\)\s*(const\s*)?(noexcept\s*)?(->[^{}]*)?\{\s*$') {
         return -1
     }
-    if ($start -gt 0 -and $Lines[$start - 1].Trim() -match '^template\s*<.*>\s*$') { --$start }
+    # Ordinary requires-clauses, including wrapped predicates, are part of the
+    # template declaration. Do not borrow across statements or definition braces.
+    for ($i = $start - 1; $i -ge [Math]::Max(0, $start - 12); --$i) {
+        $prefix = $Lines[$i].Trim()
+        if ($prefix -match '^template\s*<.*>\s*$') {
+            $constraint = if ($i -eq $start - 1) { '' } else { ($Lines[($i + 1)..($start - 1)] -join ' ').Trim() }
+            if (-not $constraint -or ($constraint -match '^requires\b' -and $constraint -notmatch '[;{}]')) {
+                $start = $i
+            }
+            break
+        }
+        if ($prefix -match '[;{}]') { break }
+    }
     return $start
 }
 
@@ -504,36 +527,50 @@ function Test-CppFile {
     }
 }
 
-# Purpose: Audit PowerShell files for large functions.
-# Inputs: `Path` is one script and `Findings` is the mutable output list.
-# Outputs: Adds findings for large PowerShell functions and high marker counts.
+# Purpose: Audit scripts and modules using native function and comment boundaries.
+# Inputs: Path is one PowerShell source and Findings is the mutable result list.
+# Outputs: Rejects syntax errors and records changed function size, complexity and required contracts.
 function Test-PowerShellFile {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Findings
     )
-
-    $lines = [IO.File]::ReadAllLines($Path)
-    for ($i = 0; $i -lt $lines.Count; ++$i) {
-        if ($lines[$i] -notmatch "^\s*function\s+[\w-]+\s*\{?") {
-            continue
+    $tokens = $null
+    $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$errors)
+    if ($errors.Count) {
+        foreach ($parseError in $errors) {
+            Add-RefactorFinding -Findings $Findings -Category 'invalid-syntax' -Path $Path -Line $parseError.Extent.StartLineNumber -EndLine $parseError.Extent.EndLineNumber -Detail $parseError.ErrorId
         }
-        $depth = 0
-        $body = New-Object System.Collections.Generic.List[string]
-        for ($j = $i; $j -lt $lines.Count; ++$j) {
-            $body.Add($lines[$j])
-            $depth += Get-BraceDelta -Line $lines[$j]
-            if ($depth -eq 0) {
-                break
+        return
+    }
+    $lines = [IO.File]::ReadAllLines($Path)
+    $commentLines = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($token in $tokens) {
+        if ($token.Kind -eq [Management.Automation.Language.TokenKind]::Comment) {
+            foreach ($line in ($token.Extent.StartLineNumber - 1)..($token.Extent.EndLineNumber - 1)) {
+                $commentLines.Add($line) | Out-Null
             }
         }
-        $lineCount = $body.Count
-        $markers = Measure-ComplexityMarker -Lines $body.ToArray()
+    }
+    $functions = $ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst]
+    }, $true)
+    foreach ($function in $functions) {
+        $first = $function.Extent.StartLineNumber - 1
+        $last = $function.Extent.EndLineNumber - 1
+        $contract = $first
+        while ($contract -gt 0 -and ([string]::IsNullOrWhiteSpace($lines[$contract - 1]) -or $commentLines.Contains($contract - 1))) { --$contract }
+        $lineCount = $last - $first + 1
+        $markers = Measure-ComplexityMarker -Lines $lines[$first..$last]
         if ($lineCount -gt $script:AuditMaxFunctionLines) {
-            Add-RefactorFinding -Findings $Findings -Category "large-function" -Path $Path -Line ($i + 1) -EndLine ($j + 1) -Detail "$lineCount lines"
+            Add-RefactorFinding -Findings $Findings -Category 'large-function' -Path $Path -Line ($contract + 1) -EndLine ($last + 1) -Detail "$lineCount lines"
         }
         if ($markers -gt $script:AuditMaxComplexityMarkers) {
-            Add-RefactorFinding -Findings $Findings -Category "complex-function" -Path $Path -Line ($i + 1) -EndLine ($j + 1) -Detail "$markers markers"
+            Add-RefactorFinding -Findings $Findings -Category 'complex-function' -Path $Path -Line ($contract + 1) -EndLine ($last + 1) -Detail "$markers markers"
+        }
+        if ($script:AuditCheckContracts -and -not (Test-NearbyContractComment -Lines $lines -Index $first -CommentLines $commentLines)) {
+            Add-RefactorFinding -Findings $Findings -Category 'missing-contract' -Path $Path -Line ($contract + 1) -EndLine ($last + 1) -Detail 'No adjacent Purpose/Input/Output contract comment'
         }
     }
 }
@@ -558,7 +595,7 @@ foreach ($file in $files) {
     if ($lines.Count -gt $script:AuditMaxFileLines) {
         Add-RefactorFinding -Findings $findings -Category "large-file" -Path $file.FullName -Line 1 -Detail "$($lines.Count) lines"
     }
-    if ($file.Extension -eq ".ps1") {
+    if ($file.Extension -in @(".ps1", ".psm1")) {
         Test-PowerShellFile -Path $file.FullName -Findings $findings
     } else {
         Test-CppFile -Path $file.FullName -Findings $findings

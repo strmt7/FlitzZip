@@ -2,6 +2,7 @@
 
 #include "app/extraction_destinations.hpp"
 #include "app/log_policy.hpp"
+#include "app/history_publication.hpp"
 #include "core/path_text.hpp"
 
 #include <cmath>
@@ -195,85 +196,172 @@ void MainWindow::start_extract() {
     launch_extract_job(std::move(request));
 }
 
-// Purpose: Run one long operation on the background worker thread.
-// Inputs: `job` performs the operation, `label` is busy text, and `destination_to_open` is a captured optional folder.
-// Outputs: Updates status, progress, history rows, and optional summary selection when the worker completes.
+// Purpose: Run one long operation with transactional admission and supervised completion.
+// Inputs: job, busy label, operation kind and optional destination are captured for this operation.
+// Outputs: Starts at most one worker; preparation, launch and completion failures restore idle admission.
 void MainWindow::run_job(std::function<void()> job, std::string label, OperationKind operation,
                          std::filesystem::path destination_to_open) {
-    if (worker_running_.exchange(true)) {
+    if (window_close_requested_ || worker_.running()) {
         return;
     }
-    if (worker_.joinable()) {
-        worker_.join();
+    consume_worker_failure();
+    // Prepare emergency error text before taking admission; reporting must remain possible if allocation fails.
+    std::string failure_status = "Error: operation worker could not prepare or publish its result";
+    worker_failure_status_.swap(failure_status);
+    try {
+        const std::string failure_operation = operation_for_job_label(label);
+        const bool show_summary = applied_settings_.show_operation_summary;
+        const auto result = worker_.start(
+            [&] {
+                operation_cancel_requested_.store(false);
+                {
+                    std::lock_guard lock(mutex_);
+                    operation_summary_.begin(state_.history.size());
+                    operation_destination_.begin(std::move(destination_to_open));
+                    state_.status = label;
+                    state_.progress = {};
+                    state_.progress.operation = operation;
+                    state_.active_operation = operation;
+                    state_.operation_cancel_requested = false;
+                    state_.smoothed_time_remaining_seconds = -1.0;
+                    state_.progress_visible_until = {};
+                }
+                append_operation_log(LogSeverity::Information, failure_operation, "started");
+                KillTimer(hwnd_, kProgressHoldTimer);
+            },
+            [this, job = std::move(job), failure_operation, show_summary] {
+                execute_job(job, failure_operation, show_summary);
+            },
+            [this]() noexcept { request_repaint(); });
+        if (result == BackgroundJob::StartResult::Failed) {
+            consume_worker_failure();
+        }
+    } catch (...) {
+        report_worker_failure(std::current_exception());
     }
-    operation_cancel_requested_.store(false);
-    const std::string failure_operation = operation_for_job_label(label);
-    const bool show_summary = applied_settings_.show_operation_summary;
+    request_repaint();
+}
+
+// Purpose: Execute and publish an admitted archive operation while the worker owns admission.
+// Inputs: job and category belong to the worker; show_summary is the captured applied preference.
+// Outputs: Publishes ordinary success/failure; unexpected reporting failures propagate to BackgroundJob supervision.
+void MainWindow::execute_job(const std::function<void()>& job, const std::string& failure_operation,
+                             bool show_summary) {
+    bool completed = false;
+    bool cancelled = false;
+    std::string failure_text;
+    try {
+        job();
+        if (operation_cancel_requested_.load()) {
+            throw ArchiveError("operation cancelled");
+        }
+        completed = true;
+    } catch (const std::exception& error) {
+        cancelled = operation_cancel_requested_.load();
+        failure_text = error.what();
+    } catch (...) {
+        cancelled = operation_cancel_requested_.load();
+        failure_text = "unknown operation failure";
+    }
     {
         std::lock_guard lock(mutex_);
-        operation_summary_.begin(state_.history.size());
-        operation_destination_.begin(std::move(destination_to_open));
-        state_.status = label;
-        state_.progress = {};
-        state_.progress.operation = operation;
-        state_.active_operation = operation;
+        if (completed) {
+            state_.status = "Ready";
+            state_.smoothed_time_remaining_seconds = 0.0;
+            retain_progress_after_stop_locked(true);
+        } else {
+            state_.status = cancelled ? "Operation stopped" : std::string("Error: ") + failure_text;
+            retain_progress_after_stop_locked(false);
+            publish_history_result(
+                state_, HistoryEntry{
+                            .operation = failure_operation,
+                            .archive_name = cancelled ? failure_operation + " stopped" : failure_operation + " failure",
+                            .archive_path = state_.progress.current_entry.empty() ? std::string("-")
+                                                                                  : state_.progress.current_entry,
+                            .detail = cancelled ? std::string("Operation stopped by the user") : failure_text,
+                            .success = false,
+                        });
+        }
+        state_.active_operation = OperationKind::Idle;
         state_.operation_cancel_requested = false;
-        state_.smoothed_time_remaining_seconds = -1.0;
-        state_.progress_visible_until = {};
     }
-    append_operation_log(LogSeverity::Information, failure_operation, "started");
-    KillTimer(hwnd_, kProgressHoldTimer);
-    worker_ = std::thread([this, job = std::move(job), failure_operation, show_summary] {
-        bool completed = false;
-        bool cancelled = false;
-        std::string failure_text;
+    operation_cancel_requested_.store(false);
+    append_operation_log(completed ? LogSeverity::Information : LogSeverity::Warning, failure_operation,
+                         completed ? "completed" : (cancelled ? "stopped" : "failed"));
+    {
+        std::lock_guard lock(mutex_);
+        operation_summary_.complete(state_.history, failure_operation, show_summary);
+        operation_destination_.complete(completed);
+    }
+}
+
+// Purpose: Present a supervised preparation or completion failure without retrying archive work.
+// Inputs: failure is the original exception; worker_failure_status_ was allocated before admission.
+// Outputs: Restores idle UI state, clears stale presentation requests and displays exact or allocation-safe error text.
+void MainWindow::report_worker_failure(std::exception_ptr failure) {
+    std::string diagnostic;
+    try {
+        std::rethrow_exception(failure);
+    } catch (const std::exception& error) {
         try {
-            job();
-            if (operation_cancel_requested_.load()) {
-                throw ArchiveError("operation cancelled");
-            }
-            completed = true;
-        } catch (const std::exception& error) {
-            cancelled = operation_cancel_requested_.load();
-            failure_text = error.what();
+            diagnostic = std::string("Error: ") + error.what();
         } catch (...) {
-            cancelled = operation_cancel_requested_.load();
-            failure_text = "unknown operation failure";
+            // Error presentation itself may be the failed allocation. Preserve prepared nonallocating text.
         }
-        {
-            std::lock_guard lock(mutex_);
-            if (completed) {
-                state_.status = "Ready";
-                state_.smoothed_time_remaining_seconds = 0.0;
-                retain_progress_after_stop_locked(true);
-            } else {
-                state_.status = cancelled ? "Operation stopped" : std::string("Error: ") + failure_text;
-                retain_progress_after_stop_locked(false);
-                state_.history.push_back(HistoryEntry{
-                    .operation = failure_operation,
-                    .archive_name = cancelled ? failure_operation + " stopped" : failure_operation + " failure",
-                    .archive_path =
-                        state_.progress.current_entry.empty() ? std::string("-") : state_.progress.current_entry,
-                    .detail = cancelled ? std::string("Operation stopped by the user") : failure_text,
-                    .success = false,
-                });
-                state_.selected_history_index = static_cast<int>(state_.history.size()) - 1;
-            }
-            state_.active_operation = OperationKind::Idle;
-            state_.operation_cancel_requested = false;
-        }
-        operation_cancel_requested_.store(false);
-        worker_running_.store(false);
-        append_operation_log(completed ? LogSeverity::Information : LogSeverity::Warning, failure_operation,
-                             completed ? "completed" : (cancelled ? "stopped" : "failed"));
-        {
-            std::lock_guard lock(mutex_);
-            operation_summary_.complete(state_.history, failure_operation, show_summary);
-            operation_destination_.complete(completed);
-        }
-        request_repaint();
-    });
+    } catch (...) {
+    }
+    {
+        std::lock_guard lock(mutex_);
+        state_.status.swap(diagnostic.empty() ? worker_failure_status_ : diagnostic);
+        state_.active_operation = OperationKind::Idle;
+        state_.operation_cancel_requested = false;
+        operation_summary_.begin(state_.history.size());
+        operation_destination_.begin({});
+        retain_progress_after_stop_locked(false);
+    }
+    operation_cancel_requested_.store(false);
     request_repaint();
+}
+
+// Purpose: Consume terminal worker exceptions on the controller thread after actual thread cleanup.
+// Inputs: None; active work is not interrupted. Outputs: Presents each retained failure once.
+void MainWindow::consume_worker_failure() {
+    if (const auto failure = worker_.take_failure()) {
+        report_worker_failure(failure);
+    }
+}
+
+// Purpose: Request cooperative cancellation while preserving the native message pump during shutdown.
+// Inputs: UI thread; the current worker may still own callbacks and native notifications.
+// Outputs: Rejects later job starts, requests cancellation and closes immediately only when work is terminal.
+void MainWindow::request_window_close() {
+    window_close_requested_ = true;
+    operation_cancel_requested_.store(true);
+    if (worker_.running()) {
+        request_stop_operation();
+    }
+    static_cast<void>(complete_window_close());
+}
+
+// Purpose: Release the notification window only after its archive worker has finished.
+// Inputs: UI thread; completion notifications and the normal clock keep the pump responsive while work drains.
+// Outputs: Joins actual closure cleanup and destroys the window for a pending terminal close; otherwise returns false.
+bool MainWindow::complete_window_close() {
+    if (!window_close_requested_ || worker_.running()) {
+        return false;
+    }
+    worker_.join();
+    if (DestroyWindow(hwnd_)) {
+        return true;
+    }
+    const auto error = GetLastError();
+    window_close_requested_ = false;
+    {
+        std::lock_guard lock(mutex_);
+        state_.status = "Window close failed (Windows error " + std::to_string(error) + ")";
+    }
+    request_repaint();
+    return false;
 }
 
 // Purpose: Present a completed job's result through the existing History detail surface.
@@ -317,7 +405,7 @@ void MainWindow::request_stop_operation() {
     bool requested = false;
     {
         std::lock_guard lock(mutex_);
-        if (state_.active_operation == OperationKind::Idle || !worker_running_.load()) {
+        if (state_.active_operation == OperationKind::Idle || !worker_.running()) {
             return;
         }
         if (state_.active_operation == OperationKind::Compress) {
@@ -468,37 +556,22 @@ void MainWindow::append_operation_log(LogSeverity severity, std::string_view ope
     append_log_entry(severity, std::string(operation) + ": " + std::string(message));
 }
 
-// Purpose: Convert a legacy history text line into a structured session row.
-// Inputs: `line` is the existing caller text.
-// Outputs: Appends a classified history entry.
-void MainWindow::append_history(const std::string& line) {
-    const bool success = !line.starts_with("Error");
-    std::string operation = "Security";
-    if (line.starts_with("Compressed")) {
-        operation = "Compress";
-    } else if (line.starts_with("Extracted")) {
-        operation = "Extract";
-    } else if (line.starts_with("Error")) {
-        operation = "Failure";
-    }
-    append_history_entry(operation, line, "-", line, success);
-}
-
 // Purpose: Add a structured operation result to session history.
 // Inputs: `operation`, `archive_name`, `archive_path`, `detail`, and `success` describe the visible history row.
-// Outputs: Appends one row to in-memory UI history and selects it for details.
+// Outputs: Publishes/selects one row and requests a window-thread detail reset and repaint.
 void MainWindow::append_history_entry(std::string operation, std::string archive_name, std::string archive_path,
                                       std::string detail, bool success) {
-    std::lock_guard lock(mutex_);
-    state_.history.push_back(HistoryEntry{
-        .operation = std::move(operation),
-        .archive_name = std::move(archive_name),
-        .archive_path = std::move(archive_path),
-        .detail = std::move(detail),
-        .success = success,
-    });
-    state_.selected_history_index = static_cast<int>(state_.history.size()) - 1;
-    reset_history_details_scroll_state();
+    {
+        std::lock_guard lock(mutex_);
+        publish_history_result(state_, HistoryEntry{
+                                           .operation = std::move(operation),
+                                           .archive_name = std::move(archive_name),
+                                           .archive_path = std::move(archive_path),
+                                           .detail = std::move(detail),
+                                           .success = success,
+                                       });
+    }
+    request_repaint();
 }
 
 }  // namespace flitzzip::app

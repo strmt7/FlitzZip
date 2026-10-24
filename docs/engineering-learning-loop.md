@@ -17,6 +17,10 @@ confirmed defect becomes a production repair and an executable recurrence guard.
 4. Retain the smallest independent reproducer. Where practical, demonstrate that
    the old source fails and the repaired source passes using an external oracle,
    guarded boundary or controlled negative test.
+   Check that the guard rejects a plausible broken behavior rather than merely
+   exercising the repaired line. Use the [investigation contract](debugging-strategy.md#investigation-contract)
+   and [oracle selection](code-coverage.md#oracle-selection) when the cause or
+   assertion is uncertain.
 5. Ask the change-aware verifier for affected consumers. Diagnose a failed check
    before expanding coverage. Keep deferred checks explicitly deferred; match
    source and tool identities before reusing successful evidence.

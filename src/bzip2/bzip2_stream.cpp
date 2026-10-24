@@ -1,6 +1,6 @@
 #include "bzip2/bzip2_stream.hpp"
 
-#include "core/file_size.hpp"
+#include "core/file_manifest.hpp"
 #include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
@@ -247,10 +247,11 @@ class Bzip2OutputStream::Buffer final : public std::streambuf {
 class Bzip2InputStream::Buffer final : public std::streambuf {
   public:
     // Purpose: Open a bounded Bzip2 decoder and initialize its owned input/output buffers.
-    // Inputs: `archive_path` names untrusted compressed input; allocation follows codec resource limits.
+    // Inputs: `archive_path` names untrusted regular input; immutable source admission precedes decoder allocation.
     // Outputs: Creates decoding state or throws on open/initialization failure, without publishing files.
     explicit Buffer(const std::filesystem::path& archive_path)
-        : input_(archive_path, std::ios::binary), archive_size_(regular_file_size(archive_path)) {
+        : source_(pin_source_file(archive_path)), input_(source_.path(), std::ios::binary),
+          archive_size_(source_.size()) {
         if (!input_) {
             throw ArchiveError("cannot open Bzip2 stream: " + path_diagnostic_utf8(archive_path));
         }
@@ -385,6 +386,7 @@ class Bzip2InputStream::Buffer final : public std::streambuf {
         finished_ = true;
     }
 
+    PinnedSourceFile source_;
     std::ifstream input_;
     std::exception_ptr failure_;
     bz_stream stream_{};

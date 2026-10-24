@@ -8,8 +8,9 @@
 namespace flitzzip {
 
 // Purpose: Stream-decompress an `.xz` file through `std::istream` with bounded XZ Embedded state.
-// Inputs: Construct with `archive_path`; callers read uncompressed bytes through the `std::istream` interface.
+// Inputs: Construct with a regular `archive_path`; callers read through `std::istream` while its source stays pinned.
 // Outputs: Provides raw uncompressed bytes and validates XZ framing/checks when drained.
+// Rejects mutable/reparse sources and retains the source/parent locks until reader destruction, including after finish.
 class XzInputStream final : public std::istream {
   public:
     explicit XzInputStream(const std::filesystem::path& archive_path);

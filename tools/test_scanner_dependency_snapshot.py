@@ -1,6 +1,7 @@
 """Independent source, inventory and installed-metadata controls for scanner graph publication."""
 
 import copy
+import importlib.metadata
 import json
 import os
 import subprocess
@@ -177,6 +178,90 @@ class SnapshotTests(unittest.TestCase):
                     self.assertEqual(result.returncode, expected, result.stderr)
                     if expected:
                         self.assertIn("source, recipe or run changed", result.stderr)
+
+
+class InstalledGraphTests(unittest.TestCase):
+    def setUp(self):
+        """Purpose: Use real distribution metadata with controlled lookup, never package imports or network access.
+        Inputs: Owned dist-info directories. Outputs: Native metadata readers and an independently specified lock.
+        """
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.pins = {"root": ("1.0", ()), "leaf": ("2.0", ()), "bridge": ("1.0", ())}
+        self.distributions = {}
+        self.write_distribution("root", "Root", "1.0", ["Bridge[feature]>=1", "Leaf==2; extra == 'unused'"])
+        self.write_distribution("leaf", "Leaf", "2.0", [])
+        self.write_distribution("bridge", "Bridge", "1.0", ["Leaf>=2; extra == 'feature'", "Root; extra == 'feature'"])
+
+    def write_distribution(self, key, name, version, requirements):
+        """Purpose: Frame actual metadata independently of graph generation.
+        Inputs: Public fixture fields. Outputs: Standard-library distribution reader backed by owned files.
+        """
+        directory = self.root / (key + ".dist-info")
+        directory.mkdir(exist_ok=True)
+        text = f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+        text += "".join("Requires-Dist: " + value + "\n" for value in requirements)
+        (directory / "METADATA").write_text(text, encoding="utf-8")
+        self.distributions[key] = importlib.metadata.PathDistribution(directory)
+
+    def graph(self, pins=None):
+        """Purpose: Inject only installed-distribution lookup while retaining real parsing and graph traversal.
+        Inputs: Exact fixture lock. Outputs: Production graph or its original admission error.
+        """
+        with patch.object(tool.importlib.metadata, "distribution", side_effect=self.distributions.__getitem__):
+            return tool.installed_graph(self.pins if pins is None else pins)
+
+    def test_late_extra_activation_revisits_dependencies_and_terminates_cycles(self):
+        """Purpose: Reject one-pass traversal that silently loses newly activated transitive requirements.
+        Inputs: Bridge visited before Root activates its feature; real metadata includes a cycle and inactive edge.
+        Outputs: Independently specified complete, sorted graph with no false inactive dependency.
+        """
+        graph = self.graph()
+        expected = {
+            "pkg:pypi/root@1.0": ["pkg:pypi/bridge@1.0"],
+            "pkg:pypi/bridge@1.0": ["pkg:pypi/leaf@2.0", "pkg:pypi/root@1.0"],
+            "pkg:pypi/leaf@2.0": [],
+        }
+        self.assertEqual(set(graph), set(expected))
+        for purl, dependencies in expected.items():
+            self.assertEqual(
+                graph[purl],
+                dict(package_url=purl, dependencies=dependencies, scope="development", relationship="direct"),
+            )
+
+    def test_activated_missing_conflicting_and_direct_url_edges_fail_closed(self):
+        """Purpose: Prevent a partial or redirected dependency graph from being submitted as complete.
+        Inputs: Hidden missing child, incompatible version and URL requirement activated after the first visit.
+        Outputs: Exact edge refusal, followed by valid reuse with restored metadata.
+        """
+        for requirement in (
+            "Absent; extra == 'feature'",
+            "Leaf>=3; extra == 'feature'",
+            "Leaf @ https://example.invalid/leaf.whl ; extra == 'feature'",
+        ):
+            with self.subTest(requirement=requirement):
+                self.write_distribution("bridge", "Bridge", "1.0", [requirement])
+                with self.assertRaisesRegex(ValueError, "dependency edge is missing or conflicts"):
+                    self.graph()
+        self.write_distribution("bridge", "Bridge", "1.0", ["Leaf==2; extra == 'feature'"])
+        self.assertEqual(self.graph()["pkg:pypi/bridge@1.0"]["dependencies"], ["pkg:pypi/leaf@2.0"])
+
+    def test_empty_inventory_and_installed_identity_drift_are_rejected(self):
+        """Purpose: Bind every submitted distribution to its exact admitted name and version.
+        Inputs: Empty lock, wrong installed name and wrong version. Outputs: Refusal before publication and recovery.
+        """
+        with self.assertRaisesRegex(ValueError, "cannot be empty"):
+            self.graph({})
+        for name, version in (("Foreign", "1.0"), ("Root", "1.1")):
+            self.write_distribution("root", name, version, [])
+            with (
+                self.subTest(name=name, version=version),
+                self.assertRaisesRegex(ValueError, "disagrees with its lock"),
+            ):
+                self.graph()
+        self.write_distribution("root", "Root", "1.0", ["Bridge[feature]>=1"])
+        self.assertEqual(len(self.graph()), 3)
 
 
 if __name__ == "__main__":

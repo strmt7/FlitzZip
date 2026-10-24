@@ -24,6 +24,9 @@ namespace {
 using Path = std::filesystem::path;
 using Kind = flitzzip::BlockKind;
 
+// Published wire minima are independent of the implementation capability dispatch.
+constexpr std::array<std::uint32_t, 14> kWireMinimumVersions{1, 1, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+
 // Independently packed little-endian index: one raw "bin" entry containing "foo".
 constexpr std::array<unsigned char, 68> kIndexWire{83, 85, 90, 80, 1, 0, 0, 0, 1,  0,   0,   0,   3, 0, 98, 105, 110,
                                                    0,  3,  0,  0,  0, 0, 0, 0, 0,  0,   0,   0,   0, 0, 0,  0,   0,
@@ -612,6 +615,50 @@ TEST_CASE(flzip_deflate_consumers_preserve_block_boundaries_and_recover) {
     }
 }
 
+// Purpose: Reject internally inconsistent Zstandard frames after valid framing, then recover both CPU consumers.
+// Inputs: An independently framed 4096-byte RLE block, a 4095-byte block with the same declared content size,
+// serial/parallel consumers and raw neighbors; no production encoder constructs the fixtures.
+// Outputs: Exact valid bytes, a decompression error for the inconsistent frame and intact outer canaries.
+TEST_CASE(flzip_zstd_consumers_reject_decoded_size_mismatch_and_recover) {
+    constexpr std::array<unsigned char, 11> frame{0x28, 0xB5, 0x2F, 0xFD, 0x60, 0x00, 0x0F, 0x03, 0x80, 0x00, 0x7C};
+    std::vector<std::byte> payload{std::byte{0x11}};
+    const auto bytes = std::as_bytes(std::span(frame));
+    payload.insert(payload.end(), bytes.begin(), bytes.end());
+    payload.push_back(std::byte{0x22});
+    const std::array blocks{
+        flitzzip::BlockDescriptor{.kind = Kind::Raw, .uncompressed_len = 1U, .encoded_len = 1U},
+        flitzzip::BlockDescriptor{
+            .kind = Kind::CpuZstd, .uncompressed_len = 4096U, .encoded_offset = 1U, .encoded_len = 11U},
+        flitzzip::BlockDescriptor{.kind = Kind::Raw, .uncompressed_len = 1U, .encoded_offset = 12U, .encoded_len = 1U}};
+    for (const auto workers : {1U, 3U}) {
+        for (const auto decode : {&flitzzip::decode_chunk_cpu, &flitzzip::decode_cpu_only_blocks_cpu}) {
+            for (const bool invalid : {false, true, false}) {
+                payload[8] = invalid ? std::byte{0xFB} : std::byte{0x03};
+                payload[9] = invalid ? std::byte{0x7F} : std::byte{0x80};
+                std::array<std::byte, 4100> guarded;
+                guarded.fill(std::byte{0x7D});
+                auto output = std::span(guarded).subspan(1U, 4098U);
+                bool rejected = false;
+                try {
+                    decode(payload, blocks, output, {.worker_count = workers});
+                } catch (const flitzzip::ArchiveError& error) {
+                    REQUIRE_EQ(std::string_view(error.what()), "Zstandard native block failed to decompress");
+                    rejected = true;
+                }
+                REQUIRE_EQ(rejected, invalid);
+                REQUIRE_EQ(guarded.front(), std::byte{0x7D});
+                REQUIRE_EQ(guarded.back(), std::byte{0x7D});
+                if (!invalid) {
+                    REQUIRE_EQ(std::ranges::count(output.subspan(1U, 4096U), std::byte{0x7C}), 4096);
+                    const bool all_blocks = decode == &flitzzip::decode_chunk_cpu;
+                    REQUIRE_EQ(output.front(), all_blocks ? std::byte{0x11} : std::byte{0x7D});
+                    REQUIRE_EQ(output.back(), all_blocks ? std::byte{0x22} : std::byte{0x7D});
+                }
+            }
+        }
+    }
+}
+
 // Purpose: Reject zero/oversized decoded blocks and unknown kind values before allocating decoder work.
 // Inputs: Mutations of one otherwise valid raw record. Outputs: Exact metadata diagnostics and preserved targets.
 TEST_CASE(flzip_metadata_rejects_invalid_block_headers) {
@@ -1026,4 +1073,52 @@ TEST_CASE(archive_metadata_hip_layout_rejects_untrusted_extents) {
         reject(std::span(&empty, 1U), 4096U);
     }
 #endif
+}
+
+// Purpose: Prevent reader/writer capability drift across every wire kind byte and readable version.
+// Inputs: Independently packed index bytes and the published version matrix; these are metadata, not codec frames.
+// Outputs: Both boundaries agree with the independent matrix; accepted metadata serializes byte for byte.
+TEST_CASE(flzip_index_kind_version_admission_matches_published_wire_matrix) {
+    for (std::uint32_t kind = 0; kind <= 255U; ++kind) {
+        for (std::uint32_t version = 1; version <= 11U; ++version) {
+            auto wire = index_wire_fixture(version);
+            wire[50] = static_cast<char>(kind);
+            if (kind == 3U) {
+                wire[64] = '\2';
+            }
+            const bool allowed = kind < kWireMinimumVersions.size() && version >= kWireMinimumVersions[kind];
+            flitzzip::ArchiveIndex index;
+            bool read_rejected = false;
+            try {
+                std::istringstream input(wire, std::ios::binary);
+                index = flitzzip::read_archive_index(input);
+            } catch (const flitzzip::ArchiveError& error) {
+                REQUIRE_EQ(std::string_view(error.what()), kind < kWireMinimumVersions.size()
+                                                               ? "archive block kind is not supported by its version"
+                                                               : "archive block has unknown encoding kind");
+                read_rejected = true;
+            }
+            REQUIRE_EQ(read_rejected, !allowed);
+            if (allowed) {
+                REQUIRE_EQ(index.entries.front().blocks.front().kind, static_cast<Kind>(kind));
+                std::ostringstream output(std::ios::binary);
+                flitzzip::write_archive_index(output, index);
+                REQUIRE_EQ(output.str(), wire);
+            } else {
+                std::istringstream control(index_wire_fixture(version), std::ios::binary);
+                index = flitzzip::read_archive_index(control);
+                index.entries.front().blocks.front().kind = static_cast<Kind>(kind);
+                index.entries.front().blocks.front().encoded_len = kind == 3U ? 2U : 3U;
+                bool write_rejected = false;
+                try {
+                    std::ostringstream output(std::ios::binary);
+                    flitzzip::write_archive_index(output, index);
+                } catch (const flitzzip::ArchiveError& error) {
+                    REQUIRE_EQ(std::string_view(error.what()), "archive block kind is not supported by its version");
+                    write_rejected = true;
+                }
+                REQUIRE_TRUE(write_rejected);
+            }
+        }
+    }
 }

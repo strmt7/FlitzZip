@@ -32,7 +32,7 @@ Invoke-FlitzZipBackgroundWork {
             & $taskCmake --build $taskBuild --config Release --parallel $taskJobs
             if ($LASTEXITCODE -ne 0) { throw 'Precompiled-header contract build failed.' }
         }
-        foreach ($taskTarget in @('flitzzip_core', 'flitzzip_test_objects', 'FlitzZip', 'decoy')) {
+        foreach ($taskTarget in @('flitzzip_core', 'flitzzip_test_objects', 'flitzzip_gui', 'decoy')) {
             & (Join-Path $taskBuild "Release/$taskTarget.exe")
             if ($LASTEXITCODE -ne 0) { throw 'Precompiled-header runtime or target-local policy changed.' }
         }

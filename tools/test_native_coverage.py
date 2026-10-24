@@ -26,6 +26,27 @@ from tools.native_coverage_report import normalize_report, read_report, source_p
 
 
 class CoverageTests(unittest.TestCase):
+    # Purpose: Retain complete bounded local diagnostics without changing the MCP response default.
+    # Inputs: A real owned Python child emitting more than the protocol response limit into a temporary log.
+    # Outputs: Requires exact full text and truthful truncation metadata in both the result and saved artifact.
+    @unittest.skipUnless(os.name == "nt", "The real process containment contract uses Windows Job Objects")
+    def test_local_capture_preserves_complete_bounded_diagnostics(self):
+        payload = "independent diagnostic line\n" * 1000
+        log = self.root / "local-diagnostics.json"
+        result = collector.run_checked(
+            [
+                sys.executable,
+                "-c",
+                "import sys;sys.stdout.buffer.write(('independent diagnostic line\\n' * 1000).encode('utf-8'))",
+            ],
+            10,
+            log,
+        )
+        self.assertEqual(len(result["stdout"]), len(payload))
+        self.assertEqual(result["stdout"], payload)
+        self.assertFalse(result["output_truncated"])
+        self.assertEqual(json.loads(log.read_text())["stdout"], payload)
+
     # Purpose: Reject unbounded keyboard waits and unacknowledged pointer input in an instrumented GUI scenario.
     # Inputs: Unmodified PowerShell helper definitions and an isolated native-transport fault fixture.
     # Outputs: Requires ordered bounded dispatch, DPI arguments, rejected acknowledgements and release cleanup.
@@ -75,6 +96,30 @@ class CoverageTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Actual hover paint helpers passed", result.stdout)
+
+    @unittest.skipUnless(os.name == "nt", "The GUI lexical contract uses Windows PowerShell")
+    def test_gui_terminology_checks_literals_without_flagging_documentation(self):
+        """Purpose: Prevent source-policy false positives without allowing actual rejected UI strings.
+        Inputs: Actual helpers extracted from the GUI driver. Outputs: Independent native lexical acceptance cases.
+        """
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(collector.ROOT / "tools/fixtures/gui_text_contract.ps1"),
+                "-SourcePath",
+                str(collector.ROOT / "tools/gui_smoke.ps1"),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Actual GUI literal contracts passed", result.stdout)
 
     # Purpose: Enforce the coverage XML byte boundary on the opened stream with small real files.
     # Inputs: A complete document exactly at a reduced test budget, followed by one excess byte.
@@ -673,6 +718,56 @@ class CoverageTests(unittest.TestCase):
         ):
             collector.run_scenarios(self.root)
 
+    # Purpose: Prevent failed retries from presenting an older successful measurement as current.
+    # Inputs: Independent old report bytes and failures at build admission, collection and report validation.
+    # Outputs: Every failure preserves exact historical evidence and removes the old current qualification.
+    def test_failed_retry_retires_previous_measurement(self):
+        before = {"inputs_sha256": "a" * 64, "receipt_sha256": "b" * 64, "receipt": {"inputs": {"files": {}}}}
+        for phase in ("build", "collection", "normalization", "required-consumers"):
+            with self.subTest(phase=phase):
+                output = self.root / phase
+                output.mkdir()
+                originals = {
+                    "summary.json": b"previous qualified summary",
+                    "native.xml": b"previous normalized report",
+                    "native-raw.xml": b"previous raw report",
+                    "native-process.json": b"previous process result",
+                }
+                for name, data in originals.items():
+                    (output / name).write_bytes(data)
+                unrelated = output / "unrelated-evidence.txt"
+                unrelated.write_bytes(b"retain unrelated evidence")
+                report = {"files": {}}
+                with (
+                    patch.object(collector, "ROOT", self.root),
+                    patch.object(
+                        collector,
+                        "coverage_build",
+                        return_value=before,
+                        side_effect=RuntimeError("admission failed") if phase == "build" else None,
+                    ),
+                    patch.object(collector, "measurement_identity", return_value={}),
+                    patch.object(
+                        collector,
+                        "run_checked",
+                        side_effect=RuntimeError("collection failed") if phase == "collection" else None,
+                    ),
+                    patch.object(collector, "verify_collector"),
+                    patch.object(
+                        collector,
+                        "normalize_report",
+                        return_value=report,
+                        side_effect=ValueError("normalization failed") if phase == "normalization" else None,
+                    ),
+                    self.assertRaises((RuntimeError, ValueError)),
+                ):
+                    collector.collect(self.root / "collector.exe", {"files": {}}, output)
+                self.assertFalse((output / "summary.json").exists())
+                archives = list(output.glob("previous-measurement-*"))
+                self.assertEqual(len(archives), 1)
+                self.assertEqual({p.name: p.read_bytes() for p in archives[0].iterdir()}, originals)
+                self.assertEqual(unrelated.read_bytes(), b"retain unrelated evidence")
+
     # Purpose: Reject executable substitution even when its PDB and application receipt remain unchanged.
     # Inputs: A frozen test binary, matching symbols and a controlled mutation during the collector invocation.
     # Outputs: No accepted summary is published for the changed test executable.
@@ -741,6 +836,7 @@ class CoverageTests(unittest.TestCase):
             patch.object(collector, "coverage_build"),
             patch.object(collector, "require_hip_device"),
             patch.object(collector, "run_cli_admission"),
+            patch.object(collector, "GUI_SCENARIO_TIMEOUT_SECONDS", 17),
         ):
             for hip_host in (False, True):
                 with self.subTest(hip_host=hip_host), patch.object(collector, "run_checked") as run:
@@ -764,12 +860,14 @@ class CoverageTests(unittest.TestCase):
                             str(self.root / "tools/gui_smoke.ps1"),
                             "-Configuration",
                             "Debug",
+                            "-ScenarioTimeoutSeconds",
+                            str(collector.GUI_SCENARIO_TIMEOUT_SECONDS),
                             "-ScreenshotPath",
                             str(self.root / "gui.png"),
                         ],
                     )
                     self.assertEqual(log, self.root / "gui-process.json")
-                    self.assertLessEqual(timeout, 900)
+                    self.assertEqual(timeout, collector.GUI_SCENARIO_TIMEOUT_SECONDS)
                     self.assertEqual(run.call_count, 7)
 
     # Purpose: Stop collection at every failed scenario without running later commands or rebuilding binaries.
@@ -877,6 +975,7 @@ class CoverageTests(unittest.TestCase):
         ):
             with (
                 self.subTest(hip_host=hip_host, include_gui=include_gui),
+                patch.object(collector, "ROOT", self.root),
                 patch.object(collector, "coverage_build", return_value={}),
                 patch.object(collector, "measurement_identity", return_value={}),
                 patch.object(collector, "run_checked", side_effect=RuntimeError("captured invocation")) as run,
@@ -909,6 +1008,7 @@ class CoverageTests(unittest.TestCase):
         identities = {"build/Debug/flitzzip_tests.pdb": "c" * 64, "build/Debug/flitzzip_tests.exe": "d" * 64}
         report = {"files": sources, "lines_valid": 8, "lines_covered": 7, "uncovered_lines": {sources[0]: [1]}}
         with (
+            patch.object(collector, "ROOT", self.root),
             patch.object(collector, "coverage_build", return_value=before) as build,
             patch.object(collector, "measurement_identity", return_value=identities),
             patch.object(collector, "run_checked") as run,
@@ -955,6 +1055,7 @@ class CoverageTests(unittest.TestCase):
             }
             with (
                 self.subTest(measured_gui=measured_gui),
+                patch.object(collector, "ROOT", self.root),
                 patch.object(collector, "coverage_build", return_value=before),
                 patch.object(collector, "measurement_identity", return_value=identities) as identity,
                 patch.object(collector, "run_checked") as run,
@@ -1013,6 +1114,7 @@ class CoverageTests(unittest.TestCase):
         }
         report = {"files": [], "lines_valid": 0, "lines_covered": 0, "uncovered_lines": {}}
         with (
+            patch.object(collector, "ROOT", self.root),
             patch.object(collector, "coverage_build", return_value=before),
             patch.object(collector, "measurement_identity", return_value=identities),
             patch.object(collector, "run_checked"),
@@ -1070,6 +1172,164 @@ class CoverageTests(unittest.TestCase):
         ):
             collector.main()
         collect.assert_called_once_with(executable, lock, self.root / "out/coverage-gui", False, True)
+
+    # Purpose: Supply independent device-absence observations without borrowing the production status formatter.
+    # Inputs: The CLI command. Outputs: A complete expected process record with no device or kernel availability.
+    @staticmethod
+    def absence_result(command):
+        fields = {
+            "hip_compiled": "true",
+            "hip_runtime_loadable": "true",
+            "hip_kernel_loadable": "false",
+            "available": "false",
+            "device_count": "0",
+            "selected_device": "-1",
+            "status": "No AMD HIP device is available",
+        }
+        if command == "dependency-check":
+            fields["dependency_status"] = "missing_amd_gpu"
+        return {
+            "stdout": "\n".join(key + "=" + value for key, value in fields.items()),
+            "stderr": "",
+            "exit_code": 12 if command == "dependency-check" else 1,
+            "timed_out": False,
+            "output_limit_exceeded": False,
+            "output_truncated": False,
+        }
+
+    # Purpose: Keep visibility changes scoped and require both no-device classification and Neutron refusal.
+    # Inputs: Absent, empty and configured prior masks with independently controlled child observations.
+    # Outputs: Exact restored environment, bounded status commands and the required-GPU rejection contract.
+    def test_device_absence_restores_visibility_and_preserves_required_gpu_policy(self):
+        for index, previous in enumerate((None, "", "0,2")):
+            directory = self.root / f"absence-{index}"
+            directory.mkdir()
+            environment = {} if previous is None else {"HIP_VISIBLE_DEVICES": previous}
+            with (
+                self.subTest(previous=previous),
+                patch.dict(os.environ, environment, clear=True),
+                patch.object(collector, "process_owner") as owner,
+                patch.object(collector, "run_cli_admission_case") as rejection,
+            ):
+                snapshot = dict(os.environ)
+                observed_masks = []
+
+                # Purpose: Observe actual child-launch conditions. Inputs: Fixed command. Outputs: Independent result.
+                def child(command, masks=observed_masks, expected_directory=directory, **limits):
+                    masks.append(os.environ.get("HIP_VISIBLE_DEVICES"))
+                    self.assertEqual(limits["timeout_seconds"], 30)
+                    self.assertEqual(limits["working_directory"], expected_directory)
+                    return self.absence_result(command[1])
+
+                owner.return_value.run_bounded_command.side_effect = child
+                names = collector.run_cli_device_absence_contracts(
+                    self.root / "cli.exe", directory, directory / "source", directory / "destination"
+                )
+                self.assertEqual(observed_masks, ["-1", "-1"])
+                self.assertEqual(dict(os.environ), snapshot)
+                self.assertEqual(
+                    names, ["no-device-gpu-info.json", "no-device-dependency-check.json", "no-device-neutron.json"]
+                )
+                case = rejection.call_args.args[1]
+                self.assertIn("--neutron-star", case[0])
+                self.assertIn("--require-gpu", case[0])
+                self.assertEqual(case[1:], (1, "No AMD HIP device is available"))
+
+    # Purpose: Reject ambiguous absence observations and always restore subsequent commands' visibility.
+    # Inputs: Wrong/unknown device counts, capability flags, exit status and incomplete or failed transport.
+    # Outputs: No admission of the Neutron case; raw first-command evidence survives rejection.
+    def test_device_absence_rejects_false_or_incomplete_status(self):
+        mutations = [
+            ("stdout", self.absence_result("gpu-info")["stdout"].replace("device_count=0", "device_count=-1")),
+            ("stdout", self.absence_result("gpu-info")["stdout"].replace("available=false", "available=true")),
+            (
+                "stdout",
+                self.absence_result("gpu-info")["stdout"].replace(
+                    "hip_runtime_loadable=true", "hip_runtime_loadable=false"
+                ),
+            ),
+            (
+                "stdout",
+                self.absence_result("gpu-info")["stdout"].replace(
+                    "hip_kernel_loadable=false", "hip_kernel_loadable=true"
+                ),
+            ),
+            ("stdout", self.absence_result("gpu-info")["stdout"] + "\ndevice_count=0"),
+            ("exit_code", 13),
+            ("stderr", "native failure"),
+            ("timed_out", True),
+            ("output_limit_exceeded", True),
+            ("output_truncated", True),
+        ]
+        for index, (field, value) in enumerate(mutations):
+            directory = self.root / f"invalid-absence-{index}"
+            directory.mkdir()
+            result = self.absence_result("gpu-info")
+            result[field] = value
+            with (
+                self.subTest(field=field, index=index),
+                patch.dict(os.environ, {"HIP_VISIBLE_DEVICES": "0"}),
+                patch.object(collector, "process_owner") as owner,
+                patch.object(collector, "run_cli_admission_case") as rejection,
+            ):
+                owner.return_value.run_bounded_command.return_value = result
+                with self.assertRaises((ValueError, RuntimeError)):
+                    collector.run_cli_device_absence_contracts(
+                        self.root / "cli.exe", directory, directory / "source", directory / "destination"
+                    )
+                self.assertEqual(os.environ["HIP_VISIBLE_DEVICES"], "0")
+                rejection.assert_not_called()
+                retained = json.loads((directory / "no-device-gpu-info.json").read_text())
+                self.assertEqual(retained["result"], result)
+
+    # Purpose: Restore visibility when launch, dependency classification or the required-GPU rejection itself fails.
+    # Inputs: Each controller failure stage and a pre-existing visibility selection.
+    # Outputs: Original selection survives every exception; none of the failures is admitted as successful coverage.
+    def test_device_absence_restores_environment_after_each_failed_stage(self):
+        for stage in ("gpu-launch", "dependency-launch", "dependency-status", "neutron"):
+            directory = self.root / stage
+            directory.mkdir()
+            results = [self.absence_result("gpu-info"), self.absence_result("dependency-check")]
+            if stage == "gpu-launch":
+                results[0] = OSError("controlled native launch failure")
+            elif stage == "dependency-launch":
+                results[1] = OSError("controlled native launch failure")
+            elif stage == "dependency-status":
+                results[1]["stdout"] = results[1]["stdout"].replace(
+                    "missing_amd_gpu", "hip_initialization_or_kernel_failure"
+                )
+            with (
+                self.subTest(stage=stage),
+                patch.dict(os.environ, {"HIP_VISIBLE_DEVICES": "0,1"}),
+                patch.object(collector, "process_owner") as owner,
+                patch.object(
+                    collector, "run_cli_admission_case", side_effect=RuntimeError("controlled Neutron failure")
+                ),
+            ):
+                owner.return_value.run_bounded_command.side_effect = results
+                with self.assertRaises((OSError, RuntimeError, ValueError)):
+                    collector.run_cli_device_absence_contracts(
+                        self.root / "cli.exe", directory, directory / "source", directory / "destination"
+                    )
+                self.assertEqual(os.environ["HIP_VISIBLE_DEVICES"], "0,1")
+
+    # Purpose: Keep actual no-device checks in HIP qualification without assigning them to CPU-only builds.
+    # Inputs: Both explicit measurement modes and the existing independent fixture builder.
+    # Outputs: Only HIP routes the real source/destination through the absence consumer.
+    def test_hip_admission_routes_device_absence_contracts(self):
+        for hip in (False, True):
+            with (
+                self.subTest(hip=hip),
+                patch.object(collector, "ROOT", self.root),
+                patch.object(collector, "cli_admission_cases", return_value=[]),
+                patch.object(collector, "run_cli_capability_contracts", return_value=[]),
+                patch.object(collector, "run_cli_device_absence_contracts", return_value=[]) as absence,
+            ):
+                collector.run_cli_admission(self.root / "cli.exe", self.root, hip_host=hip)
+                self.assertEqual(absence.call_count, int(hip))
+                if hip:
+                    self.assertEqual(absence.call_args.args[2].name, "input with spaces.txt")
+                    self.assertEqual(absence.call_args.args[3].name, "preserved.zip")
 
     # Purpose: Keep direct module execution connected to the same argparse contract as imported calls.
     # Inputs: The standard help option. Outputs: A clean zero-status SystemExit before host or artifact access.

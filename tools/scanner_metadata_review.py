@@ -26,6 +26,7 @@ METADATA_PATH = re.compile(
     r"(?:\.github/gitleaks\.toml|docs/benchmarks/corpora/[^/]+\.json"
     r"|tools/benchmark_permissions\.json|docs/licenses/development-notices\.json"
     r"|tools/native-coverage-toolchain\.json"
+    r"|tools/hip-coverage-toolchain\.json"
     r"|\.github/requirements/semgrep-distribution\.json"
     r"|third_party/upstream/nltk/[0-9]+\.[0-9]+\.[0-9]+(?:-rc[1-9][0-9]*)?/distribution\.json"
     r"|\.github/scanner-secret-reviews(?:-crawl4ai(?:-tests)?)?\.json)"
@@ -35,6 +36,7 @@ CORPUS_COMMIT_PATHS = (
     "docs/benchmarks/corpora/neutron-public-corpora.json",
     "tools/benchmark_permissions.json",
 )
+TOOLCHAIN_COMMIT_PATH = "tools/hip-coverage-toolchain.json"
 SOURCE_POLICY = Path(".github/scanner-source-reviews.csv")
 SOURCE_FIELDS = ("path", "rule", "input_sha256", "startLine", "startColumn", "endLine", "endColumn", "evidence")
 SOURCE_EVIDENCE = "docs/security-source-finding-review-2026-10-04.md"
@@ -327,7 +329,8 @@ def read_reviews(payload: bytes) -> list[dict[str, str]]:
         checksum = row["value_kind"] == "sha256" and METADATA_PATH.fullmatch(row["path"]) is not None
         commit_path = COMMIT_METADATA_PATH.fullmatch(row["path"])
         commit = row["value_kind"] == "git_commit" and (
-            (commit_path is not None and commit_path[1] == row["public_value"]) or row["path"] in CORPUS_COMMIT_PATHS
+            (commit_path is not None and commit_path[1] == row["public_value"])
+            or row["path"] in (*CORPUS_COMMIT_PATHS, TOOLCHAIN_COMMIT_PATH)
         )
         if row["rule"] != "DS173237" or not (checksum or commit):
             raise ValueError("Only exact public integrity metadata can be reviewed; code and tests remain blocking")
@@ -358,6 +361,15 @@ def public_value_matches(row: dict, payload: bytes, region: dict) -> bool:
     units = payload.decode("utf-8").encode("utf-16-le")
     if units[offset * 2 : (offset + length) * 2].decode("utf-16-le") != expected:
         return False
+    if row.get("path") == TOOLCHAIN_COMMIT_PATH:
+        from tools.hip_coverage_toolchain import parse_toolchain
+
+        try:
+            source = parse_toolchain(payload)
+            value = source["revision"] if row["value_kind"] == "git_commit" else source["zlib"]["sha256"]
+            return value == row["public_value"]
+        except (ValueError, UnicodeDecodeError):
+            return False
     if row["value_kind"] == "git_commit":
         try:
             source = json.loads(payload)

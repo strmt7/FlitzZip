@@ -5,9 +5,19 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 public static class FlitzZipPickerUi {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GUITHREADINFO {
+        public uint Size; public uint Flags;
+        public IntPtr Active; public IntPtr Focus; public IntPtr Capture; public IntPtr MenuOwner;
+        public IntPtr MoveSize; public IntPtr Caret;
+        public int Left; public int Top; public int Right; public int Bottom;
+    }
+    [DllImport("user32.dll", SetLastError=true)]
+    public static extern bool GetGUIThreadInfo(uint thread, ref GUITHREADINFO information);
     [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr window);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
     [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr window);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr window);
     [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr dialog, int id);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string name);
@@ -16,6 +26,30 @@ public static class FlitzZipPickerUi {
     public static extern IntPtr SendMessageTimeout(IntPtr window, uint message, IntPtr parameter, string text, uint flags, uint timeout, out UIntPtr result);
 }
 "@
+
+# Purpose: Observe completion of a posted native-dialog focus change before supplying filename text.
+# Inputs: Owned dialog/process and its validated edit control; the controller does not alter other threads' input.
+# Outputs: Returns on actual target-thread focus, or fails explicitly within ten seconds.
+function Wait-PickerControlFocus {
+    param([IntPtr]$Dialog, [IntPtr]$Edit, [int]$ProcessId)
+    [uint32]$owner = 0
+    $thread = [FlitzZipPickerUi]::GetWindowThreadProcessId($Dialog, [ref]$owner)
+    if ($thread -eq 0 -or $owner -ne $ProcessId) { throw 'Native picker focus target is no longer owned.' }
+    $deadline = [datetime]::UtcNow.AddSeconds(10)
+    do {
+        if (-not [FlitzZipPickerUi]::IsWindow($Dialog) -or -not [FlitzZipPickerUi]::IsWindow($Edit)) {
+            throw 'Native picker closed before filename focus was acknowledged.'
+        }
+        $information = [FlitzZipPickerUi+GUITHREADINFO]::new()
+        $information.Size = [Runtime.InteropServices.Marshal]::SizeOf($information)
+        if (-not [FlitzZipPickerUi]::GetGUIThreadInfo($thread, [ref]$information)) {
+            throw "Native picker focus query failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())."
+        }
+        if ($information.Focus -eq $Edit) { return }
+        Start-Sleep -Milliseconds 50
+    } while ([datetime]::UtcNow -lt $deadline)
+    throw 'Native picker did not focus its filename control within ten seconds.'
+}
 
 # Purpose: Reject stale, foreign or unexpected HWNDs before sending native picker input.
 # Inputs: Handle is the candidate; ProcessId is the exclusively owned GUI process; ClassName is the expected native class.
@@ -29,6 +63,36 @@ function Assert-PickerWindowOwner {
     if ($Handle -eq [IntPtr]::Zero -or $owner -ne $ProcessId -or $name.ToString() -cne $ClassName) {
         throw "Native picker ownership/class validation failed; expected owned $ClassName."
     }
+}
+
+# Purpose: Wait for shell initialization to expose an interactive, owned native filename field.
+# Inputs: Owned dialog/process and file-versus-folder mode; hidden or disabled fields receive no input.
+# Outputs: Returns the validated edit HWND, or rejects incomplete initialization within ten seconds.
+function Wait-PickerInputControl {
+    param([IntPtr]$Dialog, [int]$ProcessId, [bool]$Folder)
+    Assert-PickerWindowOwner -Handle $Dialog -ProcessId $ProcessId -ClassName '#32770'
+    $inputId = if ($Folder) { 1152 } else { 1148 }
+    $deadline = [datetime]::UtcNow.AddSeconds(10)
+    do {
+        $inputControl = [FlitzZipPickerUi]::GetDlgItem($Dialog, $inputId)
+        $edit = $inputControl
+        if (-not $Folder -and $inputControl -ne [IntPtr]::Zero) {
+            $inner = [FlitzZipPickerUi]::FindWindowEx($inputControl, [IntPtr]::Zero, 'ComboBox', $null)
+            $edit = if ($inner -ne [IntPtr]::Zero) { [FlitzZipPickerUi]::FindWindowEx($inner, [IntPtr]::Zero, 'Edit', $null) } else { [IntPtr]::Zero }
+        }
+        if ($edit -ne [IntPtr]::Zero -and [FlitzZipPickerUi]::IsWindowVisible($edit) -and
+            [FlitzZipPickerUi]::IsWindowEnabled($edit)) {
+            if (-not $Folder) {
+                Assert-PickerWindowOwner -Handle $inputControl -ProcessId $ProcessId -ClassName 'ComboBoxEx32'
+                Assert-PickerWindowOwner -Handle $inner -ProcessId $ProcessId -ClassName 'ComboBox'
+            }
+            Assert-PickerWindowOwner -Handle $edit -ProcessId $ProcessId -ClassName 'Edit'
+            return $edit
+        }
+        if (-not [FlitzZipPickerUi]::IsWindow($Dialog)) { throw 'Native picker closed before its input became interactive.' }
+        Start-Sleep -Milliseconds 100
+    } while ([datetime]::UtcNow -lt $deadline)
+    throw 'Native picker input did not become interactive within ten seconds.'
 }
 
 # Purpose: Select or cancel real OS dialogs using owned controls rather than localized captions or injected results.
@@ -49,29 +113,15 @@ function Invoke-NativePickerSelection {
         Start-Sleep -Milliseconds 100
     } while ([datetime]::UtcNow -lt $deadline)
     Assert-PickerWindowOwner -Handle $popup -ProcessId $ProcessId -ClassName '#32770'
-    # Folder mode exposes edt1 directly; multi-file mode exposes cmb13's embedded edit.
-    $inputId = if ($isFolder) { 1152 } else { 1148 }
-    $deadline = [datetime]::UtcNow.AddSeconds(10)
-    do {
-        $inputControl = [FlitzZipPickerUi]::GetDlgItem($popup, $inputId)
-        if ($inputControl -ne [IntPtr]::Zero) { break }
-        Start-Sleep -Milliseconds 100
-    } while ([datetime]::UtcNow -lt $deadline)
-    $edit = $inputControl
-    if (-not $isFolder) {
-        Assert-PickerWindowOwner -Handle $inputControl -ProcessId $ProcessId -ClassName 'ComboBoxEx32'
-        $inner = [FlitzZipPickerUi]::FindWindowEx($inputControl, [IntPtr]::Zero, 'ComboBox', $null)
-        Assert-PickerWindowOwner -Handle $inner -ProcessId $ProcessId -ClassName 'ComboBox'
-        $edit = [FlitzZipPickerUi]::FindWindowEx($inner, [IntPtr]::Zero, 'Edit', $null)
-    }
-    Assert-PickerWindowOwner -Handle $edit -ProcessId $ProcessId -ClassName 'Edit'
+    # HWND creation precedes shell initialization; never populate a still-hidden filename field.
+    $edit = Wait-PickerInputControl -Dialog $popup -ProcessId $ProcessId -Folder $isFolder
     if (-not [FlitzZipNativeUi]::PostMessage($popup, 0x0028, $edit, [IntPtr](1))) {
         throw 'Could not focus the native picker filename control.'
     }
-    Start-Sleep -Milliseconds 100
+    Wait-PickerControlFocus -Dialog $popup -Edit $edit -ProcessId $ProcessId
     [UIntPtr]$result = [UIntPtr]::Zero
     if ([FlitzZipPickerUi]::SendMessageTimeout($edit, 0x000C, [IntPtr]::Zero, $Selection, 2, 2000, [ref]$result) -eq [IntPtr]::Zero -or $result -eq [UIntPtr]::Zero) {
-        throw 'Native picker did not accept the fixture filename text.'
+        throw 'Native picker filename replacement failed or timed out.'
     }
     $buttonId = if ($Cancel) { 2 } else { 1 }
     $button = [FlitzZipPickerUi]::GetDlgItem($popup, $buttonId)

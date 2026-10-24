@@ -4,7 +4,8 @@
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/stream_archive_path.hpp"
-#include "core/file_size.hpp"
+#include "core/file_manifest.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
@@ -307,14 +308,15 @@ std::uint64_t decode_lzma_stream_to_file(std::ifstream& input, const LzmaAloneHe
 }  // namespace
 
 // Purpose: Extract one legacy LZMA-Alone stream into a single verified output file.
-// Inputs: `archive_path` is the source `.lzma` stream, `destination` is the extraction root, `overwrite` controls
-// existing targets, and `progress_callback` receives progress snapshots. Outputs: Returns extraction telemetry; throws
-// on malformed streams, unsafe output names, refused overwrite, resource limits, or publish failures.
+// Inputs: `archive_path` is pinned as immutable before reading; `destination` is the extraction root, `overwrite`
+// controls existing targets, and `progress_callback` receives progress snapshots. Outputs: Returns extraction
+// telemetry; throws on malformed streams, unsafe output names, refused overwrite, resource limits, or publish failures.
 OperationStats extract_lzma_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                  bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto archive_size = regular_file_size(archive_path);
-    std::ifstream input(archive_path, std::ios::binary);
+    const auto archive_source = pin_source_file(archive_path);
+    const auto archive_size = archive_source.size();
+    std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open LZMA archive: " + path_diagnostic_utf8(archive_path));
     }

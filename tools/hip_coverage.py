@@ -31,6 +31,15 @@ def architecture(value: str) -> str:
     return value
 
 
+# Purpose: Reject original redirected selectors before resolving an existing toolchain input.
+# Inputs: A caller-selected path. Outputs: Canonical existing path; links and missing inputs fail before tool execution.
+def existing_input(path: Path) -> Path:
+    reject_link_chain(path)
+    absolute = path.absolute()
+    reject_link_chain(absolute)
+    return absolute.resolve(strict=True)
+
+
 # Purpose: Bind evidence to regular, unchanged files without accepting redirected inputs.
 # Inputs: Existing file paths. Outputs: Sizes and SHA-256 values; missing or redirected files fail.
 def identities(paths: list[Path]) -> dict:
@@ -194,7 +203,11 @@ def validate_controls(reports: list[dict], source: Path) -> dict:
 # Purpose: Compile a bounded control using the selected SDK and matching host/device profiler.
 # Inputs: Explicit LLVM installation, SDK, device runtime, architecture and fresh owned output.
 # Outputs: A coverage-instrumented executable plus complete compiler diagnostics and immutable input identities.
-def compile_probe(compiler: Path, sdk: Path, runtime: Path, target: str, output: Path) -> tuple[Path, dict]:
+def compile_probe(
+    compiler: Path, sdk: Path, runtime: Path, target: str, output: Path, *, cuid: str | None = None
+) -> tuple[Path, dict]:
+    if cuid is not None and not re.fullmatch(r"[a-f0-9]{64}", cuid):
+        raise ValueError("Coverage translation-unit identity must be an explicit SHA-256 value")
     llvm_bin = compiler / "bin"
     host_profiles = list((compiler / "lib/clang").glob("*/lib/windows/clang_rt.profile_rocm-x86_64.lib"))
     if len(host_profiles) != 1:
@@ -228,6 +241,7 @@ def compile_probe(compiler: Path, sdk: Path, runtime: Path, target: str, output:
             str(llvm_bin / "clang++.exe"),
             "-x",
             "hip",
+            *([f"-cuid={cuid}"] if cuid is not None else []),
             f"--hip-path={sdk}",
             f"--rocm-path={sdk}",
             f"--rocm-device-lib-path={compiler / 'amdgcn/bitcode'}",
@@ -282,7 +296,9 @@ def run_controls(executable: Path, target: str, output: Path) -> list[Path]:
 # Purpose: Qualify a selected device profiling toolchain without modifying the product build or its settings.
 # Inputs: Explicit read-only tools and SDK, matching built device runtime, target and unused checkout output path.
 # Outputs: Source/tool/binary/profile-bound qualification receipt; any failure retains diagnostics and no pass receipt.
-def qualify(compiler: Path, sdk: Path, runtime: Path, target: str, output: Path) -> dict:
+def qualify(
+    compiler: Path, sdk: Path, runtime: Path, target: str, output: Path, *, registration_tool: Path | None = None
+) -> dict:
     target = architecture(target)
     for path in (compiler, sdk, runtime):
         reject_link_chain(path)
@@ -292,7 +308,12 @@ def qualify(compiler: Path, sdk: Path, runtime: Path, target: str, output: Path)
     probe_snapshot.write_bytes(PROBE.read_bytes())
     llvm_bin = compiler / "bin"
     with child_environment({"PATH": os.pathsep.join((str(sdk / "bin"), str(llvm_bin), os.environ["PATH"]))}):
-        executable, inputs = compile_probe(compiler, sdk, runtime, target, output)
+        if registration_tool is None:
+            executable, inputs = compile_probe(compiler, sdk, runtime, target, output)
+        else:
+            from tools.hip_coverage_registration import compile_registered_probe
+
+            executable, inputs = compile_registered_probe(compiler, sdk, runtime, registration_tool, target, output)
         snapshot_identity = identities([probe_snapshot])[str(probe_snapshot.resolve())]
         if snapshot_identity != inputs.get(str(PROBE.resolve())):
             raise ValueError("Probe source changed between evidence capture and compilation")
@@ -334,13 +355,16 @@ def main() -> int:
     parser.add_argument("--device-runtime", type=Path, required=True)
     parser.add_argument("--arch", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--registration-tool", type=Path)
     arguments = parser.parse_args()
+    options = {"registration_tool": existing_input(arguments.registration_tool)} if arguments.registration_tool else {}
     result = qualify(
-        arguments.compiler_root.resolve(strict=True),
-        arguments.sdk.resolve(strict=True),
-        arguments.device_runtime.resolve(strict=True),
+        existing_input(arguments.compiler_root),
+        existing_input(arguments.sdk),
+        existing_input(arguments.device_runtime),
         arguments.arch,
         arguments.output.absolute(),
+        **options,
     )
     print(json.dumps({key: result[key] for key in ("qualification", "scope", "architecture", "controls")}))
     return 0

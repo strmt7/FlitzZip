@@ -150,6 +150,15 @@ function Save-GuiTooltipExpectation {
         $capture = Save-FlitzZipScreenshot -Handle $Handle -Path $path
         $captures.Add($capture)
         $count = Get-GuiTooltipPaintCount -Path $path -Dpi $Dpi -OffsetX $offset.X -OffsetY $offset.Y
+        [FlitzZipNativeUi+POINT]$pointer = New-Object FlitzZipNativeUi+POINT
+        [FlitzZipNativeUi+POINT]$origin = New-Object FlitzZipNativeUi+POINT
+        if (-not [FlitzZipNativeUi]::GetCursorPos([ref]$pointer) -or
+            -not [FlitzZipNativeUi]::ClientToScreen($Handle, [ref]$origin)) {
+            throw 'Cannot retain native pointer evidence for the tooltip observation.'
+        }
+        $owner = [FlitzZipNativeUi]::WindowFromPoint($pointer)
+        $owned = $owner -eq $Handle -or [FlitzZipNativeUi]::IsChild($Handle, $owner)
+        Write-Information ("Tooltip observation=$observation elapsed_ms=$($watch.ElapsedMilliseconds) visible=$Visible samples=$count baseline=$Baseline pointer_client_x_px=$($pointer.X - $origin.X) pointer_client_y_px=$($pointer.Y - $origin.Y) pointer_owned=$owned") -InformationAction Continue
         $matched = if ($Visible) { $count -ge $Baseline + 300 } else { $count -le $Baseline + 80 }
         if ($matched) { return $captures.ToArray() }
         Start-Sleep -Milliseconds 120

@@ -5,6 +5,7 @@
 #include "core/path_safety.hpp"
 #include "core/stream_archive_path.hpp"
 #include "core/file_size.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
@@ -699,15 +700,17 @@ OperationStats compress_unix_compress(const std::vector<std::filesystem::path>& 
 }
 
 // Purpose: Extract one Unix Compress `.Z` stream into a destination directory.
-// Inputs: `archive_path` is the source stream, `destination` is the output root, and `overwrite` permits replacement.
+// Inputs: `archive_path` is pinned as immutable before reading; `destination` is the output root,
+// and `overwrite` permits replacement.
 // Outputs: Publishes one validated decoded file and returns operation statistics; throws on malformed or unsafe input.
 OperationStats extract_unix_compress_file(const std::filesystem::path& archive_path,
                                           const std::filesystem::path& destination, bool overwrite,
                                           const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto archive_size = regular_file_size(archive_path);
+    const auto archive_source = pin_source_file(archive_path);
+    const auto archive_size = archive_source.size();
 
-    std::ifstream input(archive_path, std::ios::binary);
+    std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open Unix Compress archive: " + path_diagnostic_utf8(archive_path));
     }

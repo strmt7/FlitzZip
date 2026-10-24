@@ -1,5 +1,7 @@
 #include "app/main_window_impl.hpp"
 
+#include "core/path_text.hpp"
+
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
@@ -403,31 +405,44 @@ void MainWindow::start_security_verify() {
 
 // Purpose: Execute archive, optional SHA-256, and optional Defender checks for a worker job.
 // Inputs: `sources` are selected archives and booleans describe requested security and GPU policies.
-// Outputs: Publishes progress/history/result state or throws after recording the failed/incomplete stage.
+// Outputs: Publishes UTF-8 progress/history and aggregate results; later failure preserves independently completed
+// checks.
 void MainWindow::run_security_review(const std::vector<std::filesystem::path>& sources, bool integrity, bool defender,
                                      bool gpu_required, ArchivePathEncoding name_encoding) {
     ProgressState progress;
     progress.start(OperationKind::Verify, sources.size(), sources.size());
     auto publish = [this, &progress] { publish_progress_snapshot_or_cancel(progress.snapshot()); };
     SecurityReviewStage stage = SecurityReviewStage::Archive;
+    std::size_t hashes_completed = 0;
+    std::size_t defender_scans_completed = 0;
     try {
         for (const auto& source : sources) {
             stage = SecurityReviewStage::Archive;
             const auto pinned = pin_source_file(source);
-            progress.set_current(pinned.path().filename().string());
+            const auto source_name = path_diagnostic_utf8(pinned.path().filename());
+            const auto source_path = path_diagnostic_utf8(pinned.path());
+            progress.set_current(source_name);
             publish();
             if (integrity) {
                 stage = SecurityReviewStage::Sha256;
                 const auto hash = hash_path(pinned.path(), IntegrityMode::Sha256);
-                append_history_entry("Security", pinned.path().filename().string(), pinned.path().string(),
-                                     integrity_history_status("Archive", hash), true);
+                append_history_entry("Security", source_name, source_path, integrity_history_status("Archive", hash),
+                                     true);
+                if (++hashes_completed == sources.size()) {
+                    std::lock_guard lock(mutex_);
+                    state_.security_sha256 = SecurityCheckState::Passed;
+                }
             }
             if (defender) {
                 stage = SecurityReviewStage::Defender;
                 const auto scan = scan_with_windows_defender(pinned.path(), DefenderScanMode::FullPath);
-                append_history_entry("Security", pinned.path().filename().string(), pinned.path().string(),
-                                     defender_history_status("Defender", scan), defender_scan_passed(scan));
+                append_history_entry("Security", source_name, source_path, defender_history_status("Defender", scan),
+                                     defender_scan_passed(scan));
                 require_clean_defender_scan(scan, pinned.path());
+                if (++defender_scans_completed == sources.size()) {
+                    std::lock_guard lock(mutex_);
+                    state_.security_defender = SecurityCheckState::Passed;
+                }
             }
             stage = SecurityReviewStage::Archive;
             const auto format = detect_archive_format(pinned.path());
@@ -435,7 +450,7 @@ void MainWindow::run_security_review(const std::vector<std::filesystem::path>& s
                 format, pinned.path(), gpu_required,
                 [this](const ProgressSnapshot& snapshot) { publish_progress_snapshot_or_cancel(snapshot); },
                 name_encoding);
-            append_history_entry("Security", pinned.path().filename().string(), pinned.path().string(),
+            append_history_entry("Security", source_name, source_path,
                                  "Archive paths and payload integrity passed for " + std::to_string(stats.entries) +
                                      " entr" + (stats.entries == 1U ? "y" : "ies"),
                                  true);
@@ -447,10 +462,9 @@ void MainWindow::run_security_review(const std::vector<std::filesystem::path>& s
             std::lock_guard lock(mutex_);
             state_.security_archive_paths = SecurityCheckState::Passed;
             state_.security_payload_integrity = SecurityCheckState::Passed;
-            state_.security_sha256 = integrity ? SecurityCheckState::Passed : SecurityCheckState::NotRun;
-            state_.security_defender = defender ? SecurityCheckState::Passed : SecurityCheckState::NotRun;
         }
-        const std::string summary_path = sources.size() == 1U ? sources.front().string() : "Multiple selected archives";
+        const std::string summary_path =
+            sources.size() == 1U ? path_diagnostic_utf8(sources.front()) : "Multiple selected archives";
         append_history_entry("Security", "Security review", summary_path,
                              "Validated format, member paths, and payload integrity for " +
                                  std::to_string(sources.size()) + " archive(s)",

@@ -175,6 +175,9 @@ LRESULT MainWindow::handle_create() {
 // Inputs: None.
 // Outputs: Posts quit and returns the handled Win32 result.
 LRESULT MainWindow::handle_destroy() {
+    operation_cancel_requested_.store(true);
+    queue_metadata_.stop();
+    worker_.join();
     // Kill every timer owned by this window before shutdown so repaint,
     // telemetry sampling, and smoke cleanup cannot outlive the HWND.
     KillTimer(hwnd_, kAnimationTimer);

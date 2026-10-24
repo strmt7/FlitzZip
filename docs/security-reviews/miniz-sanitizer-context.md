@@ -24,6 +24,22 @@ GNU/BSD seed corpus and RAM-only truncation oracle expand parser qualification.
 The build command contracts and real sanitizer smoke remain required; command
 fixtures alone do not establish that the fuzz binaries execute correctly.
 
+The native test object list also registers the isolated trusted-runtime loader,
+Windows CNG integrity, native-path diagnostic, native repaint-queue and supervised background-job tests. These translation units
+do not define allocator configuration or call miniz. The GUI implementation is now
+compiled once into `flitzzip_gui` and shared with GUI-enabled native tests. The
+same support files remain available to GUI-disabled test builds. This changes
+neither the miniz library nor its allocation configuration: the miniz target,
+sanitizer allocator definitions and matching allocation family remain unchanged.
+Hidden controller tests select ordinary CPU ZIP creation and exercise native
+thread admission and cooperative shutdown; they do not redefine codec allocators.
+
+The optional development HIP coverage manifest replaces only the five kernel
+object inputs. Its dynamic CRT setting applies only to the private HIP DLL;
+that module does not link miniz. The miniz target, Windows heap allocator and
+two required sanitizer-only preprocessor definitions remain unchanged.
+Instrumented builds cannot qualify production packages or enter installation.
+
 The committed disposition binds the complete allocator source, exact location,
 scanner identity, current build recipes, new harness and this evidence. Raw
 reports remain retained. Changed source, callers, recipes or scanner identities

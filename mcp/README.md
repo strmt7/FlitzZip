@@ -30,6 +30,10 @@ covering its 60-minute remote deadline plus the audit rather than killing it
 prematurely after 15 minutes. Cancellation and output limits still apply.
 Aggregate child output is limited to 16 MiB;
 only bounded stdout/stderr tails are returned with explicit truncation flags.
+Protocol replies retain the 12,000-character output cap. Trusted repository
+artifact collectors can request an explicit larger internal character budget
+when saving bounded local evidence. Byte limits, deadlines and process-tree
+containment still apply to those captures.
 These are development commands, not a remote archive-processing API. A client
 must obtain user approval appropriate to the selected command. `security_scan`
 is the repository's local policy script, not the Codex Security plugin scanner.

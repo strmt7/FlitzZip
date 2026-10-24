@@ -2,9 +2,11 @@
 
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
+#include "core/path_text.hpp"
 #include "gzip/gzip_adapter.hpp"
 #include "tar/tar_adapter.hpp"
 #include "tar/tar_reader.hpp"
+#include "tar/tar_header_fields.hpp"
 
 #include <algorithm>
 #include <array>
@@ -89,6 +91,78 @@ void write_one_entry_tar(const std::filesystem::path& archive, std::string_view 
 }
 
 }  // namespace
+
+namespace {
+
+// Purpose: Preserve the security error and publication state for an existing Unicode extraction target.
+// Inputs: Plain or Gzip transport, an independent one-file TAR and an owned supplementary-Unicode destination.
+// Outputs: Both repeated refusals preserve the old bytes; explicit overwrite succeeds with no staging debris.
+void require_tar_unicode_overwrite_contract(bool gzip) {
+    const auto root = test_temp_dir(gzip ? "tar-unicode-gzip-overwrite" : "tar-unicode-overwrite");
+    const auto plain = root / "input.tar";
+    write_one_entry_tar(plain, "file.txt", '0', "replacement");
+    const auto archive = gzip ? root / "input.tar.gz" : plain;
+    if (gzip) {
+        (void)flitzzip::compress_gzip_file(plain, archive);
+    }
+    const auto destination = root / std::filesystem::path(L"\u65e5\u672c-\U0001F4C1");
+    std::filesystem::create_directory(destination);
+    const auto target = destination / "file.txt";
+    {
+        std::ofstream output(target, std::ios::binary);
+        output << "original";
+        REQUIRE_TRUE(output.good());
+    }
+    const auto extract = [&](bool overwrite) {
+        return gzip ? flitzzip::extract_tar_gzip(archive, destination, overwrite)
+                    : flitzzip::extract_tar(archive, destination, overwrite);
+    };
+    const auto expected =
+        "refusing to overwrite existing TAR extraction target: " + flitzzip::path_diagnostic_utf8(target);
+    const auto expected_regular = "refusing to overwrite existing TAR extraction target: " +
+                                  flitzzip::path_diagnostic_utf8(flitzzip::windows_regular_path(target));
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        bool rejected = false;
+        try {
+            (void)extract(false);
+        } catch (const flitzzip::SecurityError& error) {
+            // Both native Windows aliases identify this exact file; diagnostic policy does not fix the prefix.
+            if (std::string(error.what()) != expected && std::string(error.what()) != expected_regular) {
+                throw std::runtime_error("unexpected TAR refusal text; expected [" + expected + "]; actual [" +
+                                         error.what() + "]");
+            }
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        std::ifstream input(target, std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "original");
+        REQUIRE_EQ(static_cast<std::size_t>(std::distance(std::filesystem::directory_iterator(destination),
+                                                          std::filesystem::directory_iterator{})),
+                   1U);
+    }
+    const auto stats = extract(true);
+    REQUIRE_EQ(stats.entries, 1U);
+    REQUIRE_EQ(stats.output_bytes, 11U);
+    std::ifstream input(target, std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "replacement");
+    REQUIRE_EQ(static_cast<std::size_t>(std::distance(std::filesystem::directory_iterator(destination),
+                                                      std::filesystem::directory_iterator{})),
+               1U);
+}
+
+}  // namespace
+
+// Purpose: Check Unicode refusals and recovery in the seekable TAR reader.
+// Inputs: Independent bounded filesystem fixture. Outputs: Exact security diagnostic and byte-preserving refusal.
+TEST_CASE(tar_unicode_overwrite_seekable_preserves_error_and_recovery) {
+    require_tar_unicode_overwrite_contract(false);
+}
+
+// Purpose: Check Unicode refusals and recovery in both passes of the Gzip-filtered TAR reader.
+// Inputs: Independent bounded filesystem fixture. Outputs: Exact security diagnostic and byte-preserving refusal.
+TEST_CASE(tar_unicode_overwrite_filtered_preserves_error_and_recovery) {
+    require_tar_unicode_overwrite_contract(true);
+}
 
 namespace {
 
@@ -1007,6 +1081,90 @@ TEST_CASE(tar_scan_requires_truthful_seekable_bounds) {
     }
 }
 
+namespace {
+
+enum class TarSeekFault { HeaderPosition, PositionPastExtent, PayloadPosition, PayloadSkip };
+
+// Purpose: Fail a real seekable-stream operation without changing the valid TAR bytes or exhausting host resources.
+// Inputs: Independently framed bytes and the position query or payload seek to reject once.
+// Outputs: Owns normal readable bytes, records one actual refusal and then permits valid stream reuse.
+class TarSeekFaultInput final : public std::stringbuf {
+  public:
+    // Purpose: Preserve valid read/seek behavior until the selected boundary is actually requested.
+    // Inputs: Complete fixture bytes and one controlled seek failure mode. Outputs: Owns the unchanged fixture.
+    TarSeekFaultInput(const std::string& bytes, TarSeekFault fault)
+        : std::stringbuf(bytes, std::ios::in | std::ios::binary), fault_(fault), extent_(bytes.size()) {}
+
+    // Purpose: Prove the parser reached the injected external failure rather than an unrelated rejection.
+    // Inputs: None. Outputs: True only after the chosen query or seek was intercepted.
+    bool fault_observed() const noexcept {
+        return fault_observed_;
+    }
+
+  protected:
+    // Purpose: Intercept only the selected query/seek, forwarding all other stream operations unchanged.
+    // Inputs: Standard stream offset, origin and access mode. Outputs: Valid position or one controlled failure.
+    pos_type seekoff(off_type offset, std::ios_base::seekdir origin, std::ios_base::openmode mode) override {
+        const auto position = std::stringbuf::seekoff(0, std::ios::cur, std::ios::in);
+        if (!fault_observed_ && origin == std::ios::cur) {
+            if (offset == 0 && position == pos_type(0) &&
+                (fault_ == TarSeekFault::HeaderPosition || fault_ == TarSeekFault::PositionPastExtent)) {
+                fault_observed_ = true;
+                return fault_ == TarSeekFault::HeaderPosition ? pos_type(off_type(-1)) : pos_type(extent_ + 1U);
+            }
+            if (position == pos_type(512) && ((offset == 0 && fault_ == TarSeekFault::PayloadPosition) ||
+                                              (offset == 512 && fault_ == TarSeekFault::PayloadSkip))) {
+                fault_observed_ = true;
+                return pos_type(off_type(-1));
+            }
+        }
+        return std::stringbuf::seekoff(offset, origin, mode);
+    }
+
+  private:
+    TarSeekFault fault_;
+    std::size_t extent_;
+    bool fault_observed_ = false;
+};
+
+}  // namespace
+
+// Purpose: Refuse untrustworthy stream positions before returning an apparently validated archive plan.
+// Inputs: The same two-file TAR with controlled header-position, extent, payload-position and payload-seek failures.
+// Outputs: Exact boundary errors, unchanged source bytes and successful reuse of the same stream after each fault.
+TEST_CASE(tar_seek_failures_reject_incomplete_plans_and_allow_same_stream_recovery) {
+    const auto bytes = tar_reader_boundary_fixture();
+    for (const auto fault : {TarSeekFault::HeaderPosition, TarSeekFault::PositionPastExtent,
+                             TarSeekFault::PayloadPosition, TarSeekFault::PayloadSkip}) {
+        TarSeekFaultInput buffer(bytes, fault);
+        std::istream input(&buffer);
+        bool rejected = false;
+        try {
+            (void)flitzzip::detail::scan_tar_stream(input, true, bytes.size());
+        } catch (const flitzzip::ArchiveError& error) {
+            const std::string_view expected = fault == TarSeekFault::PayloadPosition
+                                                  ? "seekable TAR payload has no valid offset or archive-size bound"
+                                              : fault == TarSeekFault::PayloadSkip
+                                                  ? "TAR payload is truncated"
+                                                  : "TAR header has no valid archive-bounded offset";
+            REQUIRE_EQ(std::string_view(error.what()), expected);
+            rejected = true;
+        }
+        REQUIRE_TRUE(buffer.fault_observed());
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(buffer.str(), bytes);
+        input.clear();
+        input.seekg(0);
+        const auto admitted = flitzzip::detail::scan_tar_stream(input, true, bytes.size());
+        REQUIRE_EQ(admitted.entries.size(), 2U);
+        REQUIRE_EQ(admitted.entries[0].path, std::string("before.txt"));
+        REQUIRE_EQ(admitted.entries[0].payload_offset, 512U);
+        REQUIRE_EQ(admitted.entries[1].path, std::string("after.txt"));
+        REQUIRE_EQ(admitted.entries[1].payload_offset, 1536U);
+        REQUIRE_EQ(admitted.total_file_bytes, 8U);
+    }
+}
+
 // Purpose: Refuse second-pass metadata changes before the first file is published.
 // Inputs: An admitted two-file plan, independently replaced path/kind/size/encoding and forbidden entry types.
 // Outputs: Every changed stream rejects while preserving the original destination and leaving no staging files.
@@ -1035,6 +1193,61 @@ TEST_CASE(tar_stream_extract_rejects_changed_metadata_before_publication) {
         require_tar_rejected_without_publication(
             destination, [&] { flitzzip::detail::extract_validated_tar_stream(input, plan, destination, false, {}); });
     }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject a changed second-pass inventory before publication, including apparently clean end markers.
+// Inputs: An admitted one-file plan and empty, extra or dangling-extension replacement streams.
+// Outputs: Every mismatch throws, preserving the destination sentinel and leaving no unpublished temporary files.
+TEST_CASE(tar_stream_extract_rejects_missing_extra_and_dangling_entries) {
+    const auto root = test_temp_dir("tar-second-pass-inventory");
+    std::ostringstream valid(std::ios::out | std::ios::binary);
+    append_tar_fixture_record(valid, make_test_tar_header("before.txt", '0', 3), "abc");
+    std::istringstream scan(valid.str(), std::ios::in | std::ios::binary);
+    const auto plan = flitzzip::detail::scan_tar_stream(scan, false);
+    std::vector<std::string> replacements{"", std::string(1024U, '\0')};
+    for (const auto type : {'x', 'L'}) {
+        std::ostringstream extension(std::ios::out | std::ios::binary);
+        const auto payload = type == 'x' ? test_pax_record("path", "before.txt") : std::string("before.txt\0", 11U);
+        append_tar_fixture_record(extension, make_test_tar_header("extension", type, payload.size()), payload);
+        replacements.push_back(extension.str());
+    }
+    for (std::size_t index = 0; index < replacements.size(); ++index) {
+        std::istringstream changed(replacements[index], std::ios::in | std::ios::binary);
+        require_tar_rejected_without_publication(root / std::to_string(index), [&] {
+            flitzzip::detail::extract_validated_tar_stream(changed, plan, root / std::to_string(index), false, {});
+        });
+    }
+    std::istringstream empty_scan("", std::ios::in | std::ios::binary);
+    const auto empty_plan = flitzzip::detail::scan_tar_stream(empty_scan, false);
+    std::istringstream extra(valid.str(), std::ios::in | std::ios::binary);
+    require_tar_rejected_without_publication(root / "extra", [&] {
+        flitzzip::detail::extract_validated_tar_stream(extra, empty_plan, root / "extra", false, {});
+    });
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Preserve validated directory records and following file alignment in the non-seekable extraction pass.
+// Inputs: An independent directory/file TAR with a legal directory payload that must be skipped, not published.
+// Outputs: The exact directory and file bytes, correct admitted totals and no directory payload file.
+TEST_CASE(tar_stream_extract_directory_payload_does_not_shift_following_file) {
+    const auto root = test_temp_dir("tar-directory-stream-alignment");
+    std::ostringstream wire(std::ios::out | std::ios::binary);
+    append_tar_fixture_record(wire, make_test_tar_header("nested/", '5', 3), "pad");
+    append_tar_fixture_record(wire, make_test_tar_header("nested/after.txt", '0', 5), "after");
+    std::istringstream scan(wire.str(), std::ios::in | std::ios::binary);
+    const auto plan = flitzzip::detail::scan_tar_stream(scan, false);
+    REQUIRE_EQ(plan.entries.size(), 2U);
+    REQUIRE_EQ(plan.total_file_bytes, 5U);
+    std::istringstream input(wire.str(), std::ios::in | std::ios::binary);
+    flitzzip::detail::extract_validated_tar_stream(input, plan, root, false, {});
+    {
+        std::ifstream restored(root / "nested" / "after.txt", std::ios::binary);
+        REQUIRE_TRUE(restored.is_open());
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), {}), "after");
+    }
+    REQUIRE_EQ(
+        std::distance(std::filesystem::directory_iterator(root / "nested"), std::filesystem::directory_iterator{}), 1);
     std::filesystem::remove_all(root);
 }
 
@@ -1125,4 +1338,111 @@ TEST_CASE(tar_global_and_long_name_metadata_match_between_passes) {
             std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}), 2);
     }
     std::filesystem::remove_all(root);
+}
+
+namespace {
+
+// Purpose: Reject unsupported TAR numeric widths during overload resolution, before any header can be written.
+// Inputs: A field's static extent. Outputs: Whether the production encoder admits that width.
+template <std::size_t Width>
+concept TarNumericWidth =
+    requires(std::span<char, Width> field) { flitzzip::tar_detail::put_tar_number(field, std::uint64_t{0}); };
+static_assert(TarNumericWidth<7> && TarNumericWidth<8> && TarNumericWidth<12>);
+static_assert(!TarNumericWidth<0> && !TarNumericWidth<1> && !TarNumericWidth<6> && !TarNumericWidth<13>);
+
+// Purpose: Compare actual wire bytes with independent GNU TAR vectors while guarding both field boundaries.
+// Inputs: Unsigned metadata and a Python-standard-library-generated literal, including all field bytes.
+// Outputs: Exact octal/base-256 field and unchanged surrounding header bytes.
+template <std::size_t Size> void require_tar_numeric_wire(std::uint64_t value, const char (&expected)[Size]) {
+    constexpr std::size_t width = Size - 1U;
+    std::array<char, width + 4U> buffer;
+    buffer.fill('!');
+    auto field = std::span(buffer).template subspan<2, width>();
+    flitzzip::tar_detail::put_tar_number(field, value);
+    for (std::size_t index = 0; index < width; ++index) {
+        REQUIRE_EQ(static_cast<unsigned char>(field[index]), static_cast<unsigned char>(expected[index]));
+    }
+    REQUIRE_TRUE(buffer.front() == '!' && buffer[1] == '!');
+    REQUIRE_TRUE(buffer[width + 2U] == '!' && buffer.back() == '!');
+}
+
+// Purpose: Preserve header state when a valid unsigned value cannot fit a narrower GNU binary field.
+// Inputs: Actual TAR field width and an out-of-range value. Outputs: Refusal before writes and valid same-field reuse.
+template <std::size_t Width> void require_tar_numeric_overflow(std::uint64_t value) {
+    std::array<char, Width + 4U> buffer;
+    buffer.fill('!');
+    const auto before = buffer;
+    auto field = std::span(buffer).template subspan<2, Width>();
+    bool refused = false;
+    try {
+        flitzzip::tar_detail::put_tar_number(field, value);
+    } catch (const flitzzip::ArchiveError&) {
+        refused = true;
+    }
+    REQUIRE_TRUE(refused);
+    REQUIRE_TRUE(buffer == before);
+    flitzzip::tar_detail::put_tar_number(field, 0);
+    REQUIRE_TRUE(std::all_of(field.begin(), field.end() - 1, [](char byte) { return byte == '0'; }));
+    REQUIRE_EQ(field.back(), '\0');
+    REQUIRE_TRUE(buffer.front() == '!' && buffer[1] == '!');
+    REQUIRE_TRUE(buffer[Width + 2U] == '!' && buffer.back() == '!');
+}
+
+}  // namespace
+
+// Purpose: Qualify every production numeric width, its octal/binary boundary and the complete unsigned size domain.
+// Inputs: Golden fields independently captured from CPython 3.13 tarfile.itn with GNU_FORMAT.
+// Outputs: Exact bytes with no large files, fabricated buffer extents or shared writer/reader oracle.
+TEST_CASE(tar_header_numeric_fields_match_independent_gnu_vectors) {
+    require_tar_numeric_wire(0ULL, "\x30\x30\x30\x30\x30\x30\x00");
+    require_tar_numeric_wire(262143ULL, "\x37\x37\x37\x37\x37\x37\x00");
+    require_tar_numeric_wire(262144ULL, "\x80\x00\x00\x00\x04\x00\x00");
+    require_tar_numeric_wire(281474976710655ULL, "\x80\xff\xff\xff\xff\xff\xff");
+    require_tar_numeric_wire(0ULL, "\x30\x30\x30\x30\x30\x30\x30\x00");
+    require_tar_numeric_wire(7ULL, "\x30\x30\x30\x30\x30\x30\x37\x00");
+    require_tar_numeric_wire(8ULL, "\x30\x30\x30\x30\x30\x31\x30\x00");
+    require_tar_numeric_wire(2097151ULL, "\x37\x37\x37\x37\x37\x37\x37\x00");
+    require_tar_numeric_wire(2097152ULL, "\x80\x00\x00\x00\x00\x20\x00\x00");
+    require_tar_numeric_wire(4294967295ULL, "\x80\x00\x00\x00\xff\xff\xff\xff");
+    require_tar_numeric_wire(72057594037927935ULL, "\x80\xff\xff\xff\xff\xff\xff\xff");
+    require_tar_numeric_wire(0ULL, "\x30\x30\x30\x30\x30\x30\x30\x30\x30\x30\x30\x00");
+    require_tar_numeric_wire(8589934591ULL, "\x37\x37\x37\x37\x37\x37\x37\x37\x37\x37\x37\x00");
+    require_tar_numeric_wire(8589934592ULL, "\x80\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00");
+    require_tar_numeric_wire(9223372036854775808ULL, "\x80\x00\x00\x00\x80\x00\x00\x00\x00\x00\x00\x00");
+    require_tar_numeric_wire(18446744073709551615ULL, "\x80\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff");
+}
+
+// Purpose: Keep failed metadata encoding from corrupting a reusable bounded header.
+// Inputs: Values at and beyond the seven/eight-byte binary limit. Outputs: Unchanged bytes, then correct zero encoding.
+TEST_CASE(tar_header_numeric_overflow_preserves_field_and_allows_reuse) {
+    require_tar_numeric_overflow<7>(std::uint64_t{1} << 48U);
+    require_tar_numeric_overflow<7>(std::numeric_limits<std::uint64_t>::max());
+    require_tar_numeric_overflow<8>(std::uint64_t{1} << 56U);
+    require_tar_numeric_overflow<8>(std::numeric_limits<std::uint64_t>::max());
+}
+
+// Purpose: Enforce actual USTAR filename byte bounds and preserve neighboring header fields on rejection.
+// Inputs: An exact-width name, one excess byte and a subsequent UTF-8 value. Outputs: Exact copies or unchanged bytes.
+TEST_CASE(tar_header_text_fields_preserve_bounds_and_reject_before_writing) {
+    std::array<char, 104> buffer;
+    buffer.fill('!');
+    auto field = std::span(buffer).subspan<2, 100>();
+    const std::string exact(100, 'x');
+    flitzzip::tar_detail::put_tar_string(field, exact);
+    REQUIRE_TRUE(std::equal(field.begin(), field.end(), exact.begin()));
+    const auto before = buffer;
+    bool refused = false;
+    try {
+        flitzzip::tar_detail::put_tar_string(field, exact + "x");
+    } catch (const flitzzip::ArchiveError&) {
+        refused = true;
+    }
+    REQUIRE_TRUE(refused);
+    REQUIRE_TRUE(buffer == before);
+    std::fill(field.begin(), field.end(), '\0');
+    const std::string unicode = "\xE6\x97\xA5";
+    flitzzip::tar_detail::put_tar_string(field, unicode);
+    REQUIRE_TRUE(std::equal(unicode.begin(), unicode.end(), field.begin()));
+    REQUIRE_TRUE(std::all_of(field.begin() + unicode.size(), field.end(), [](char byte) { return byte == '\0'; }));
+    REQUIRE_TRUE(buffer.front() == '!' && buffer[1] == '!' && buffer[102] == '!' && buffer.back() == '!');
 }

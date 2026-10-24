@@ -102,7 +102,11 @@ def process_owner():
 # Inputs: Fixed argv, seconds and owned report path. Outputs: Retained result or diagnostic-bearing failure.
 def run_checked(arguments: list[str], timeout: int, log: Path) -> dict:
     result = process_owner().run_bounded_command(
-        arguments, timeout_seconds=timeout, max_output_bytes=8 * 1024 * 1024, response_tail_bytes=8 * 1024 * 1024
+        arguments,
+        timeout_seconds=timeout,
+        max_output_bytes=8 * 1024 * 1024,
+        response_tail_bytes=8 * 1024 * 1024,
+        response_max_characters=8 * 1024 * 1024,
     )
     log.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     if result["exit_code"] != 0 or result["timed_out"] or result["output_limit_exceeded"]:
@@ -130,6 +134,10 @@ def cli_admission_cases(source: Path, destination: Path, zip_source: Path) -> li
         ([*create, "--format", "tar", "--verify-after-write"], 1, "supported only for FLZIP and ZIP"),
         (["extract", "--unknown"], 1, "unknown extract argument"),
         (["verify", "--unknown"], 1, "unknown verify argument"),
+        (["benchmark-suite", "--unknown"], 1, "unknown benchmark-suite argument"),
+        (["benchmark-suite", "--size-mib"], 1, "missing value for --size-mib"),
+        (["benchmark-suite", "--workers", "4294967296"], 1, "invalid value for --workers"),
+        (["benchmark-suite", "--compression-level", "10"], 1, "invalid value for --compression-level"),
         (["gpu-diagnostic", "--unknown"], 1, "unknown gpu-diagnostic argument"),
         (["gpu-diagnostic", "--seconds", "0"], 1, "invalid value for --seconds: 0"),
         (
@@ -150,6 +158,28 @@ def cli_admission_cases(source: Path, destination: Path, zip_source: Path) -> li
         (["gpu-diagnostic", "--buffer-mib", "-1"], 1, "invalid value for --buffer-mib"),
         (["gpu-diagnostic", "--inner-iterations", "4294967296"], 1, "invalid value for --inner-iterations"),
     ]
+    for tuning in ([], ["--tune"], ["--tune-levels"]):
+        # Parse actual suite controls, then reject before either lane performs a synthetic benchmark.
+        cases.append(
+            (
+                [
+                    "benchmark-suite",
+                    "--size-mib",
+                    "1",
+                    "--profile",
+                    "RepeatedRecord",
+                    "--workers",
+                    "1",
+                    "--block-size-kib",
+                    "256",
+                    "--compression-level",
+                    "5",
+                    *tuning,
+                ],
+                1,
+                "memory benchmark workload must be at least 10240 MiB (10 GiB)",
+            )
+        )
     for arguments in (
         ["--force-cpu"],
         ["--require-gpu"],
@@ -196,7 +226,7 @@ def run_cli_admission_case(binary: Path, case: tuple[list[str], int, str | None]
 
 # Purpose: Exercise real CLI rejection and destination-preservation boundaries under the native collector.
 # Inputs: Existing executable, owned evidence directory and explicit HIP-host selection.
-# Outputs: Preserved caller fixtures and raw admission/capability reports; HIP mode adds one bounded GPU diagnostic.
+# Outputs: Preserved caller fixtures and raw reports; HIP mode adds real device work and isolated absence checks.
 def run_cli_admission(binary: Path, output: Path, *, hip_host: bool = False) -> None:
     directory = owned_path(ROOT, output / ("cli-admission-" + uuid.uuid4().hex))
     directory.mkdir()
@@ -224,10 +254,79 @@ def run_cli_admission(binary: Path, output: Path, *, hip_host: bool = False) -> 
         ):
             raise RuntimeError(f"Rejected CLI request changed caller files: {log}")
     expected_files.update(run_cli_capability_contracts(binary, directory, hip_host))
+    if hip_host:
+        expected_files.update(run_cli_device_absence_contracts(binary, directory, source, destination))
     if any(path.read_bytes() != expected for path, expected in fixtures.items()) or (
         {path.name for path in directory.iterdir()} != expected_files
     ):
         raise RuntimeError("CLI capability requests changed caller files or produced unexpected output files")
+
+
+# Purpose: Qualify explicit HIP no-device reporting and required-GPU refusal without altering the host driver.
+# Inputs: Admitted HIP binary and caller-owned fixtures; visibility changes only in this serial controller's children.
+# Outputs: Raw status/rejection logs and restored visibility; the caller independently verifies its original files.
+def run_cli_device_absence_contracts(binary: Path, directory: Path, source: Path, destination: Path) -> list[str]:
+    previous = os.environ.get("HIP_VISIBLE_DEVICES")
+    logs = []
+    os.environ["HIP_VISIBLE_DEVICES"] = "-1"
+    try:
+        for command, expected_exit in (("gpu-info", 1), ("dependency-check", 12)):
+            result = process_owner().run_bounded_command(
+                [str(binary), command],
+                timeout_seconds=30,
+                max_output_bytes=65536,
+                response_tail_bytes=65536,
+                working_directory=directory,
+            )
+            log = directory / f"no-device-{command}.json"
+            with log.open("x", encoding="utf-8") as stream:
+                json.dump({"environment": {"HIP_VISIBLE_DEVICES": "-1"}, "result": result}, stream, indent=2)
+                stream.write("\n")
+            if (
+                type(result.get("exit_code")) is not int
+                or result["exit_code"] != expected_exit
+                or any(result.get(key) is not False for key in ("timed_out", "output_limit_exceeded"))
+                or result.get("stderr") != ""
+            ):
+                raise RuntimeError(f"CLI no-device command failed: {log}")
+            values = cli_key_values(result, command)
+            expected = {
+                "hip_compiled": "true",
+                "hip_runtime_loadable": "true",
+                "hip_kernel_loadable": "false",
+                "available": "false",
+                "device_count": "0",
+                "selected_device": "-1",
+                "status": "No AMD HIP device is available",
+            }
+            if command == "dependency-check":
+                expected["dependency_status"] = "missing_amd_gpu"
+            if any(values.get(key) != value for key, value in expected.items()):
+                raise ValueError("CLI no-device status does not match explicit device absence")
+            logs.append(log.name)
+        log = directory / "no-device-neutron.json"
+        case = (
+            [
+                "compress",
+                "--format",
+                "flzip",
+                "--neutron-star",
+                "--require-gpu",
+                "--output",
+                str(destination),
+                str(source),
+            ],
+            1,
+            "No AMD HIP device is available",
+        )
+        run_cli_admission_case(binary, case, log)
+        logs.append(log.name)
+    finally:
+        if previous is None:
+            os.environ.pop("HIP_VISIBLE_DEVICES", None)
+        else:
+            os.environ["HIP_VISIBLE_DEVICES"] = previous
+    return logs
 
 
 # Purpose: Reject incomplete or ambiguous machine-readable CLI output without losing native diagnostics.
@@ -480,6 +579,8 @@ def run_scenarios(output: Path, hip_host: bool = False, include_gui: bool = Fals
                     str(ROOT / "tools/gui_smoke.ps1"),
                     "-Configuration",
                     "Debug",
+                    "-ScenarioTimeoutSeconds",
+                    str(GUI_SCENARIO_TIMEOUT_SECONDS),
                     "-ScreenshotPath",
                     str(output / "gui.png"),
                 ],
@@ -495,10 +596,40 @@ def run_scenarios(output: Path, hip_host: bool = False, include_gui: bool = Fals
     run_cli_admission(binary / "flitzzip_cli.exe", output, hip_host=hip_host)
 
 
+# Purpose: Separate previous measurement evidence from a new attempt before any fallible admission.
+# Inputs: Owned output directory; only the collector's fixed report names are moved, never deleted.
+# Outputs: Prior reports remain recoverable locally; no old qualifying summary survives at the current path.
+def retire_previous_measurement(output: Path) -> None:
+    names = (
+        "summary.json",
+        "native.xml",
+        "native-raw.xml",
+        "native-process.json",
+        "registry-process.json",
+        "cli-help-process.json",
+        "cli-version-process.json",
+        "cli-plan-process.json",
+        "cli-corpus-process.json",
+        "cli-formats-process.json",
+        "gui-process.json",
+        "gpu-info-process.json",
+    )
+    paths = [owned_path(ROOT, output / name) for name in names]
+    previous = [path for path in paths if path.exists()]
+    if not previous:
+        return
+    archive = owned_path(ROOT, output / ("previous-measurement-" + uuid.uuid4().hex))
+    archive.mkdir()
+    # Retire the qualifying summary first: a later I/O failure cannot leave it beside a new report.
+    for path in previous:
+        path.rename(archive / path.name)
+
+
 # Purpose: Measure native host instructions in an existing symbols-enabled build without inferring device hits.
 # Inputs: Current successful build receipt, explicit host/GUI modes and verified collector.
 # Outputs: Normalized Cobertura and source-bound metadata.
 def collect(collector: Path, lock: dict, output: Path, hip_host: bool = False, include_gui: bool = False) -> None:
+    retire_previous_measurement(output)
     before = coverage_build(hip_host)
     binary = ROOT / "build/Debug"
     identities = measurement_identity(include_gui)

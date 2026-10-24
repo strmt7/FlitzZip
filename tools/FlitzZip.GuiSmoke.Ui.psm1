@@ -1,6 +1,17 @@
 # FlitzZip GUI smoke Win32, input, capture, and visual helper functions.
 $ErrorActionPreference = "Stop"
 
+# Purpose: Keep the orphan-window safety fuse outside the owning scenario's legitimate execution budget.
+# Inputs: Bounded scenario seconds and the same cleanup milliseconds used by the driver after requesting close.
+# Outputs: Native timer milliseconds, including cleanup grace; no active assertion or parent deadline is extended.
+function Get-GuiSmokeWatchdogInterval {
+    param(
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$ScenarioTimeoutSeconds,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 60000)][int]$CleanupTimeoutMilliseconds
+    )
+    return [uint32](([long]$ScenarioTimeoutSeconds * 1000) + $CleanupTimeoutMilliseconds)
+}
+
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;
@@ -78,7 +89,7 @@ public static class FlitzZipNativeUi {
     [DllImport("user32.dll")]
     public static extern bool IsChild(IntPtr hWndParent, IntPtr hWnd);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError=true)]
     public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
@@ -388,7 +399,7 @@ function Invoke-ClientDrag {
 
 # Purpose: Inject a file-drop payload into the FlitzZip window.
 # Inputs: `Handle` is the FlitzZip HWND and `Paths` are absolute file paths.
-# Outputs: Posts `WM_DROPFILES`; the app owns and releases the allocated HDROP handle.
+# Outputs: Transfers HDROP ownership only after checked queue admission; releases a rejected payload and retains errors.
 function Invoke-FileDrop {
     param(
         [IntPtr]$Handle,
@@ -401,7 +412,16 @@ function Invoke-FileDrop {
     $dropX = [int][Math]::Round($DesignX * $scale)
     $dropY = [int][Math]::Round($DesignY * $scale)
     $dropHandle = [FlitzZipNativeUi]::CreateDropHandle($Paths, $dropX, $dropY)
-    [void][FlitzZipNativeUi]::PostMessage($Handle, 0x0233, $dropHandle, [IntPtr]::Zero)
+    try {
+        Send-ClientInputMessage -Handle $Handle -Message 0x0233 -WParam $dropHandle -LParam ([IntPtr]::Zero) -Queued
+    } catch {
+        $primary = $_
+        if ([FlitzZipNativeUi]::GlobalFree($dropHandle) -ne [IntPtr]::Zero) {
+            $primary.Exception.Data['DropPayloadCleanupFailure'] = 'Could not release the rejected HDROP payload.'
+            Write-Warning 'Could not release the rejected HDROP payload.' -WarningAction Continue
+        }
+        throw $primary
+    }
 }
 
 # Purpose: Assert that the release window is fixed-size.
@@ -844,4 +864,4 @@ function Invoke-DropdownExercise {
 }
 
 
-Export-ModuleMember -Function Assert-DesignRectHasColor, Assert-DesignRectHasDetail, Assert-FixedWindowStyle, Assert-QueueEmptyMessageCentered, Assert-FlitzZipVisibleForCapture, Assert-VisualStructure, ConvertTo-MouseLParam, Get-ClientCaptureOffset, Get-SampledUniqueColorCount, Get-ValidatedScreenWindowCapture, Invoke-ClientClick, Invoke-ClientDrag, Invoke-ClientKey, Invoke-ClientMove, Invoke-ClientWheel, Invoke-DropdownExercise, Invoke-FileDrop, Invoke-SidebarClick, Request-FlitzZipRedraw, Save-FlitzZipScreenshot, Show-FlitzZipForeground, Test-ColorNear
+Export-ModuleMember -Function Get-GuiSmokeWatchdogInterval, Assert-DesignRectHasColor, Assert-DesignRectHasDetail, Assert-FixedWindowStyle, Assert-QueueEmptyMessageCentered, Assert-FlitzZipVisibleForCapture, Assert-VisualStructure, ConvertTo-MouseLParam, Get-ClientCaptureOffset, Get-SampledUniqueColorCount, Get-ValidatedScreenWindowCapture, Invoke-ClientClick, Invoke-ClientDrag, Invoke-ClientKey, Invoke-ClientMove, Invoke-ClientWheel, Invoke-DropdownExercise, Invoke-FileDrop, Invoke-SidebarClick, Request-FlitzZipRedraw, Save-FlitzZipScreenshot, Show-FlitzZipForeground, Test-ColorNear

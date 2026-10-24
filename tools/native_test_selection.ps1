@@ -88,8 +88,8 @@ function Get-FlitzZipNativeTestSelection {
                @{ source = 'tests/cpp/test_resource_usage.cpp'; pattern = '^' }) },
         @{ id = 'sevenzip-parser'; requireHip = $false; paths = @('third_party/lzma_sdk/C/7zArcIn.c')
            rules = @(
-               @{ source = 'tests/cpp/test_sevenzip_compat.cpp'; pattern = '^sevenzip_' },
-               @{ source = 'tests/cpp/test_sevenzip_ppmd.cpp'; pattern = '^sevenzip_' }) },
+               @{ source = 'tests/cpp/test_sevenzip_compat.cpp'; pattern = '^' },
+               @{ source = 'tests/cpp/test_sevenzip_ppmd.cpp'; pattern = '^' }) },
         @{ id = 'hip-entropy-encode'; requireHip = $true; paths = @('src/gpu/hip_codec_static_prefix.hip.cpp', 'src/gpu/hip_codec_adaptive_prefix.hip.cpp')
            rules = @(
                @{ source = 'tests/cpp/test_flzip_gpu_prefix.cpp'; pattern = '^flzip_(prefix_reference|gpu_(prefix_|huffman_|entropy_efforts_|efforts_preserve_dictionary_)|required_gpu_(prefix_|huffman_))' },

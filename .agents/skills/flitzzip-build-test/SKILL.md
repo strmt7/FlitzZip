@@ -1,6 +1,6 @@
 ---
 name: flitzzip-build-test
-description: Select and run FlitzZip native builds, affected tests, packaging checks and hosted verification with the pinned Windows and AMD HIP toolchain.
+description: Build and qualify FlitzZip changes, diagnose CI failures and verify packages using the pinned Windows and AMD HIP toolchain.
 ---
 
 # FlitzZip Build and Test
@@ -22,12 +22,26 @@ admission, tool provisioning, checkpoint intent and post-push acceptance.
 3. Provision missing tools through existing pinned launchers. Follow
    [ROCm toolchain configuration](../../../docs/rocm-toolchain.md) for existing
    or custom SDK installations. Preserve unrelated host work and build trees.
+   Verify the selected interpreter against each lock's supported versions;
+   `py -3` may select a newer unsupported runtime. Use a version selector or
+   process-scoped launcher selection, never a global downgrade or relaxed lock.
 4. Run `tools/verify_changes.ps1` with the planned scope. Diagnose failures
    before expanding coverage. Reuse checks only while relevant source, recipe,
    tool and output identities still match.
 5. Review the final diff and commit intentional source, documentation and
    configuration. Follow the operating guide's exact-commit workflow procedure;
    final acceptance covers the accumulated change range and required audit.
+
+For a failing check, distinguish configure, compile, link, execution, collection
+and upload failures before changing code or rebuilding. Preserve the first
+failure. Use `flitzzip-test-investigation` when the cause is unclear. A retry must
+test a changed hypothesis; an eventual pass does not erase an intermittent failure.
+
+For build-time improvements, measure the expensive stage first. Review generated
+outputs and their dependency edges before adding caches, PCH reuse or parallel
+work. Validate an unchanged incremental build and the rebuild caused by changing
+a real input. Caches accelerate work; they do not replace source/output admission
+or the traced builds required by static analysis.
 
 ## Specialized consumers
 

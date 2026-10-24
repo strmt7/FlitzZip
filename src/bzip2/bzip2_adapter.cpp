@@ -119,10 +119,15 @@ OperationStats compress_bzip2(const std::vector<std::filesystem::path>& sources,
     return compress_bzip2_file(sources.front(), output_archive, compression_level, progress_callback);
 }
 
+// Purpose: Decode a Bzip2 source held immutable through verified file publication.
+// Inputs: archive_path is admitted before destination creation; destination, overwrite and progress_callback select
+// output. Outputs: Exact decoded telemetry or an error, with partial output cleaned and the source lock released on
+// every exit.
 OperationStats extract_bzip2_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                   bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto archive_size = regular_file_size(archive_path);
+    Bzip2InputStream input(archive_path);
+    const auto archive_size = input.input_bytes();
     const auto entry_name = single_stream_entry_name(archive_path, {{".bz2", ""}});
     create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, entry_name, ArchivePathEncoding::Utf8);
@@ -139,7 +144,6 @@ OperationStats extract_bzip2_file(const std::filesystem::path& archive_path, con
     bool temporary_active = true;
     std::uint64_t output_size = 0;
     try {
-        Bzip2InputStream input(archive_path);
         std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
         if (!output) {
             throw ArchiveError("cannot create Bzip2 extraction target: " + path_diagnostic_utf8(target));

@@ -5,12 +5,17 @@
 #include "core/result.hpp"
 #include "hqx/hqx_adapter.hpp"
 
+#include <cstddef>
+#include <array>
 #include <cstdint>
+#include <limits>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -163,12 +168,13 @@ std::string wrap_hqx_text(const std::string& encoded) {
     return text;
 }
 
-// Purpose: Build a complete test-side BinHex 4.0 fixture.
+// Purpose: Serialize independent BinHex header, fork and CRC bytes before transfer encoding.
 // Inputs: `name` is the embedded output name, `data` is the data fork, `resource` is the resource fork, and corruption
-// flags flip stored CRC bits. Outputs: Returns a complete `.hqx` text stream.
-std::string make_hqx_fixture(std::string_view name, const std::vector<unsigned char>& data,
-                             const std::vector<unsigned char>& resource = {}, bool corrupt_header_crc = false,
-                             bool corrupt_data_crc = false, bool corrupt_resource_crc = false) {
+// flags flip stored CRC bits. Outputs: Returns logical bytes before RLE or six-bit encoding.
+std::vector<unsigned char> make_hqx_logical_fixture(std::string_view name, const std::vector<unsigned char>& data,
+                                                    const std::vector<unsigned char>& resource = {},
+                                                    bool corrupt_header_crc = false, bool corrupt_data_crc = false,
+                                                    bool corrupt_resource_crc = false) {
     std::vector<unsigned char> header;
     header.push_back(static_cast<unsigned char>(name.size()));
     header.insert(header.end(), name.begin(), name.end());
@@ -185,7 +191,70 @@ std::string make_hqx_fixture(std::string_view name, const std::vector<unsigned c
     append_be16(logical, static_cast<std::uint16_t>(hqx_crc_for(data) ^ (corrupt_data_crc ? 1U : 0U)));
     logical.insert(logical.end(), resource.begin(), resource.end());
     append_be16(logical, static_cast<std::uint16_t>(hqx_crc_for(resource) ^ (corrupt_resource_crc ? 1U : 0U)));
+    return logical;
+}
+
+// Purpose: Preserve the existing literal-escape BinHex fixture interface over one canonical logical serializer.
+// Inputs: Filename, forks and optional CRC corruption controls. Outputs: Complete HQX text with literal RLE escapes.
+std::string make_hqx_fixture(std::string_view name, const std::vector<unsigned char>& data,
+                             const std::vector<unsigned char>& resource = {}, bool corrupt_header_crc = false,
+                             bool corrupt_data_crc = false, bool corrupt_resource_crc = false) {
+    const auto logical =
+        make_hqx_logical_fixture(name, data, resource, corrupt_header_crc, corrupt_data_crc, corrupt_resource_crc);
     return wrap_hqx_text(hqx_encode_sixbit(rle_escape(logical)));
+}
+
+// Purpose: Encode real repeat runs using RFC 1741 Appendix A, independently of the production decoder.
+// Inputs: Logical bytes, including literal marker values. Outputs: Runs split at 255 bytes and escaped markers.
+std::vector<unsigned char> hqx_encode_runs(const std::vector<unsigned char>& logical) {
+    std::vector<unsigned char> encoded;
+    for (std::size_t offset = 0; offset < logical.size();) {
+        std::size_t count = 1U;
+        while (count < 255U && count < logical.size() - offset && logical[offset + count] == logical[offset]) {
+            ++count;
+        }
+        const auto literals = count >= 3U ? 1U : count;
+        for (std::size_t i = 0; i < literals; ++i) {
+            encoded.push_back(logical[offset]);
+            if (logical[offset] == kHqxRleMarker) {
+                encoded.push_back(0U);
+            }
+        }
+        if (count >= 3U) {
+            encoded.push_back(kHqxRleMarker);
+            encoded.push_back(static_cast<unsigned char>(count));
+        }
+        offset += count;
+    }
+    return encoded;
+}
+
+// Purpose: Require malformed transfer streams to preserve caller files and remove every temporary artifact.
+// Inputs: Isolated root, exact transfer bytes and an expected failure fragment (empty accepts any parser error).
+// Outputs: Real extraction rejects with one unchanged sentinel and no extra file or directory.
+void require_hqx_rejected_without_publication(const std::filesystem::path& root, const std::string& text,
+                                              std::string_view diagnostic = {}) {
+    std::filesystem::create_directories(root);
+    const auto archive = root / "input.hqx";
+    const auto output = root / "out";
+    std::filesystem::create_directories(output);
+    const auto sentinel = output / "existing.bin";
+    const std::vector<unsigned char> original{0x10U, 0x90U, 0xFFU};
+    write_binary_file(sentinel, original);
+    write_text_file(archive, text);
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_hqx_file(archive, output, true);
+    } catch (const flitzzip::ArchiveError& error) {
+        if (std::string_view(error.what()).find(diagnostic) == std::string_view::npos) {
+            throw std::runtime_error("Unexpected BinHex rejection for " + root.filename().string() + ": " +
+                                     std::string(error.what()).substr(0U, 512U));
+        }
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(read_binary_file(sentinel), original);
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{}), 1);
 }
 
 // Purpose: Corrupt the first encoded payload character with a byte outside the HQX alphabet.
@@ -207,6 +276,156 @@ std::string corrupt_first_hqx_payload_char(std::string text) {
 // Purpose: Verify BinHex extraction restores only the data fork and validates the stream by auto-detection.
 // Inputs: A valid `.hqx` fixture with binary data and a non-empty resource fork.
 // Outputs: Throws if detection, extraction statistics, or restored data bytes differ.
+// Purpose: Decode real RLE runs at marker/count boundaries while independently validating both fork CRCs.
+// Inputs: RFC 1741 run sizes around 3 and 255, including zero, literal markers and high bytes in both forks.
+// Outputs: Exact data fork only; a partial preamble match does not consume the following valid transfer comment.
+TEST_CASE(hqx_extracts_real_rle_runs_and_recovers_preamble_matching) {
+    const auto root = test_temp_dir("hqx-real-runs");
+    std::vector<unsigned char> payload;
+    for (const auto byte : {0x00U, 0x90U, 0xFFU}) {
+        for (const std::size_t count : {1U, 2U, 3U, 254U, 255U, 256U, 511U}) {
+            payload.insert(payload.end(), count, static_cast<unsigned char>(byte));
+            payload.push_back(0x37U);
+        }
+    }
+    const std::vector<unsigned char> resource(511U, 0x90U);
+    const auto logical = make_hqx_logical_fixture("payload.bin", payload, resource);
+    const auto encoded = hqx_encode_runs(logical);
+    REQUIRE_TRUE(encoded.size() < logical.size());
+    const auto archive = root / "runs.hqx";
+    write_text_file(archive, "Ignored partial marker (Thisx\n" + wrap_hqx_text(hqx_encode_sixbit(encoded)));
+    const auto destination = root / "out";
+    const auto result = flitzzip::extract_hqx_file(archive, destination, false);
+    REQUIRE_EQ(result.entries, 1U);
+    REQUIRE_EQ(result.output_bytes, payload.size());
+    REQUIRE_EQ(read_binary_file(destination / "payload.bin"), payload);
+    REQUIRE_EQ(count_regular_files(destination), 1U);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Preserve empty data/resource fork completion and publish real zero-byte files rather than omit them.
+// Inputs: Every empty/nonempty fork combination with independently generated CRCs and transfer framing.
+// Outputs: Exactly one regular data-fork file with the original bytes; resource-only input still publishes an empty
+// file.
+TEST_CASE(hqx_empty_forks_publish_exact_zero_byte_files) {
+    const auto root = test_temp_dir("hqx-empty-forks");
+    const std::array<std::vector<unsigned char>, 2> forks{{{}, {0x90U, 0x00U, 0xFFU}}};
+    for (std::size_t data = 0; data < forks.size(); ++data) {
+        for (std::size_t resource = 0; resource < forks.size(); ++resource) {
+            const auto fixture = root / (std::to_string(data) + "-" + std::to_string(resource));
+            std::filesystem::create_directories(fixture);
+            const auto archive = fixture / "input.hqx";
+            const auto output = fixture / "out";
+            write_text_file(archive, make_hqx_fixture("zero.bin", forks[data], forks[resource]));
+            const auto result = flitzzip::extract_hqx_file(archive, output, false);
+            REQUIRE_EQ(result.entries, 1U);
+            REQUIRE_EQ(result.output_bytes, forks[data].size());
+            REQUIRE_TRUE(std::filesystem::is_regular_file(output / "zero.bin"));
+            REQUIRE_EQ(read_binary_file(output / "zero.bin"), forks[data]);
+            REQUIRE_EQ(count_regular_files(output), 1U);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Refuse every truncated logical BinHex record after otherwise complete transfer/RLE framing.
+// Inputs: All shorter prefixes of independent header/data/resource/CRC bytes and an unchanged caller sentinel.
+// Outputs: No partial publication or staging debris, including after data-fork writes; valid reuse still succeeds.
+TEST_CASE(hqx_logical_truncations_preserve_destination_and_allow_recovery) {
+    const auto root = test_temp_dir("hqx-logical-truncations");
+    const std::vector<unsigned char> payload{0x00U, 0x90U, 0xFFU, 0x23U, 0x47U};
+    const std::vector<unsigned char> resource{0x90U, 0x00U, 0x77U};
+    const auto logical = make_hqx_logical_fixture("payload.bin", payload, resource);
+    for (std::size_t length = 0; length < logical.size(); ++length) {
+        const std::vector<unsigned char> prefix(logical.begin(), logical.begin() + static_cast<std::ptrdiff_t>(length));
+        const auto fixture = root / std::to_string(length);
+        require_hqx_rejected_without_publication(fixture, wrap_hqx_text(hqx_encode_sixbit(rle_escape(prefix))),
+                                                 "before all CRC-checked sections were complete");
+        write_text_file(fixture / "input.hqx", make_hqx_fixture("payload.bin", payload, resource));
+        const auto result = flitzzip::extract_hqx_file(fixture / "input.hqx", fixture / "out", true);
+        REQUIRE_EQ(result.output_bytes, payload.size());
+        REQUIRE_EQ(read_binary_file(fixture / "out" / "payload.bin"), payload);
+        REQUIRE_EQ(count_regular_files(fixture / "out"), 2U);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Validate outer transfer framing, RLE grammar and filename-length bounds before publishing any file.
+// Inputs: Independently malformed preambles, delimiters, residual sextets, RLE controls and logical trailing bytes.
+// Outputs: Exact diagnostic category and an unchanged destination with no staging debris for every malformed stream.
+TEST_CASE(hqx_transfer_and_rle_grammar_reject_malformed_boundaries) {
+    const auto root = test_temp_dir("hqx-transfer-framing");
+    auto logical = make_hqx_logical_fixture("payload.bin", {0x11U}, {0x22U});
+    const auto valid = make_hqx_fixture("payload.bin", {0x11U}, {0x22U});
+    logical.push_back(0x33U);
+    const std::vector<std::pair<std::string, std::string_view>> cases{
+        {"Incomplete transfer comment", "required header comment"},
+        {std::string(kHqxComment), "payload-start colon"},
+        {std::string(kHqxComment) + "\nX", "not followed by a payload-start colon"},
+        {std::string(65536U, 'x') + valid, "preamble exceeds"},
+        {valid.substr(0U, valid.rfind(':')), "terminating colon"},
+        {valid + "unexpected trailing bytes", "trailing data after the terminating colon"},
+        {wrap_hqx_text("!"), "invalid trailing six-bit group"},
+        {wrap_hqx_text(hqx_encode_sixbit({0x90U})), "missing its repeat count"},
+        {wrap_hqx_text(hqx_encode_sixbit({0x90U, 0x02U})), "repeat appears before any byte"},
+        {wrap_hqx_text(hqx_encode_sixbit({0x00U})), "filename length is outside"},
+        {wrap_hqx_text(hqx_encode_sixbit({0x40U})), "filename length is outside"},
+        {wrap_hqx_text(hqx_encode_sixbit(rle_escape(logical))), "decoded data after the resource fork"},
+    };
+    for (std::size_t index = 0; index < cases.size(); ++index) {
+        require_hqx_rejected_without_publication(root / std::to_string(index), cases[index].first, cases[index].second);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Admit exact fork-work ceilings and reject their successors without allocating or writing those fork sizes.
+// Inputs: Tiny CRC-correct headers declaring boundary, over-boundary and overflowing-32-bit fork sums.
+// Outputs: Boundary headers reach the expected physical truncation; excessive work rejects at metadata admission.
+TEST_CASE(hqx_declared_fork_work_has_exact_metadata_boundaries) {
+    const auto root = test_temp_dir("hqx-fork-work-admission");
+    constexpr std::uint32_t total_work_limit = 1024U * 1024U * 1024U;
+    constexpr std::uint32_t resource_limit = 256U * 1024U * 1024U;
+    struct ForkCase {
+        std::uint32_t data;
+        std::uint32_t resource;
+        bool admitted;
+    };
+    for (const std::size_t name_length : {1U, 11U, 63U}) {
+        // RFC 1741: name plus 20 header bytes and three two-byte CRCs consume decoded work too.
+        const auto maximum_data = total_work_limit - static_cast<std::uint32_t>(name_length + 26U);
+        const std::array<ForkCase, 7> cases{{
+            {maximum_data, 0U, true},
+            {maximum_data + 1U, 0U, false},
+            {0U, resource_limit, true},
+            {0U, resource_limit + 1U, false},
+            {maximum_data - resource_limit, resource_limit, true},
+            {maximum_data - resource_limit + 1U, resource_limit, false},
+            {std::numeric_limits<std::uint32_t>::max(), 1U, false},
+        }};
+        for (std::size_t index = 0; index < cases.size(); ++index) {
+            auto logical = make_hqx_logical_fixture(std::string(name_length, 'x'), {});
+            const auto header_size = static_cast<std::size_t>(logical.front()) + 20U;
+            REQUIRE_TRUE(logical.size() >= header_size + 2U);
+            const auto [data, resource, admitted] = cases[index];
+            for (std::size_t byte = 0; byte < 4U; ++byte) {
+                logical[header_size - 8U + byte] = static_cast<unsigned char>(data >> ((3U - byte) * 8U));
+                logical[header_size - 4U + byte] = static_cast<unsigned char>(resource >> ((3U - byte) * 8U));
+            }
+            const std::vector<unsigned char> header(logical.begin(),
+                                                    logical.begin() + static_cast<std::ptrdiff_t>(header_size));
+            const auto crc = hqx_crc_for(header);
+            logical[header_size] = static_cast<unsigned char>(crc >> 8U);
+            logical[header_size + 1U] = static_cast<unsigned char>(crc);
+            const auto expected = admitted ? "before all CRC-checked sections were complete"
+                                           : "declared fork work exceeds FlitzZip resource limits";
+            const auto fixture = root / (std::to_string(name_length) + "-" + std::to_string(index));
+            require_hqx_rejected_without_publication(fixture, wrap_hqx_text(hqx_encode_sixbit(rle_escape(logical))),
+                                                     expected);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
 TEST_CASE(hqx_extracts_data_fork_and_discards_resource_fork) {
     const auto root = test_temp_dir("hqx-data-fork");
     const auto archive = root / "payload.hqx";

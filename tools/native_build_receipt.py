@@ -356,6 +356,8 @@ def configured_recipe(root: Path, configuration: str) -> tuple[dict, dict]:
         match = re.fullmatch(r"([^#/:][^:]*):[^=]+=(.*)", line)
         if match:
             cache[match[1]] = match[2]
+    if cache.get("FLITZZIP_HIP_COVERAGE_MANIFEST"):
+        raise ValueError("development HIP coverage builds cannot qualify production packages")
     if any(key not in cache for key in RECIPE_KEYS):
         raise ValueError("CMake cache lacks required native build options")
     recipe = {key: cache[key] for key in RECIPE_KEYS}

@@ -3,7 +3,7 @@
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/stream_archive_path.hpp"
-#include "core/file_size.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 #include "xz/xz_stream.hpp"
@@ -26,14 +26,14 @@ constexpr std::size_t kXzBufferBytes = 64U * 1024U;
 }  // namespace
 
 // Purpose: Decode one XZ compatibility stream into a verified output file.
-// Inputs: `archive_path` is the encoded stream, `destination` is the extraction root, `overwrite` controls final-file
-// replacement, and `progress_callback` receives synchronous progress snapshots.
-// Outputs: Publishes the decoded file below `destination` and returns stats, or throws on malformed data or unsafe
-// path.
+// Inputs: `archive_path` stays pinned through publication, `destination` is the extraction root, `overwrite` controls
+// final-file replacement, and `progress_callback` receives synchronous progress snapshots. Outputs: Publishes the
+// decoded file below `destination` and returns stats, or throws on malformed data or unsafe path.
 OperationStats extract_xz_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto archive_size = regular_file_size(archive_path);
+    XzInputStream input(archive_path);
+    const auto archive_size = input.input_bytes();
     const auto entry_name = single_stream_entry_name(archive_path, {{".xz", ""}});
     create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, entry_name, ArchivePathEncoding::Utf8);
@@ -50,7 +50,6 @@ OperationStats extract_xz_file(const std::filesystem::path& archive_path, const 
     bool temporary_active = true;
     std::uint64_t output_size = 0;
     try {
-        XzInputStream input(archive_path);
         std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
         if (!output) {
             throw ArchiveError("cannot create XZ extraction target: " + path_diagnostic_utf8(target));

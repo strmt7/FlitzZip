@@ -1,4 +1,5 @@
 #include "app/gdi_back_buffer.hpp"
+#include "app/gdi_dc_state.hpp"
 #include "test_util.hpp"
 
 #include <limits>
@@ -76,6 +77,44 @@ TEST_CASE(gdi_back_buffer_reuses_surface_and_presents_changed_pixels) {
     buffer.reset();
     REQUIRE_TRUE(buffer.render(target.dc, 150, 110, nullptr, [](HDC) {}));
     REQUIRE_EQ(buffer.allocation_count(), 3U);
+}
+
+// Purpose: Recover from real Win32 allocation/presentation rejection without leaking a retained surface.
+// Inputs: A memory-only valid destination and a reserved invalid HDC; no GDI exhaustion or desktop drawing.
+// Outputs: Cold failure never calls paint, cached presentation failure releases ownership, and valid reuse presents
+// pixels.
+TEST_CASE(gdi_back_buffer_releases_cached_surface_after_native_destination_failure) {
+    TestSurface target;
+    const auto invalid = reinterpret_cast<HDC>(static_cast<INT_PTR>(-1));
+    REQUIRE_EQ(GetObjectType(invalid), 0U);
+    const auto baseline = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+    flitzzip::app::GdiBackBuffer buffer;
+    bool invoked = false;
+    REQUIRE_TRUE(!buffer.render(invalid, 100, 80, nullptr, [&](HDC) { invoked = true; }));
+    REQUIRE_TRUE(!invoked);
+    REQUIRE_EQ(buffer.allocation_count(), 0U);
+    REQUIRE_EQ(GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS), baseline);
+    for (std::uint64_t attempt = 0; attempt < 8U; ++attempt) {
+        const auto color = RGB(20 + attempt, 40, 60);
+        REQUIRE_TRUE(
+            buffer.render(target.dc, 100, 80, nullptr, [color](HDC dc) { REQUIRE_TRUE(SetPixelV(dc, 3, 4, color)); }));
+        REQUIRE_EQ(GetPixel(target.dc, 3, 4), color);
+        REQUIRE_EQ(buffer.allocation_count(), attempt + 1U);
+        invoked = false;
+        REQUIRE_TRUE(!buffer.render(invalid, 100, 80, nullptr, [&](HDC dc) {
+            invoked = true;
+            REQUIRE_TRUE(SetPixelV(dc, 3, 4, RGB(200, 10, 30)));
+        }));
+        REQUIRE_TRUE(invoked);
+        REQUIRE_EQ(GetPixel(target.dc, 3, 4), color);
+        REQUIRE_EQ(GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS), baseline);
+    }
+    REQUIRE_TRUE(
+        buffer.render(target.dc, 100, 80, nullptr, [](HDC dc) { REQUIRE_TRUE(SetPixelV(dc, 3, 4, RGB(30, 60, 90))); }));
+    REQUIRE_EQ(GetPixel(target.dc, 3, 4), RGB(30, 60, 90));
+    REQUIRE_EQ(buffer.allocation_count(), 9U);
+    buffer.reset();
+    REQUIRE_EQ(GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS), baseline);
 }
 
 TEST_CASE(gdi_back_buffer_restores_state_and_font_lifetime_between_frames) {
@@ -161,4 +200,41 @@ TEST_CASE(gdi_back_buffer_invalidates_monitor_identity_and_preserves_destination
     REQUIRE_EQ(buffer.allocation_count(), 2U);
     REQUIRE_TRUE(buffer.render(target.dc, 100, 80, monitor, [](HDC) {}));
     REQUIRE_EQ(buffer.allocation_count(), 2U);
+}
+
+// Purpose: Restore borrowed native drawing state during exceptions without replaying an already consumed snapshot.
+// Inputs: Real memory-only DC, a nested saved level and explicit completion; null DC supplies safe admission refusal.
+// Outputs: Caller state returns exactly, nested levels retire, explicit completion and destruction do not pop twice.
+TEST_CASE(gdi_dc_state_restores_on_exception_and_consumes_its_snapshot_once) {
+    TestSurface target;
+    const COLORREF original = RGB(7, 19, 31);
+    REQUIRE_TRUE(SetTextColor(target.dc, original) != CLR_INVALID);
+    const int caller = SaveDC(target.dc);
+    REQUIRE_TRUE(caller != 0);
+    bool caught = false;
+    try {
+        flitzzip::app::GdiDcState state(target.dc);
+        REQUIRE_TRUE(state.valid());
+        REQUIRE_TRUE(SaveDC(target.dc) != 0);
+        SetTextColor(target.dc, RGB(90, 80, 70));
+        throw std::runtime_error("controlled drawing failure");
+    } catch (const std::runtime_error& error) {
+        caught = std::string(error.what()) == "controlled drawing failure";
+    }
+    REQUIRE_TRUE(caught);
+    REQUIRE_EQ(GetTextColor(target.dc), original);
+    const COLORREF later = RGB(41, 53, 67);
+    {
+        flitzzip::app::GdiDcState state(target.dc);
+        REQUIRE_TRUE(state.restore());
+        REQUIRE_TRUE(!state.valid());
+        SetTextColor(target.dc, later);
+        REQUIRE_TRUE(!state.restore());
+    }
+    REQUIRE_EQ(GetTextColor(target.dc), later);
+    REQUIRE_TRUE(RestoreDC(target.dc, caller) != FALSE);
+    REQUIRE_EQ(GetTextColor(target.dc), original);
+    flitzzip::app::GdiDcState invalid(nullptr);
+    REQUIRE_TRUE(!invalid.valid());
+    REQUIRE_TRUE(!invalid.restore());
 }

@@ -1,4 +1,5 @@
 #include "core/archive.hpp"
+#include "core/path_text.hpp"
 
 #include "core/archive_encode_batch.hpp"
 #include "core/archive_index.hpp"
@@ -816,7 +817,7 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
     configure_file_stream_buffer(input, input_buffer);
     input.open(manifest_entry.source_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open source file: " + manifest_entry.source_path.string());
+        throw ArchiveError("cannot open source file: " + path_diagnostic_utf8(manifest_entry.source_path));
     }
 
     const auto entry_chunks = count_stream_windows(manifest_entry.size, options.chunk_size);
@@ -841,7 +842,7 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
         const auto want = std::min<std::uint64_t>(remaining, options.chunk_size);
         auto chunk = read_file_chunk(input, want);
         if (chunk.empty() && want != 0) {
-            throw ArchiveError("source file ended unexpectedly: " + manifest_entry.source_path.string());
+            throw ArchiveError("source file ended unexpectedly: " + path_diagnostic_utf8(manifest_entry.source_path));
         }
         const auto chunk_bytes = chunk.size();
         enqueue_encode_chunk(pending, std::move(chunk), gpu_options);
@@ -921,7 +922,7 @@ OperationStats compress_flzip(const std::vector<std::filesystem::path>& sources,
     configure_file_stream_buffer(output, archive_output_buffer);
     output.open(publication.staging_path(), std::ios::binary | std::ios::trunc);
     if (!output) {
-        throw ArchiveError("cannot create archive: " + output_archive.string());
+        throw ArchiveError("cannot create archive: " + path_diagnostic_utf8(output_archive));
     }
 
     ArchiveIndex index;
@@ -1009,21 +1010,24 @@ OperationStats compress_flzip(const std::vector<std::filesystem::path>& sources,
 }
 
 // Purpose: Extract a native FLZIP archive while publishing each file only after verification.
-// Inputs: `archive_path`, `destination`, `options`, and optional `progress_callback` describe the extraction run.
-// Outputs: Restores archive entries into `destination` and returns operation telemetry or throws on validation failure.
-OperationStats extract_flzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+// Inputs: `requested_archive` is pinned through publication; `destination`, `options` and `progress_callback` select
+// extraction. Outputs: Restores archive entries into `destination` and returns operation telemetry or throws on
+// validation failure.
+OperationStats extract_flzip(const std::filesystem::path& requested_archive, const std::filesystem::path& destination,
                              const ExtractOptions& options, const ProgressCallback& progress_callback) {
     validate_archive_options(options.chunk_size, options.block_size, options.worker_count, options.max_inflight_chunks);
     const auto gpu_telemetry = std::make_shared<GpuTelemetry>();
     const auto started = std::chrono::steady_clock::now();
+    const auto archive_source = pin_source_file(requested_archive);
+    const auto& archive_path = archive_source.path();
     auto archive_input_buffer = make_file_stream_buffer();
     std::ifstream input;
     configure_file_stream_buffer(input, archive_input_buffer);
     input.open(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open archive: " + archive_path.string());
+        throw ArchiveError("cannot open archive: " + path_diagnostic_utf8(archive_path));
     }
-    const auto archive_size = regular_file_size(archive_path);
+    const auto archive_size = archive_source.size();
     auto index = read_index_from_file(input);
 
     // Validate the complete index up front so extraction cannot create files for malformed metadata.
@@ -1060,7 +1064,7 @@ OperationStats extract_flzip(const std::filesystem::path& archive_path, const st
             continue;
         }
         if (!options.overwrite && std::filesystem::exists(target)) {
-            throw SecurityError("refusing to overwrite existing file: " + target.string());
+            throw SecurityError("refusing to overwrite existing file: " + path_diagnostic_utf8(target));
         }
         const auto entry_windows = count_decode_block_windows(entry.blocks, decode_window_bytes);
         const GpuCodecOptions gpu_options{
@@ -1082,7 +1086,8 @@ OperationStats extract_flzip(const std::filesystem::path& archive_path, const st
             output.open(temporary_target.file, std::ios::binary | std::ios::trunc);
             temporary_active = true;
             if (!output) {
-                throw ArchiveError("cannot create temporary extraction file: " + temporary_target.file.string());
+                throw ArchiveError("cannot create temporary extraction file: " +
+                                   path_diagnostic_utf8(temporary_target.file));
             }
             decoded = decode_entry_streaming(input, entry, archive_size, decode_window_bytes, gpu_options, budget,
                                              [&](std::span<const std::byte> bytes) {
@@ -1092,11 +1097,13 @@ OperationStats extract_flzip(const std::filesystem::path& archive_path, const st
                                              });
             output.flush();
             if (!output) {
-                throw ArchiveError("failed to write temporary extraction file: " + temporary_target.file.string());
+                throw ArchiveError("failed to write temporary extraction file: " +
+                                   path_diagnostic_utf8(temporary_target.file));
             }
             output.close();
             if (!output) {
-                throw ArchiveError("failed to close temporary extraction file: " + temporary_target.file.string());
+                throw ArchiveError("failed to close temporary extraction file: " +
+                                   path_diagnostic_utf8(temporary_target.file));
             }
             if (decoded.crc32 != entry.crc32) {
                 throw ArchiveError("CRC mismatch while extracting: " + entry.path);
@@ -1123,22 +1130,25 @@ OperationStats extract_flzip(const std::filesystem::path& archive_path, const st
 }
 
 // Purpose: Verify a native FLZIP archive without publishing extraction output.
-// Inputs: `archive_path` identifies the archive, `options` controls decode policy, and `progress_callback` observes
-// initialization, entries, and bounded decode windows; callback exceptions cancel the operation.
-// Outputs: Returns verification telemetry; throws on malformed metadata, decode failure, CRC mismatch, or cancellation.
-OperationStats verify_flzip(const std::filesystem::path& archive_path, const ExtractOptions& options,
+// Inputs: `requested_archive` stays pinned throughout verification, `options` controls decode policy, and
+// `progress_callback` observes initialization, entries, and bounded decode windows; callback exceptions cancel the
+// operation. Outputs: Returns verification telemetry; throws on malformed metadata, decode failure, CRC mismatch, or
+// cancellation.
+OperationStats verify_flzip(const std::filesystem::path& requested_archive, const ExtractOptions& options,
                             const ProgressCallback& progress_callback) {
     validate_archive_options(options.chunk_size, options.block_size, options.worker_count, options.max_inflight_chunks);
     const auto gpu_telemetry = std::make_shared<GpuTelemetry>();
     const auto started = std::chrono::steady_clock::now();
+    const auto archive_source = pin_source_file(requested_archive);
+    const auto& archive_path = archive_source.path();
     auto archive_input_buffer = make_file_stream_buffer();
     std::ifstream input;
     configure_file_stream_buffer(input, archive_input_buffer);
     input.open(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open archive: " + archive_path.string());
+        throw ArchiveError("cannot open archive: " + path_diagnostic_utf8(archive_path));
     }
-    const auto archive_size = regular_file_size(archive_path);
+    const auto archive_size = archive_source.size();
     auto index = read_index_from_file(input);
     const auto validation = validate_archive_index_metadata(index);
     const auto decode_window_bytes = resolve_decode_window_bytes(options, validation);

@@ -4,6 +4,7 @@
 #include "core/com_task_string.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
 #include <cwchar>
 #include <system_error>
@@ -45,12 +46,16 @@ UINT smoke_auto_close_ms() {
     if (length == 0 || length >= capacity) {
         return 0;
     }
-    wchar_t* end = nullptr;
-    const unsigned long parsed = std::wcstoul(buffer, &end, 10);
-    if (end == buffer || parsed == 0) {
+    if (!std::all_of(buffer, buffer + length, [](wchar_t value) { return value >= L'0' && value <= L'9'; })) {
         return 0;
     }
-    return static_cast<UINT>(std::clamp<unsigned long>(parsed, 5000UL, 300000UL));
+    errno = 0;
+    wchar_t* end = nullptr;
+    const unsigned long parsed = std::wcstoul(buffer, &end, 10);
+    if (errno == ERANGE || end != buffer + length || parsed == 0) {
+        return 0;
+    }
+    return static_cast<UINT>(std::clamp<unsigned long>(parsed, 5000UL, USER_TIMER_MAXIMUM));
 }
 
 // Purpose: Read the optional GUI-smoke close-marker file path.

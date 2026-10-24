@@ -1,4 +1,5 @@
 #include "rpm/rpm_format.hpp"
+#include "core/path_text.hpp"
 
 #include "core/file_size.hpp"
 #include "core/resource_limits.hpp"
@@ -301,7 +302,7 @@ RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path) {
 
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open RPM package: " + archive_path.string());
+        throw ArchiveError("cannot open RPM package: " + path_diagnostic_utf8(archive_path));
     }
 
     read_rpm_lead(input);

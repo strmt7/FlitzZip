@@ -1,7 +1,9 @@
 #include "core/integrity.hpp"
 
+#include "core/path_text.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
+#include "core/sha256_provider.hpp"
 
 #include <algorithm>
 #include <array>
@@ -22,6 +24,52 @@
 #endif
 
 namespace flitzzip {
+
+#ifdef _WIN32
+// Purpose: Open the fixed native SHA-256 algorithm; inputs: null handle; outputs: owned CNG reference or failure.
+bool integrity_detail::CngSha256Provider::open_algorithm(void*& algorithm) const noexcept {
+    return BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) == 0;
+}
+
+// Purpose: Read native object storage requirements; inputs: algorithm; outputs: byte count and CNG success status.
+bool integrity_detail::CngSha256Provider::object_length(void* algorithm, std::uint32_t& bytes) const noexcept {
+    ULONG count = 0;
+    ULONG written = 0;
+    const auto status = BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&count),
+                                          sizeof(count), &written, 0);
+    bytes = count;
+    return status == 0;
+}
+
+// Purpose: Create a native hash; inputs: live algorithm and bounded retained storage; outputs: real CNG reference.
+bool integrity_detail::CngSha256Provider::create_hash(void* algorithm, void*& hash,
+                                                      std::span<std::byte> object) const noexcept {
+    return BCryptCreateHash(algorithm, &hash, reinterpret_cast<PUCHAR>(object.data()),
+                            static_cast<ULONG>(object.size()), nullptr, 0, 0) == 0;
+}
+
+// Purpose: Forward a bounded immutable chunk; inputs: live hash and borrowed bytes; outputs: native update result.
+bool integrity_detail::CngSha256Provider::update_hash(void* hash, std::span<const std::byte> bytes) const noexcept {
+    return BCryptHashData(hash, reinterpret_cast<PUCHAR>(const_cast<std::byte*>(bytes.data())),
+                          static_cast<ULONG>(bytes.size()), 0) == 0;
+}
+
+// Purpose: Read the native SHA-256 digest; inputs: hash and exact output extent; outputs: 32 bytes or failure.
+bool integrity_detail::CngSha256Provider::finish_hash(void* hash, std::span<std::byte, 32> digest) const noexcept {
+    return BCryptFinishHash(hash, reinterpret_cast<PUCHAR>(digest.data()), static_cast<ULONG>(digest.size()), 0) == 0;
+}
+
+// Purpose: Release native hash ownership; inputs: live hash; outputs: actual destruction status without throwing.
+bool integrity_detail::CngSha256Provider::destroy_hash(void* hash) const noexcept {
+    return BCryptDestroyHash(hash) == 0;
+}
+
+// Purpose: Release native algorithm ownership; inputs: live provider without hashes; outputs: native close status.
+bool integrity_detail::CngSha256Provider::close_algorithm(void* algorithm) const noexcept {
+    return BCryptCloseAlgorithmProvider(algorithm, 0) == 0;
+}
+#endif
+
 namespace {
 
 constexpr std::size_t kIntegrityBufferBytes = 1024U * 1024U;
@@ -32,27 +80,17 @@ constexpr auto kIntegrityTimeLimit = std::chrono::minutes(30);
 class Sha256Hasher {
   public:
     // Purpose: Open one Windows CNG SHA-256 hash context.
-    // Inputs: None.
+    // Inputs: None; the native provider is owned by this context.
     // Outputs: Owns the provider, hash handle, and object buffer until destruction.
-    Sha256Hasher() {
-        try {
-            if (BCryptOpenAlgorithmProvider(&algorithm_, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) {
-                throw ArchiveError("cannot open Windows SHA-256 provider");
-            }
-            DWORD object_len = 0;
-            DWORD data_len = 0;
-            if (BCryptGetProperty(algorithm_, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&object_len),
-                                  sizeof(object_len), &data_len, 0) != 0) {
-                throw ArchiveError("cannot query Windows SHA-256 object length");
-            }
-            object_.resize(object_len);
-            if (BCryptCreateHash(algorithm_, &hash_, object_.data(), object_len, nullptr, 0, 0) != 0) {
-                throw ArchiveError("cannot create Windows SHA-256 hash");
-            }
-        } catch (...) {
-            close_handles();
-            throw;
-        }
+    Sha256Hasher() : provider_(native_provider_) {
+        initialize();
+    }
+
+    // Purpose: Open one context through an explicit dependency boundary.
+    // Inputs: Provider outlives this hasher and returns real successful acquisitions.
+    // Outputs: Owns all native resources or releases partial construction before propagating failure.
+    explicit Sha256Hasher(const integrity_detail::CngSha256Provider& provider) : provider_(provider) {
+        initialize();
     }
 
     Sha256Hasher(const Sha256Hasher&) = delete;
@@ -70,11 +108,11 @@ class Sha256Hasher {
     // Outputs: Releases hash and provider handles exactly once.
     void close_handles() noexcept {
         if (hash_ != nullptr) {
-            BCryptDestroyHash(hash_);
+            static_cast<void>(provider_.destroy_hash(hash_));
             hash_ = nullptr;
         }
         if (algorithm_ != nullptr) {
-            BCryptCloseAlgorithmProvider(algorithm_, 0);
+            static_cast<void>(provider_.close_algorithm(algorithm_));
             algorithm_ = nullptr;
         }
     }
@@ -86,8 +124,7 @@ class Sha256Hasher {
         if (bytes.empty()) {
             return;
         }
-        if (BCryptHashData(hash_, reinterpret_cast<PUCHAR>(const_cast<std::byte*>(bytes.data())),
-                           static_cast<ULONG>(bytes.size()), 0) != 0) {
+        if (!provider_.update_hash(hash_, bytes)) {
             throw ArchiveError("Windows SHA-256 update failed");
         }
     }
@@ -96,8 +133,8 @@ class Sha256Hasher {
     // Inputs: None.
     // Outputs: Returns the 64-character digest or throws when CNG finalization fails.
     [[nodiscard]] std::string finish_hex() {
-        std::array<UCHAR, 32> digest{};
-        if (BCryptFinishHash(hash_, digest.data(), static_cast<ULONG>(digest.size()), 0) != 0) {
+        std::array<std::byte, 32> digest{};
+        if (!provider_.finish_hash(hash_, digest)) {
             throw ArchiveError("Windows SHA-256 finalize failed");
         }
         std::ostringstream hex;
@@ -109,10 +146,44 @@ class Sha256Hasher {
     }
 
   private:
+    // Purpose: Acquire algorithm, storage and hash in ownership order.
+    // Inputs: The retained provider; initially empty native owners. Outputs: Complete context or cleaned failure.
+    void initialize() {
+        try {
+            if (!provider_.open_algorithm(algorithm_)) {
+                throw ArchiveError("cannot open Windows SHA-256 provider");
+            }
+            std::uint32_t object_len = 0;
+            if (!provider_.object_length(algorithm_, object_len)) {
+                throw ArchiveError("cannot query Windows SHA-256 object length");
+            }
+            object_.resize(object_len);
+            if (!provider_.create_hash(algorithm_, hash_, std::as_writable_bytes(std::span(object_)))) {
+                throw ArchiveError("cannot create Windows SHA-256 hash");
+            }
+        } catch (...) {
+            close_handles();
+            throw;
+        }
+    }
+
+    integrity_detail::CngSha256Provider native_provider_;
+    const integrity_detail::CngSha256Provider& provider_;
     BCRYPT_ALG_HANDLE algorithm_ = nullptr;
     BCRYPT_HASH_HANDLE hash_ = nullptr;
     std::vector<UCHAR> object_;
 };
+
+// Purpose: Hash a complete snapshot using provider-sized bounded chunks.
+// Inputs: Live hasher and immutable borrowed bytes. Outputs: Exact SHA-256 text or the original provider failure.
+std::string hash_snapshot(Sha256Hasher& hasher, std::span<const std::byte> bytes) {
+    for (std::size_t offset = 0; offset < bytes.size();) {
+        const auto count = std::min(kIntegrityBufferBytes, bytes.size() - offset);
+        hasher.update(bytes.subspan(offset, count));
+        offset += count;
+    }
+    return hasher.finish_hex();
+}
 
 // Purpose: Feed UTF-8 metadata text into a SHA-256 stream.
 // Inputs: `hasher` is the mutable hash context and `text` is already UTF-8 compatible metadata.
@@ -214,7 +285,7 @@ IntegrityObject open_integrity_object(const std::filesystem::path& path) {
         CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                     FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
-        throw ArchiveError("cannot open and lock integrity target: " + path.string());
+        throw ArchiveError("cannot open and lock integrity target: " + path_diagnostic_utf8(path));
     }
     IntegrityHandle owner(handle);
     return IntegrityObject{.handle = std::move(owner), .state = query_integrity_object_state(handle)};
@@ -281,7 +352,7 @@ struct IntegrityBudget {
 std::string relative_integrity_key(const std::filesystem::path& root, const std::filesystem::path& path) {
     const auto relative = path.lexically_normal().lexically_relative(root);
     if (relative.empty() || relative.is_absolute()) {
-        throw ArchiveError("cannot compute relative integrity path: " + path.string());
+        throw ArchiveError("cannot compute relative integrity path: " + path_diagnostic_utf8(path));
     }
     for (const auto& component : relative) {
         if (component == L"..") {
@@ -464,14 +535,19 @@ std::string sha256_bytes(std::span<const std::byte> bytes) {
     throw ArchiveError("SHA-256 integrity hashing is currently implemented through Windows CNG");
 #else
     Sha256Hasher hasher;
-    for (std::size_t offset = 0; offset < bytes.size();) {
-        const auto count = std::min(kIntegrityBufferBytes, bytes.size() - offset);
-        hasher.update(bytes.subspan(offset, count));
-        offset += count;
-    }
-    return hasher.finish_hex();
+    return hash_snapshot(hasher, bytes);
 #endif
 }
+
+#ifdef _WIN32
+// Purpose: Exercise the canonical owning hash implementation through one explicit platform boundary.
+// Inputs: Immutable snapshot and provider valid through completion. Outputs: Normal digest or cleaned failure.
+std::string integrity_detail::sha256_bytes_with_provider(std::span<const std::byte> bytes,
+                                                         const CngSha256Provider& provider) {
+    Sha256Hasher hasher(provider);
+    return hash_snapshot(hasher, bytes);
+}
+#endif
 
 // Purpose: Optionally compute the standard SHA-256 digest for one regular file.
 // Inputs: `path` is an existing regular file and `mode` selects disabled or SHA-256 hashing.
@@ -485,7 +561,7 @@ IntegrityResult hash_file(const std::filesystem::path& path, IntegrityMode mode)
 #else
     auto object = open_integrity_object(path);
     if ((object.state.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U) {
-        throw ArchiveError("hash target is not a regular file: " + path.string());
+        throw ArchiveError("hash target is not a regular file: " + path_diagnostic_utf8(path));
     }
     return hash_regular_file(std::move(object));
 #endif

@@ -1,6 +1,6 @@
 #include "gzip/gzip_stream.hpp"
 
-#include "core/file_size.hpp"
+#include "core/file_manifest.hpp"
 #include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
@@ -398,10 +398,11 @@ class GzipOutputStream::Buffer final : public std::streambuf {
 class GzipInputStream::Buffer final : public std::streambuf {
   public:
     // Purpose: Open and initialize a bounded raw-deflate reader for one Gzip stream.
-    // Inputs: `archive_path` is an existing `.gz` stream with a validated header/trailer.
+    // Inputs: `archive_path` names a regular non-reparse `.gz` source, pinned before opening or parsing.
     // Outputs: Prepares the get area and decompressor state, or throws on I/O/format failure.
     explicit Buffer(const std::filesystem::path& archive_path)
-        : input_(archive_path, std::ios::binary), archive_size_(regular_file_size(archive_path)) {
+        : source_(pin_source_file(archive_path)), input_(source_.path(), std::ios::binary),
+          archive_size_(source_.size()) {
         if (!input_) {
             throw ArchiveError("cannot open Gzip stream: " + path_diagnostic_utf8(archive_path));
         }
@@ -557,6 +558,7 @@ class GzipInputStream::Buffer final : public std::streambuf {
         finished_ = true;
     }
 
+    PinnedSourceFile source_;
     std::ifstream input_;
     std::exception_ptr failure_;
     ParsedGzipHeader header_{};

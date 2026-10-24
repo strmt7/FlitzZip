@@ -19,10 +19,11 @@
 namespace flitzzip::app {
 
 // Purpose: Construct a main window controller with default UI state.
-// Inputs: None.
+// Inputs: launcher outlives the controller and supplies native thread admission.
 // Outputs: Initializes lazy metadata callbacks only; the native HWND is created by `run`.
-MainWindow::MainWindow()
-    : queue_metadata_(read_queue_file_metadata, [this](const std::filesystem::path& path, bool kind_changed) {
+MainWindow::MainWindow(const JobThreadLauncher& launcher)
+    : worker_(launcher),
+      queue_metadata_(read_queue_file_metadata, [this](const std::filesystem::path& path, bool kind_changed) {
           if (kind_changed) {
               std::lock_guard lock(folder_size_mutex_);
               folder_size_cache_.invalidate(path);
@@ -36,9 +37,8 @@ MainWindow::MainWindow()
 MainWindow::~MainWindow() {
     queue_metadata_.stop();
     stop_folder_size_worker();
-    if (worker_.joinable()) {
-        worker_.join();
-    }
+    operation_cancel_requested_.store(true);
+    worker_.join();
     shutdown_performance_monitor();
     for (HFONT font : {title_font_, body_font_, small_font_, tiny_font_, mono_font_}) {
         if (font != nullptr) {
@@ -219,24 +219,21 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         cancel_column_resize_for_geometry_change();
         if (wparam == SIZE_MINIMIZED) {
             window_was_minimized_ = true;
-            repaint_queued_ = false;
+            repaint_request_.acknowledge();
             return 0;
         }
         if (window_was_minimized_) {
             window_was_minimized_ = false;
-            repaint_queued_ = false;
+            repaint_request_.acknowledge();
             fit_window_to_work_area();
             RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
         }
         request_repaint();
         return 0;
     case WM_PRINT:
-    case WM_PRINTCLIENT: {
-        RECT rect{};
-        GetClientRect(hwnd_, &rect);
-        layout_and_draw(reinterpret_cast<HDC>(wparam), rect);
+    case WM_PRINTCLIENT:
+        print_client(reinterpret_cast<HDC>(wparam));
         return 0;
-    }
     case WM_ERASEBKGND: {
         return 1;
     }
@@ -260,8 +257,15 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         return handle_drop_files(wparam);
     case WM_CREATE:
         return handle_create();
+    case WM_CLOSE:
+        request_window_close();
+        return 0;
     case WM_APP + 1:
-        repaint_queued_ = false;
+        repaint_request_.acknowledge();
+        if (complete_window_close()) {
+            return 0;
+        }
+        consume_worker_failure();
         open_pending_operation_destination();
         show_pending_operation_summary();
         InvalidateRect(hwnd_, nullptr, FALSE);

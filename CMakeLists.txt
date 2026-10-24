@@ -12,6 +12,17 @@ endif()
 option(FLITZZIP_ENABLE_HIP "Build AMD HIP acceleration backend" ON)
 option(FLITZZIP_BUILD_GUI "Build native Windows GUI" ON)
 option(FLITZZIP_BUILD_TESTS "Build C++ test binaries" ON)
+set(FLITZZIP_HIP_COVERAGE_MANIFEST
+    ""
+    CACHE FILEPATH "Qualified development-only HIP profiling object manifest")
+if(FLITZZIP_HIP_COVERAGE_MANIFEST)
+  if(NOT FLITZZIP_ENABLE_HIP)
+    message(FATAL_ERROR "Device coverage requires the real HIP backend")
+  endif()
+  # Instrumented development artifacts must never enter an installer or CPack.
+  install(CODE "message(FATAL_ERROR \"HIP coverage builds cannot install\")"
+          ALL_COMPONENTS)
+endif()
 option(FLITZZIP_BUILD_FUZZERS "Build libFuzzer targets for parser hardening"
        OFF)
 set(FLITZZIP_HIP_ARCH
@@ -547,11 +558,51 @@ if(FLITZZIP_ENABLE_HIP)
       "${CMAKE_CURRENT_BINARY_DIR}/flitzzip_hip_dictionary_matcher.obj")
   set(FLITZZIP_HIP_SPARSE_OBJECT
       "${CMAKE_CURRENT_BINARY_DIR}/flitzzip_hip_sparse_pattern.obj")
-  # Purpose: Compile one HIP translation unit with the pinned Windows HIP path.
-  # Inputs: source is repo-relative, output is the generated object path, and
-  # comment is the build status text. Outputs: Produces an object and a compiler
-  # dependency file, tracking the headers consumed by this translation unit.
-  function(flitzzip_compile_hip_object source output comment)
+  if(FLITZZIP_HIP_COVERAGE_MANIFEST)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(_coverage_admit_args
+        -B
+        -m
+        tools.hip_coverage_product
+        admit
+        --manifest
+        "${FLITZZIP_HIP_COVERAGE_MANIFEST}"
+        --sdk
+        "${FLITZZIP_HIP_PATH}"
+        --arch
+        "${FLITZZIP_HIP_ARCH}")
+    execute_process(
+      COMMAND "${Python3_EXECUTABLE}" ${_coverage_admit_args}
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+      RESULT_VARIABLE _coverage_admission
+      OUTPUT_VARIABLE _coverage_metadata
+      TIMEOUT 60)
+    if(NOT _coverage_admission EQUAL 0)
+      message(FATAL_ERROR "Development HIP coverage object admission failed")
+    endif()
+    string(JSON _coverage_host_runtime GET "${_coverage_metadata}" host_runtime)
+    add_custom_target(
+      flitzzip_hip_coverage_admission
+      COMMAND "${Python3_EXECUTABLE}" ${_coverage_admit_args}
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+      COMMENT "Admitting exact development HIP coverage objects"
+      VERBATIM)
+  endif()
+  # Purpose: Prepare one HIP translation unit with the pinned Windows HIP path.
+  # Inputs: source is repo-relative, output_variable selects its object path,
+  # and comment is the build status text. Outputs: Produces an object and a
+  # compiler dependency file, tracking the headers consumed by this translation
+  # unit.
+  function(flitzzip_compile_hip_object source output_variable comment)
+    if(FLITZZIP_HIP_COVERAGE_MANIFEST)
+      string(JSON _coverage_object GET "${_coverage_metadata}" objects
+             "${source}")
+      set(${output_variable}
+          "${_coverage_object}"
+          PARENT_SCOPE)
+      return()
+    endif()
+    set(output "${${output_variable}}")
     add_custom_command(
       OUTPUT "${output}"
       DEPFILE "${output}.d"
@@ -573,21 +624,20 @@ if(FLITZZIP_ENABLE_HIP)
   endfunction()
 
   flitzzip_compile_hip_object(
-    src/gpu/hip_codec.hip.cpp "${FLITZZIP_HIP_CODEC_OBJECT}"
+    src/gpu/hip_codec.hip.cpp FLITZZIP_HIP_CODEC_OBJECT
     "Compiling AMD HIP codec object")
   flitzzip_compile_hip_object(
-    src/gpu/hip_codec_static_prefix.hip.cpp
-    "${FLITZZIP_HIP_STATIC_PREFIX_OBJECT}"
+    src/gpu/hip_codec_static_prefix.hip.cpp FLITZZIP_HIP_STATIC_PREFIX_OBJECT
     "Compiling AMD HIP static-prefix codec object")
   flitzzip_compile_hip_object(
     src/gpu/hip_codec_adaptive_prefix.hip.cpp
-    "${FLITZZIP_HIP_ADAPTIVE_PREFIX_OBJECT}"
+    FLITZZIP_HIP_ADAPTIVE_PREFIX_OBJECT
     "Compiling AMD HIP adaptive-prefix codec object")
   flitzzip_compile_hip_object(
-    src/gpu/hip_dictionary_matcher.hip.cpp "${FLITZZIP_HIP_DICTIONARY_OBJECT}"
+    src/gpu/hip_dictionary_matcher.hip.cpp FLITZZIP_HIP_DICTIONARY_OBJECT
     "Compiling AMD HIP dictionary codec object")
   flitzzip_compile_hip_object(
-    src/gpu/hip_sparse_pattern.hip.cpp "${FLITZZIP_HIP_SPARSE_OBJECT}"
+    src/gpu/hip_sparse_pattern.hip.cpp FLITZZIP_HIP_SPARSE_OBJECT
     "Compiling AMD HIP sparse-pattern codec object")
   set(FLITZZIP_HIP_OBJECTS
       "${FLITZZIP_HIP_CODEC_OBJECT}" "${FLITZZIP_HIP_STATIC_PREFIX_OBJECT}"
@@ -616,6 +666,17 @@ if(FLITZZIP_ENABLE_HIP)
     flitzzip_gpu_hip PRIVATE FLITZZIP_ENABLE_HIP=1 __HIP_PLATFORM_AMD__=1
                              NOMINMAX WIN32_LEAN_AND_MEAN)
   target_link_libraries(flitzzip_gpu_hip PRIVATE "${FLITZZIP_HIP_LIB}")
+  if(FLITZZIP_HIP_COVERAGE_MANIFEST)
+    add_dependencies(flitzzip_gpu_hip flitzzip_hip_coverage_admission)
+    target_sources(
+      flitzzip_gpu_hip
+      PRIVATE tools/hip_profile_registration/hip_profile_lifecycle.cpp)
+    target_compile_definitions(flitzzip_core
+                               PRIVATE FLITZZIP_HIP_DEVICE_COVERAGE=1)
+    set_property(TARGET flitzzip_gpu_hip PROPERTY MSVC_RUNTIME_LIBRARY
+                                                  MultiThreadedDLL)
+    target_link_libraries(flitzzip_gpu_hip PRIVATE "${_coverage_host_runtime}")
+  endif()
   target_include_directories(flitzzip_core
                              PUBLIC "${FLITZZIP_HIP_PATH}/include")
   target_compile_definitions(
@@ -781,9 +842,11 @@ if(FLITZZIP_BUILD_GUI AND WIN32)
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/app/FlitzZip.manifest.in"
                  "${CMAKE_CURRENT_BINARY_DIR}/FlitzZip.manifest" @ONLY)
 
-  add_executable(
-    FlitzZip WIN32
-    src/app/main.cpp
+  # Share the exact GUI implementation with controller tests instead of
+  # recompiling app support sources with different flags. Resources remain in
+  # each executable.
+  add_library(
+    flitzzip_gui STATIC
     src/app/main_window.cpp
     src/app/main_window_archive_support.cpp
     src/app/settings_json.cpp
@@ -810,27 +873,28 @@ if(FLITZZIP_BUILD_GUI AND WIN32)
     src/app/main_window_settings_timers.cpp
     src/app/main_window_shell_render.cpp
     src/app/main_window_startup_support.cpp
-    src/app/text_format.cpp
-    src/app/FlitzZip.rc)
-  add_dependencies(FlitzZip flitzzip_brand_logo_header
+    src/app/text_format.cpp)
+  add_executable(FlitzZip WIN32 src/app/main.cpp src/app/FlitzZip.rc)
+  add_dependencies(flitzzip_gui flitzzip_brand_logo_header
                    flitzzip_license_notices_header)
-  target_include_directories(FlitzZip PRIVATE "${FLITZZIP_GENERATED_DIR}")
+  target_include_directories(flitzzip_gui PRIVATE "${FLITZZIP_GENERATED_DIR}")
   target_link_libraries(
-    FlitzZip
-    PRIVATE flitzzip_core
-            comdlg32
-            shell32
-            shlwapi
-            uxtheme
-            dwmapi
-            ole32
-            oleaut32
-            RuntimeObject
-            gdiplus
-            pdh
-            psapi)
-  target_compile_definitions(FlitzZip PRIVATE UNICODE _UNICODE
-                                              _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+    flitzzip_gui
+    PUBLIC flitzzip_core
+           comdlg32
+           shell32
+           shlwapi
+           uxtheme
+           dwmapi
+           ole32
+           oleaut32
+           RuntimeObject
+           gdiplus
+           pdh
+           psapi)
+  target_compile_definitions(
+    flitzzip_gui PUBLIC UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+  target_link_libraries(FlitzZip PRIVATE flitzzip_gui)
   flitzzip_copy_zstd_runtime(FlitzZip)
   flitzzip_copy_wimlib_runtime(FlitzZip)
   if(MSVC)
@@ -896,6 +960,8 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_archive_verification.cpp
     tests/cpp/test_archive_metadata_failures.cpp
     tests/cpp/test_integrity.cpp
+    tests/cpp/test_sha256_provider.cpp
+    tests/cpp/test_trusted_runtime.cpp
     tests/cpp/test_archive_format.cpp
     tests/cpp/test_adapter_error_contracts.cpp
     tests/cpp/test_ar_compat.cpp
@@ -924,7 +990,6 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_cpio_compat.cpp
     tests/cpp/test_drop_payload.cpp
     tests/cpp/test_queue_drop_target.cpp
-    src/app/queue_drop_target.cpp
     tests/cpp/test_file_manifest.cpp
     tests/cpp/test_gzip_compat.cpp
     tests/cpp/test_hqx_compat.cpp
@@ -937,15 +1002,11 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_main_window_archive_support.cpp
     tests/cpp/test_settings_migration.cpp
     tests/cpp/test_settings_json.cpp
-    src/app/main_window_archive_support.cpp
-    src/app/main_window_startup_support.cpp
-    src/app/settings_json.cpp
-    src/app/text_format.cpp
     tests/cpp/test_folder_size_cache.cpp
+    tests/cpp/test_background_job.cpp
+    tests/cpp/test_repaint_request.cpp
     tests/cpp/test_folder_size.cpp
-    src/app/folder_size.cpp
     tests/cpp/test_queue_metadata.cpp
-    src/app/queue_metadata.cpp
     tests/cpp/test_gdi_back_buffer.cpp
     tests/cpp/test_system_layout.cpp
     tests/cpp/test_form_layout.cpp
@@ -953,8 +1014,8 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_window_layout.cpp
     tests/cpp/test_operation_summary.cpp
     tests/cpp/test_operation_destination.cpp
-    src/app/form_layout.cpp
     tests/cpp/test_path_safety.cpp
+    tests/cpp/test_path_diagnostics.cpp
     tests/cpp/test_publication_state.cpp
     tests/cpp/test_rpm_compat.cpp
     tests/cpp/test_resource_usage.cpp
@@ -981,6 +1042,22 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_zstd_compat.cpp
     tests/cpp/test_zip_compat.cpp
     tests/cpp/test_zip_verification.cpp)
+  if(TARGET flitzzip_gui)
+    target_sources(flitzzip_test_objects
+                   PRIVATE tests/cpp/test_main_window_lifecycle.cpp)
+    target_link_libraries(flitzzip_test_objects PRIVATE flitzzip_gui)
+  else()
+    target_sources(
+      flitzzip_test_objects
+      PRIVATE src/app/queue_drop_target.cpp
+              src/app/main_window_archive_support.cpp
+              src/app/main_window_startup_support.cpp
+              src/app/settings_json.cpp
+              src/app/text_format.cpp
+              src/app/folder_size.cpp
+              src/app/queue_metadata.cpp
+              src/app/form_layout.cpp)
+  endif()
   target_link_libraries(flitzzip_test_objects PRIVATE flitzzip_core)
   target_compile_definitions(
     flitzzip_test_objects
@@ -988,13 +1065,14 @@ if(FLITZZIP_BUILD_TESTS)
       FLITZZIP_TEST_GUI_BUILT=$<TARGET_EXISTS:FlitzZip>
       FLITZZIP_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
   add_executable(flitzzip_tests $<TARGET_OBJECTS:flitzzip_test_objects>)
-  target_link_libraries(
-    flitzzip_tests PRIVATE flitzzip_core gdi32 user32 shell32 oleaut32
-                           RuntimeObject)
+  target_link_libraries(flitzzip_tests PRIVATE flitzzip_core gdi32 user32
+                                               shell32 oleaut32 RuntimeObject)
   flitzzip_copy_zstd_runtime(flitzzip_tests)
   flitzzip_copy_wimlib_runtime(flitzzip_tests)
   add_dependencies(flitzzip_tests flitzzip_cli)
   if(TARGET FlitzZip)
+    target_sources(flitzzip_tests PRIVATE src/app/FlitzZip.rc)
+    target_link_libraries(flitzzip_tests PRIVATE flitzzip_gui)
     add_dependencies(flitzzip_tests FlitzZip)
   endif()
   add_test(NAME flitzzip_tests COMMAND flitzzip_tests)

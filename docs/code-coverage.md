@@ -20,9 +20,10 @@ CPU report, GUI/HIP-host report, tooling and device instructions have distinct
 scopes; none establishes whole-repository coverage.
 
 Device measurement must first pass the helper-inclusive qualification control
-described below. Its current zero helper counters are a measurement limitation,
-not a reason to rewrite correct product code or invent line hits. Coverage
-remains unfinished until the independent behavior and measurement gaps close.
+described below, including the pinned compiler's registration repair. Unmodified
+compiler output omits helper counters; the repaired measurement mechanism has
+passed independent kernel/helper controls. Product device coverage remains
+unfinished until its own behavior and measurement gaps close.
 
 ## Measurement
 
@@ -49,8 +50,8 @@ planning retain their independent build requirements.
 
 The collector selects first-party `src` files linked into the native test and
 CLI executables. It publishes their measured executable lines, including zero-hit
-lines. GUI executable-only paths, Python/PowerShell tooling, and GPU device
-instructions are not measured by this report. Do not describe this
+lines. GUI paths not linked into these consumers, Python/PowerShell tooling,
+and GPU device instructions are not measured by this report. Do not describe this
 number as whole-repository, branch, or GPU coverage.
 
 On a HIP-capable development host, build `Debug` with the ordinary HIP-enabled
@@ -81,8 +82,14 @@ The smoke asserts interaction results, settings persistence, publication failure
 and Neutron admission; inspect every generated capture as well. The added mode
 uses the canonical bounded process runner, including its Windows PowerShell
 environment handling. It requires measured GUI entry points and records the
-GUI executable, PDB, scenario and imported UI helper identities. A smoke failure
-or a changed helper invalidates collection.
+GUI executable, PDB, scenario and imported UI helper identities. The collector passes its scenario deadline explicitly to the smoke driver. The
+orphan-window watchdog includes that deadline and the driver's cleanup grace;
+it cannot expire earlier than the still-active owning scenario. Native timer
+parsing respects Windows' supported timer bound and rejects malformed or
+overflowing input. A reached watchdog deadline is logged before orderly close.
+A smoke failure or a changed helper invalidates collection. Before a new attempt, the collector
+moves previous reports into an ignored local `previous-measurement-*` directory.
+A failed retry must not leave an older qualifying summary at the current path.
 The native/CLI collection keeps its 900-second outer deadline. Selecting GUI
 adds that stage's 900-second budget, giving the combined transaction a bounded
 1,800-second outer deadline. Individual scenario deadlines remain unchanged;
@@ -91,15 +98,26 @@ The full smoke also opens real Windows multi-file and folder dialogs without
 selection-result overrides. It checks spaced and Unicode paths, cancellation
 with a populated filename field, unchanged Queue rendering, and a GUI-created
 ZIP whose exact member paths and bytes are checked by the independent .NET ZIP
-reader. HWND ownership and native control classes are verified before input;
+reader. Input controls must become visible and enabled, and acknowledge focus,
+before receiving selection text; shell initialization must not overwrite it.
+HWND ownership and native control classes are verified before input;
 localized captions and personal file-list contents are not used as test data.
 Evidence goes to `out/coverage-hip-host-gui` (or `out/coverage-gui` without HIP),
 with `gui_host_coverage=true`. These local measurements do not replace the CI
 badge or establish device-instruction coverage. The default collector does not
-open GUI windows.
+run the desktop GUI smoke. When the GUI is built,
+native controller regressions create hidden windows on their own UI threads;
+they use isolated temporary settings, never activate a window or move the pointer,
+and join all workers before restoring that environment. The product and these
+tests share the same `flitzzip_gui` static library and native resources. The tests
+exercise real message dispatch, controlled thread admission refusal, subsequent
+reuse, cancellation and responsive close. They supplement the visible all-page
+smoke and screenshot review; they do not replace it.
 
 `tools/native_coverage.py` verifies the native build receipt, all selected
 executables, their symbols and scenario drivers before and after collection.
+It retains process diagnostics locally within its 8 MiB output budget, separately
+from the MCP protocol's shorter response cap. Truncation metadata remains explicit.
 `tools/native_coverage_report.py` rejects empty, foreign,
 ambiguous, malformed, or source-inconsistent reports and normalizes paths without
 changing measured hits. The workflow retains raw XML, normalized XML, diagnostics,
@@ -161,6 +179,56 @@ the implementation into assertions, remove untested code from reports, or add
 tests whose only purpose is increasing a percentage. A coverage increase without
 new behavioral evidence is not an engineering improvement.
 
+### Oracle Selection
+
+Choose the weakest plausible implementation that the test must reject. If that
+implementation still passes, strengthen the observation rather than adding more
+inputs to the same ineffective assertion.
+
+| Behavior | Useful oracle and rejection control |
+| --- | --- |
+| Archive compatibility | Independently framed bytes or another supported implementation; a same-library round trip can share an encoder/decoder defect |
+| Parser bounds | Valid records beside truncation, overflow and inconsistent-length cases; assert output preservation on failure |
+| Ownership and publication | Real handle/file identity, final release, unchanged existing bytes and successful reuse after interruption |
+| Stateful logic | An independently specified transition model; exercise failed admission, cancellation and recovery, not only the final flag |
+| Concurrency | Controlled event ordering and actual completion/lifetime assertions; elapsed sleeps alone do not prove ordering |
+| Tool orchestration | Actual command selection, refused stale identities and preserved failed outputs, rather than matching the implementation's text |
+
+Generated tests complement these oracles. Use bounded domains, reproducible seeds
+and minimized failing inputs; retain each confirmed failure as a deterministic
+regression. Property and metamorphic assertions need an independent justification:
+for example, preserving a file's bytes after rejection is stronger than merely
+calling the same decoder twice. [Hypothesis](https://hypothesis.readthedocs.io/en/latest/quickstart.html)
+and [RapidCheck](https://github.com/emil-e/rapidcheck) illustrate generation and
+reduction; their documentation does not require adding either dependency here.
+
+Use a targeted old-source negative control or isolated behavioral mutation when
+it resolves uncertainty about an assertion. The [mutation-testing method](https://mull.readthedocs.io/en/latest/MutationTestingIntro.html)
+checks sensitivity to changed behavior; surviving mutations need investigation,
+and equivalent changes are not automatically missing tests. This is not a new
+mandatory mutation tool or a reason to rewrite product behavior for coverage.
+
+[Google's coverage guidance](https://testing.googleblog.com/2020/08/code-coverage-best-practices.html)
+distinguishes execution from test quality, and [LLVM's coverage documentation](https://clang.llvm.org/docs/SourceBasedCodeCoverage.html)
+distinguishes line, region and branch measurements. Retain the maintainer's
+complete-coverage target while keeping assertions, measurement validity and
+unmeasured code visible as separate questions.
+
+### Batch Development
+
+Develop coverage in coherent batches from the retained uncovered-line inventory.
+Compile incrementally and run the new tests and their direct consumers while
+editing; investigate failures immediately. Repeat complete coverage collection
+after a substantial batch, rather than after each small assertion. Keep all
+planner-selected checks pending until the batch is qualified, and perform the
+accumulated final suites, hosted checks and release gates before acceptance.
+Focused development results never replace that final qualification.
+
+For focused native runs, use `^prefix_` to select a test-name prefix or `=full_name`
+for one exact case. Unadorned filters retain substring matching and can cross
+module boundaries: a format label may also occur inside another codec or mode
+name. Check the emitted selected names before interpreting the cohort's scope.
+
 Container admission tests compare plain and compressed readers at structural
 truncation boundaries, preserving existing destination bytes on rejection.
 CAB and XAR fixtures additionally exercise binary header fields, optional reserve
@@ -186,6 +254,13 @@ thread in MSVC Debug builds, without exhausting host memory. They require long-k
 lookup, completion, invalidation and duplicate admission to use existing storage.
 The preceding CRT hook is restored before assertions; Release runs retain the
 same state-transition assertions without claiming that Debug failure control.
+Scope allocation refusal to the component's ownership and exception contracts.
+Debug-library bookkeeping can allocate inside nonthrowing standard-library
+operations; a global refusal sweep does not automatically model Release failure
+semantics. Retain such diagnostics, distinguish runtime limitations from product
+defects, and qualify the relevant production configuration when necessary. Do not
+disable iterator verification or rewrite valid application behavior merely to
+make an unsupported injection sweep pass.
 
 Native index I/O tests use independently packed wire bytes across every readable
 version. Forward-only streams exercise every truncation boundary without relying
@@ -210,13 +285,13 @@ failure-recovery assertions. Keep device instructions and unmeasured executables
 visible until a suitable measurement mechanism is qualified. Resource exhaustion,
 driver hangs and destruction of host state are not acceptable coverage techniques.
 
-The local GUI/HIP-host collector has completed the full native registry, CLI
-contracts and all-page interactive smoke on the same source identity. Its captures
-were visually reviewed, including compact layouts, Neutron selection, overwrite
-confirmation, scrollable tables, monitor graphs and both license tabs. This
-qualifies those exercised paths; it does not make the remaining zero-hit lines
-covered. The current source-bound totals and inventories remain in the collector
-artifacts, rather than in reusable agent instructions.
+Complete GUI/HIP-host qualification requires the native registry, CLI contracts
+and all-page interactive smoke on one admitted source identity. Review every
+capture, including compact layouts, Neutron selection, overwrite confirmation,
+scrollable tables, monitor graphs and both license tabs. Focused runs qualify
+their exercised paths; a failed combined transaction is not a complete coverage
+measurement. Keep current source-bound results and remaining gaps in collector
+artifacts rather than reusable instructions.
 
 ## Device counter qualification
 
@@ -278,6 +353,50 @@ registration and counters before admitting whole-device coverage. Inlining
 helpers solely to satisfy the control or deriving counts from dispatches would
 not qualify the missing measurement.
 
+`tools/hip_profile_registration` repairs this compiler emission boundary through
+LLVM's typed IR and ELF APIs. It inventories the actual linked profiling records,
+requires complete, nonoverlapping section coverage, and reconciles ordinary HIP
+variable registrations and profiler section notifications with that inventory.
+Some template kernels have host references to profiling globals absent from the
+linked image. Only those validated profiling registrations are retired; every
+original program value and instruction outside that metadata repair is preserved.
+Missing actual profiling records receive normal registrations. The qualifier also extracts
+the relinked device image and requires byte-for-byte equality before executing it.
+The supported input is one static, non-RDC translation unit with the reviewed
+Windows x64/AMDGPU profiling ABI. Unsupported layouts fail explicitly.
+
+Added host shadows include the validated translation-unit identity. Helpers
+shared by independent device images must retain distinct host registrations;
+coalescing them can prevent a multi-unit kernel DLL from linking.
+
+The compiler phases share an explicit `-cuid` selected before compilation. The
+host-only frontend consumes the original source and that compilation's device
+bundle. Temporary preprocessed-file compilation is unsuitable here because it
+changes source mapping. LLVM's table suffix is an unpadded hexadecimal hash;
+do not assume a fixed number of characters or substitute it for the driver's CUID.
+
+The native tool's identity binds its exact C++ source, CMake recipe and reviewed
+LLVM revision. Build and qualification consume the same validated
+`tools/hip-coverage-toolchain.json` provenance record; the compiled identity also
+binds that manifest and its parser. Before GPU execution, the qualifier automatically runs native
+success, complete-IR idempotence, existing-output preservation and malformed-input
+controls. Wrong contexts, flags, pointer storage, extents, section groups, source
+identities and incomplete device symbols must fail without publishing output.
+Raw failures remain in the owned evidence directory.
+
+Idempotence compares LLVM's complete printed IR, excluding only its initial
+input-filename comment. Source filenames, targets, instructions, attributes,
+profiling metadata and embedded device bytes remain in the digest. Equivalent
+LLVM bitcode can have different serialization order; the linked GPU executable
+still requires byte-for-byte preservation.
+
+The repaired mechanism has also passed a separate control with two kernels,
+shared helpers with external, internal and inline linkage, and a deliberately
+unentered helper. Independently expected readback, invocation counts, branch
+counts and zero hits distinguish working measurement from inflated coverage.
+These controls qualify the measurement mechanism; they do not measure all
+FlitzZip kernels or establish release readiness.
+
 Prepare an isolated coverage compiler from AMD's
 [ROCm 10.1 distribution](https://rocm.docs.amd.com/en/docs-10.1.0/install/rocm.html).
 The tested compiler source is the ROCm LLVM commit
@@ -321,21 +440,163 @@ compiler, source checkout, Ninja, CMake, build directory and actual GPU target:
 
 The omitted upstream runtime test targets are build options for this isolated
 profiling library; FlitzZip's product tests and security workflows remain enabled.
+Build the registration tool as a separate LLVM external project from the same
+clean source checkout. Use a fresh tool build directory, the existing compatible
+x64 developer shell, the pinned CMake/Ninja, and the selected coverage compiler.
+Set `$repoRoot` to this checkout and `$coveragePython` to a supported Python
+interpreter. This builds the required LLVM libraries and helper, without adding
+LLVM to the product or installing a different system compiler:
+
+The reader needs zlib for LLVM's compressed profile names and coverage mappings.
+The shared toolchain manifest pins its official source archive, size and digest.
+Prepare fresh, isolated `$coverageZlibSource`, `$coverageZlibBuild` and
+`$coverageZlibPrefix` directories and an unused `$coverageZlibArchive` path:
+
+```powershell
+& $coveragePython (Join-Path $repoRoot 'tools/hip_coverage_toolchain.py') --field revision
+if ($LASTEXITCODE -ne 0) { throw 'Coverage provenance admission failed.' }
+$zlibPin = (Get-Content (Join-Path $repoRoot 'tools/hip-coverage-toolchain.json') -Raw | ConvertFrom-Json).zlib
+Invoke-WebRequest -Uri $zlibPin.url -OutFile $coverageZlibArchive
+if ((Get-Item -LiteralPath $coverageZlibArchive).Length -ne $zlibPin.bytes -or
+    (Get-FileHash -LiteralPath $coverageZlibArchive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $zlibPin.sha256) {
+  throw 'Coverage zlib archive identity mismatch.'
+}
+New-Item -ItemType Directory -Path $coverageZlibSource -ErrorAction Stop | Out-Null
+tar -xf $coverageZlibArchive -C $coverageZlibSource --strip-components=1
+if ($LASTEXITCODE -ne 0) { throw 'Coverage zlib extraction failed.' }
+& $coverageCmake -S $coverageZlibSource -B $coverageZlibBuild -G Ninja `
+  "-DCMAKE_MAKE_PROGRAM=$coverageNinja" -DCMAKE_BUILD_TYPE=Release `
+  -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL -DZLIB_BUILD_SHARED=OFF `
+  -DZLIB_BUILD_TESTING=ON "-DCMAKE_INSTALL_PREFIX=$coverageZlibPrefix"
+if ($LASTEXITCODE -ne 0) { throw 'Coverage zlib configuration failed.' }
+& $coverageCmake --build $coverageZlibBuild --parallel 2
+if ($LASTEXITCODE -ne 0) { throw 'Coverage zlib build failed.' }
+& (Join-Path (Split-Path $coverageCmake) 'ctest.exe') --test-dir $coverageZlibBuild --output-on-failure
+if ($LASTEXITCODE -ne 0) { throw 'Coverage zlib tests failed.' }
+& $coverageCmake --install $coverageZlibBuild
+if ($LASTEXITCODE -ne 0) { throw 'Coverage zlib installation failed.' }
+```
+
+Preserve the archive's complete license with this development installation.
+The static Windows library is named `zs.lib` by this pinned zlib release; supply
+it explicitly because older CMake find-module naming lists may omit that name.
+
+```powershell
+$registrationSource = Join-Path $repoRoot 'tools/hip_profile_registration'
+& $coverageCmake -S "$coverageSource/llvm" -B $registrationBuild -G Ninja `
+  "-DCMAKE_MAKE_PROGRAM=$coverageNinja" `
+  "-DCMAKE_C_COMPILER=$coverageCompiler/bin/clang.exe" `
+  "-DCMAKE_CXX_COMPILER=$coverageCompiler/bin/clang++.exe" `
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL `
+  '-DLLVM_TARGETS_TO_BUILD=' '-DLLVM_ENABLE_PROJECTS=' '-DLLVM_ENABLE_RUNTIMES=' `
+  -DLLVM_EXTERNAL_PROJECTS=FlitzZipProfileRegister `
+  "-DLLVM_EXTERNAL_FLITZZIPPROFILEREGISTER_SOURCE_DIR=$registrationSource" `
+  -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF `
+  -DLLVM_INCLUDE_DOCS=OFF -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_ENABLE_ZLIB=FORCE_ON `
+  "-DZLIB_ROOT=$coverageZlibPrefix" "-DZLIB_LIBRARY=$coverageZlibPrefix/lib/zs.lib" `
+  -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_LIBEDIT=OFF `
+  "-DPython3_EXECUTABLE=$coveragePython"
+if ($LASTEXITCODE -ne 0) { throw 'HIP profiling registration configuration failed.' }
+. (Join-Path $repoRoot 'tools/build_parallelism.ps1')
+$registrationJobs = Resolve-BuildParallelism
+Invoke-FlitzZipParallelBuild -Jobs $registrationJobs -Action {
+  & $coverageCmake --build $registrationBuild --target flitzzip_hip_profile_register --parallel $registrationJobs
+  if ($LASTEXITCODE -ne 0) { throw 'HIP profiling registration tool build failed.' }
+}
+```
+
+Configuration rejects another LLVM revision or modified LLVM/runtime sources.
+Preserve upstream LLVM notices with the development installation. The helper
+uses this repository's license and is not shipped with the application.
 Run the qualification with explicit paths, using the existing product SDK for
 HIP headers and runtime. No machine-specific installation path is embedded:
 
 ```powershell
 py -3 -B -m tools.hip_coverage --compiler-root $coverageCompiler --sdk $productSdk `
   --device-runtime "$coverageBuild/compiler-rt/lib/generic/libclang_rt.profile-amdgpu.a" `
+  --registration-tool "$registrationBuild/bin/flitzzip_hip_profile_register.exe" `
   --arch $coverageArch --output out/hip-coverage-qualification
 ```
 
 Repeat qualification when the compiler, profiler, runtime or device changes.
 Run the offline counter-admission regressions with
-`py -3 -B -m unittest tools.test_hip_coverage`; the existing component-contract
+`py -3 -B -m unittest tools.test_hip_coverage tools.test_hip_coverage_registration`; the existing component-contract
 workflow selects these tests when their inputs change and never launches a GPU.
 
 ## Tool provenance and local use
+
+### Production kernel objects
+
+After the helper-inclusive qualification passes, prepare profiling objects from
+the five canonical product HIP translation units:
+
+```powershell
+py -3 -B -m tools.hip_coverage_product build `
+  --qualification out/hip-coverage-qualification/qualification.json `
+  --output out/hip-product-objects
+```
+
+Configure a separate development build with
+`-DFLITZZIP_HIP_COVERAGE_MANIFEST=<absolute-path>/product-objects.json`, the same
+SDK and the qualified single GPU architecture. The manifest admits exact
+source, repository/SDK headers, compiler, profiler, object and device-image
+identities. CMake checks those identities again before linking the canonical
+kernel DLL, whose normal generated checksum and POD ABI admission remain active.
+No executable or DLL is replaced beneath an already qualified loader.
+Object preparation binds its own compiler recipe. CMake linking, lifecycle code
+and test consumers need their own source-bound measurement; an install-rule edit
+does not change the standalone object's compiler inputs.
+
+The supplied Windows ROCm host profiler uses the dynamic CRT. This development
+DLL therefore consistently uses that CRT for its instrumented objects and module
+entrypoint. Ownership and exceptions remain within the existing POD boundary.
+The ordinary product DLL keeps its static CRT and pinned compiler path.
+The profiling runtime uses explicit initialization and collection: the
+executable's module owner drains device counters before releasing its verified
+DLL. Automatic profiler exit callbacks must not perform HIP work during DLL
+detach, where [Windows holds the loader lock](https://learn.microsoft.com/en-us/windows/win32/dlls/dllmain).
+Missing lifecycle exports and
+collection errors fail measurement rather than silently dropping profiles.
+Instrumented builds cannot receive a production build receipt, install or enter
+CPack. Run them only for measurement, never performance comparisons or release
+qualification. Local consistency receipts are not authenticated attestations.
+
+Preparing objects performs no GPU execution. Product device coverage still
+requires the real test consumers, retained raw profiles, complete per-image LLVM
+exports and source-bound results; successful compilation alone does not qualify it.
+
+After configuring the isolated HIP build, explicitly build and measure selected
+regressions with the portable consumer:
+
+```powershell
+py -3.13 -B -m tools.hip_coverage_measure build-and-measure `
+  --manifest out/hip-product-objects/product-objects.json `
+  --build-root out/hip-product-measurement `
+  --filter '=neutron_dictionary_gpu_matches_exhaustive_oracle' `
+  --filter '=gpu_diagnostic_checksum_independent_sum_and_guards' `
+  --output out/hip-device-measurement
+```
+
+This command refreshes the existing configured `Debug` test target through the
+pinned CMake launcher and shared memory policy. It verifies all five complete
+device bundles in the linked DLL before execution, requires actual HIP admission
+and every translation unit's profile. LLVM's native profile reader associates
+each raw profile with exactly one ELF using its complete name-reference, CFG-hash
+and counter-extent inventory. Only profiles from the same image are merged;
+cross-image function-name collisions must not create or hide mapping mismatches.
+Every image receives its own complete native export, with diagnostics blocking
+acceptance. LLVM's line iterator supplies exact mapped-line hits; the product
+summary unions hits by source path and line, counting shared headers once.
+This distinct-source-line metric can differ from LLVM's instantiation-group
+summary. Raw reports retain both representations.
+Review each selected workload first: unoptimized instrumented kernels can
+be much slower than the ordinary product. Exact selectors are mandatory to avoid
+accidentally invoking large groups or opt-in benchmarks. Offline tool contracts
+exercise refusals without compiling the product or executing a GPU.
+
+The raw export retains SDK and compiler mappings. Product summaries include only
+the checkout's `src` tree, even when a downloaded SDK resides in its `out` cache.
+Source counts remain separate from host coverage and release qualification.
 
 OpenCppCoverage 0.9.9.0 is a development-only GPL-3.0 tool, downloaded from its
 [official release](https://github.com/OpenCppCoverage/OpenCppCoverage/releases/tag/release-0.9.9.0).

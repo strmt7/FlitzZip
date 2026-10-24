@@ -5,6 +5,8 @@
 #include "core/archive_format.hpp"
 #include "core/checksum.hpp"
 #include "core/result.hpp"
+#include "core/resource_limits.hpp"
+#include "core/stream_position.hpp"
 #include "sevenzip/sevenzip_adapter.hpp"
 
 #include <array>
@@ -12,7 +14,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
+#include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -38,7 +43,9 @@ constexpr std::array<unsigned char, 174> kNestedSevenZipFixture{
 void write_7z_fixture(const std::filesystem::path& archive,
                       std::span<const unsigned char> bytes = kNestedSevenZipFixture) {
     std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+    output.exceptions(std::ios::badbit | std::ios::failbit);
     output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    output.close();
 }
 
 // Purpose: Append a little-endian 32-bit field to a handcrafted 7z header.
@@ -106,7 +113,109 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
     return count;
 }
 
+// Purpose: Independently frame one named empty 7z file using the SDK's published FilesInfo wire grammar.
+// Inputs: UTF-16 name units; no packed data. Outputs: A checksum-correct archive with an explicit nine-byte size field.
+std::vector<unsigned char> make_empty_named_7z(std::u16string_view name) {
+    std::vector<unsigned char> header{1, 5, 1, 14, 1, 0x80, 15, 1, 0x80, 17, 0xFF};
+    append_le64(header, 1U + (static_cast<std::uint64_t>(name.size()) + 1U) * 2U);
+    header.push_back(0);
+    for (const auto unit : name) {
+        header.push_back(static_cast<unsigned char>(unit & 0xFFU));
+        header.push_back(static_cast<unsigned char>(unit >> 8U));
+    }
+    header.insert(header.end(), {0, 0, 0, 0});
+    return make_unencoded_7z(header);
+}
+
 }  // namespace
+
+// Purpose: Prove signed seek admission at every small position and the independently calculated 64-bit extremes.
+// Inputs: Bounded exhaustive small arithmetic and explicit minimum/maximum signed/unsigned cases; no filesystem work.
+// Outputs: Requires exact positions or rejection, including a constant-evaluated minimum signed displacement.
+TEST_CASE(stream_seek_position_bounds_are_overflow_safe) {
+    constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+    constexpr auto signed_maximum = std::numeric_limits<std::int64_t>::max();
+    constexpr auto signed_minimum = std::numeric_limits<std::int64_t>::min();
+    constexpr auto half = std::uint64_t{1} << 63U;
+    static_assert(flitzzip::checked_stream_seek_position(half, signed_minimum, maximum) == 0U);
+    struct Case {
+        std::uint64_t base;
+        std::int64_t offset;
+        std::uint64_t extent;
+        std::optional<std::uint64_t> expected;
+    };
+    const Case cases[] = {
+        {maximum, 0, maximum, maximum},
+        {maximum, 1, maximum, std::nullopt},
+        {maximum, -1, maximum, maximum - 1U},
+        {0, signed_maximum, maximum, static_cast<std::uint64_t>(signed_maximum)},
+        {maximum - signed_maximum, signed_maximum, maximum, maximum},
+        {maximum - signed_maximum + 1U, signed_maximum, maximum, std::nullopt},
+        {half, signed_minimum, maximum, 0U},
+        {half - 1U, signed_minimum, maximum, std::nullopt},
+        {half + 1U, signed_minimum, maximum, 1U},
+        {0, signed_minimum, maximum, std::nullopt},
+        {maximum, signed_minimum, maximum, static_cast<std::uint64_t>(signed_maximum)},
+    };
+    for (const auto& item : cases) {
+        REQUIRE_EQ(flitzzip::checked_stream_seek_position(item.base, item.offset, item.extent), item.expected);
+    }
+    for (std::uint64_t extent = 0; extent <= 16U; ++extent) {
+        for (std::uint64_t base = 0; base <= extent + 1U; ++base) {
+            for (std::int64_t offset = -20; offset <= 20; ++offset) {
+                const auto candidate = static_cast<std::int64_t>(base) + offset;
+                const auto expected = base <= extent && candidate >= 0 && candidate <= static_cast<std::int64_t>(extent)
+                                          ? std::optional<std::uint64_t>(static_cast<std::uint64_t>(candidate))
+                                          : std::nullopt;
+                REQUIRE_EQ(flitzzip::checked_stream_seek_position(base, offset, extent), expected);
+            }
+        }
+    }
+}
+
+// Purpose: Distinguish UTF-16 metadata bounds from UTF-8 expansion bounds before any 7z file publication.
+// Inputs: An independently framed valid scalar-width filename and oversized ASCII, two-, three- and four-byte names.
+// Outputs: Exact empty-file extraction for valid scalars; specific size errors and no destination for all excessive
+// names.
+TEST_CASE(sevenzip_name_conversion_bounds_precede_publication) {
+    const auto root = test_temp_dir("sevenzip-name-conversion-bounds");
+    const auto archive = root / "input.7z";
+    const std::u16string valid_name = u"\u00E9-\u07FF-\u0800-\uFFFD-\U00010000-\U0010FFFD.txt";
+    write_7z_fixture(archive, make_empty_named_7z(valid_name));
+    const auto stats = flitzzip::extract_7z(archive, root / "valid", false);
+    REQUIRE_EQ(stats.entries, 1U);
+    REQUIRE_EQ(stats.output_bytes, 0U);
+    REQUIRE_TRUE(std::filesystem::is_regular_file(root / "valid" / std::filesystem::path(valid_name)));
+    REQUIRE_EQ(count_regular_files(root / "valid"), 1U);
+    std::u16string supplementary;
+    for (std::uint32_t index = 0; index <= flitzzip::kMaxArchivePathBytes / 4U; ++index) {
+        supplementary += u"\U0001F9EA";
+    }
+    const std::pair<std::u16string, std::string_view> invalid[] = {
+        {std::u16string(flitzzip::kMaxArchivePathBytes + 1U, u'a'), "7z filename exceeds FlitzZip resource limit"},
+        {std::u16string(flitzzip::kMaxArchivePathBytes / 2U + 1U, u'\u00E9'),
+         "7z filename exceeds FlitzZip path length limit"},
+        {std::u16string(flitzzip::kMaxArchivePathBytes / 3U + 1U, u'\u754C'),
+         "7z filename exceeds FlitzZip path length limit"},
+        {supplementary, "7z filename exceeds FlitzZip path length limit"},
+    };
+    for (const auto& [name, diagnostic] : invalid) {
+        write_7z_fixture(archive, make_empty_named_7z(name));
+        bool rejected = false;
+        try {
+            (void)flitzzip::extract_7z(archive, root / "rejected", false);
+        } catch (const flitzzip::ArchiveError& error) {
+            if (std::string_view(error.what()).find(diagnostic) == std::string_view::npos) {
+                throw std::runtime_error("7z name conversion expected " + std::string(diagnostic) + "; received " +
+                                         error.what());
+            }
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_TRUE(!std::filesystem::exists(root / "rejected"));
+    }
+    std::filesystem::remove_all(root);
+}
 
 // Purpose: Verify native `.7z` extraction reads a nested payload through the LZMA SDK decoder.
 // Inputs: An embedded 7z archive with `nested/payload.txt`.
@@ -185,22 +294,48 @@ TEST_CASE(sevenzip_extraction_refuses_overwrite_by_default) {
     REQUIRE_EQ(read_text_file(output / "nested" / "payload.txt"), "old");
 }
 
-// Purpose: Verify 7z extraction rejects truncated archives before output publication.
-// Inputs: A 7z fixture truncated to the signature/header area.
-// Outputs: Throws `ArchiveError` and creates no extracted files.
+// Purpose: Reject every strict 7z prefix without modifying an existing destination or retaining source handles.
+// Inputs: All truncation points of an independent nested archive, then the complete archive for recovery.
+// Outputs: Every prefix rejects without staging debris; complete input still restores exact bytes beside the sentinel.
 TEST_CASE(sevenzip_extraction_rejects_truncated_archive_before_output) {
     const auto root = test_temp_dir("sevenzip-truncated");
     const auto archive = root / "truncated.7z";
-    write_7z_fixture(archive, std::span<const unsigned char>(kNestedSevenZipFixture.data(), 32));
-
-    bool rejected = false;
-    try {
-        static_cast<void>(flitzzip::extract_7z(archive, root / "out", false));
-    } catch (const flitzzip::ArchiveError&) {
-        rejected = true;
+    const auto output = root / "out";
+    std::filesystem::create_directories(output);
+    const auto sentinel = output / "existing.txt";
+    {
+        std::ofstream file(sentinel);
+        file.exceptions(std::ios::badbit | std::ios::failbit);
+        file << "retain";
+        file.close();
     }
-    REQUIRE_TRUE(rejected);
-    REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
+    for (std::size_t cut = 0; cut < kNestedSevenZipFixture.size(); ++cut) {
+        write_7z_fixture(archive, std::span<const unsigned char>(kNestedSevenZipFixture.data(), cut));
+        REQUIRE_EQ(std::filesystem::file_size(archive), cut);
+        bool rejected = false;
+        try {
+            (void)flitzzip::extract_7z(archive, output, false);
+        } catch (const flitzzip::Error&) {
+            rejected = true;
+        }
+        if (!rejected) {
+            throw std::runtime_error("7z strict prefix accepted at byte " + std::to_string(cut));
+        }
+        REQUIRE_EQ(count_regular_files(output), 1U);
+        REQUIRE_EQ(std::distance(std::filesystem::recursive_directory_iterator(output),
+                                 std::filesystem::recursive_directory_iterator()),
+                   1);
+        REQUIRE_EQ(read_text_file(sentinel), "retain");
+        REQUIRE_EQ(read_text_file(archive),
+                   std::string(reinterpret_cast<const char*>(kNestedSevenZipFixture.data()), cut));
+    }
+    write_7z_fixture(archive);
+    const auto stats = flitzzip::extract_7z(archive, output, false);
+    REQUIRE_EQ(stats.entries, 1U);
+    REQUIRE_EQ(read_text_file(output / "nested" / "payload.txt"), "sevenzip payload");
+    REQUIRE_EQ(read_text_file(sentinel), "retain");
+    REQUIRE_EQ(count_regular_files(output), 2U);
+    std::filesystem::remove_all(root);
 }
 
 // Purpose: Verify 7z extraction rejects corrupted payload bytes through CRC validation.

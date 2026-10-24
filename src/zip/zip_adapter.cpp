@@ -159,7 +159,7 @@ OperationStats compress_zip(const std::vector<std::filesystem::path>& sources,
     FilePublishTransaction publication(output_archive);
     mz_zip_archive zip{};
     if (!mz_zip_writer_init_file(&zip, zip_filesystem_path(publication.staging_path()).c_str(), 0)) {
-        throw ArchiveError("cannot create ZIP archive: " + output_archive.string());
+        throw ArchiveError("cannot create ZIP archive: " + path_diagnostic_utf8(output_archive));
     }
     bool finalized = false;
     std::uint64_t output_bytes = 0;
@@ -213,14 +213,17 @@ OperationStats compress_zip(const std::vector<std::filesystem::path>& sources,
 }
 
 // Purpose: Validate ZIP metadata and decoded CRC/size without creating extraction files.
-// Inputs: `archive_path` identifies the ZIP; `progress_callback` may throw to cancel at bounded decode checkpoints.
-// Outputs: Returns verification telemetry or propagates a format, resource, path, decoder, or callback failure.
-OperationStats verify_zip(const std::filesystem::path& archive_path, const ProgressCallback& progress_callback) {
+// Inputs: `requested_archive` stays pinned throughout verification; `progress_callback` may cancel at bounded decode
+// checkpoints. Outputs: Returns verification telemetry or propagates a format, resource, path, decoder, or callback
+// failure.
+OperationStats verify_zip(const std::filesystem::path& requested_archive, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
+    const auto archive_source = pin_source_file(requested_archive);
+    const auto& archive_path = archive_source.path();
     mz_zip_archive zip{};
     if (!mz_zip_reader_init_file(&zip, zip_filesystem_path(archive_path).c_str(),
                                  MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY)) {
-        throw ArchiveError("cannot open ZIP archive: " + archive_path.string());
+        throw ArchiveError("cannot open ZIP archive: " + path_diagnostic_utf8(archive_path));
     }
     try {
         const auto scan = scan_zip_entries(zip);
@@ -250,7 +253,7 @@ OperationStats verify_zip(const std::filesystem::path& archive_path, const Progr
             publish_progress(progress, progress_callback);
         }
         OperationStats stats;
-        stats.input_bytes = regular_file_size(archive_path);
+        stats.input_bytes = archive_source.size();
         stats.output_bytes = scan.total_bytes;
         stats.entries = scan.paths.size();
         stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -263,16 +266,18 @@ OperationStats verify_zip(const std::filesystem::path& archive_path, const Progr
 }
 
 // Purpose: Extract a standard ZIP archive with FlitzZip path safety and verified final-file publication.
-// Inputs: `archive_path`, `destination`, `overwrite`, and optional `progress_callback` describe the extraction run.
-// Outputs: Restores verified ZIP entries into `destination` and returns operation telemetry, or throws on validation
-// failure.
-OperationStats extract_zip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+// Inputs: `requested_archive` stays pinned through publication; destination, overwrite and progress_callback select
+// extraction. Outputs: Restores verified ZIP entries into `destination` and returns operation telemetry, or throws on
+// validation failure.
+OperationStats extract_zip(const std::filesystem::path& requested_archive, const std::filesystem::path& destination,
                            bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
+    const auto archive_source = pin_source_file(requested_archive);
+    const auto& archive_path = archive_source.path();
     mz_zip_archive zip{};
     if (!mz_zip_reader_init_file(&zip, zip_filesystem_path(archive_path).c_str(),
                                  MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY)) {
-        throw ArchiveError("cannot open ZIP archive: " + archive_path.string());
+        throw ArchiveError("cannot open ZIP archive: " + path_diagnostic_utf8(archive_path));
     }
     try {
         const auto scan = scan_zip_entries(zip);
@@ -297,7 +302,8 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
                 continue;
             }
             if (!overwrite && std::filesystem::exists(target)) {
-                throw SecurityError("refusing to overwrite existing ZIP extraction target: " + target.string());
+                throw SecurityError("refusing to overwrite existing ZIP extraction target: " +
+                                    path_diagnostic_utf8(target));
             }
             // Miniz extracts to a private same-directory target first; only verified output is published.
             const auto temporary_target = reserve_file_publish_target(target);
@@ -322,7 +328,7 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
         mz_zip_reader_end(&zip);
 
         OperationStats stats;
-        stats.input_bytes = regular_file_size(archive_path);
+        stats.input_bytes = archive_source.size();
         stats.output_bytes = scan.total_bytes;
         stats.entries = file_count;
         stats.gpu_used = false;

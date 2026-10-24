@@ -1,6 +1,8 @@
+#include "test_environment.hpp"
 #include "test_util.hpp"
 
 #include "app/main_window_support.hpp"
+#include "core/path_text.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -27,42 +29,7 @@ template <typename Operation> void require_archive_error(Operation&& operation, 
     REQUIRE_TRUE(rejected);
 }
 
-class ScopedEnvironment final {
-  public:
-    // Purpose: Preserve one process environment value while a GUI-startup contract mutates it.
-    // Inputs: `name` is a stable variable owned by the test process.
-    // Outputs: Captures the prior value and restores it at destruction.
-    explicit ScopedEnvironment(std::wstring name) : name_(std::move(name)) {
-        wchar_t buffer[32768]{};
-        const DWORD length = GetEnvironmentVariableW(name_.c_str(), buffer, 32768U);
-        if (length > 0U && length < 32768U) {
-            previous_.assign(buffer, length);
-            existed_ = true;
-        }
-    }
-
-    ScopedEnvironment(const ScopedEnvironment&) = delete;
-    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
-
-    // Purpose: Restore the captured environment value without leaking test state.
-    // Inputs: Captured construction state.
-    // Outputs: Restores or removes the variable.
-    ~ScopedEnvironment() {
-        SetEnvironmentVariableW(name_.c_str(), existed_ ? previous_.c_str() : nullptr);
-    }
-
-    // Purpose: Set or remove the scoped environment variable.
-    // Inputs: Nullable UTF-16 value.
-    // Outputs: Fails the test if Windows rejects the mutation.
-    void set(const wchar_t* value) const {
-        REQUIRE_TRUE(SetEnvironmentVariableW(name_.c_str(), value) != 0);
-    }
-
-  private:
-    std::wstring name_;
-    std::wstring previous_;
-    bool existed_ = false;
-};
+using flitzzip_test::ScopedEnvironment;
 
 // Purpose: Read an owned test artifact byte-for-byte without text-mode newline conversion.
 // Inputs: Existing regular file path.
@@ -415,11 +382,11 @@ TEST_CASE(gui_compatibility_routing_round_trips_all_create_formats) {
 }
 
 // Purpose: Keep unknown, recognized-unsupported, and name-aware GUI extraction routes fail-closed before publication.
-// Inputs: Owned empty files and exact format identities that exercise dispatcher-only policy branches.
-// Outputs: Stable diagnostics are returned and no extraction destination is published.
+// Inputs: An owned Unicode-named empty file and exact format identities that exercise dispatcher-only policy branches.
+// Outputs: Stable UTF-8 diagnostics are returned and no extraction destination is published.
 TEST_CASE(gui_extraction_dispatch_rejects_unimplemented_routes) {
     const auto root = test_temp_dir("gui-extraction-routing-errors");
-    const auto archive = root / "input.bin";
+    const auto archive = root / std::filesystem::path(u"input-\U0001F9EA.bin");
     {
         std::ofstream output(archive, std::ios::binary);
         REQUIRE_TRUE(static_cast<bool>(output));
@@ -430,7 +397,7 @@ TEST_CASE(gui_extraction_dispatch_rejects_unimplemented_routes) {
             (void)flitzzip::app::extract_detected_archive(flitzzip::ArchiveFormat::Unknown, archive, destination, false,
                                                           false, {});
         },
-        "unable to detect archive format: " + archive.string());
+        "unable to detect archive format: " + flitzzip::path_diagnostic_utf8(archive));
     require_archive_error(
         [&] {
             (void)flitzzip::app::extract_detected_archive(flitzzip::ArchiveFormat::Rar, archive, destination, false,
@@ -605,7 +572,18 @@ TEST_CASE(gui_startup_policy_is_bounded_and_non_resizable) {
     auto_close.set(L"1");
     REQUIRE_EQ(flitzzip::app::smoke_auto_close_ms(), 5000U);
     auto_close.set(L"999999");
-    REQUIRE_EQ(flitzzip::app::smoke_auto_close_ms(), 300000U);
+    REQUIRE_EQ(flitzzip::app::smoke_auto_close_ms(), 999999U);
+    auto_close.set(L"910000");
+    REQUIRE_EQ(flitzzip::app::smoke_auto_close_ms(), 910000U);
+    auto_close.set(L"4294967295");
+    REQUIRE_EQ(flitzzip::app::smoke_auto_close_ms(), static_cast<UINT>(USER_TIMER_MAXIMUM));
+    for (const auto* invalid : {L"-1", L" 15000", L"15000suffix", L"4294967296"}) {
+        auto_close.set(invalid);
+        REQUIRE_EQ(flitzzip::app::smoke_auto_close_ms(), 0U);
+    }
+    const std::wstring oversized_number(40, L'9');
+    auto_close.set(oversized_number.c_str());
+    REQUIRE_EQ(flitzzip::app::smoke_auto_close_ms(), 0U);
     auto_close.set(L"15000");
     REQUIRE_EQ(flitzzip::app::smoke_auto_close_ms(), 15000U);
 
@@ -621,4 +599,22 @@ TEST_CASE(gui_startup_policy_is_bounded_and_non_resizable) {
     }
     REQUIRE_TRUE(flitzzip::app::smoke_close_requested());
     std::filesystem::remove_all(root);
+}
+
+// Purpose: Keep opaque exception bytes from turning status rendering into a second conversion failure.
+// Inputs: Empty, valid Unicode and malformed UTF-8 diagnostics with literal escape-like text.
+// Outputs: Exact valid text or explicitly labeled reversible byte escapes; strict metadata conversion still rejects.
+TEST_CASE(diagnostic_text_preserves_unicode_and_labels_invalid_exception_bytes) {
+    using flitzzip::app::diagnostic_text;
+    REQUIRE_EQ(diagnostic_text(""), std::wstring());
+    REQUIRE_EQ(diagnostic_text("Error: \xCE\xB4\xF0\x9F\x93\xA6"), std::wstring(L"Error: \u03B4\U0001F4E6"));
+    REQUIRE_EQ(diagnostic_text(std::string("Error: \xFF\\x00\n", 14)),
+               std::wstring(L"[invalid UTF-8 bytes] Error: \\xFF\\x5Cx00\\x0A\\x00"));
+    bool rejected = false;
+    try {
+        static_cast<void>(flitzzip::app::widen("\xFF"));
+    } catch (const flitzzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
 }

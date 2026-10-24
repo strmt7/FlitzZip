@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "test_source_session.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -81,6 +82,16 @@ TEST_CASE(unix_compress_extracts_handcrafted_single_literal) {
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "single"), "A");
     REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::UnixCompress);
+}
+
+// Purpose: Preserve one immutable Unix Compress source identity throughout decoding and publication.
+// Inputs: An independently packed literal stream and real Windows sharing probes; no bytes are changed.
+// Outputs: Refused active/concurrent writers, exact output and recovery after admission refusal or interruption.
+TEST_CASE(single_stream_source_session_unix_compress) {
+    const auto root = test_temp_dir("unix-compress-source-session");
+    const auto archive = root / "payload.Z";
+    write_binary_file(archive, {0x1FU, 0x9DU, 0x90U, 0x41U, 0x00U});
+    flitzzip_test::require_archive_source_session(archive, root, "payload", "A", &flitzzip::extract_unix_compress_file);
 }
 
 // Purpose: Preserve Unicode host filenames in Unix Compress extraction independently of its encoder.

@@ -9,6 +9,7 @@
 #include <iterator>
 #include <memory>
 #include <new>
+#include <string>
 #include <utility>
 
 namespace {
@@ -337,6 +338,58 @@ TEST_CASE(file_manifest_pinned_session_moves_preserve_exclusive_lifetime) {
     }
     require_source_write_access(first, true);
     require_source_write_access(second, true);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject writable mapped sources even after their original file and mapping handles have closed.
+// Inputs: One owned 4 KiB file, captured manifest identity and a real Windows writable mapping/view.
+// Outputs: Both public source-admission APIs refuse every surviving writable owner, then admit unchanged bytes.
+TEST_CASE(file_manifest_pinned_session_rejects_surviving_writable_views) {
+    const auto root = test_temp_dir("manifest-mapped-source");
+    const auto source = root / "source.bin";
+    const std::string expected(4096U, 'M');
+    std::ofstream(source, std::ios::binary) << expected;
+    const auto entry = flitzzip::build_manifest({source}).entries.front();
+    flitzzip::windows_detail::HandleOwner writer(CreateFileW(source.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                                             nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+    REQUIRE_TRUE(writer.get() != INVALID_HANDLE_VALUE);
+    flitzzip::windows_detail::HandleOwner mapping(
+        CreateFileMappingW(writer.get(), nullptr, PAGE_READWRITE, 0U, 0U, nullptr));
+    REQUIRE_TRUE(mapping.get() != nullptr);
+    std::unique_ptr<void, decltype(&UnmapViewOfFile)> view(
+        MapViewOfFile(mapping.get(), FILE_MAP_WRITE, 0U, 0U, expected.size()), &UnmapViewOfFile);
+    REQUIRE_TRUE(view.get() != nullptr);
+    writer.reset();
+    for (const bool close_mapping_handle : {false, true}) {
+        if (close_mapping_handle) {
+            mapping.reset();
+        }
+        for (const bool manifest_admission : {false, true}) {
+            bool rejected = false;
+            try {
+                if (manifest_admission) {
+                    (void)flitzzip::lock_manifest_source(entry);
+                } else {
+                    (void)flitzzip::pin_source_file(source);
+                }
+            } catch (const flitzzip::SecurityError& error) {
+                REQUIRE_TRUE(std::string_view(error.what()).find("(Windows error 32)") != std::string_view::npos);
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+        }
+    }
+    view.reset();
+    {
+        const auto source_owner = flitzzip::pin_source_file(source);
+        const auto manifest_owner = flitzzip::lock_manifest_source(entry);
+        REQUIRE_EQ(source_owner.size(), expected.size());
+        require_source_write_access(source, false);
+        std::ifstream input(source_owner.path(), std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), expected);
+    }
+    require_source_write_access(source, true);
     std::filesystem::remove_all(root);
 }
 

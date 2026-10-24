@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
+#include "test_source_session.hpp"
 
 #include "arj/arj_adapter.hpp"
 #include "core/archive_format.hpp"
@@ -236,6 +237,15 @@ TEST_CASE(arj_extracts_stored_files_and_directories) {
     std::filesystem::remove_all(root);
 }
 
+// Purpose: Retain one ARJ source identity across its metadata and payload passes.
+// Inputs: An independently framed stored entry. Outputs: Exact bytes, real sharing refusal and failure recovery.
+TEST_CASE(archive_source_session_arj) {
+    const auto root = test_temp_dir("arj-source-session");
+    const auto archive = root / "input.arj";
+    write_binary_file(archive, make_arj_archive({ArjFixtureEntry{.name = "payload", .payload = {'a', 'r', 'j'}}}));
+    flitzzip_test::require_archive_source_session(archive, root, "payload", "arj", &flitzzip::extract_arj);
+}
+
 // Purpose: Verify ARJ extraction refuses existing output files unless overwrite is explicit.
 // Inputs: A stored ARJ entry whose target already exists.
 // Outputs: Throws if overwrite refusal is bypassed or existing content changes.
@@ -408,8 +418,8 @@ TEST_CASE(arj_metadata_policy_failure_matrix_preserves_destination) {
 }
 
 // Purpose: Validate ARJ extended-header CRC handling and scan-to-publication payload revalidation.
-// Inputs: One valid extension, one bad extension CRC and a callback mutation after the complete scan.
-// Outputs: Extracts valid metadata, rejects corrupt metadata, and removes a payload changed before publication.
+// Inputs: Valid extension metadata, corrupt extension/payload bytes and a real write-admission probe after scanning.
+// Outputs: Exact valid output, corrupt-input refusal, denied late mutation and valid reuse after CRC rejection.
 TEST_CASE(arj_extended_headers_and_second_pass_integrity_are_enforced) {
     const auto root = test_temp_dir("arj-extended-and-revalidation");
     const std::vector<unsigned char> extension{'m', 'e', 't', 'a'};
@@ -438,24 +448,31 @@ TEST_CASE(arj_extended_headers_and_second_pass_integrity_are_enforced) {
     write_binary_file(archive, valid);
     const auto payload_offset = static_cast<std::size_t>(
         std::search(valid.begin(), valid.end(), payload.begin(), payload.end()) - valid.begin());
-    bool mutated = false;
-    bool rejected = false;
-    try {
-        (void)flitzzip::extract_arj(archive, root / "mutated-output", false, [&](const flitzzip::ProgressSnapshot&) {
-            if (!mutated) {
-                std::fstream changed(archive, std::ios::binary | std::ios::in | std::ios::out);
-                changed.seekp(static_cast<std::streamoff>(payload_offset));
-                changed.put('X');
-                changed.flush();
-                mutated = true;
-            }
-        });
-    } catch (const flitzzip::ArchiveError& error) {
-        REQUIRE_EQ(std::string_view(error.what()), "ARJ file payload CRC mismatch during publish");
-        rejected = true;
-    }
-    REQUIRE_TRUE(mutated);
-    REQUIRE_TRUE(rejected);
-    REQUIRE_TRUE(!std::filesystem::exists(root / "mutated-output" / "payload.bin"));
+    REQUIRE_TRUE(payload_offset < valid.size());
+    REQUIRE_TRUE(payload.size() <= valid.size() - payload_offset);
+    unsigned probes = 0;
+    const auto stable_output = root / "immutable-output";
+    const auto stats = flitzzip::extract_arj(archive, stable_output, false, [&](const flitzzip::ProgressSnapshot&) {
+        DWORD error = ERROR_SUCCESS;
+        REQUIRE_TRUE(!flitzzip_test::source_writer_available(archive, error));
+        REQUIRE_EQ(error, static_cast<DWORD>(ERROR_SHARING_VIOLATION));
+        ++probes;
+    });
+    REQUIRE_TRUE(probes > 0U);
+    REQUIRE_EQ(stats.output_bytes, payload.size());
+    REQUIRE_EQ(read_text_file(stable_output / "payload.bin"), std::string(payload.begin(), payload.end()));
+    REQUIRE_EQ(read_text_file(archive), std::string(valid.begin(), valid.end()));
+
+    // Corruption present before admission must still fail the real CRC check without publishing payload bytes.
+    auto bad_payload = valid;
+    bad_payload[payload_offset] ^= 1U;
+    const auto bad_root = root / "bad-payload";
+    require_arj_archive_rejected(bad_payload, bad_root, "ARJ stored payload CRC mismatch");
+    DWORD released_error = ERROR_SUCCESS;
+    REQUIRE_TRUE(flitzzip_test::source_writer_available(bad_root / "input.arj", released_error));
+    write_binary_file(bad_root / "input.arj", valid);
+    REQUIRE_EQ(flitzzip::extract_arj(bad_root / "input.arj", bad_root / "out", true).output_bytes, payload.size());
+    REQUIRE_EQ(read_text_file(bad_root / "out" / "payload.bin"), std::string(payload.begin(), payload.end()));
+    REQUIRE_EQ(read_text_file(bad_root / "out" / "sentinel.txt"), std::string("retain"));
     std::filesystem::remove_all(root);
 }

@@ -112,12 +112,13 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
 }
 
 // Purpose: Extract a single-file `.zst`/`.zstd` stream to a validated destination.
-// Inputs: `archive_path`, `destination`, `overwrite`, and `progress_callback` define the extraction run.
-// Outputs: Publishes the decoded file and returns telemetry, or throws on malformed streams or unsafe paths.
+// Inputs: `archive_path` stays pinned through publication; `destination`, `overwrite`, and `progress_callback` select
+// output. Outputs: Publishes the decoded file and returns telemetry, or throws on malformed streams or unsafe paths.
 OperationStats extract_zstd_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                  bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto archive_size = regular_file_size(archive_path);
+    ZstdInputStream input(archive_path);
+    const auto archive_size = input.input_bytes();
     const auto entry_name = single_stream_entry_name(archive_path, {{".zstd", ""}, {".zst", ""}});
     create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, entry_name, ArchivePathEncoding::Utf8);
@@ -133,7 +134,6 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
 
     FilePublishTransaction publication(target);
     {
-        ZstdInputStream input(archive_path);
         std::ofstream output(publication.staging_path(), std::ios::binary | std::ios::trunc);
         if (!output) {
             throw ArchiveError("cannot create Zstandard extraction target: " + path_diagnostic_utf8(target));

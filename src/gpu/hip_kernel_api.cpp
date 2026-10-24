@@ -4,6 +4,9 @@
 #include "flitzzip_hip_kernel_identity.hpp"
 
 #include <algorithm>
+#if defined(FLITZZIP_HIP_DEVICE_COVERAGE)
+#include <cstdio>
+#endif
 #include <tuple>
 #include <utility>
 #include <windows.h>
@@ -14,6 +17,19 @@ namespace {
 struct KernelModule {
     TrustedRuntimeModule owner;
     const HipKernelApi* api;
+#if defined(FLITZZIP_HIP_DEVICE_COVERAGE)
+    using ProfileFinish = int (*)() noexcept;
+    ProfileFinish finish_profile;
+
+    // Purpose: Drain development device counters outside DLL detach while the verified module remains owned.
+    // Inputs: The admitted nonthrowing profiler entrypoint. Outputs: Profiles or explicit failure before module
+    // release.
+    ~KernelModule() {
+        if (finish_profile() != 0) {
+            std::fputs("FlitzZip device profile collection failed before kernel module release\n", stderr);
+        }
+    }
+#endif
 };
 
 // Purpose: Reject absent device code before the HIP DLL can register incompatible fat binaries.
@@ -121,7 +137,16 @@ const KernelModule& admitted_kernel_module() {
         using ReadApi = const HipKernelApi* (*)() noexcept;
         const auto* api = reinterpret_cast<ReadApi>(entry)();
         validate_kernel_api(api);
+#if defined(FLITZZIP_HIP_DEVICE_COVERAGE)
+        const auto finish = reinterpret_cast<KernelModule::ProfileFinish>(
+            GetProcAddress(static_cast<HMODULE>(owner.native_handle()), "flitzzip_hip_profile_finish_v1"));
+        if (finish == nullptr) {
+            throw GpuError("Development HIP module is missing its required profiler lifecycle export");
+        }
+        return KernelModule{std::move(owner), api, finish};
+#else
         return KernelModule{std::move(owner), api};
+#endif
     }();
     return loaded;
 }

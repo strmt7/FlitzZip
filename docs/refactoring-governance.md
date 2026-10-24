@@ -3,22 +3,23 @@
 This document defines how FlitzZip refactoring is planned, triggered, executed,
 and verified without changing product behavior accidentally.
 
-## References Checked
+## Research And Adoption
 
-Checked on 2026-06-16:
+| Primary guidance | Adopted decision |
+| --- | --- |
+| [Google small changes](https://google.github.io/eng-practices/review/developer/small-cls.html) and [review standard](https://google.github.io/eng-practices/review/reviewer/standard.html) | Keep coherent changes reviewable and their regressions together; prioritize demonstrated correctness and maintainability |
+| [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines) and [Microsoft resource ownership](https://learn.microsoft.com/en-us/cpp/cpp/object-lifetime-and-resource-management-modern-cpp) | Establish ownership immediately, keep invariants explicit and review exception paths before structural movement |
+| [NIST SSDF](https://csrc.nist.gov/pubs/sp/800/218/final) and [CISA Secure by Design](https://www.cisa.gov/securebydesign) | Treat security and recurrence prevention as lifecycle responsibilities |
+| [GitHub Actions security](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions) | Preserve least privilege, pinned dependencies and trust boundaries during workflow optimization |
+| [SLSA build track](https://slsa.dev/spec/v1.2/build-track-basics) and [artifact verification](https://docs.github.com/en/actions/concepts/security/artifact-attestations) | Verify artifact identity and provenance; attestation generation alone does not prove trust or product correctness |
+| [Reproducible-build definition](https://reproducible-builds.org/docs/definition/) | Claim reproducibility only after comparing the specified outputs under the recorded source, environment and recipe |
+| [SPDX license information](https://spdx.dev/learn/handling-license-info/) and [OpenChain compliance](https://openchainproject.org/license-compliance) | Preserve notices, exact license choices and distribution obligations when moving or replacing components |
 
-- Martin Fowler, Refactoring: <https://refactoring.com/>
-- Google Engineering Practices, Small CLs: <https://google.github.io/eng-practices/review/developer/small-cls.html>
-- Microsoft Visual Studio refactoring documentation: <https://learn.microsoft.com/en-us/visualstudio/ide/refactoring-in-visual-studio>
-- NIST Secure Software Development Framework SP 800-218: <https://csrc.nist.gov/pubs/sp/800/218/final>
-- CISA Secure by Design: <https://www.cisa.gov/securebydesign>
-- OWASP Secure Coding Practices Quick Reference Guide: <https://owasp.org/www-project-secure-coding-practices-quick-reference-guide/>
-- GitHub Actions secure use: <https://docs.github.com/actions/security-guides/security-hardening-for-github-actions>
-- OpenSSF Scorecard checks: <https://github.com/ossf/scorecard>
-- SLSA specification v1.2: <https://slsa.dev/spec/v1.2/>
-- Microsoft Security Development Lifecycle practices: <https://www.microsoft.com/en-us/securityengineering/sdl/practices>
-- C++ Core Guidelines: <https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines>
-- SEI CERT C++ Coding Standard: <https://cmu-sei.github.io/secure-coding-standards/sei-cert-cpp-coding-standard/>
+Consult the [NIST publication status](https://csrc.nist.gov/projects/ssdf/publications)
+before treating a revision as final. SSDF v1.1 is final; the reviewed v1.2 is a
+draft. These references inform engineering decisions, not a claim of certification
+or complete conformance. Recheck changed external contracts when adopting them;
+do not recrawl unchanged background documents during each implementation batch.
 
 The common rule is that refactoring changes structure while preserving behavior.
 For FlitzZip, that means tests, benchmark baselines, and security gates are part

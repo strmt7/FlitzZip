@@ -294,13 +294,16 @@ struct HipDeviceIdentity {
 };
 
 // Purpose: Validate live device enumeration and the calling thread's selection without querying properties or VRAM.
-// Inputs: The trusted HIP runtime is loaded; allow_absent permits only a successful zero-device enumeration.
+// Inputs: The trusted HIP runtime is loaded; allow_absent admits zero devices or HIP's explicit no-device status.
 // Outputs: Returns the current identity, or {0, -1} for admitted absence; other failures throw GpuError.
 HipDeviceIdentity checked_hip_device_identity(bool allow_absent = false) {
     int count = 0;
     const auto count_status = hipGetDeviceCount(&count);
-    if (count_status != hipSuccess) {
+    if (count_status != hipSuccess && count_status != hipErrorNoDevice) {
         throw GpuError(std::string("Unable to enumerate AMD HIP devices: ") + hipGetErrorString(count_status));
+    }
+    if (count_status == hipErrorNoDevice) {
+        count = 0;
     }
     if (count == 0 && allow_absent) {
         return HipDeviceIdentity{0, -1};
@@ -538,7 +541,7 @@ GpuInfo query_hip_gpu_info() {
     }
     info.hip_runtime_loadable = true;
     info.runtime_version = loaded_hip_runtime().version;
-    // A failed enumeration remains unknown; only a successful zero count admits device absence.
+    // Other enumeration failures remain unknown; explicit HIP no-device status is known absence.
     info.device_count = -1;
     HipDeviceIdentity identity{};
     try {

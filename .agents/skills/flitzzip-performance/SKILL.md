@@ -1,6 +1,6 @@
 ---
 name: flitzzip-performance
-description: Improve FlitzZip compression and execution efficiency using mode-specific RAM-only benchmarks, licensed workloads, complete archive sizes and actual AMD HIP telemetry.
+description: Optimize FlitzZip CPU or HIP speed and archive size using representative RAM-only benchmarks, complete sizes and measured device execution.
 ---
 
 # FlitzZip Performance
@@ -43,6 +43,11 @@ change-aware verifier for correctness checks before benchmarking.
 5. Compare repeated observations on the same basis. Retain losses, non-monotonic
    effort pairs and inconclusive timings. Separate size, correctness, throughput
    and hardware-coverage claims.
+   Separate setup, transfers, kernel completion and end-to-end time. Compare
+   distributions or paired observations rather than only a best run. Include
+   incompressible and held-out inputs; a selected corpus gain is not a universal
+   improvement. Do not apply host tuning or approximate arithmetic from generic
+   GPU examples to lossless production behavior without the required proof.
 6. Refresh affected documentation and generated figures from retained records.
    Inspect every changed figure visually and preserve uncertainty correctly.
 

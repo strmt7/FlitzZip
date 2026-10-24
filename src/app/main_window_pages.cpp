@@ -20,17 +20,17 @@
 
 namespace flitzzip::app {
 
-namespace {
-
 // Purpose: Build the History details text for the selected row.
 // Inputs: `entry` is the selected session history row.
-// Outputs: Returns the multi-line detail body rendered in the lower History panel.
+// Outputs: Returns the detail body; opaque error bytes are labeled and escaped, while metadata stays strict.
 std::wstring history_detail_text(const HistoryEntry& entry) {
     return std::wstring(L"Time: ") + local_time_text(entry.timestamp) + L"    Operation: " + widen(entry.operation) +
            L"    Status: " + (entry.success ? L"Success" : L"Failure") + L"\nArchive name: " +
            widen(entry.archive_name) + L"\nArchive path: " + widen(entry.archive_path) + L"\nDetails: " +
-           widen(entry.detail);
+           diagnostic_text(entry.detail);
 }
+
+namespace {
 
 struct SecurityCheckDisplay {
     std::wstring_view text;
@@ -573,9 +573,13 @@ void MainWindow::draw_history_details(HDC dc, const RECT& details, const UiState
 }
 
 // Purpose: Clear History details pixel-scroll state after selection, filtering, or history reset changes.
-// Inputs: None.
-// Outputs: Resets visible/target offsets, wheel remainder, drag state, and smooth-scroll animation state.
+// Inputs: The live window's owning thread; workers publish a synchronized pending request instead.
+// Outputs: Resets offsets, drag/wheel and animation state; rejects wrong-thread access before any write.
 void MainWindow::reset_history_details_scroll_state() {
+    const DWORD owner = GetWindowThreadProcessId(hwnd_, nullptr);
+    if (owner == 0 || owner != GetCurrentThreadId()) {
+        throw std::logic_error("History presentation state requires the window thread");
+    }
     history_details_scroll_pixels_ = 0;
     history_details_scroll_target_pixels_ = 0;
     history_details_scroll_animation_start_pixels_ = 0;
