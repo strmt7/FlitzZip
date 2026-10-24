@@ -977,3 +977,100 @@ TEST_CASE(gpu_diagnostic_compute_closed_form_and_guards) {
     REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
 #endif
 }
+
+// Purpose: Prove selective noncompetitive admission changes only the selected segment's literal decision.
+// Inputs: Four masks over one 64-KiB segment and a 513-byte tail; initialized trees and canary-owned unused state.
+// Outputs: Exact independent literal prices, unchanged unselected segments and intact allocation guards on HIP.
+TEST_CASE(gpu_neutron_noncompetitive_mask_preserves_unselected_state) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    using namespace flitzzip;
+    using namespace flitzzip::dictionary;
+    using namespace flitzzip::hip_detail;
+    constexpr std::array<std::uint32_t, 2> lengths{kSegmentBytes, 513U};
+    constexpr std::array<std::uint32_t, 2> prices{65794U, 516U};
+    // Independent literal-only LZ4 packets: 65,536 uses [F0, FF x256, F1]; 513 uses [F0, FF, F3].
+    for (std::size_t segment = 0; segment < lengths.size(); ++segment) {
+        std::vector<std::byte> wire{std::byte{0xF0}};
+        if (segment == 0U) {
+            wire.insert(wire.end(), 256U, std::byte{0xFF});
+            wire.push_back(std::byte{0xF1});
+        } else {
+            wire.insert(wire.end(), {std::byte{0xFF}, std::byte{0xF3}});
+        }
+        wire.insert(wire.end(), lengths[segment], std::byte{0x61});
+        REQUIRE_EQ(wire.size(), prices[segment]);
+        std::vector<std::byte> decoded(lengths[segment]);
+        REQUIRE_EQ(LZ4_decompress_safe(reinterpret_cast<const char*>(wire.data()),
+                                       reinterpret_cast<char*>(decoded.data()), static_cast<int>(wire.size()),
+                                       static_cast<int>(decoded.size())),
+                   static_cast<int>(decoded.size()));
+        REQUIRE_TRUE(
+            std::all_of(decoded.begin(), decoded.end(), [](std::byte byte) { return byte == std::byte{0x61}; }));
+    }
+    constexpr std::uint64_t guard64 = 0xA5A5A5A5A5A5A5A5ULL;
+    constexpr std::uint32_t guard32 = 0xA5A5A5A5U;
+    std::vector<std::uint64_t> initial_tree(2U * optimal::kTreeWords + 32U, optimal::kInfinity);
+    std::fill_n(initial_tree.begin(), 16U, guard64);
+    std::fill_n(initial_tree.end() - 16U, 16U, guard64);
+    std::vector<std::uint32_t> initial_next(kSegmentBytes + 513U + 32U, guard32);
+    const std::array<std::uint32_t, 4> initial_active{guard32, 1U, 1U, guard32};
+    HipDeviceBuffer<std::uint64_t> trees(initial_tree.size() * sizeof(initial_tree[0]), "mask oracle trees");
+    HipDeviceBuffer<std::uint32_t> next(initial_next.size() * sizeof(initial_next[0]), "mask oracle decisions");
+    HipDeviceBuffer<std::uint32_t> active(sizeof(initial_active), "mask oracle activity");
+    for (std::uint32_t mask : {0U, 1U, 2U, 3U}) {
+        auto expected_tree = initial_tree;
+        auto expected_next = initial_next;
+        auto expected_active = initial_active;
+        for (std::size_t segment = 0; segment < lengths.size(); ++segment) {
+            if ((mask & (1U << segment)) == 0U) {
+                continue;
+            }
+            expected_active[segment + 1U] = 0U;
+            expected_next[16U + segment * kSegmentBytes] = lengths[segment];
+            const auto key = static_cast<std::uint64_t>(prices[segment]) << 32U;
+            // Only the leaf for local position zero and its sixteen ancestors can change from infinity.
+            for (std::size_t node = kSegmentBytes; node != 0U; node /= 2U) {
+                expected_tree[16U + segment * optimal::kTreeWords + node] = key;
+            }
+        }
+        REQUIRE_EQ(hipMemcpy(trees.get(), initial_tree.data(), initial_tree.size() * sizeof(initial_tree[0]),
+                             hipMemcpyHostToDevice),
+                   hipSuccess);
+        REQUIRE_EQ(hipMemcpy(next.get(), initial_next.data(), initial_next.size() * sizeof(initial_next[0]),
+                             hipMemcpyHostToDevice),
+                   hipSuccess);
+        REQUIRE_EQ(hipMemcpy(active.get(), initial_active.data(), sizeof(initial_active), hipMemcpyHostToDevice),
+                   hipSuccess);
+        optimal::State state{.suffix_tree = trees.get() + 16U, .next_matches = next.get() + 16U};
+        std::uint32_t input_size = kSegmentBytes + 513U;
+        auto* flags = active.get() + 1U;
+        void* arguments[]{&state, &input_size, &mask, &flags};
+        REQUIRE_EQ(
+            hipLaunchKernel(reinterpret_cast<const void*>(hip_kernel_api().neutron_initialize_noncompetitive_graphs),
+                            dim3(2), dim3(kDictionaryKernelThreads), arguments, 0, nullptr),
+            hipSuccess);
+        std::vector<std::uint64_t> actual_tree(initial_tree.size());
+        std::vector<std::uint32_t> actual_next(initial_next.size());
+        std::array<std::uint32_t, 4> actual_active{};
+        REQUIRE_EQ(hipMemcpy(actual_tree.data(), trees.get(), actual_tree.size() * sizeof(actual_tree[0]),
+                             hipMemcpyDeviceToHost),
+                   hipSuccess);
+        REQUIRE_EQ(hipMemcpy(actual_next.data(), next.get(), actual_next.size() * sizeof(actual_next[0]),
+                             hipMemcpyDeviceToHost),
+                   hipSuccess);
+        REQUIRE_EQ(hipMemcpy(actual_active.data(), active.get(), sizeof(actual_active), hipMemcpyDeviceToHost),
+                   hipSuccess);
+        REQUIRE_EQ(actual_tree, expected_tree);
+        REQUIRE_EQ(actual_next, expected_next);
+        REQUIRE_EQ(actual_active, expected_active);
+    }
+    active.reset_checked("mask oracle activity release");
+    next.reset_checked("mask oracle decisions release");
+    trees.reset_checked("mask oracle trees release");
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}

@@ -939,3 +939,108 @@ TEST_CASE(ar_extraction_refuses_overwrite_by_default) {
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(read_text_file(output / "file.txt"), "old");
 }
+
+namespace {
+
+enum class ArPositionFailure { MemberOffset, PayloadOffset, PayloadSeek, PaddingSeek };
+
+// Purpose: Fail one real AR stream positioning operation while preserving all ordinary reads and seeks.
+// Inputs: Complete independently framed bytes and the selected first-member query/seek boundary.
+// Outputs: A one-shot failed position, explicit observation evidence and the same reusable owned stream.
+class ArPositionFailureBuffer final : public std::stringbuf {
+  public:
+    // Purpose: Preserve an ordinary seekable source. Inputs: Complete bytes and failure selection. Outputs: Armed copy.
+    ArPositionFailureBuffer(const std::string& bytes, ArPositionFailure failure)
+        : std::stringbuf(bytes, std::ios::in | std::ios::binary), failure_(failure) {}
+
+    // Purpose: Restore valid external operations. Inputs: None. Outputs: Same bytes/position with failure disabled.
+    void disarm() noexcept {
+        armed_ = false;
+    }
+
+    // Purpose: Verify the parser reached the chosen external operation. Inputs: None. Outputs: One-shot evidence.
+    bool observed() const noexcept {
+        return observed_;
+    }
+
+  protected:
+    // Purpose: Reject exactly one position query or relative seek, forwarding every other request unchanged.
+    // Inputs: Standard stream offset, reference origin and mode. Outputs: Real position or failed-position sentinel.
+    pos_type seekoff(off_type offset, std::ios_base::seekdir direction, std::ios_base::openmode mode) override {
+        const auto current = std::stringbuf::seekoff(0, std::ios::cur, mode);
+        if (armed_ && !observed_ && direction == std::ios::cur && (mode & std::ios::in) != 0) {
+            bool query_failure = false;
+            if (offset == 0 && current == pos_type(68)) {
+                ++member_position_queries_;
+                query_failure = (failure_ == ArPositionFailure::MemberOffset && member_position_queries_ == 1U) ||
+                                (failure_ == ArPositionFailure::PayloadOffset && member_position_queries_ == 2U);
+            }
+            const bool seek_failure =
+                (failure_ == ArPositionFailure::PayloadSeek && current == pos_type(68) && offset == 3) ||
+                (failure_ == ArPositionFailure::PaddingSeek && current == pos_type(71) && offset == 1);
+            if (query_failure || seek_failure) {
+                observed_ = true;
+                return pos_type(off_type(-1));
+            }
+        }
+        return std::stringbuf::seekoff(offset, direction, mode);
+    }
+
+  private:
+    ArPositionFailure failure_;
+    unsigned member_position_queries_ = 0;
+    bool armed_ = true;
+    bool observed_ = false;
+};
+
+}  // namespace
+
+// Purpose: Refuse incomplete AR publication plans when a real stream position or payload/padding seek fails.
+// Inputs: Independent two-member bytes, four one-shot external operation refusals and the exact same reused stream.
+// Outputs: Specific ArchiveError at each observed boundary, unchanged bytes and complete exact metadata after recovery.
+TEST_CASE(ar_reader_position_failures_reject_incomplete_plans_and_allow_same_stream_recovery) {
+    const auto [bytes, boundary] = ar_reader_boundary_fixture();
+    REQUIRE_EQ(boundary, 72U);
+    REQUIRE_EQ(bytes.size(), 138U);
+    struct Case {
+        ArPositionFailure failure;
+        std::string_view diagnostic;
+    };
+    const std::array cases{
+        Case{ArPositionFailure::MemberOffset, "failed to read AR member offset"},
+        Case{ArPositionFailure::PayloadOffset, "failed to read AR payload offset"},
+        Case{ArPositionFailure::PayloadSeek, "AR member payload is truncated"},
+        Case{ArPositionFailure::PaddingSeek, "AR member padding is truncated"},
+    };
+    for (const auto& item : cases) {
+        ArPositionFailureBuffer buffer(bytes, item.failure);
+        std::istream input(&buffer);
+        bool rejected = false;
+        try {
+            (void)flitzzip::detail::scan_ar_stream(input, bytes.size(), flitzzip::ArchivePathEncoding::Utf8);
+        } catch (const flitzzip::ArchiveError& error) {
+            REQUIRE_TRUE(std::string_view(error.what()).find(item.diagnostic) != std::string_view::npos);
+            rejected = true;
+        }
+        REQUIRE_TRUE(buffer.observed());
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(buffer.str(), bytes);
+        buffer.disarm();
+        input.clear();
+        input.seekg(0, std::ios::beg);
+        REQUIRE_TRUE(input.good());
+        const auto recovered =
+            flitzzip::detail::scan_ar_stream(input, bytes.size(), flitzzip::ArchivePathEncoding::Utf8);
+        REQUIRE_EQ(recovered.entries.size(), 2U);
+        REQUIRE_EQ(recovered.total_file_bytes, 8U);
+        REQUIRE_EQ(recovered.entries[0].path, "before.o");
+        REQUIRE_EQ(recovered.entries[0].payload_offset, 68U);
+        REQUIRE_EQ(recovered.entries[0].size, 3U);
+        REQUIRE_EQ(recovered.entries[1].path, "after.o");
+        REQUIRE_EQ(recovered.entries[1].payload_offset, 132U);
+        REQUIRE_EQ(recovered.entries[1].size, 5U);
+        REQUIRE_EQ(bytes.substr(recovered.entries[0].payload_offset, recovered.entries[0].size), "abc");
+        REQUIRE_EQ(bytes.substr(recovered.entries[1].payload_offset, recovered.entries[1].size), "defgh");
+        REQUIRE_EQ(input.tellg(), std::istream::pos_type(138));
+    }
+}
