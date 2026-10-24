@@ -65,10 +65,20 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Select contract-test Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Install declared contract-test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r .github/requirements/requirements-contracts.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Contract-test dependency installation failed.' }
       - name: Test changed tool contracts
         id: contracts
         shell: pwsh
         env:
+          PY_PYTHON3: '3.13'
           EVENT_NAME: ${{ github.event_name }}
           PUSH_BASE: ${{ github.event.before }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
@@ -90,11 +100,6 @@ jobs:
           } else {
             tools/ci_tool_contracts.ps1 -BaseRef HEAD~1 -HeadRef HEAD -GitHubOutput $env:GITHUB_OUTPUT
           }
-      - name: Select Python for changed research dependencies
-        if: steps.contracts.outputs.research_lock_changed == 'true'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.13'
       - name: Resolve changed research dependency lock
         if: steps.contracts.outputs.research_lock_changed == 'true'
         shell: pwsh

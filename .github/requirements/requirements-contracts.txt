@@ -1,0 +1,4 @@
+# Universal wheel digest already admitted by the research and scanner dependency locks.
+# Install with --require-hashes --only-binary=:all: using the selected test interpreter.
+packaging==26.3 \
+    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c

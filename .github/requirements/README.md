@@ -8,6 +8,22 @@ official artifacts. The current Semgrep lock has one explicitly identified
 packaging exception, described below; it does not authorize further overrides.
 The crawler has its own [portable installation and qualification](../../docs/crawl4ai.md).
 
+## Component Contracts
+
+`requirements-contracts.in` declares the development-only PEP 508 parser used by
+scanner dependency-graph tests. Its lock admits the same universal `packaging`
+wheel as the scanner and research locks. The component workflow explicitly selects
+CPython 3.13, installs this small hash-locked graph, and directs `py -3` to that
+same version. Runner images and unrelated local tools are not dependency providers.
+
+For local component execution, install the lock into the selected test interpreter
+with `py -3.13 -m pip install --require-hashes --only-binary=:all: -r
+.github/requirements/requirements-contracts.txt` and set the process-scoped
+`PY_PYTHON3` to `3.13` before running `tools/ci_tool_contracts.ps1`. Other isolated
+test environments can run the Python test modules directly with their own
+interpreter after installing the same lock. These dependencies do not enter
+product binaries or packages.
+
 ## Refresh
 
 Use a reviewed uv installation at version 0.13.4 or newer. Earlier versions

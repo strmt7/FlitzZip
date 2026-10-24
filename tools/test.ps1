@@ -13,7 +13,7 @@ $repo = Split-Path -Parent $PSScriptRoot
 & (Join-Path $PSScriptRoot "test_cmake_toolchain.ps1")
 $ctestExe = Join-Path (Split-Path -Parent (Find-CMake -RepoRoot $repo)) 'ctest.exe'
 $build = Join-Path $repo "build"
-& $ctestExe --test-dir $build -C $Configuration --output-on-failure
+& $ctestExe --test-dir $build -C $Configuration --output-on-failure --stop-on-failure
 if ($LASTEXITCODE -ne 0) {
     throw "ctest failed with exit code $LASTEXITCODE."
 }
