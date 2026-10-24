@@ -5,6 +5,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
+#include <string_view>
+#include <system_error>
+#include <windows.h>
 #include <string>
 
 namespace {
@@ -266,4 +270,50 @@ TEST_CASE(publication_state_disappearing_quarantine_entries_preserve_caller_and_
         REQUIRE_EQ(publication_bytes(destination / "keep.txt"), "caller-owned");
     }
     REQUIRE_TRUE(stale_inventory_refusals > 0);
+}
+
+// Purpose: Retain caller files when a real Windows sharing owner prevents complete quarantine inventory.
+// Inputs: A tiny staged child directory held exclusively, then released on the same live transaction.
+// Outputs: Refuses incomplete inventory, retains staged bytes, then publishes exact files after owner release.
+TEST_CASE(publication_state_shared_directory_inventory_refusal_recovers_same_transaction) {
+    const auto root = test_temp_dir("publication-inventory-sharing");
+    const auto destination = root / "out";
+    std::filesystem::create_directory(destination);
+    std::ofstream(destination / "keep.txt", std::ios::binary) << "caller-owned";
+    std::filesystem::path staging;
+    {
+        flitzzip::DirectoryPublishTransaction transaction(destination);
+        staging = transaction.staging_directory();
+        const auto child = staging / "nested";
+        std::filesystem::create_directory(child);
+        std::ofstream(child / "payload.txt", std::ios::binary) << "verified inventory payload";
+        const auto raw_blocker = CreateFileW(child.c_str(), FILE_LIST_DIRECTORY, 0, nullptr, OPEN_EXISTING,
+                                             FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        std::unique_ptr<void, decltype(&CloseHandle)> blocker(
+            raw_blocker == INVALID_HANDLE_VALUE ? nullptr : raw_blocker, &CloseHandle);
+        REQUIRE_TRUE(blocker != nullptr);
+        // Calibrate actual filesystem refusal and separately establish that object metadata stays readable.
+        std::error_code probe_error;
+        const std::filesystem::directory_iterator probe(child, probe_error);
+        REQUIRE_EQ(probe_error.value(), static_cast<int>(ERROR_SHARING_VIOLATION));
+        probe_error.clear();
+        REQUIRE_TRUE(std::filesystem::is_directory(std::filesystem::symlink_status(child, probe_error)));
+        REQUIRE_TRUE(!probe_error);
+        bool rejected = false;
+        try {
+            transaction.publish(false);
+        } catch (const flitzzip::ArchiveError& error) {
+            rejected = std::string_view(error.what()).starts_with("cannot enumerate complete extraction quarantine:");
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(publication_bytes(destination / "keep.txt"), "caller-owned");
+        REQUIRE_TRUE(!std::filesystem::exists(destination / "nested"));
+        blocker.reset();
+        REQUIRE_EQ(publication_bytes(child / "payload.txt"), "verified inventory payload");
+        transaction.publish(false);
+        REQUIRE_TRUE(!std::filesystem::exists(staging));
+    }
+    REQUIRE_TRUE(!std::filesystem::exists(staging));
+    REQUIRE_EQ(publication_bytes(destination / "keep.txt"), "caller-owned");
+    REQUIRE_EQ(publication_bytes(destination / "nested" / "payload.txt"), "verified inventory payload");
 }

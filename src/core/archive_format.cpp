@@ -152,30 +152,36 @@ std::string ascii_lower(std::string value) {
     return value;
 }
 
-// Purpose: Match ASCII archive extensions without narrowing Unicode filenames through a Windows code page.
-// Inputs: A native filesystem path whose final component may contain arbitrary Unicode.
-// Outputs: Returns UTF-8 filename bytes with only ASCII letters folded to lowercase.
-std::string archive_filename_key(const std::filesystem::path& path) {
-    const auto name = path.filename().generic_u8string();
-    return ascii_lower(std::string(reinterpret_cast<const char*>(name.data()), name.size()));
-}
-
-// Purpose: Test whether a string ends in a case-normalized suffix.
-// Inputs: `value` and `suffix` are lowercase strings.
-// Outputs: Returns true when `suffix` is a byte suffix of `value`.
-bool ends_with_lower(const std::string& value, std::string_view suffix) {
-    return value.size() >= suffix.size() && value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+// Purpose: Match catalog ASCII suffixes directly against native filename units without encoding conversion.
+// Inputs: A native path and lowercase ASCII suffix; only ASCII A-Z in the compared tail are folded.
+// Outputs: Returns true for a filename suffix; root-only and trailing-separator paths never match.
+bool has_ascii_filename_suffix(const std::filesystem::path& path, std::string_view suffix) noexcept {
+    const auto& native = path.native();
+    if (native.size() < suffix.size()) {
+        return false;
+    }
+    const auto start = native.size() - suffix.size();
+    for (std::size_t index = 0; index < suffix.size(); ++index) {
+        auto character = native[start + index];
+        if (character >= 'A' && character <= 'Z') {
+            character = static_cast<std::filesystem::path::value_type>(character + ('a' - 'A'));
+        }
+        if (character != static_cast<std::filesystem::path::value_type>(suffix[index])) {
+            return false;
+        }
+    }
+    return path.has_filename();
 }
 
 // Purpose: Detect ZIP-based application/document containers that must not be treated as archives.
 // Inputs: `path` is the candidate archive path.
 // Outputs: Returns true when a ZIP-magic file uses an extension outside FlitzZip archive support.
 bool has_excluded_zip_container_extension(const std::filesystem::path& path) {
-    const auto name = archive_filename_key(path);
     constexpr std::array excluded = {
         ".docx", ".pptx", ".xlsx", ".odt", ".ods", ".odp", ".jar", ".war", ".ear", ".apk", ".ipa", ".xpi", ".cbz",
     };
-    return std::ranges::any_of(excluded, [&](std::string_view extension) { return ends_with_lower(name, extension); });
+    return std::ranges::any_of(excluded,
+                               [&](std::string_view extension) { return has_ascii_filename_suffix(path, extension); });
 }
 
 // Purpose: Read bounded leading bytes for format magic detection.
@@ -277,7 +283,7 @@ bool has_uue_begin_line(std::span<const unsigned char> bytes) {
 // Outputs: Returns true for `.xxe` files with a strict begin line or for extensionless probes with an XXE-only length
 // marker.
 bool has_xxe_begin_line(std::span<const unsigned char> bytes, const std::filesystem::path& path) {
-    const bool extension_hint = ends_with_lower(archive_filename_key(path), ".xxe");
+    const bool extension_hint = has_ascii_filename_suffix(path, ".xxe");
     std::size_t line_start = 0;
     while (line_start < bytes.size()) {
         std::size_t line_end = line_start;
@@ -471,9 +477,9 @@ ArchiveFormat detect_stream_magic(std::span<const unsigned char> bytes, const st
         return ArchiveFormat::Xz;
     }
     if (starts_with_signature(bytes, {'L', 'Z', 'I', 'P'})) {
-        const auto lower_name = archive_filename_key(path);
-        return (ends_with_lower(lower_name, ".tar.lz") || ends_with_lower(lower_name, ".tlz")) ? ArchiveFormat::TarLzip
-                                                                                               : ArchiveFormat::Lzip;
+        return (has_ascii_filename_suffix(path, ".tar.lz") || has_ascii_filename_suffix(path, ".tlz"))
+                   ? ArchiveFormat::TarLzip
+                   : ArchiveFormat::Lzip;
     }
     if (starts_with_signature(bytes, {0x28, 0xB5, 0x2F, 0xFD})) {
         return ArchiveFormat::Zstd;
@@ -487,8 +493,7 @@ ArchiveFormat detect_stream_magic(std::span<const unsigned char> bytes, const st
 ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::filesystem::path& path) {
     if (starts_with_signature(bytes, {'P', 'K', 0x03, 0x04}) || starts_with_signature(bytes, {'P', 'K', 0x05, 0x06}) ||
         starts_with_signature(bytes, {'P', 'K', 0x07, 0x08})) {
-        const auto lower_name = archive_filename_key(path);
-        return ends_with_lower(lower_name, ".zipx") ? ArchiveFormat::Zipx : ArchiveFormat::Zip;
+        return has_ascii_filename_suffix(path, ".zipx") ? ArchiveFormat::Zipx : ArchiveFormat::Zip;
     }
     if (starts_with_signature(bytes, {0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C})) {
         return ArchiveFormat::SevenZip;
@@ -512,8 +517,7 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
         return ArchiveFormat::Arj;
     }
     if (bytes.size() >= 2U && bytes[0] == 0x1AU && bytes[1] <= 9U) {
-        const auto lower_name = archive_filename_key(path);
-        if (ends_with_lower(lower_name, ".arc") || ends_with_lower(lower_name, ".ark")) {
+        if (has_ascii_filename_suffix(path, ".arc") || has_ascii_filename_suffix(path, ".ark")) {
             return ArchiveFormat::Arc;
         }
     }
@@ -521,8 +525,7 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
         return ArchiveFormat::Lha;
     }
     if (starts_with_signature(bytes, {'M', 'S', 'W', 'I', 'M', 0x00, 0x00, 0x00})) {
-        const auto lower_name = archive_filename_key(path);
-        if (ends_with_lower(lower_name, ".swm")) {
+        if (has_ascii_filename_suffix(path, ".swm")) {
             return ArchiveFormat::SplitWim;
         }
         return ArchiveFormat::Wim;
@@ -534,8 +537,7 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
         return ArchiveFormat::Rpm;
     }
     if (starts_with_signature(bytes, {'!', '<', 'a', 'r', 'c', 'h', '>', '\n'})) {
-        const auto lower_name = archive_filename_key(path);
-        return ends_with_lower(lower_name, ".deb") ? ArchiveFormat::Deb : ArchiveFormat::Ar;
+        return has_ascii_filename_suffix(path, ".deb") ? ArchiveFormat::Deb : ArchiveFormat::Ar;
     }
     if (matches_signature_at(bytes, 257U, {'u', 's', 't', 'a', 'r'})) {
         return ArchiveFormat::Tar;
@@ -557,9 +559,8 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
 // Inputs: `path` is the archive path being classified.
 // Outputs: Returns a recognized extension format or unknown.
 ArchiveFormat detect_by_extension(const std::filesystem::path& path) {
-    const auto name = archive_filename_key(path);
     for (const auto& mapping : kExtensionFormats) {
-        if (ends_with_lower(name, mapping.extension)) {
+        if (has_ascii_filename_suffix(path, mapping.extension)) {
             return mapping.format;
         }
     }
@@ -616,9 +617,8 @@ const ArchiveFormatExtensionInfo& archive_format_extension_info_for_path(Archive
     if (format == ArchiveFormat::Unknown || format == ArchiveFormat::Auto) {
         return kUnknownExtensionInfo;
     }
-    const auto name = archive_filename_key(archive_path);
     for (const auto& info : kFormatExtensionRegistry) {
-        if (info.format == format && ends_with_lower(name, ascii_lower(info.extension))) {
+        if (info.format == format && has_ascii_filename_suffix(archive_path, ascii_lower(info.extension))) {
             return info;
         }
     }

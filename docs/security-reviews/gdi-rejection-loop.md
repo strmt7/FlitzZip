@@ -37,3 +37,32 @@ and the exact source, scanner version, location and context in the committed
 review ledger. It does not admit other constant comparisons or classify every
 GDI failure as harmless. The test and scanner coverage remain intact; changed
 identities expire the decision, and final hosted acceptance remains required.
+
+## Current-Source Renewal
+
+The current GDI test source has canonical SHA-256
+`77d2801332eb2f9c6720e0810fbe7d665eb9bc3648eb621eba77652ab3ff5c67`.
+All source through line 376, including the reported condition at
+177:37–177:49 and its full retry-loop body, is byte-identical to the retained
+original. The later callback-failure regression now throws a non-standard value
+sentinel and catches it by const reference, comparing its semantic marker.
+Native restoration failure, destination preservation, handle cleanup and reuse
+checks remain; no exception-object identity is claimed.
+
+The canonical current follow-up passed seven checks and 69 native cases. The
+retry-loop and value-sentinel regressions each ran and passed exactly once
+within that follow-up; no separate two-case process was run. Its Release/HIP
+build receipt is
+`997a574369616ba5e6f01acad213312ae561d414ba35a578e5e78071ceeda81e`,
+with native input identity
+`fa1152aa4c01fa22fb8dbc0cb99066000b86b0984c861234887978da63030df0`.
+Retained local evidence is `out/gdi-current-followup-qualification.json`, the
+canonical `out/test-followup-verification.log` and
+`out/test-only-product-evidence-reuse.json`. The latter establishes unchanged
+shipped product bytes and GUI producers for the earlier product qualification.
+
+This renewal covers only alert 8431 and its existing two categories and
+coordinates. Alert 8433 remains unreviewed and is neither admitted nor dismissed
+by this decision. Raw scanner results remain intact; the value-exception
+cleanup still requires a later hosted analysis, and final exact-commit hosted
+acceptance remains pending.
