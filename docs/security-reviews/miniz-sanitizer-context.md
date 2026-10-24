@@ -33,6 +33,11 @@ neither the miniz library nor its allocation configuration: the miniz target,
 sanitizer allocator definitions and matching allocation family remain unchanged.
 Hidden controller tests select ordinary CPU ZIP creation and exercise native
 thread admission and cooperative shutdown; they do not redefine codec allocators.
+The independently framed Huffman decoder and incremental Neutron writer tests
+likewise add only native test translation units. They consume the public GPU
+decoder and LZ4 interfaces; their CMake registration changes no allocator target,
+compile definition, sanitizer recipe or miniz source. Their behavioral
+qualification is separate from this review of the unchanged allocator context.
 
 The optional development HIP coverage manifest replaces only the five kernel
 object inputs. Its dynamic CRT setting applies only to the private HIP DLL;

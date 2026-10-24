@@ -225,6 +225,14 @@ void MainWindow::run_job(std::function<void()> job, std::string label, Operation
                     state_.operation_cancel_requested = false;
                     state_.smoothed_time_remaining_seconds = -1.0;
                     state_.progress_visible_until = {};
+                    if (operation == OperationKind::Verify) {
+                        state_.security_archive_paths = SecurityCheckState::Running;
+                        state_.security_payload_integrity = SecurityCheckState::Running;
+                        state_.security_sha256 =
+                            state_.integrity_hash_opt_in ? SecurityCheckState::Running : SecurityCheckState::NotRun;
+                        state_.security_defender =
+                            state_.defender_scan_opt_in ? SecurityCheckState::Running : SecurityCheckState::NotRun;
+                    }
                 }
                 append_operation_log(LogSeverity::Information, failure_operation, "started");
                 KillTimer(hwnd_, kProgressHoldTimer);
@@ -297,7 +305,7 @@ void MainWindow::execute_job(const std::function<void()>& job, const std::string
 
 // Purpose: Present a supervised preparation or completion failure without retrying archive work.
 // Inputs: failure is the original exception; worker_failure_status_ was allocated before admission.
-// Outputs: Restores idle UI state, clears stale presentation requests and displays exact or allocation-safe error text.
+// Outputs: Restores idle state, marks unfinished checks incomplete, and presents exact or prepared error text.
 void MainWindow::report_worker_failure(std::exception_ptr failure) {
     std::string diagnostic;
     try {
@@ -313,6 +321,12 @@ void MainWindow::report_worker_failure(std::exception_ptr failure) {
     {
         std::lock_guard lock(mutex_);
         state_.status.swap(diagnostic.empty() ? worker_failure_status_ : diagnostic);
+        for (auto* check : {&state_.security_archive_paths, &state_.security_payload_integrity, &state_.security_sha256,
+                            &state_.security_defender}) {
+            if (*check == SecurityCheckState::Running) {
+                *check = SecurityCheckState::Incomplete;
+            }
+        }
         state_.active_operation = OperationKind::Idle;
         state_.operation_cancel_requested = false;
         operation_summary_.begin(state_.history.size());

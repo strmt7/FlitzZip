@@ -146,7 +146,7 @@ class ControllerFixture final {
 
     // Purpose: Isolate every settings, log and archive write from real user data.
     // Inputs: Existing documented smoke redirect and an owned temporary root. Outputs: Small CPU ZIP fixture.
-    ControllerFixture() {
+    explicit ControllerFixture(bool integrity = false) {
         temp_.set(root.c_str());
         tmp_.set(root.c_str());
         redirect_.set(L"1");
@@ -158,6 +158,7 @@ class ControllerFixture final {
         std::ofstream(input, std::ios::binary) << "controller ownership fixture\n";
         flitzzip::app::AppSettings settings;
         settings.gpu_required = false;
+        settings.integrity_hash_opt_in = integrity;
         settings.compression_format_index = 1;
         settings.show_operation_summary = false;
         settings.log_level_index = 2;
@@ -324,10 +325,11 @@ RECT first_queue_size_cell(HWND window) {
     return RECT{left + scale(8), top, left + widths[1] - scale(8), top + scale(kQueueRowHeight)};
 }
 
-// Purpose: Independently recognize one exact rendered Queue status using native reference glyphs.
+// Purpose: Independently recognize one exact rendered table status using native reference glyphs.
 // Inputs: Actual captured frame, size-cell bounds, DPI and literal expected text; no product formatter is called.
 // Outputs: Exact RGB comparison against DrawTextW, excluding the scaled table border.
-bool queue_size_text_matches(HDC actual, const RECT& cell, UINT dpi, std::wstring_view expected) {
+bool native_cell_text_matches(HDC actual, const RECT& cell, UINT dpi, std::wstring_view expected,
+                              COLORREF color = flitzzip::app::kMuted) {
     const int width = cell.right - cell.left;
     const int height = cell.bottom - cell.top;
     QueueCapture reference(width, height);
@@ -347,7 +349,7 @@ bool queue_size_text_matches(HDC actual, const RECT& cell, UINT dpi, std::wstrin
     REQUIRE_TRUE(saved.valid());
     REQUIRE_TRUE(SelectObject(reference.dc(), font.get()) != nullptr);
     SetBkMode(reference.dc(), TRANSPARENT);
-    SetTextColor(reference.dc(), flitzzip::app::kMuted);
+    SetTextColor(reference.dc(), color);
     REQUIRE_TRUE(DrawTextW(reference.dc(), expected.data(), static_cast<int>(expected.size()), &bounds,
                            DT_LEFT | DT_VCENTER | DT_SINGLELINE) != 0);
     for (int y = border; y < height; ++y) {
@@ -560,8 +562,8 @@ TEST_CASE(main_window_folder_admission_failure_is_unavailable_until_readd_and_jo
         }
         for (unsigned repaint = 0; repaint < 3U; ++repaint) {
             HiddenController::send(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(frame.dc()), PRF_CLIENT);
-            REQUIRE_TRUE(queue_size_text_matches(frame.dc(), cell, dpi, L"--"));
-            REQUIRE_TRUE(!queue_size_text_matches(frame.dc(), cell, dpi, L"..."));
+            REQUIRE_TRUE(native_cell_text_matches(frame.dc(), cell, dpi, L"--"));
+            REQUIRE_TRUE(!native_cell_text_matches(frame.dc(), cell, dpi, L"..."));
             HiddenController::send(window, WM_NULL);
         }
         REQUIRE_EQ(launcher.attempts.load(), 1U);
@@ -572,7 +574,7 @@ TEST_CASE(main_window_folder_admission_failure_is_unavailable_until_readd_and_jo
         deadline = std::chrono::steady_clock::now() + 5s;
         do {
             HiddenController::send(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(frame.dc()), PRF_CLIENT);
-            completed_size = queue_size_text_matches(frame.dc(), cell, dpi, L"40 B");
+            completed_size = native_cell_text_matches(frame.dc(), cell, dpi, L"40 B");
         } while (!completed_size && std::chrono::steady_clock::now() < deadline);
         REQUIRE_TRUE(completed_size);
         REQUIRE_TRUE(entered.wait_for(0s) == std::future_status::ready);
@@ -759,4 +761,143 @@ TEST_CASE(main_window_lifecycle_stop_then_success_preserves_input_and_admission)
     std::ifstream input(fixture.input, std::ios::binary);
     const std::string original((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     REQUIRE_EQ(original, std::string("controller ownership fixture\n"));
+}
+
+namespace {
+
+// Purpose: Consume a fixed independently encoded valid archive instead of trusting a product writer/reader round trip.
+// Inputs: Owned destination. Outputs: Stored ZIP member security.txt with literal security admission fixture plus LF.
+std::string write_security_admission_zip(const std::filesystem::path& path) {
+    // Python standard-library zipfile, ZIP_STORED, fixed DOS timestamp 2020-01-02 03:04:06.
+    constexpr unsigned char bytes[]{
+        0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x83, 0x18, 0x22, 0x50, 0xe6, 0x44, 0x0c,
+        0x84, 0x1b, 0x00, 0x00, 0x00, 0x1b, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x73, 0x65, 0x63, 0x75,
+        0x72, 0x69, 0x74, 0x79, 0x2e, 0x74, 0x78, 0x74, 0x73, 0x65, 0x63, 0x75, 0x72, 0x69, 0x74, 0x79, 0x20,
+        0x61, 0x64, 0x6d, 0x69, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x20, 0x66, 0x69, 0x78, 0x74, 0x75, 0x72, 0x65,
+        0x0a, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x83, 0x18, 0x22, 0x50,
+        0xe6, 0x44, 0x0c, 0x84, 0x1b, 0x00, 0x00, 0x00, 0x1b, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x00, 0x00, 0x73, 0x65, 0x63, 0x75,
+        0x72, 0x69, 0x74, 0x79, 0x2e, 0x74, 0x78, 0x74, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x01,
+        0x00, 0x01, 0x00, 0x3a, 0x00, 0x00, 0x00, 0x45, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    const std::string expected(reinterpret_cast<const char*>(bytes), sizeof(bytes));
+    std::ofstream output(path, std::ios::binary);
+    output.write(expected.data(), static_cast<std::streamsize>(expected.size()));
+    output.close();
+    REQUIRE_TRUE(output.good());
+    return expected;
+}
+
+// Purpose: Wait for actual asynchronous metadata before asking Security to admit an archive.
+// Inputs: Hidden Queue with one regular archive and owned frame. Outputs: Independently rendered Archive type.
+void require_archive_queue_ready(HWND window, HDC frame) {
+    const auto dpi = GetDpiForWindow(window);
+    auto cell = first_queue_size_cell(window);
+    RECT client{};
+    REQUIRE_TRUE(GetClientRect(window, &client) != FALSE);
+    const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
+    const int available = std::max(scale(360), static_cast<int>(client.right) - scale(flitzzip::app::kRailWidth) -
+                                                   scale(2 * flitzzip::app::kPageInsetX) -
+                                                   scale(flitzzip::app::kQueueCheckboxColumnWidth) - scale(22));
+    const auto widths = flitzzip::app::fit_table_columns(std::array<double, 4>{276, 100, 96, 468},
+                                                         flitzzip::app::kQueueColumnMinimums, available, dpi);
+    cell.left += widths[1];
+    cell.right = cell.left + widths[2] - scale(16);
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    do {
+        HiddenController::send(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(frame), PRF_CLIENT);
+        if (native_cell_text_matches(frame, cell, dpi, L"Archive")) {
+            return;
+        }
+    } while (std::chrono::steady_clock::now() < deadline);
+    throw std::runtime_error("archive metadata was not rendered before Security admission");
+}
+
+// Purpose: Recognize actual Security check status cells with literal native text/color references.
+// Inputs: Owned frame and HWND; expected state for the three selected checks. Outputs: Exact RGB assertions.
+void require_security_statuses(HWND window, HDC frame, std::wstring_view expected, COLORREF color) {
+    const auto dpi = GetDpiForWindow(window);
+    const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
+    const int left = scale(flitzzip::app::kRailWidth) + scale(flitzzip::app::kPageInsetX);
+    const int top = scale(flitzzip::app::kTopBar) + scale(flitzzip::app::kPageInsetY) + scale(54) + scale(36);
+    HiddenController::send(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(frame), PRF_CLIENT);
+    for (int row = 0; row < 4; ++row) {
+        const RECT cell{left + scale(230), top + row * scale(38), left + scale(414), top + (row + 1) * scale(38)};
+        REQUIRE_TRUE(native_cell_text_matches(frame, cell, dpi, row < 3 ? expected : L"Not selected",
+                                              row < 3 ? color : flitzzip::app::kMuted));
+    }
+}
+
+// Purpose: Dispatch only public native mouse input to Security's real navigation and Verify hit regions.
+// Inputs: Hidden HWND and whether navigation precedes the command. Outputs: One actual Verify button activation.
+void click_security_verify(HWND window, bool navigate) {
+    const auto dpi = GetDpiForWindow(window);
+    const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
+    auto click = [window](POINT point) {
+        const auto position = MAKELPARAM(point.x, point.y);
+        HiddenController::send(window, WM_LBUTTONDOWN, MK_LBUTTON, position);
+        HiddenController::send(window, WM_LBUTTONUP, 0, position);
+    };
+    if (navigate) {
+        click(POINT{scale(40), scale(flitzzip::app::kTopBar) + scale(10) + 3 * scale(63) + scale(31)});
+    }
+    RECT client{};
+    REQUIRE_TRUE(GetClientRect(window, &client) != FALSE);
+    click(POINT{client.right - scale(flitzzip::app::kPageInsetX) - scale(55),
+                client.bottom - scale(flitzzip::app::kStatusBar) - scale(flitzzip::app::kPageInsetY) - scale(36)});
+}
+
+}  // namespace
+
+// Purpose: Prevent phantom running checks after real native thread refusal, then prove actual review and ownership
+// reuse. Inputs: Independently encoded stored ZIP, SHA-256 selected, Defender unselected and existing once-refusing
+// launcher. Outputs: Incomplete without work, Running during held retry, then Passed; source unchanged and all native
+// owners joined.
+TEST_CASE(main_window_security_admission_failure_is_incomplete_then_real_retry_passes_and_joins) {
+    ControllerFixture fixture(true);
+    const auto archive = fixture.root / L"security.zip";
+    const auto expected_bytes = write_security_admission_zip(archive);
+    GatedLauncher launcher;
+    launcher.refuse_first = true;
+    auto entered = launcher.entered.get_future();
+    auto completed = launcher.first_completed.get_future();
+    HWND window = nullptr;
+    {
+        HiddenController controller(launcher);
+        ReleaseOnExit release(launcher.released);
+        window = controller.wait_window();
+        RECT client{};
+        REQUIRE_TRUE(GetClientRect(window, &client) != FALSE);
+        QueueCapture frame(client.right, client.bottom);
+        ControllerFixture::queue_path(window, archive);
+        require_archive_queue_ready(window, frame.dc());
+        click_security_verify(window, true);
+        REQUIRE_EQ(launcher.attempts.load(), 1U);
+        REQUIRE_TRUE(entered.wait_for(0s) == std::future_status::timeout);
+        for (unsigned repaint = 0; repaint < 3U; ++repaint) {
+            require_security_statuses(window, frame.dc(), L"Incomplete", flitzzip::app::kWarn);
+        }
+        REQUIRE_EQ(launcher.attempts.load(), 1U);
+        click_security_verify(window, false);
+        REQUIRE_TRUE(entered.wait_for(3s) == std::future_status::ready);
+        REQUIRE_EQ(launcher.attempts.load(), 2U);
+        require_security_statuses(window, frame.dc(), L"Running", flitzzip::app::kInfo);
+        release.release();
+        REQUIRE_TRUE(completed.wait_for(5s) == std::future_status::ready);
+        HiddenController::send(window, WM_TIMER, flitzzip::app::kClockTimer);
+        require_security_statuses(window, frame.dc(), L"Passed", flitzzip::app::kOk);
+        HiddenController::send(window, WM_CLOSE);
+        controller.require_closed();
+    }
+    REQUIRE_TRUE(IsWindow(window) == FALSE);
+    REQUIRE_TRUE(!launcher.release_timed_out.load());
+    std::ifstream input(archive, std::ios::binary);
+    REQUIRE_EQ(std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>()), expected_bytes);
+    REQUIRE_TRUE(std::filesystem::is_empty(fixture.output));
+    std::ifstream log(flitzzip::app::log_file_path(), std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(log)), std::istreambuf_iterator<char>());
+    const auto completion = text.find("Security: completed");
+    REQUIRE_TRUE(completion != std::string::npos);
+    REQUIRE_TRUE(text.find("Security: completed", completion + 1) == std::string::npos);
+    REQUIRE_TRUE(text.find("Security: failed") == std::string::npos);
 }

@@ -3,6 +3,7 @@
 #include "core/checksum.hpp"
 #include "core/compound_block.hpp"
 #include "core/file_publish.hpp"
+#include "core/host_memory_budget.hpp"
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
 #include "core/sparse_pattern_block.hpp"
@@ -2615,4 +2616,72 @@ TEST_CASE(flzip_verify_rejects_invalid_gpu_pattern_metadata) {
     }
     REQUIRE_TRUE(rejected);
     std::filesystem::remove_all(root);
+}
+
+// Purpose: Check pure memory admission, then exercise the public Neutron boundary only with available HIP.
+// Inputs: Maximal policy counters; available HIP also uses tiny caller files and 64 retained 128 MiB windows.
+// Outputs: Always proves the pure cap; available HIP rejects before archive output/progress/encoding and recovers.
+TEST_CASE(flzip_neutron_inflight_memory_admission_preserves_destination_and_recovers) {
+    constexpr std::uint64_t chunk_bytes = 128ULL * 1024ULL * 1024ULL;
+    // Independent policy arithmetic: 3 stream extents plus 6 Neutron intermediates = 72 GiB total.
+    REQUIRE_TRUE(64ULL * 9ULL * chunk_bytes > flitzzip::kMaxPipelineMemoryBytes);
+    const auto maximum = std::numeric_limits<std::uint64_t>::max();
+    const auto unlimited_limit = flitzzip::resolve_host_pipeline_inflight_limit({maximum, maximum}, chunk_bytes, 0U,
+                                                                                {.per_window_bytes = 6U * chunk_bytes});
+    REQUIRE_EQ(unlimited_limit, 56U);
+    // Production capability policy queries HIP before the host-memory budget; never treat its refusal as memory.
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    const auto root = test_temp_dir("flzip-neutron-inflight-admission");
+    const auto source = root / "input.bin";
+    const auto archive = root / "archive.flzip";
+    const std::string payload = "Independent admission recovery bytes";
+    std::ofstream(source, std::ios::binary) << payload;
+    std::ofstream(archive, std::ios::binary) << "caller-owned destination";
+    flitzzip::CompressOptions refused;
+    refused.compression_mode = flitzzip::NativeCompressionMode::NeutronStar;
+    refused.compression_level = 9;
+    refused.gpu_required = true;
+    refused.chunk_size = chunk_bytes;
+    refused.worker_count = 64U;
+    refused.max_inflight_chunks = 64U;
+    int progress_calls = 0;
+    bool rejected = false;
+    try {
+        (void)flitzzip::compress_flzip({source}, archive, refused,
+                                       [&](const flitzzip::ProgressSnapshot&) { ++progress_calls; });
+    } catch (const flitzzip::ArchiveError& error) {
+        const std::string_view message(error.what());
+        rejected = message == "requested in-flight chunks exceed FlitzZip memory budget" ||
+                   message == "insufficient physical memory for one archive window within the 80% host RAM target; "
+                              "retry when more memory is available";
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(progress_calls, 0);
+    {
+        std::ifstream input(archive, std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "caller-owned destination");
+    }
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(root), std::filesystem::directory_iterator{}), 2);
+    flitzzip::CompressOptions admitted;
+    admitted.gpu_required = false;
+    admitted.force_cpu = true;
+    admitted.chunk_size = 4096U;
+    admitted.block_size = 4096U;
+    admitted.worker_count = 1U;
+    admitted.max_inflight_chunks = 1U;
+    const auto encoded = flitzzip::compress_flzip({source}, archive, admitted);
+    REQUIRE_EQ(encoded.input_bytes, payload.size());
+    flitzzip::ExtractOptions decoded;
+    decoded.gpu_required = false;
+    decoded.force_cpu = true;
+    decoded.chunk_size = 4096U;
+    decoded.block_size = 4096U;
+    const auto destination = root / "restored";
+    REQUIRE_EQ(flitzzip::extract_flzip(archive, destination, decoded).output_bytes, payload.size());
+    std::ifstream restored(destination / "input.bin", std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), {}), payload);
+    std::ifstream unchanged(source, std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(unchanged), {}), payload);
 }

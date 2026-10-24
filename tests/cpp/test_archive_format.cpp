@@ -12,6 +12,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -462,4 +463,124 @@ TEST_CASE(archive_format_prefers_compound_tar_extensions_over_stream_magic) {
     REQUIRE_EQ(flitzzip::detect_archive_format(root / "logs.tar.lz"), flitzzip::ArchiveFormat::TarLzip);
     REQUIRE_EQ(flitzzip::detect_archive_format(root / "logs.cpio.gz"), flitzzip::ArchiveFormat::CpioGzip);
     REQUIRE_EQ(flitzzip::detect_archive_format(root / "logs.cpgz"), flitzzip::ArchiveFormat::CpioGzip);
+}
+
+namespace {
+
+// Purpose: Supply native non-Unicode filenames and an adjacent valid supplementary-plane control.
+// Inputs: Host native path representation. Outputs: Exact units; no UTF-8 conversion or filesystem mutation.
+std::vector<std::filesystem::path::string_type> native_classifier_prefixes() {
+#ifdef _WIN32
+    return {std::wstring{L'n', L'-', static_cast<wchar_t>(0xD800)},
+            std::wstring{L'n', L'-', static_cast<wchar_t>(0xDC00)},
+            std::wstring{L'n', L'-', static_cast<wchar_t>(0xD83D), static_cast<wchar_t>(0xDCC1)}};
+#else
+    return {std::string("n-\xFF"), std::string("n-\x80"), std::string("n-\xF0\x9F\x93\x81")};
+#endif
+}
+
+// Purpose: Append only a catalog ASCII suffix while preserving every caller-owned native prefix unit.
+// Inputs: Native prefix and ASCII suffix. Outputs: Native path without conversion of its basename.
+std::filesystem::path native_classifier_path(const std::filesystem::path::string_type& prefix,
+                                             std::string_view suffix) {
+    auto native = prefix;
+    for (const auto character : suffix) {
+        native.push_back(static_cast<std::filesystem::path::value_type>(character));
+    }
+    return std::filesystem::path(std::move(native));
+}
+
+}  // namespace
+
+// Purpose: Classify real native filename units without letting unrelated basename encoding throw on the UI thread.
+// Inputs: Lone high/low UTF-16 units on Windows, native byte controls elsewhere, and every registered ASCII suffix.
+// Outputs: Exact registry extension/display selection, unchanged native input and preserved generic-bin policy.
+TEST_CASE(archive_format_native_filename_units_preserve_ascii_catalog_suffixes) {
+    for (const auto& prefix : native_classifier_prefixes()) {
+        for (const auto& row : flitzzip::archive_format_extension_registry()) {
+            for (const bool uppercase : {false, true}) {
+                std::string extension(row.extension);
+                if (uppercase) {
+                    for (auto& character : extension) {
+                        if (character >= 'a' && character <= 'z') {
+                            character = static_cast<char>(character - ('a' - 'A'));
+                        }
+                    }
+                }
+                const auto path = native_classifier_path(prefix, extension);
+                const auto before = path.native();
+                const auto expected =
+                    std::string_view(row.extension) == ".bin" ? flitzzip::ArchiveFormat::Unknown : row.format;
+                REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(path), expected);
+                REQUIRE_EQ(
+                    std::string_view(flitzzip::archive_format_extension_info_for_path(row.format, path).extension),
+                    std::string_view(row.extension));
+                REQUIRE_EQ(path.native(), before);
+            }
+        }
+    }
+}
+
+// Purpose: Keep independently specified ASCII suffix boundaries and exclusion precedence with native basenames.
+// Inputs: Compound/single suffixes, excluded ZIP containers, parent directories, native roots and trailing separators.
+// Outputs: Exact existing formats, no aliases, no directory-based match and no whole-basename conversion.
+TEST_CASE(archive_format_native_suffix_boundaries_preserve_compound_and_excluded_policy) {
+    using flitzzip::ArchiveFormat;
+    constexpr std::array cases{
+        std::pair{".ZIP", ArchiveFormat::Zip},        std::pair{".ZIPX", ArchiveFormat::Zipx},
+        std::pair{".TAR.GZ", ArchiveFormat::TarGzip}, std::pair{".CPIO.GZ", ArchiveFormat::CpioGzip},
+        std::pair{".TAR.LZ", ArchiveFormat::TarLzip}, std::pair{".TAR.ZST", ArchiveFormat::TarZstd},
+        std::pair{".Z", ArchiveFormat::UnixCompress}, std::pair{".z", ArchiveFormat::UnixCompress},
+        std::pair{".DOCX", ArchiveFormat::Unknown},   std::pair{".JAR", ArchiveFormat::Unknown},
+        std::pair{".BIN", ArchiveFormat::Unknown},    std::pair{".ZIP.other", ArchiveFormat::Unknown},
+        std::pair{".ZIP.", ArchiveFormat::Unknown},   std::pair{"", ArchiveFormat::Unknown}};
+    for (const auto& prefix : native_classifier_prefixes()) {
+        for (const auto& [suffix, expected] : cases) {
+            REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(native_classifier_path(prefix, suffix)), expected);
+        }
+        const auto parent = native_classifier_path(prefix, ".ZIP");
+        REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(parent / "ordinary.txt"), ArchiveFormat::Unknown);
+        REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(parent / "leaf.Z"), ArchiveFormat::UnixCompress);
+        REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(parent / ""), ArchiveFormat::Unknown);
+        const auto interrupted = native_classifier_path(prefix, ".ZI") / "P";
+        REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(interrupted), ArchiveFormat::Unknown);
+    }
+#ifdef _WIN32
+    REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(std::filesystem::path(L"\\\\server.zip")),
+               ArchiveFormat::Unknown);
+    REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(std::filesystem::path(L"C:")), ArchiveFormat::Unknown);
+    REQUIRE_EQ(flitzzip::detect_archive_format_by_extension(std::filesystem::path(L"C:payload.Z")),
+               ArchiveFormat::UnixCompress);
+#endif
+}
+
+// Purpose: Preserve public magic, compound and native-footer precedence for files with exact native filename units.
+// Inputs: Owned tiny independent magic prefixes and existing native compatibility fixture, with three basename
+// controls. Outputs: ZIPX and excluded-container policy, compound precedence and native signature dominance; input
+// bytes persist.
+TEST_CASE(archive_format_native_filename_units_preserve_magic_and_native_precedence) {
+    using flitzzip::ArchiveFormat;
+    const auto root = test_temp_dir("native-filename-detection");
+    constexpr std::array<unsigned char, 4> zip_magic{'P', 'K', 3U, 4U};
+    constexpr std::array<unsigned char, 4> zstd_magic{0x28, 0xB5, 0x2F, 0xFD};
+    for (const auto& prefix : native_classifier_prefixes()) {
+        const auto zipx = root / native_classifier_path(prefix, ".ZIPX");
+        const auto excluded = root / native_classifier_path(prefix, ".DOCX");
+        const auto compound = root / native_classifier_path(prefix, ".TAR.GZ");
+        const auto native = root / native_classifier_path(prefix, ".ZST");
+        for (const auto& path : {zipx, excluded, compound}) {
+            write_fixture(path, zip_magic);
+        }
+        write_minimal_flzip_fixture(native, 6U, zstd_magic);
+        REQUIRE_EQ(flitzzip::detect_archive_format(zipx), ArchiveFormat::Zipx);
+        REQUIRE_EQ(flitzzip::detect_archive_format(excluded), ArchiveFormat::Unknown);
+        REQUIRE_EQ(flitzzip::detect_archive_format(compound), ArchiveFormat::TarGzip);
+        REQUIRE_EQ(flitzzip::detect_archive_format(native), ArchiveFormat::FlitzZip);
+        for (const auto& path : {zipx, excluded, compound}) {
+            std::ifstream input(path, std::ios::binary);
+            const std::string actual(std::istreambuf_iterator<char>(input), {});
+            REQUIRE_EQ(actual, std::string(reinterpret_cast<const char*>(zip_magic.data()), zip_magic.size()));
+        }
+        REQUIRE_EQ(std::filesystem::file_size(native), 40U);
+    }
 }

@@ -375,8 +375,9 @@ TEST_CASE(gdi_back_buffer_recovers_from_native_state_refusal_without_presentatio
 }
 
 // Purpose: Preserve a drawing exception even when native restoration also fails during unwinding.
-// Inputs: One identity-bearing thrown pointer, refused RestoreDC and actual owned memory DC/bitmap.
-// Outputs: Exact original exception, unchanged destination, no retained handles and a later correctly painted frame.
+// Inputs: A non-standard value sentinel, refused RestoreDC and actual owned memory DC/bitmap.
+// Outputs: Original failure type and marker, unchanged destination, released handles and a later correctly painted
+// frame.
 TEST_CASE(gdi_back_buffer_preserves_callback_exception_when_native_restoration_fails) {
     TestSurface target;
     const auto baseline = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
@@ -386,15 +387,18 @@ TEST_CASE(gdi_back_buffer_preserves_callback_exception_when_native_restoration_f
     const auto original = RGB(111, 92, 73);
     REQUIRE_TRUE(SetPixelV(target.dc, 3, 4, original));
     calls.failure = SurfaceFailure::RestoreState;
-    int marker = 73;
+    struct DrawFailure {
+        int marker;
+    };
+    constexpr DrawFailure expected{73};
     bool matched = false;
     try {
         (void)buffer.render(target.dc, 90, 80, nullptr, [&](HDC dc) {
             REQUIRE_TRUE(SetPixelV(dc, 3, 4, RGB(80, 70, 60)));
-            throw &marker;
+            throw expected;
         });
-    } catch (const int* error) {
-        matched = error == &marker;
+    } catch (const DrawFailure& error) {
+        matched = error.marker == expected.marker;
     }
     REQUIRE_TRUE(matched);
     REQUIRE_EQ(GetPixel(target.dc, 3, 4), original);

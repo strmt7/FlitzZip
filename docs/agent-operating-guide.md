@@ -583,6 +583,10 @@ tools\package.ps1 -Configuration Release
 ## Coding Standards
 
 - Use C++20, RAII, value types, `std::filesystem`, `std::span`, explicit integer widths, and clear ownership.
+- Throw C++ exceptions by value and catch class exceptions by `const` reference
+  ([C++ Core Guidelines E.15](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#re-exception-ref)).
+  Do not throw raw pointers. For regressions of non-`std::exception` handling,
+  use small named value payload types with explicit ownership and lifetime.
 - Keep filesystem paths in their native representation for I/O. Use
   `path_diagnostic_utf8` for narrow progress, history and error text; never rely
   on the host ANSI code page through `path.string()`.

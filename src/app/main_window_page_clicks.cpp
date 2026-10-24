@@ -366,7 +366,7 @@ bool MainWindow::handle_security_click(const RECT& content, int x, int y) {
 
 // Purpose: Start an exact-byte security verification pass for selected archives.
 // Inputs: None; reads selected archives and opt-in settings from UI state.
-// Outputs: Launches a Verify worker or reports missing archive input.
+// Outputs: Captures a Verify request or reports missing input; admitted preparation publishes running checks.
 void MainWindow::start_security_verify() {
     UiState snapshot;
     bool integrity = false;
@@ -389,14 +389,6 @@ void MainWindow::start_security_verify() {
         request_repaint();
         return;
     }
-    {
-        std::lock_guard lock(mutex_);
-        state_.security_archive_paths = SecurityCheckState::Running;
-        state_.security_payload_integrity = SecurityCheckState::Running;
-        state_.security_sha256 = integrity ? SecurityCheckState::Running : SecurityCheckState::NotRun;
-        state_.security_defender = defender ? SecurityCheckState::Running : SecurityCheckState::NotRun;
-    }
-    request_repaint();
     const auto name_encoding = selected_name_encoding(snapshot).encoding;
     run_job([this, sources, integrity, defender, gpu_required,
              name_encoding] { run_security_review(sources, integrity, defender, gpu_required, name_encoding); },
