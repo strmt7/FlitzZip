@@ -1,6 +1,7 @@
 #include "test_util.hpp"
 
 #include "gpu/hip_device.hpp"
+#include "lz4.h"
 
 #if FLITZZIP_ENABLE_HIP
 #include "gpu/hip_crc.hpp"
@@ -8,6 +9,7 @@
 #endif
 
 #include <array>
+#include <algorithm>
 #include <limits>
 #include <span>
 #include <utility>
@@ -88,6 +90,173 @@ TEST_CASE(gpu_byte_plane_kernel_independent_oracle_and_guards) {
             source.reset_checked("test byte-plane source release");
         }
     }
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+#if FLITZZIP_ENABLE_HIP
+namespace {
+
+struct DictionaryDecodeOracle {
+    std::vector<std::byte> encoded;
+    std::uint32_t decoded_bytes;
+    std::vector<std::byte> expected;
+    bool valid;
+};
+
+// Purpose: Construct explicit binary dictionary fixtures without invoking the production encoder or reader.
+// Inputs: Literal wire bytes, exact decoded extent and independently derived output for valid cases.
+// Outputs: An owned small test packet; invalid packets intentionally have no expected decoded payload.
+DictionaryDecodeOracle dictionary_decode_oracle(std::initializer_list<std::uint8_t> wire, std::uint32_t decoded_bytes,
+                                                std::vector<std::byte> expected = {}, bool valid = false) {
+    DictionaryDecodeOracle result{{}, decoded_bytes, std::move(expected), valid};
+    for (const auto byte : wire) {
+        result.encoded.push_back(std::byte{byte});
+    }
+    return result;
+}
+
+// Purpose: Exercise real cooperative device parsing without allowing one segment to overwrite its neighbors.
+// Inputs: Independently specified valid and malformed packets, each with separate bounded input/output spans.
+// Outputs: Exact statuses and valid bytes, unchanged uploaded inputs/tables, untouched output and status canaries.
+void require_dictionary_device_oracles(const std::vector<DictionaryDecodeOracle>& cases) {
+    using namespace flitzzip;
+    using namespace flitzzip::hip_detail;
+    std::vector<std::byte> wire(8U, std::byte{0xD6}), output(8U, std::byte{0xA7});
+    std::vector<DictionarySegmentSpan> spans;
+    for (const auto& packet : cases) {
+        if (packet.valid) {
+            std::vector<std::byte> independent(packet.decoded_bytes);
+            REQUIRE_EQ(LZ4_decompress_safe(reinterpret_cast<const char*>(packet.encoded.data()),
+                                           reinterpret_cast<char*>(independent.data()),
+                                           static_cast<int>(packet.encoded.size()),
+                                           static_cast<int>(independent.size())),
+                       static_cast<int>(packet.decoded_bytes));
+            REQUIRE_EQ(independent, packet.expected);
+        }
+        spans.push_back({static_cast<std::uint32_t>(wire.size()), static_cast<std::uint32_t>(packet.encoded.size()),
+                         static_cast<std::uint32_t>(output.size()), packet.decoded_bytes});
+        wire.insert(wire.end(), packet.encoded.begin(), packet.encoded.end());
+        wire.insert(wire.end(), 8U, std::byte{0xD6});
+        output.insert(output.end(), packet.decoded_bytes + 8U, std::byte{0xA7});
+    }
+    HipDeviceBuffer<std::byte> input(wire.size(), "dictionary oracle input");
+    HipDeviceBuffer<std::byte> decoded(output.size(), "dictionary oracle output");
+    HipDeviceBuffer<DictionarySegmentSpan> plans(spans.size() * sizeof(DictionarySegmentSpan),
+                                                 "dictionary oracle spans");
+    HipDeviceBuffer<std::uint32_t> statuses((cases.size() + 1U) * sizeof(std::uint32_t), "dictionary oracle statuses");
+    std::vector<std::uint32_t> actual_status(cases.size() + 1U, 0xA5A5A5A5U);
+    REQUIRE_EQ(hipMemcpy(input.get(), wire.data(), wire.size(), hipMemcpyHostToDevice), hipSuccess);
+    REQUIRE_EQ(hipMemcpy(decoded.get(), output.data(), output.size(), hipMemcpyHostToDevice), hipSuccess);
+    REQUIRE_EQ(hipMemcpy(plans.get(), spans.data(), spans.size() * sizeof(spans[0]), hipMemcpyHostToDevice),
+               hipSuccess);
+    REQUIRE_EQ(hipMemcpy(statuses.get(), actual_status.data(), actual_status.size() * sizeof(actual_status[0]),
+                         hipMemcpyHostToDevice),
+               hipSuccess);
+    const auto* from = input.get();
+    const auto* metadata = plans.get();
+    auto* to = decoded.get();
+    auto* status = statuses.get();
+    void* arguments[]{&from, &metadata, &to, &status};
+    REQUIRE_EQ(hipLaunchKernel(reinterpret_cast<const void*>(hip_kernel_api().decode_dictionary_segments),
+                               dim3(static_cast<unsigned>(cases.size())), dim3(kDictionaryKernelThreads), arguments, 0,
+                               nullptr),
+               hipSuccess);
+    std::vector<std::byte> actual(output.size());
+    REQUIRE_EQ(hipMemcpy(actual.data(), decoded.get(), actual.size(), hipMemcpyDeviceToHost), hipSuccess);
+    REQUIRE_EQ(hipMemcpy(actual_status.data(), statuses.get(), actual_status.size() * sizeof(actual_status[0]),
+                         hipMemcpyDeviceToHost),
+               hipSuccess);
+    REQUIRE_EQ(actual_status.back(), 0xA5A5A5A5U);
+    REQUIRE_TRUE(std::all_of(actual.begin(), actual.begin() + 8U, [](auto byte) { return byte == std::byte{0xA7}; }));
+    for (std::size_t index = 0; index < cases.size(); ++index) {
+        const auto& packet = cases[index];
+        const auto& span = spans[index];
+        REQUIRE_EQ(actual_status[index], packet.valid ? 1U : 0U);
+        if (packet.valid) {
+            REQUIRE_EQ(packet.expected.size(), packet.decoded_bytes);
+            REQUIRE_TRUE(
+                std::equal(packet.expected.begin(), packet.expected.end(), actual.begin() + span.decoded_offset));
+        }
+        const auto guard = actual.begin() + span.decoded_offset + span.decoded_size;
+        REQUIRE_TRUE(std::all_of(guard, guard + 8U, [](auto byte) { return byte == std::byte{0xA7}; }));
+    }
+    actual.resize(wire.size());
+    REQUIRE_EQ(hipMemcpy(actual.data(), input.get(), actual.size(), hipMemcpyDeviceToHost), hipSuccess);
+    REQUIRE_EQ(actual, wire);
+    const auto original_spans = std::as_bytes(std::span(spans));
+    actual.resize(original_spans.size());
+    REQUIRE_EQ(hipMemcpy(actual.data(), plans.get(), actual.size(), hipMemcpyDeviceToHost), hipSuccess);
+    REQUIRE_TRUE(std::equal(actual.begin(), actual.end(), original_spans.begin()));
+    statuses.reset_checked("dictionary oracle statuses release");
+    plans.reset_checked("dictionary oracle spans release");
+    decoded.reset_checked("dictionary oracle output release");
+    input.reset_checked("dictionary oracle input release");
+}
+
+}  // namespace
+#endif
+
+// Purpose: Verify dictionary GPU parsing against independent legal blocks and adjacent malformed wire boundaries.
+// Inputs: Small literal, overlapping-match and extended-length LZ4 blocks; bounded malformed neighbors.
+// Outputs: Exact success bytes or rejection, with per-segment guards and preserved input ownership.
+TEST_CASE(gpu_dictionary_decoder_independent_wire_and_rejection_guards) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> repeated(16U, std::byte{0x41});
+    repeated.insert(repeated.end(),
+                    {std::byte{0x42}, std::byte{0x43}, std::byte{0x44}, std::byte{0x45}, std::byte{0x46}});
+    std::vector<DictionaryDecodeOracle> cases{
+        dictionary_decode_oracle({0x10, 0x41}, 1U, {std::byte{0x41}}, true),
+        dictionary_decode_oracle({0x1B, 0x41, 1, 0, 0x50, 0x42, 0x43, 0x44, 0x45, 0x46}, 21U, repeated, true),
+        dictionary_decode_oracle({}, 1U),
+        dictionary_decode_oracle({0xF0, 255}, 300U),
+        dictionary_decode_oracle({0xF0, 0}, 14U),
+        dictionary_decode_oracle({0xF0, 255}, 32U),
+        dictionary_decode_oracle({0x30, 0x41, 0x42}, 3U),
+        dictionary_decode_oracle({0x10, 0x41, 1}, 20U),
+        dictionary_decode_oracle({0x10, 0x41, 0, 0}, 20U),
+        dictionary_decode_oracle({0x10, 0x41, 2, 0}, 20U),
+        dictionary_decode_oracle({0x10, 0x41, 1, 0}, 3U),
+        dictionary_decode_oracle({0x1F, 0x41, 1, 0, 255}, 20U),
+        dictionary_decode_oracle({0x1F, 0x41, 1, 0, 255}, 300U),
+        dictionary_decode_oracle({0x10, 0x41}, 2U),
+        dictionary_decode_oracle({0x20, 0x41, 0x42}, 1U),
+        dictionary_decode_oracle({0x1B, 0x41, 1, 0}, 21U),
+        dictionary_decode_oracle({0x18, 0x41, 1, 0, 0x40, 0x42, 0x43, 0x44, 0x45}, 17U),
+        dictionary_decode_oracle({0x12, 0x41, 1, 0, 0x50, 0x42, 0x43, 0x44, 0x45, 0x46}, 12U),
+    };
+    auto extended = dictionary_decode_oracle({0xF0, 255, 0}, 270U, std::vector<std::byte>(270U, std::byte{0x53}), true);
+    extended.encoded.insert(extended.encoded.end(), 270U, std::byte{0x53});
+    cases.push_back(std::move(extended));
+    auto long_match = dictionary_decode_oracle({0x1F, 0x41, 1, 0, 255, 0, 0x50, 0x42, 0x43, 0x44, 0x45, 0x46}, 280U);
+    long_match.expected.assign(275U, std::byte{0x41});
+    long_match.expected.insert(long_match.expected.end(), repeated.end() - 5U, repeated.end());
+    long_match.valid = true;
+    cases.push_back(std::move(long_match));
+    auto shortest = dictionary_decode_oracle({0x13, 0x41, 1, 0, 0x50, 0x42, 0x43, 0x44, 0x45, 0x46}, 13U);
+    shortest.expected.assign(8U, std::byte{0x41});
+    shortest.expected.insert(shortest.expected.end(), repeated.end() - 5U, repeated.end());
+    shortest.valid = true;
+    cases.push_back(std::move(shortest));
+    auto periodic = dictionary_decode_oracle({0xFF, 242}, 1289U);
+    for (unsigned index = 0; index < 257U; ++index) {
+        periodic.encoded.push_back(std::byte{static_cast<std::uint8_t>(index * 37U + 19U)});
+    }
+    periodic.expected.assign(periodic.encoded.begin() + 2U, periodic.encoded.end());
+    for (unsigned index = 0; index < 1027U; ++index) {
+        periodic.expected.push_back(periodic.expected[index % 257U]);
+    }
+    periodic.encoded.insert(periodic.encoded.end(), {std::byte{1}, std::byte{1}, std::byte{255}, std::byte{255},
+                                                     std::byte{255}, std::byte{243}, std::byte{0x50}});
+    periodic.encoded.insert(periodic.encoded.end(), repeated.end() - 5U, repeated.end());
+    periodic.expected.insert(periodic.expected.end(), repeated.end() - 5U, repeated.end());
+    periodic.valid = true;
+    cases.push_back(std::move(periodic));
+    require_dictionary_device_oracles(cases);
 #else
     REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
 #endif

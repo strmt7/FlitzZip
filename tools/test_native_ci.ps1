@@ -9,6 +9,36 @@ function Assert-NativeCi {
     if (-not $Condition) { throw "Native CI contract failed: $Message" }
 }
 
+# Purpose: Require actual CTest invocations to stop after failure, without admitting a flag in a comment or string.
+# Inputs: PowerShell source from the native driver or controlled policy mutations.
+# Outputs: True only for parseable source with CTest commands whose literal arguments all retain fail-fast behavior.
+function Test-NativeCTestFailFast {
+    param([string]$Source)
+    $tokens = $null
+    $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($Source, [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { return $false }
+    $commands = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and
+        $node.CommandElements[0] -is [Management.Automation.Language.VariableExpressionAst] -and
+        $node.CommandElements[0].VariablePath.UserPath -eq 'ctestExe'
+    }, $true))
+    if (-not $commands.Count) { return $false }
+    foreach ($command in $commands) {
+        $flags = @($command.CommandElements | Where-Object {
+            $_ -is [Management.Automation.Language.StringConstantExpressionAst]
+        } | ForEach-Object { $_.Value })
+        if ('--stop-on-failure' -notin $flags) { return $false }
+    }
+    return $true
+}
+
+Assert-NativeCi (Test-NativeCTestFailFast (Get-Content (Join-Path $PSScriptRoot 'test.ps1') -Raw)) 'native CTest failure must stop downstream work'
+Assert-NativeCi (Test-NativeCTestFailFast '& $ctestExe --output-on-failure --stop-on-failure') 'valid CTest fail-fast control'
+Assert-NativeCi (-not (Test-NativeCTestFailFast "# --stop-on-failure`n& `$ctestExe --output-on-failure")) 'comment cannot replace CTest fail-fast behavior'
+Assert-NativeCi (-not (Test-NativeCTestFailFast 'Write-Output "& $ctestExe --stop-on-failure"')) 'displayed command cannot replace CTest execution'
+
 # Purpose: Apply the actual owned GitHub push/PR filters, including ordered exclusions.
 # Inputs: Workflow and Path are checkout-relative fixtures with literal/star path syntax.
 # Outputs: Returns filter admission; rejects unsupported patterns or divergent push/PR aliases.

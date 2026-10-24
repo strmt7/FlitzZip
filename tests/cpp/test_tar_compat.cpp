@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "test_path_diagnostic.hpp"
 
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
@@ -117,20 +118,13 @@ void require_tar_unicode_overwrite_contract(bool gzip) {
         return gzip ? flitzzip::extract_tar_gzip(archive, destination, overwrite)
                     : flitzzip::extract_tar(archive, destination, overwrite);
     };
-    const auto expected =
-        "refusing to overwrite existing TAR extraction target: " + flitzzip::path_diagnostic_utf8(target);
-    const auto expected_regular = "refusing to overwrite existing TAR extraction target: " +
-                                  flitzzip::path_diagnostic_utf8(flitzzip::windows_regular_path(target));
     for (unsigned attempt = 0; attempt < 2; ++attempt) {
         bool rejected = false;
         try {
             (void)extract(false);
         } catch (const flitzzip::SecurityError& error) {
-            // Both native Windows aliases identify this exact file; diagnostic policy does not fix the prefix.
-            if (std::string(error.what()) != expected && std::string(error.what()) != expected_regular) {
-                throw std::runtime_error("unexpected TAR refusal text; expected [" + expected + "]; actual [" +
-                                         error.what() + "]");
-            }
+            REQUIRE_TRUE(flitzzip_test::path_diagnostic_matches(
+                error.what(), "refusing to overwrite existing TAR extraction target: ", target));
             rejected = true;
         }
         REQUIRE_TRUE(rejected);

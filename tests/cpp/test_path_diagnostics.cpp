@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "test_path_diagnostic.hpp"
 
 #include "base64/base64_adapter.hpp"
 #include "core/defender_scan.hpp"
@@ -12,7 +13,7 @@
 
 namespace {
 
-// Purpose: Require a boundary's intended error class and complete native filename, independent of Windows prefix.
+// Purpose: Require a boundary's intended error class and complete native filename, independent of Windows aliases.
 // Inputs: Action, exact diagnostic prefix and the caller-selected path; only equivalent native aliases are allowed.
 // Outputs: Rejects unrelated exceptions, incomplete names and arbitrary diagnostic changes.
 template <typename Error, typename Action>
@@ -21,9 +22,7 @@ void require_path_error(Action&& action, std::string_view prefix, const std::fil
     try {
         action();
     } catch (const Error& error) {
-        const auto extended = std::string(prefix) + flitzzip::path_diagnostic_utf8(path);
-        const auto regular = std::string(prefix) + flitzzip::path_diagnostic_utf8(flitzzip::windows_regular_path(path));
-        REQUIRE_TRUE(error.what() == extended || error.what() == regular);
+        REQUIRE_TRUE(flitzzip_test::path_diagnostic_matches(error.what(), prefix, path));
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
@@ -35,6 +34,13 @@ std::string diagnostic_fixture_bytes(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     REQUIRE_TRUE(input.is_open());
     return std::string(std::istreambuf_iterator<char>(input), {});
+}
+
+// Purpose: Derive expected UTF-8 directly from the native fixture, independently of product diagnostic helpers.
+// Inputs: Owned native fixture path. Outputs: Complete byte-length-preserving UTF-8 text.
+std::string diagnostic_fixture_path_text(const std::filesystem::path& path) {
+    const auto encoded = path.u8string();
+    return std::string(reinterpret_cast<const char*>(encoded.data()), encoded.size());
 }
 
 using TextWriter = flitzzip::OperationStats (*)(const std::filesystem::path&, const std::filesystem::path&,
@@ -83,6 +89,48 @@ void require_text_codec_unicode_contract(const std::string& name, TextWriter wri
 }
 
 }  // namespace
+
+// Purpose: Preserve path identity across native spelling changes while rejecting corrupt or unrelated diagnostics.
+// Inputs: Unicode fixture names, an existing parent-component alias and a distinct object with identical contents.
+// Outputs: Exact-prefix and UTF-8 rejection controls; only the same complete filename and object admit aliases.
+TEST_CASE(path_diagnostic_oracle_resolves_aliases_without_accepting_other_objects) {
+    const auto root = test_temp_dir("path-diagnostic-alias-oracle");
+    const auto directory = root / std::filesystem::path(L"\u65e5\u672c-\U0001F4C1");
+    const auto other_directory = root / "other";
+    std::filesystem::create_directory(directory);
+    std::filesystem::create_directory(other_directory);
+    const auto name = std::filesystem::path(L"\u4e2d\U0001F4C1.bin");
+    const auto original = directory / name;
+    const auto other = other_directory / name;
+    for (const auto& file : {original, other}) {
+        std::ofstream output(file, std::ios::binary);
+        output << "same contents, different identity";
+        REQUIRE_TRUE(output.good());
+    }
+    constexpr std::string_view prefix = "fixture refusal: ";
+    const auto diagnostic = std::string(prefix) + diagnostic_fixture_path_text(original);
+    // Ordinary Win32 paths normalize '..'; the extended namespace deliberately rejects that syntax.
+    const auto alias = flitzzip::windows_regular_path(other_directory) / ".." / directory.filename() / name;
+    const auto invalid_extended = other_directory / ".." / directory.filename() / name;
+    REQUIRE_TRUE(alias != original);
+    REQUIRE_TRUE(flitzzip_test::path_diagnostic_matches(diagnostic, prefix, original));
+    REQUIRE_TRUE(flitzzip_test::path_diagnostic_matches(diagnostic, prefix, alias));
+    REQUIRE_TRUE(!flitzzip_test::path_diagnostic_matches(diagnostic, prefix, invalid_extended));
+    REQUIRE_TRUE(!flitzzip_test::path_diagnostic_matches(diagnostic, prefix, other));
+    REQUIRE_TRUE(!flitzzip_test::path_diagnostic_matches(diagnostic, "wrong refusal: ", original));
+    REQUIRE_TRUE(!flitzzip_test::path_diagnostic_matches(std::string(prefix), prefix, original));
+    REQUIRE_TRUE(!flitzzip_test::path_diagnostic_matches(diagnostic + std::string("\0extra", 6), prefix, original));
+    REQUIRE_TRUE(!flitzzip_test::path_diagnostic_matches(diagnostic + static_cast<char>(0xFF), prefix, original));
+    REQUIRE_TRUE(!flitzzip_test::path_diagnostic_matches(std::string(prefix) + diagnostic_fixture_path_text(name),
+                                                         prefix, original));
+    REQUIRE_TRUE(
+        !flitzzip_test::path_diagnostic_matches(diagnostic.substr(0, diagnostic.size() - 1U), prefix, original));
+    const auto missing = directory / "missing.bin";
+    REQUIRE_TRUE(flitzzip_test::path_diagnostic_matches(std::string(prefix) + diagnostic_fixture_path_text(missing),
+                                                        prefix, missing));
+    REQUIRE_TRUE(!std::filesystem::exists(missing));
+    REQUIRE_EQ(diagnostic_fixture_bytes(original), diagnostic_fixture_bytes(other));
+}
 
 // Purpose: Preserve Base64's rejection and recovery contracts for Unicode filesystem parents.
 // Inputs: Bounded binary fixture and real public codec. Outputs: Exact errors, byte preservation and readback.
