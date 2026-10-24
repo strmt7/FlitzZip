@@ -24,9 +24,10 @@ second compatibility launcher or overwrite a registration owned by another proje
 - Command failures are MCP tool results with `isError: true`; malformed
   requests and unknown tools use JSON-RPC errors. Notifications receive no reply.
 - JSON is parsed before changing session state. Nonstandard numeric constants
-  (`NaN` and infinities) and numbers outside the supported finite floating-point
-  range receive a parse error; the next valid frame can still initialize.
-  Finite numbers and strings containing those spellings remain valid extension data.
+  (`NaN` and infinities) and floating-point tokens that overflow to infinity
+  receive a parse error; the next valid frame can still initialize. Finite
+  floating-point results, including exponent underflow to zero, and strings
+  containing those spellings remain valid extension data.
 
 The ordinary command timeout is 900 seconds. Full local verification has a
 3600-second deadline; the explicit final workflow waiter has 4500 seconds,

@@ -869,3 +869,72 @@ TEST_CASE(cab_callback_failures_preserve_types_cleanup_and_reuse) {
         }
     }
 }
+
+// Purpose: Enforce the total declared CAB output bound without allocating or decoding the claimed payload.
+// Inputs: Independently framed file records whose sizes total exactly 64 GiB, then one byte more.
+// Outputs: The metadata boundary is exact; excess declarations preserve destination bytes and ordinary reuse works.
+TEST_CASE(cab_declared_output_limit_is_exact_and_precedes_decompression) {
+    const auto root = test_temp_dir("cab-declared-output-limit");
+    const auto archive = root / "declared.cab";
+    std::vector<CabFixtureEntry> entries;
+    for (unsigned index = 0; index < 17U; ++index)
+        entries.push_back({.name = "file-" + std::to_string(index) + ".txt", .payload = ""});
+    write_uncompressed_cab(archive, entries);
+    auto bytes = read_binary_file(archive);
+    std::size_t file_record = kCabHeaderBytes + kCabFolderBytes;
+    for (unsigned index = 0; index < entries.size(); ++index) {
+        set_cab_field(bytes, file_record, 4U, index < 16U ? 0xFFFFFFFFU : 16U);
+        if (index + 1U < entries.size())
+            file_record += kCabFileRecordBytes + entries[index].name.size() + 1U;
+    }
+    write_binary_file(archive, bytes);
+    // Only scan declarations: these records deliberately do not contain 64 GiB of actual file data.
+    const auto metadata = flitzzip::scan_cab_metadata(archive);
+    REQUIRE_EQ(metadata.entries.size(), 17U);
+    REQUIRE_EQ(metadata.total_file_bytes, 64ULL * 1024ULL * 1024ULL * 1024ULL);
+    set_cab_field(bytes, file_record, 4U, 17U);
+    write_binary_file(archive, bytes);
+    require_cab_admission_rejected(archive, root / "out", "uncompressed payload exceeds");
+    write_uncompressed_cab(archive, {{.name = "file.txt", .payload = "small valid recovery"}});
+    const auto stats = flitzzip::extract_cab(archive, root / "out", true);
+    REQUIRE_EQ(stats.entries, 1U);
+    REQUIRE_EQ(stats.output_bytes, std::string_view("small valid recovery").size());
+    REQUIRE_EQ(read_text_file(root / "out" / "file.txt"), "small valid recovery");
+}
+
+// Purpose: Reject oversized filename and CFDATA-count declarations before FDI or destination mutation.
+// Inputs: A 64 KiB member name and sixteen tiny folder records declaring 1,000,001 data blocks.
+// Outputs: Each independent resource violation reports its own bound, preserves existing bytes and permits reuse.
+TEST_CASE(cab_declared_name_and_block_limits_preserve_destination) {
+    const auto root = test_temp_dir("cab-declared-name-block-limits");
+    const auto archive = root / "bounded.cab";
+    const auto destination = root / "out";
+    write_uncompressed_cab(archive, {{.name = std::string(64U * 1024U, 'a'), .payload = ""}});
+    REQUIRE_TRUE(std::filesystem::file_size(archive) < 66U * 1024U);
+    require_cab_admission_rejected(archive, destination, "filename exceeds FlitzZip resource limit");
+
+    const std::vector<CabFixtureEntry> entries{{.name = "file.txt", .payload = "small valid recovery"}};
+    write_uncompressed_cab(archive, entries);
+    const auto original = read_binary_file(archive);
+    auto blocks = original;
+    constexpr std::size_t extra_folder_bytes = 15U * kCabFolderBytes;
+    blocks.insert(blocks.begin() + kCabHeaderBytes + kCabFolderBytes, extra_folder_bytes, 0U);
+    const auto data_offset = static_cast<std::uint32_t>(cab_data_header_offset(entries) + extra_folder_bytes);
+    set_cab_field(blocks, 8U, 4U, static_cast<std::uint32_t>(blocks.size()));
+    set_cab_field(blocks, 16U, 4U, static_cast<std::uint32_t>(kCabHeaderBytes + 16U * kCabFolderBytes));
+    set_cab_field(blocks, 26U, 2U, 16U);
+    for (unsigned index = 0; index < 16U; ++index) {
+        const auto folder = kCabHeaderBytes + index * kCabFolderBytes;
+        set_cab_field(blocks, folder, 4U, data_offset);
+        // 15 * 65,535 + 16,976 = 1,000,001, rejected before any declared block traversal.
+        set_cab_field(blocks, folder + 4U, 2U, index < 15U ? 65'535U : 16'976U);
+    }
+    write_binary_file(archive, blocks);
+    REQUIRE_TRUE(blocks.size() < 1024U);
+    require_cab_admission_rejected(archive, destination, "data block count exceeds");
+    write_binary_file(archive, original);
+    const auto stats = flitzzip::extract_cab(archive, destination, true);
+    REQUIRE_EQ(stats.entries, 1U);
+    REQUIRE_EQ(stats.output_bytes, entries.front().payload.size());
+    REQUIRE_EQ(read_text_file(destination / "file.txt"), entries.front().payload);
+}

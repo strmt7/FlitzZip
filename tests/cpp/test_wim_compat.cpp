@@ -17,6 +17,7 @@
 #pragma warning(pop)
 #endif
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -310,14 +311,17 @@ void require_wim_metadata_rejected(const std::filesystem::path& archive, const s
         std::ofstream sentinel(destination / "sentinel.txt", std::ios::binary);
         sentinel << "preserve caller data";
     }
+    unsigned callbacks = 0;
     bool rejected = false;
     try {
-        (void)flitzzip::extract_wim(archive, destination, true);
+        (void)flitzzip::extract_wim(archive, destination, true,
+                                    [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
     } catch (const flitzzip::Error& error) {
         REQUIRE_TRUE(std::string_view(error.what()).find(expected) != std::string_view::npos);
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(callbacks, 0U);
     REQUIRE_EQ(read_text(destination / "sentinel.txt"), std::string("preserve caller data"));
     REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
                1);
@@ -423,4 +427,303 @@ TEST_CASE(wim_cancellation_cleans_staging_and_preserves_destination) {
     REQUIRE_EQ(read_text(destination / "payload.txt"), std::string("Independent WIM boundary payload."));
     REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
                1);
+}
+
+// Purpose: Recheck staged WIM payload sizes before replacing caller data and release failed staging state.
+// Inputs: A valid independent image and a callback that shortens or extends its real private staged payload.
+// Outputs: Both mismatches reject exactly, preserve the destination, remove staging and permit exact extraction.
+TEST_CASE(wim_staged_size_changes_reject_before_publication_and_recover) {
+    const auto root = test_temp_dir("wim-staged-size-change");
+    const auto source = wim_failure_source(root);
+    const auto archive = root / "input.wim";
+    write_unicode_wim_fixture(source, archive, 1);
+    const auto destination = root / "out";
+    std::filesystem::create_directory(destination);
+    for (const bool extend : {false, true}) {
+        std::ofstream(destination / "payload.txt", std::ios::binary | std::ios::trunc) << "original payload";
+        unsigned callbacks = 0;
+        std::filesystem::path staged_payload;
+        bool rejected = false;
+        try {
+            (void)flitzzip::extract_wim(archive, destination, true, [&](const flitzzip::ProgressSnapshot&) {
+                ++callbacks;
+                REQUIRE_EQ(callbacks, 1U);
+                for (const auto& candidate : std::filesystem::recursive_directory_iterator(destination)) {
+                    if (candidate.path().filename() == L"payload.txt" &&
+                        candidate.path().parent_path().filename() == L"image-1") {
+                        REQUIRE_TRUE(staged_payload.empty());
+                        staged_payload = candidate.path();
+                    }
+                }
+                REQUIRE_TRUE(!staged_payload.empty());
+                REQUIRE_EQ(read_text(staged_payload), std::string("Independent WIM boundary payload."));
+                const auto size = std::filesystem::file_size(staged_payload);
+                REQUIRE_TRUE(size > 0U);
+                std::filesystem::resize_file(staged_payload, extend ? size + 1U : size - 1U);
+            });
+        } catch (const flitzzip::ArchiveError& error) {
+            REQUIRE_TRUE(
+                std::string_view(error.what()).find("staged WIM payload size does not match validated metadata") !=
+                std::string_view::npos);
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(callbacks, 1U);
+        REQUIRE_EQ(read_text(destination / "payload.txt"), std::string("original payload"));
+        REQUIRE_TRUE(!std::filesystem::exists(staged_payload));
+        REQUIRE_EQ(
+            std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}), 1);
+        const auto stats = flitzzip::extract_wim(archive, destination, true);
+        REQUIRE_EQ(stats.entries, 1U);
+        REQUIRE_EQ(stats.output_bytes, std::string_view("Independent WIM boundary payload.").size());
+        REQUIRE_EQ(read_text(destination / "payload.txt"), std::string("Independent WIM boundary payload."));
+        REQUIRE_EQ(
+            std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}), 1);
+    }
+}
+
+// Purpose: Admit ordinary captured Windows attributes while rejecting offline files before staging.
+// Inputs: Independent WIMs capturing one owned file with hidden/archive attributes or the offline attribute.
+// Outputs: Supported attributes preserve exact bytes; offline metadata preserves caller data and normal reuse works.
+TEST_CASE(wim_captured_offline_attribute_rejects_before_publication) {
+    const auto root = test_temp_dir("wim-offline-attribute");
+    const auto source = wim_failure_source(root);
+    const auto payload = source / "payload.txt";
+    const auto accepted = root / "accepted.wim";
+    REQUIRE_TRUE(SetFileAttributesW(payload.c_str(), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE) != 0);
+    write_unicode_wim_fixture(source, accepted, 1);
+    REQUIRE_TRUE(SetFileAttributesW(payload.c_str(), FILE_ATTRIBUTE_NORMAL) != 0);
+    const auto destination = root / "accepted";
+    REQUIRE_EQ(flitzzip::extract_wim(accepted, destination, false).entries, 1U);
+    REQUIRE_EQ(read_text(destination / "payload.txt"), std::string("Independent WIM boundary payload."));
+
+    const auto rejected = root / "offline.wim";
+    REQUIRE_TRUE(SetFileAttributesW(payload.c_str(), FILE_ATTRIBUTE_OFFLINE) != 0);
+    const auto attributes = GetFileAttributesW(payload.c_str());
+    REQUIRE_TRUE(attributes != INVALID_FILE_ATTRIBUTES);
+    REQUIRE_TRUE((attributes & FILE_ATTRIBUTE_OFFLINE) != 0U);
+    write_unicode_wim_fixture(source, rejected, 1);
+    REQUIRE_TRUE(SetFileAttributesW(payload.c_str(), FILE_ATTRIBUTE_NORMAL) != 0);
+    require_wim_metadata_rejected(rejected, root / "rejected", "unsupported Windows file attributes");
+    const auto stats = flitzzip::extract_wim(accepted, root / "rejected", false);
+    REQUIRE_EQ(stats.entries, 1U);
+    REQUIRE_EQ(read_text(root / "rejected" / "payload.txt"), std::string("Independent WIM boundary payload."));
+    REQUIRE_EQ(read_text(root / "rejected" / "sentinel.txt"), std::string("preserve caller data"));
+}
+
+namespace {
+
+using WimFixtureOwner = std::unique_ptr<WIMStruct, decltype(&wimlib_free)>;
+
+// Purpose: Own a small fixture WIM opened through the pinned library's independent API.
+// Inputs: Archive path; the product runtime must already be initialized and checksum-admitted.
+// Outputs: Returns one RAII owner after integrity-checked opening, or fails fixture setup without leaking a handle.
+WimFixtureOwner open_wim_resource_fixture(const std::filesystem::path& archive) {
+    const auto module = GetModuleHandleW(L"libwim-15.dll");
+    REQUIRE_TRUE(module != nullptr);
+    const auto open = require_wim_export<decltype(&wimlib_open_wim)>(module, "wimlib_open_wim");
+    const auto release = require_wim_export<decltype(&wimlib_free)>(module, "wimlib_free");
+    WIMStruct* raw = nullptr;
+    const auto status = open(archive.c_str(), WIMLIB_OPEN_FLAG_CHECK_INTEGRITY, &raw);
+    WimFixtureOwner owner(raw, release);
+    REQUIRE_EQ(status, 0);
+    REQUIRE_TRUE(owner != nullptr);
+    return owner;
+}
+
+// Purpose: Write an uncompressed standalone or delta WIM using supported external-resource controls.
+// Inputs: One tiny source tree, output path, explicit write flags, and optional standalone resource WIM.
+// Outputs: Writes one image; real target and external-library handles remain owned throughout capture and writing.
+void write_wim_resource_fixture(const std::filesystem::path& source, const std::filesystem::path& archive,
+                                int write_flags, const std::filesystem::path& external = {}) {
+    const auto module = GetModuleHandleW(L"libwim-15.dll");
+    REQUIRE_TRUE(module != nullptr);
+    const auto create = require_wim_export<decltype(&wimlib_create_new_wim)>(module, "wimlib_create_new_wim");
+    const auto add = require_wim_export<decltype(&wimlib_add_image)>(module, "wimlib_add_image");
+    const auto write = require_wim_export<decltype(&wimlib_write)>(module, "wimlib_write");
+    const auto reference =
+        require_wim_export<decltype(&wimlib_reference_resources)>(module, "wimlib_reference_resources");
+    const auto release = require_wim_export<decltype(&wimlib_free)>(module, "wimlib_free");
+    auto external_owner = external.empty() ? WimFixtureOwner(nullptr, release) : open_wim_resource_fixture(external);
+    WIMStruct* raw = nullptr;
+    const auto status = create(WIMLIB_COMPRESSION_TYPE_NONE, &raw);
+    WimFixtureOwner owner(raw, release);
+    REQUIRE_EQ(status, 0);
+    REQUIRE_TRUE(owner != nullptr);
+    if (external_owner) {
+        WIMStruct* resources[]{external_owner.get()};
+        REQUIRE_EQ(reference(owner.get(), resources, 1U, 0), 0);
+    }
+    REQUIRE_EQ(add(owner.get(), source.c_str(), L"resource-boundary", nullptr,
+                   WIMLIB_ADD_FLAG_NO_ACLS | WIMLIB_ADD_FLAG_NO_UNSUPPORTED_EXCLUDE),
+               0);
+    REQUIRE_EQ(write(owner.get(), archive.c_str(), WIMLIB_ALL_IMAGES, write_flags, 1U), 0);
+    REQUIRE_TRUE(std::filesystem::file_size(archive) < 1024U * 1024U);
+}
+
+struct WimFixtureResourceObservation {
+    unsigned files = 0;
+    unsigned missing = 0;
+    std::uint64_t offset = 0;
+    std::uint64_t size = 0;
+    bool compressed = false;
+};
+
+// Purpose: Observe fixture resource identity without production metadata normalization or publication.
+// Inputs: Pinned-library directory entry and one caller-owned, nonallocating observation record.
+// Outputs: Records regular-file counts and raw resource bounds; reports invalid callback inputs without unwinding.
+int observe_wim_fixture_resource(const wimlib_dir_entry* entry, void* context) noexcept {
+    auto* observation = static_cast<WimFixtureResourceObservation*>(context);
+    if (entry == nullptr || observation == nullptr)
+        return 1;
+    if ((entry->attributes & WIMLIB_FILE_ATTRIBUTE_DIRECTORY) == 0U) {
+        if (entry->num_named_streams != 0U ||
+            (entry->attributes & (WIMLIB_FILE_ATTRIBUTE_REPARSE_POINT | WIMLIB_FILE_ATTRIBUTE_ENCRYPTED)) != 0U)
+            return 1;
+        // The pinned API guarantees streams[0] exists, including when its file resource is missing.
+        if (entry->streams[0].stream_name != nullptr)
+            return 1;
+        ++observation->files;
+        const auto& resource = entry->streams[0].resource;
+        observation->missing += resource.is_missing != 0U ? 1U : 0U;
+        observation->offset = resource.offset;
+        observation->size = resource.uncompressed_size;
+        observation->compressed = resource.is_compressed != 0U;
+    }
+    return 0;
+}
+
+// Purpose: Inspect a fixture image while allowing absent external blobs to be observed explicitly.
+// Inputs: Live fixture WIM handle. Outputs: One independent resource observation, or a setup failure.
+WimFixtureResourceObservation inspect_wim_resource_fixture(WIMStruct* wim) {
+    const auto module = GetModuleHandleW(L"libwim-15.dll");
+    const auto iterate = require_wim_export<decltype(&wimlib_iterate_dir_tree)>(module, "wimlib_iterate_dir_tree");
+    WimFixtureResourceObservation observation;
+    constexpr int flags = WIMLIB_ITERATE_DIR_TREE_FLAG_RECURSIVE | WIMLIB_ITERATE_DIR_TREE_FLAG_CHILDREN;
+    REQUIRE_EQ(iterate(wim, 1, nullptr, flags, observe_wim_fixture_resource, &observation), 0);
+    return observation;
+}
+
+// Purpose: Persist exact bounded fixture bytes without a production serializer or text translation.
+// Inputs: Owned archive path and fewer than one MiB of independently checked bytes.
+// Outputs: Replaces the fixture and fails immediately on incomplete writing or finalization.
+void write_wim_fixture_bytes(const std::filesystem::path& archive, std::string_view bytes) {
+    REQUIRE_TRUE(bytes.size() < 1024U * 1024U);
+    std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+    output.exceptions(std::ios::badbit | std::ios::failbit);
+    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    output.close();
+}
+
+}  // namespace
+
+// Purpose: Reject independently corrupted file data during WIM staging before caller files can be replaced.
+// Inputs: A valid uncompressed WIM without a whole-archive integrity table, with one raw file byte changed.
+// Outputs: Resource-hash failure, no publication callbacks or staging debris, preserved caller bytes and valid reuse.
+TEST_CASE(wim_corrupt_payload_fails_staging_and_preserves_destination) {
+    const auto root = test_temp_dir("wim-corrupt-resource");
+    const auto source = wim_failure_source(root);
+    const auto accepted = root / "accepted.wim";
+    write_wim_resource_fixture(source, accepted, WIMLIB_WRITE_FLAG_NO_CHECK_INTEGRITY);
+    const auto expected = read_text(source / "payload.txt");
+    const auto original = read_text(accepted);
+    REQUIRE_TRUE(!expected.empty());
+    const auto offset = original.find(expected);
+    REQUIRE_TRUE(offset != std::string::npos);
+    REQUIRE_EQ(original.find(expected, offset + 1U), std::string::npos);
+    {
+        const auto wim = open_wim_resource_fixture(accepted);
+        const auto module = GetModuleHandleW(L"libwim-15.dll");
+        const auto info = require_wim_export<decltype(&wimlib_get_wim_info)>(module, "wimlib_get_wim_info");
+        wimlib_wim_info metadata{};
+        REQUIRE_EQ(info(wim.get(), &metadata), 0);
+        REQUIRE_EQ(metadata.has_integrity_table, 0U);
+        const auto resource = inspect_wim_resource_fixture(wim.get());
+        REQUIRE_EQ(resource.files, 1U);
+        REQUIRE_EQ(resource.missing, 0U);
+        REQUIRE_TRUE(!resource.compressed);
+        REQUIRE_EQ(resource.offset, offset);
+        REQUIRE_EQ(resource.size, expected.size());
+    }
+    auto corrupted = original;
+    corrupted[offset] ^= 1;
+    const auto rejected_archive = root / "corrupted.wim";
+    write_wim_fixture_bytes(rejected_archive, corrupted);
+    {
+        const auto wim = open_wim_resource_fixture(rejected_archive);
+        const auto verify =
+            require_wim_export<decltype(&wimlib_verify_wim)>(GetModuleHandleW(L"libwim-15.dll"), "wimlib_verify_wim");
+        REQUIRE_EQ(verify(wim.get(), 0), WIMLIB_ERR_INVALID_RESOURCE_HASH);
+    }
+    const auto destination = root / "out";
+    std::filesystem::create_directory(destination);
+    std::ofstream(destination / "payload.txt", std::ios::binary) << "preserve original payload";
+    unsigned callbacks = 0;
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_wim(rejected_archive, destination, true,
+                                    [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
+    } catch (const flitzzip::ArchiveError& error) {
+        REQUIRE_TRUE(std::string_view(error.what()).find("failed to stage WIM image") != std::string_view::npos);
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(callbacks, 0U);
+    REQUIRE_EQ(read_text(destination / "payload.txt"), std::string("preserve original payload"));
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+               1);
+    const auto stats = flitzzip::extract_wim(accepted, destination, true);
+    REQUIRE_EQ(stats.entries, 1U);
+    REQUIRE_EQ(stats.output_bytes, expected.size());
+    REQUIRE_EQ(read_text(destination / "payload.txt"), expected);
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+               1);
+}
+
+// Purpose: Reject a genuine delta WIM whose file blob exists only in an independently written base WIM.
+// Inputs: Supported reference_resources/SKIP_EXTERNAL_WIMS construction and explicit missing/present resource controls.
+// Outputs: Missing resources reject before publication; attaching the base verifies the fixture and standalone reuse
+// works.
+TEST_CASE(wim_missing_external_resource_rejects_before_staging_and_recovers) {
+    const auto root = test_temp_dir("wim-missing-external-resource");
+    const auto source = wim_failure_source(root);
+    const auto base = root / "base.wim";
+    const auto delta = root / "delta.wim";
+    write_unicode_wim_fixture(source, base, 1);
+    write_wim_resource_fixture(source, delta, WIMLIB_WRITE_FLAG_CHECK_INTEGRITY | WIMLIB_WRITE_FLAG_SKIP_EXTERNAL_WIMS,
+                               base);
+    REQUIRE_TRUE(std::filesystem::file_size(base) + std::filesystem::file_size(delta) < 1024U * 1024U);
+    {
+        const auto base_owner = open_wim_resource_fixture(base);
+        const auto delta_owner = open_wim_resource_fixture(delta);
+        const auto missing = inspect_wim_resource_fixture(delta_owner.get());
+        REQUIRE_EQ(missing.files, 1U);
+        REQUIRE_EQ(missing.missing, 1U);
+        const auto module = GetModuleHandleW(L"libwim-15.dll");
+        const auto iterate = require_wim_export<decltype(&wimlib_iterate_dir_tree)>(module, "wimlib_iterate_dir_tree");
+        WimFixtureResourceObservation needed;
+        constexpr int flags = WIMLIB_ITERATE_DIR_TREE_FLAG_CHILDREN | WIMLIB_ITERATE_DIR_TREE_FLAG_RECURSIVE |
+                              WIMLIB_ITERATE_DIR_TREE_FLAG_RESOURCES_NEEDED;
+        REQUIRE_EQ(iterate(delta_owner.get(), 1, nullptr, flags, observe_wim_fixture_resource, &needed),
+                   WIMLIB_ERR_RESOURCE_NOT_FOUND);
+        const auto reference =
+            require_wim_export<decltype(&wimlib_reference_resources)>(module, "wimlib_reference_resources");
+        WIMStruct* resources[]{base_owner.get()};
+        REQUIRE_EQ(reference(delta_owner.get(), resources, 1U, 0), 0);
+        const auto supplied = inspect_wim_resource_fixture(delta_owner.get());
+        REQUIRE_EQ(supplied.files, 1U);
+        REQUIRE_EQ(supplied.missing, 0U);
+        REQUIRE_EQ(supplied.size, std::string_view("Independent WIM boundary payload.").size());
+        const auto verify = require_wim_export<decltype(&wimlib_verify_wim)>(module, "wimlib_verify_wim");
+        REQUIRE_EQ(verify(delta_owner.get(), 0), 0);
+    }
+    const auto destination = root / "out";
+    require_wim_metadata_rejected(delta, destination, "failed to scan WIM image metadata");
+    const auto stats = flitzzip::extract_wim(base, destination, false);
+    REQUIRE_EQ(stats.entries, 1U);
+    REQUIRE_EQ(stats.output_bytes, std::string_view("Independent WIM boundary payload.").size());
+    REQUIRE_EQ(read_text(destination / "payload.txt"), std::string("Independent WIM boundary payload."));
+    REQUIRE_EQ(read_text(destination / "sentinel.txt"), std::string("preserve caller data"));
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+               2);
 }

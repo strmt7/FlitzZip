@@ -1,6 +1,7 @@
 #include "test_util.hpp"
 
 #include "gpu/hip_device.hpp"
+#include "gpu/dictionary_matcher.hpp"
 #include "lz4.h"
 
 #if FLITZZIP_ENABLE_HIP
@@ -117,6 +118,121 @@ DictionaryDecodeOracle dictionary_decode_oracle(std::initializer_list<std::uint8
     return result;
 }
 
+// Purpose: Derive nearest exact four-byte predecessors without production key packing, sorting or GPU indexing.
+// Inputs: One independently bounded segment of at most 4097 bytes.
+// Outputs: Segment-local links plus untouched test guards; incomplete four-byte tails have no predecessor.
+std::vector<std::uint32_t> small_dictionary_predecessors(std::span<const std::byte> input) {
+    constexpr auto absent = std::numeric_limits<std::uint32_t>::max();
+    REQUIRE_TRUE(!input.empty() && input.size() <= 4097U);
+    std::vector<std::uint32_t> links(input.size() + 32U, absent);
+    for (std::size_t position = 0; position < input.size(); ++position) {
+        if (input.size() - position < 4U) {
+            break;
+        }
+        for (auto candidate = position; candidate > 0U; --candidate) {
+            const auto prior = candidate - 1U;
+            if (std::equal(input.begin() + prior, input.begin() + prior + 4U, input.begin() + position)) {
+                links[position] = static_cast<std::uint32_t>(prior);
+                break;
+            }
+        }
+    }
+    return links;
+}
+
+// Purpose: Qualify each ordinary dictionary encoder's writes and independent LZ4 interpretation on a small segment.
+// Inputs: At most 4097 immutable bytes, a nonzero sampled distance, and whether the fixture contains legal repeats.
+// Outputs: Exact upstream readback, bounded compressed sizes, preserved source/index data and allocation guards.
+void require_small_dictionary_encoder(std::span<const std::byte> input, std::uint16_t distance, bool repeated) {
+    using namespace flitzzip;
+    using namespace flitzzip::dictionary;
+    using namespace flitzzip::hip_detail;
+    REQUIRE_TRUE(distance > 0U);
+    const auto links = small_dictionary_predecessors(input);
+    std::vector<std::byte> source(32U, std::byte{0xD6});
+    source.insert(source.end(), input.begin(), input.end());
+    source.insert(source.end(), 32U, std::byte{0xD6});
+    const std::array<std::uint16_t, 3> distances{0xA5A5U, distance, 0xA5A5U};
+    const std::array<std::uint32_t, 3> initial_sizes{0xA5A5A5A5U, 0xA5A5A5A5U, 0xA5A5A5A5U};
+    constexpr auto output_bytes = kEncodedSegmentCapacity + 256U;
+    HipDeviceBuffer<std::byte> uploaded(source.size(), "small encoder source");
+    HipDeviceBuffer<std::uint32_t> previous(links.size() * sizeof(links[0]), "small encoder links");
+    HipDeviceBuffer<std::uint16_t> periods(sizeof(distances), "small encoder distances");
+    HipDeviceBuffer<std::byte> encoded(output_bytes, "small encoder output");
+    HipDeviceBuffer<std::uint32_t> sizes(sizeof(initial_sizes), "small encoder sizes");
+    REQUIRE_EQ(hipMemcpy(uploaded.get(), source.data(), source.size(), hipMemcpyHostToDevice), hipSuccess);
+    REQUIRE_EQ(hipMemcpy(previous.get(), links.data(), links.size() * sizeof(links[0]), hipMemcpyHostToDevice),
+               hipSuccess);
+    REQUIRE_EQ(hipMemcpy(periods.get(), distances.data(), sizeof(distances), hipMemcpyHostToDevice), hipSuccess);
+    const auto& api = hip_kernel_api();
+    struct Variant {
+        decltype(api.encode_dictionary_cached) kernel;
+        int level;
+        bool periodic;
+    };
+    const std::array variants{Variant{api.encode_dictionary_cached, 1, false},
+                              Variant{api.encode_dictionary_deferred, 9, false},
+                              Variant{api.encode_dictionary_periodic, 9, true}};
+    for (const auto& variant : variants) {
+        REQUIRE_EQ(hipMemset(encoded.get(), 0xA5, output_bytes), hipSuccess);
+        REQUIRE_EQ(hipMemcpy(sizes.get(), initial_sizes.data(), sizeof(initial_sizes), hipMemcpyHostToDevice),
+                   hipSuccess);
+        const auto* from = uploaded.get() + 32U;
+        auto length = static_cast<std::uint32_t>(input.size());
+        const auto* predecessors = variant.periodic ? nullptr : previous.get();
+        const auto* sampled = variant.periodic ? periods.get() + 1U : nullptr;
+        auto effort = effort_for_level(variant.level);
+        if (variant.periodic) {
+            // The production level-nine periodic dispatch saturates its scaled comparison budget at this bound.
+            effort.max_byte_comparisons = kDictionaryMaxPeriodicMatchBytes;
+        }
+        auto* to = encoded.get() + 128U;
+        auto* counts = sizes.get() + 1U;
+        void* arguments[]{&from, &length, &predecessors, &sampled, &effort, &to, &counts};
+        REQUIRE_EQ(hipLaunchKernel(reinterpret_cast<const void*>(variant.kernel), dim3(1),
+                                   dim3(kDictionaryKernelThreads), arguments, 0, nullptr),
+                   hipSuccess);
+        std::array<std::uint32_t, 3> actual_sizes{};
+        REQUIRE_EQ(hipMemcpy(actual_sizes.data(), sizes.get(), sizeof(actual_sizes), hipMemcpyDeviceToHost),
+                   hipSuccess);
+        REQUIRE_EQ(actual_sizes.front(), initial_sizes.front());
+        REQUIRE_EQ(actual_sizes.back(), initial_sizes.back());
+        const auto written = actual_sizes[1];
+        REQUIRE_TRUE(written > 0U && written <= kEncodedSegmentCapacity);
+        if (repeated) {
+            REQUIRE_TRUE(written < input.size());
+        }
+        std::vector<std::byte> payload(output_bytes), decoded(input.size());
+        REQUIRE_EQ(hipMemcpy(payload.data(), encoded.get(), payload.size(), hipMemcpyDeviceToHost), hipSuccess);
+        const auto guarded = [](std::byte byte) { return byte == std::byte{0xA5}; };
+        REQUIRE_TRUE(std::all_of(payload.begin(), payload.begin() + 128U, guarded));
+        REQUIRE_TRUE(std::all_of(payload.begin() + 128U + written, payload.end(), guarded));
+        REQUIRE_EQ(LZ4_decompress_safe(reinterpret_cast<const char*>(payload.data() + 128U),
+                                       reinterpret_cast<char*>(decoded.data()), static_cast<int>(written),
+                                       static_cast<int>(decoded.size())),
+                   static_cast<int>(decoded.size()));
+        REQUIRE_TRUE(std::equal(decoded.begin(), decoded.end(), input.begin(), input.end()));
+        std::vector<std::byte> actual_source(source.size());
+        REQUIRE_EQ(hipMemcpy(actual_source.data(), uploaded.get(), actual_source.size(), hipMemcpyDeviceToHost),
+                   hipSuccess);
+        REQUIRE_EQ(actual_source, source);
+        std::vector<std::uint32_t> actual_links(links.size());
+        REQUIRE_EQ(hipMemcpy(actual_links.data(), previous.get(), actual_links.size() * sizeof(actual_links[0]),
+                             hipMemcpyDeviceToHost),
+                   hipSuccess);
+        REQUIRE_EQ(actual_links, links);
+        std::array<std::uint16_t, 3> actual_distances{};
+        REQUIRE_EQ(hipMemcpy(actual_distances.data(), periods.get(), sizeof(actual_distances), hipMemcpyDeviceToHost),
+                   hipSuccess);
+        REQUIRE_EQ(actual_distances, distances);
+    }
+    sizes.reset_checked("small encoder sizes release");
+    encoded.reset_checked("small encoder output release");
+    periods.reset_checked("small encoder distances release");
+    previous.reset_checked("small encoder links release");
+    uploaded.reset_checked("small encoder source release");
+}
+
 // Purpose: Exercise real cooperative device parsing without allowing one segment to overwrite its neighbors.
 // Inputs: Independently specified valid and malformed packets, each with separate bounded input/output spans.
 // Outputs: Exact statuses and valid bytes, unchanged uploaded inputs/tables, untouched output and status canaries.
@@ -197,6 +313,41 @@ void require_dictionary_device_oracles(const std::vector<DictionaryDecodeOracle>
 
 }  // namespace
 #endif
+
+// Purpose: Exercise cached, deferred and periodic numeric-effort writers without expensive full-batch instrumentation.
+// Inputs: Small literal/fill packets and independently generated 17/257-byte motifs, each at most 4097 bytes.
+// Outputs: Three real one-workgroup HIP encoders satisfy independent byte, input-ownership and slot-guard oracles.
+TEST_CASE(gpu_dictionary_encoder_independent_lz4_and_slot_guards) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    for (const std::size_t length : {1U, 12U, 13U}) {
+        require_small_dictionary_encoder(std::vector<std::byte>(length, std::byte{0x41}), 1U, length == 13U);
+    }
+    std::uint32_t state = 0x21415367U;
+    std::vector<std::byte> literal(271U);
+    for (auto& byte : literal) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        byte = static_cast<std::byte>(state >> 24U);
+    }
+    for (const std::size_t length : {269U, 270U, 271U}) {
+        require_small_dictionary_encoder(std::span(literal).first(length), 17U, false);
+    }
+    for (const auto period : std::array<std::uint16_t, 2>{17U, 257U}) {
+        std::vector<std::byte> periodic(4097U);
+        for (std::size_t index = 0; index < periodic.size(); ++index) {
+            const auto phase = index % period;
+            periodic[index] = std::byte((phase * 73U + phase / 256U) & 255U);
+        }
+        require_small_dictionary_encoder(periodic, period, true);
+    }
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
 
 // Purpose: Verify dictionary GPU parsing against independent legal blocks and adjacent malformed wire boundaries.
 // Inputs: Small literal, overlapping-match and extended-length LZ4 blocks; bounded malformed neighbors.

@@ -188,6 +188,18 @@ try {
     [IO.File]::WriteAllText($fixtureSource, "TEST_CASE(sample) {}`nTEST_CASE(sample_longer) {}")
     $overlapping = Get-FlitzZipNativeTestSelection -Paths @('tests/cpp/test_fixture.cpp') -Root $fixtureRoot
     Assert-NativeSelection ($overlapping.tests.Count -eq 2) 'overlapping names remain distinct exact cases'
+    Assert-NativeSelection (-not $overlapping.requireHip) 'ordinary registered sources do not require a device'
+    foreach ($deviceBody in @("#if FLITZZIP_ENABLE_HIP`n// device assertions`n#endif",
+            "#if 0`n// inactive branch`n#elif FLITZZIP_ENABLE_HIP`n// device assertions`n#endif",
+            'if (!flitzzip::query_gpu_info().available) { return; }',
+            'if (!flitzzip::hip_device_available()) { return; }',
+            'flitzzip::require_hip_device_ready();',
+            'const auto& kernels = flitzzip::hip_kernel_api();')) {
+        [IO.File]::WriteAllText($fixtureSource, "TEST_CASE(new_device_boundary) {`n$deviceBody`n}")
+        $deviceSelection = Get-FlitzZipNativeTestSelection -Paths @('tests/cpp/test_fixture.cpp') -Root $fixtureRoot
+        Assert-NativeSelection ($deviceSelection.mode -eq 'component' -and $deviceSelection.requireHip -and
+            ($deviceSelection.tests -join '|') -ceq 'new_device_boundary') 'new device suites cannot pass by skipping HIP'
+    }
     foreach ($conditional in @("#if FLITZZIP_ENABLE_HIP`nTEST_CASE(sample) {}`n#endif",
             "#ifdef _WIN32`n#if FLITZZIP_ENABLE_HIP`nTEST_CASE(sample) {}`n#endif`n#endif",
             "#ifdef _WIN32`n#else`nTEST_CASE(sample) {}`n#endif")) {
