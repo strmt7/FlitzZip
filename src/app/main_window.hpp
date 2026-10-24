@@ -554,11 +554,6 @@ class MainWindow {
     // Outputs: Returns zero when no selected details text overflows.
     [[nodiscard]] int history_details_max_scroll_pixels(const UiState& state);
 
-    // Purpose: Set the History details scroll offset immediately without animation.
-    // Inputs: `offset_pixels` is the desired absolute pixel offset.
-    // Outputs: Clamps visible and target offsets, clears details scroll animation, and repaints on change.
-    bool set_history_details_scroll_offset_immediate(int offset_pixels);
-
     // Purpose: Animate the History details scroll position to a bounded absolute target.
     // Inputs: `target_pixels` is the desired absolute pixel offset.
     // Outputs: Starts or updates the details smooth-scroll animation and returns whether a visible change is pending.
@@ -606,15 +601,6 @@ class MainWindow {
     void draw_performance_monitor_card(HDC dc, const RECT& graph, const wchar_t* label, const std::wstring& value,
                                        const std::wstring& detail, std::span<const double> history, COLORREF color,
                                        const std::wstring& graph_top_label, const std::wstring& graph_bottom_label);
-
-    // Purpose: Draw one dual-line metric card inside the live performance monitor.
-    // Inputs: `dc` is the target; graph labels describe scale; `primary_history` and `secondary_history` are normalized
-    // samples. Outputs: Renders read/write or similar paired histories with a shared graph scale.
-    void draw_dual_performance_monitor_card(HDC dc, const RECT& graph, const wchar_t* label, const std::wstring& value,
-                                            const std::wstring& detail, std::span<const double> primary_history,
-                                            std::span<const double> secondary_history, COLORREF primary,
-                                            COLORREF secondary, const std::wstring& graph_top_label,
-                                            const std::wstring& graph_bottom_label);
 
     // Purpose: Draw a slim operation progress bar under an action button.
     // Inputs: `dc`, `rect`, `state`, and `operation` describe the matching active job.
