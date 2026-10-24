@@ -1,7 +1,9 @@
 #include "core/file_publish.hpp"
 #include "core/result.hpp"
+#include "core/windows_handle.hpp"
 #include "test_util.hpp"
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -316,4 +318,83 @@ TEST_CASE(publication_state_shared_directory_inventory_refusal_recovers_same_tra
     REQUIRE_TRUE(!std::filesystem::exists(staging));
     REQUIRE_EQ(publication_bytes(destination / "keep.txt"), "caller-owned");
     REQUIRE_EQ(publication_bytes(destination / "nested" / "payload.txt"), "verified inventory payload");
+}
+
+namespace {
+
+// Purpose: Observe a real Windows file identity without retaining a sharing restriction during publication.
+// Inputs: Owned ordinary fixture path. Outputs: Its volume and file identifier, or a failed test assertion.
+std::array<DWORD, 3> publication_file_key(const std::filesystem::path& path) {
+    flitzzip::windows_detail::HandleOwner handle(
+        CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                    OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    REQUIRE_TRUE(handle != nullptr && handle.get() != INVALID_HANDLE_VALUE);
+    BY_HANDLE_FILE_INFORMATION information{};
+    REQUIRE_TRUE(GetFileInformationByHandle(handle.get(), &information) != FALSE);
+    return {information.dwVolumeSerialNumber, information.nFileIndexHigh, information.nFileIndexLow};
+}
+
+// Purpose: Check exact bytes and object identity independently of the publication implementation.
+// Inputs: Existing path, previously observed native key and literal expected bytes. Outputs: Exact assertions.
+void require_publication_snapshot(const std::filesystem::path& path, const std::array<DWORD, 3>& identity,
+                                  std::string_view bytes) {
+    REQUIRE_EQ(publication_file_key(path), identity);
+    REQUIRE_EQ(publication_bytes(path), std::string(bytes));
+}
+
+}  // namespace
+
+// Purpose: Keep a refused final rename retryable through the same transaction without disturbing another owner.
+// Inputs: Tiny real files, an existing target held without delete sharing, and a separate live reservation.
+// Outputs: Preserves target/stage identities and bytes, publishes once after release, and cleans only its own staging.
+TEST_CASE(publication_state_final_rename_refusal_retains_live_owner_and_exact_payload) {
+    const auto root = test_temp_dir("publication-final-rename-refusal");
+    const auto target = root / "target.bin";
+    const auto sibling_target = root / "sibling.bin";
+    std::ofstream(target, std::ios::binary) << "caller-owned target";
+    flitzzip::FilePublishTransaction publication(target);
+    const auto stage = publication.staging_path();
+    std::ofstream(stage, std::ios::binary) << "complete verified replacement";
+    flitzzip::FilePublishTransaction sibling(sibling_target);
+    const auto sibling_stage = sibling.staging_path();
+    std::ofstream(sibling_stage, std::ios::binary) << "independently owned sibling";
+    const auto target_key = publication_file_key(target);
+    const auto stage_key = publication_file_key(stage);
+    const auto sibling_key = publication_file_key(sibling_stage);
+    REQUIRE_TRUE(target_key != stage_key);
+    REQUIRE_TRUE(stage_key != sibling_key);
+    flitzzip::windows_detail::HandleOwner blocker(CreateFileW(target.c_str(), GENERIC_READ,
+                                                              FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+    REQUIRE_TRUE(blocker != nullptr && blocker.get() != INVALID_HANDLE_VALUE);
+    bool refused = false;
+    try {
+        publication.commit(true);
+    } catch (const flitzzip::ArchiveError& error) {
+        const std::string_view text(error.what());
+        refused = text.starts_with("failed to publish verified output:") &&
+                  (text.find("(Windows error 5)") != text.npos || text.find("(Windows error 32)") != text.npos);
+    }
+    REQUIRE_TRUE(refused);
+    require_publication_snapshot(target, target_key, "caller-owned target");
+    require_publication_snapshot(stage, stage_key, "complete verified replacement");
+    require_publication_snapshot(sibling_stage, sibling_key, "independently owned sibling");
+    REQUIRE_TRUE(!std::filesystem::exists(sibling_target));
+    blocker.reset();
+    publication.commit(true);
+    require_publication_snapshot(target, stage_key, "complete verified replacement");
+    REQUIRE_TRUE(!std::filesystem::exists(stage.parent_path()));
+    require_publication_snapshot(sibling_stage, sibling_key, "independently owned sibling");
+    bool repeated = false;
+    try {
+        publication.commit(true);
+    } catch (const flitzzip::SecurityError& error) {
+        repeated = std::string_view(error.what()) == "publication transaction is already committed";
+    }
+    REQUIRE_TRUE(repeated);
+    require_publication_snapshot(target, stage_key, "complete verified replacement");
+    sibling.commit(false);
+    require_publication_snapshot(sibling_target, sibling_key, "independently owned sibling");
+    REQUIRE_TRUE(!std::filesystem::exists(sibling_stage.parent_path()));
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(root), std::filesystem::directory_iterator{}), 2);
 }

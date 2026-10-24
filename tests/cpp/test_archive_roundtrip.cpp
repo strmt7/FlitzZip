@@ -3,6 +3,7 @@
 #include "core/checksum.hpp"
 #include "core/compound_block.hpp"
 #include "core/file_publish.hpp"
+#include "core/windows_handle.hpp"
 #include "core/host_memory_budget.hpp"
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
@@ -13,6 +14,8 @@
 #include "miniz.h"
 #include "test_flzip_helpers.hpp"
 #include "test_util.hpp"
+#include "test_source_session.hpp"
+#include "zip/zip_adapter.hpp"
 
 #include <cmath>
 
@@ -2684,4 +2687,117 @@ TEST_CASE(flzip_neutron_inflight_memory_admission_preserves_destination_and_reco
     REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), {}), payload);
     std::ifstream unchanged(source, std::ios::binary);
     REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(unchanged), {}), payload);
+}
+
+namespace {
+
+// Independent version-six raw native frame and Python standard-library stored ZIP, each with one self-named member.
+constexpr std::array<unsigned char, 136> kNativeSelfCollisionWire{
+    0x69, 0x6E, 0x64, 0x65, 0x70, 0x65, 0x6E, 0x64, 0x65, 0x6E, 0x74, 0x20, 0x73, 0x65, 0x6C, 0x66, 0x2D,
+    0x63, 0x6F, 0x6C, 0x6C, 0x69, 0x73, 0x69, 0x6F, 0x6E, 0x20, 0x70, 0x61, 0x79, 0x6C, 0x6F, 0x61, 0x64,
+    0x0A, 0x53, 0x55, 0x5A, 0x50, 0x06, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0C, 0x00, 0x73, 0x6F,
+    0x75, 0x72, 0x63, 0x65, 0x2E, 0x66, 0x6C, 0x7A, 0x69, 0x70, 0x00, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x34, 0xCA, 0x05, 0xC7, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23, 0x00, 0x00, 0x00, 0x53, 0x55, 0x5A, 0x46, 0x06, 0x00, 0x00,
+    0x00, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+constexpr std::array<unsigned char, 153> kZipSelfCollisionWire{
+    0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x83, 0x18, 0x22, 0x50, 0x34, 0xCA, 0x05,
+    0xC7, 0x23, 0x00, 0x00, 0x00, 0x23, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x73, 0x6F, 0x75, 0x72,
+    0x63, 0x65, 0x2E, 0x7A, 0x69, 0x70, 0x69, 0x6E, 0x64, 0x65, 0x70, 0x65, 0x6E, 0x64, 0x65, 0x6E, 0x74,
+    0x20, 0x73, 0x65, 0x6C, 0x66, 0x2D, 0x63, 0x6F, 0x6C, 0x6C, 0x69, 0x73, 0x69, 0x6F, 0x6E, 0x20, 0x70,
+    0x61, 0x79, 0x6C, 0x6F, 0x61, 0x64, 0x0A, 0x50, 0x4B, 0x01, 0x02, 0x14, 0x00, 0x14, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x83, 0x18, 0x22, 0x50, 0x34, 0xCA, 0x05, 0xC7, 0x23, 0x00, 0x00, 0x00, 0x23, 0x00, 0x00,
+    0x00, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x73, 0x6F, 0x75, 0x72, 0x63, 0x65, 0x2E, 0x7A, 0x69, 0x70, 0x50, 0x4B, 0x05, 0x06, 0x00,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x38, 0x00, 0x00, 0x00, 0x4B, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+// Purpose: Observe DELETE access without deleting, renaming or mutating an owned archive.
+// Inputs: Existing test-owned archive; error receives the immediate native refusal. Outputs: Admission, no live handle.
+bool archive_delete_access_available(const std::filesystem::path& path, DWORD& error) {
+    const auto raw = CreateFileW(path.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    error = raw == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+    flitzzip::windows_detail::HandleOwner owner(raw);
+    return owner != nullptr && owner.get() != INVALID_HANDLE_VALUE;
+}
+
+// Purpose: Materialize independently prepared tiny archive bytes without invoking any product writer.
+// Inputs: Owned path and exact wire bytes. Outputs: Complete closed fixture or a stream exception.
+void write_self_collision_wire(const std::filesystem::path& path, std::span<const unsigned char> wire) {
+    std::ofstream output(path, std::ios::binary);
+    output.exceptions(std::ios::badbit | std::ios::failbit);
+    output.write(reinterpret_cast<const char*>(wire.data()), static_cast<std::streamsize>(wire.size()));
+    output.close();
+}
+
+}  // namespace
+
+// Purpose: Protect an archive when one member would replace that same source, then publish into a clean destination.
+// Inputs: Independent tiny native/ZIP bytes, CPU native decoding and each real public extraction operation.
+// Outputs: Valid controls and recovery restore literal bytes; collision preserves archive/caller data and cleans
+// staging.
+TEST_CASE(archive_source_self_collision_preserves_native_and_zip_inputs_then_recovers) {
+    struct Fixture {
+        const char* filename;
+        std::span<const unsigned char> wire;
+        bool native;
+    };
+    const std::array fixtures{Fixture{"source.flzip", kNativeSelfCollisionWire, true},
+                              Fixture{"source.zip", kZipSelfCollisionWire, false}};
+    const auto root = test_temp_dir("archive-source-self-collision");
+    const std::string payload = "independent self-collision payload\n";
+    unsigned ordinal = 0;
+    for (const auto& fixture : fixtures) {
+        const auto directory = root / std::to_string(ordinal++);
+        std::filesystem::create_directory(directory);
+        const auto archive = directory / fixture.filename;
+        write_self_collision_wire(archive, fixture.wire);
+        std::ofstream(directory / "caller.txt", std::ios::binary) << "unrelated caller data";
+        const std::string original(reinterpret_cast<const char*>(fixture.wire.data()), fixture.wire.size());
+        REQUIRE_EQ(flitzzip_test::source_session_fixture_bytes(archive), original);
+        flitzzip::ExtractOptions options;
+        options.gpu_required = false;
+        options.force_cpu = true;
+        options.overwrite = true;
+        options.chunk_size = options.block_size = 4096U;
+        options.worker_count = options.max_inflight_chunks = 1U;
+        // Purpose: Use the real decoder. Inputs: Owned destination/observer. Outputs: Actual extraction statistics.
+        const auto extract = [&](const auto& destination, const flitzzip::ProgressCallback& callback) {
+            return fixture.native ? flitzzip::extract_flzip(archive, destination, options, callback)
+                                  : flitzzip::extract_zip(archive, destination, true, callback);
+        };
+        const auto control = root / ("control-" + std::to_string(ordinal));
+        REQUIRE_EQ(extract(control, {}).output_bytes, payload.size());
+        REQUIRE_EQ(flitzzip_test::source_session_fixture_bytes(control / fixture.filename), payload);
+        DWORD access_error = ERROR_SUCCESS;
+        REQUIRE_TRUE(archive_delete_access_available(archive, access_error));
+        unsigned callbacks = 0;
+        bool refused = false;
+        try {
+            (void)extract(directory, [&](const flitzzip::ProgressSnapshot&) {
+                ++callbacks;
+                REQUIRE_TRUE(!archive_delete_access_available(archive, access_error));
+                REQUIRE_EQ(access_error, static_cast<DWORD>(ERROR_SHARING_VIOLATION));
+            });
+        } catch (const flitzzip::ArchiveError& error) {
+            const std::string_view text(error.what());
+            refused = text.starts_with("failed to publish verified output:") &&
+                      (text.find("(Windows error 5)") != text.npos || text.find("(Windows error 32)") != text.npos);
+        }
+        REQUIRE_TRUE(refused && callbacks > 0U);
+        REQUIRE_EQ(flitzzip_test::source_session_fixture_bytes(archive), original);
+        REQUIRE_EQ(flitzzip_test::source_session_fixture_bytes(directory / "caller.txt"), "unrelated caller data");
+        REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(directory), std::filesystem::directory_iterator{}),
+                   2);
+        REQUIRE_TRUE(archive_delete_access_available(archive, access_error));
+        const auto recovery = root / ("recovery-" + std::to_string(ordinal));
+        REQUIRE_EQ(extract(recovery, {}).output_bytes, payload.size());
+        REQUIRE_EQ(flitzzip_test::source_session_fixture_bytes(recovery / fixture.filename), payload);
+        REQUIRE_EQ(flitzzip_test::source_session_fixture_bytes(archive), original);
+        REQUIRE_TRUE(archive_delete_access_available(archive, access_error));
+    }
 }

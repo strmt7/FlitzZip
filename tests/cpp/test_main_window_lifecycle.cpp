@@ -5,6 +5,7 @@
 #include "app/gdi_dc_state.hpp"
 #include "app/table_columns.hpp"
 #include "test_environment.hpp"
+#include "zip/zip_adapter.hpp"
 
 #include <fstream>
 #include <future>
@@ -900,4 +901,81 @@ TEST_CASE(main_window_security_admission_failure_is_incomplete_then_real_retry_p
     REQUIRE_TRUE(completion != std::string::npos);
     REQUIRE_TRUE(text.find("Security: completed", completion + 1) == std::string::npos);
     REQUIRE_TRUE(text.find("Security: failed") == std::string::npos);
+}
+
+namespace {
+
+// Purpose: Observe the selected native rail item independently of the controller's private state.
+// Inputs: Owned hidden window, complete off-screen bitmap and the expected public navigation ordinal.
+// Outputs: Exactly one accent strip at the requested page, with all seven other strips inactive.
+void require_native_navigation_selection(HWND window, HDC frame, int expected) {
+    HiddenController::send(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(frame), PRF_CLIENT);
+    const auto dpi = static_cast<int>(GetDpiForWindow(window));
+    for (int page = 0; page < 8; ++page) {
+        const int x = MulDiv(2, dpi, 96);
+        const int y = MulDiv(flitzzip::app::kTopBar + 10 + 63 * page + 31, dpi, 96);
+        REQUIRE_EQ(GetPixel(frame, x, y), page == expected ? flitzzip::app::kAccent : flitzzip::app::kRail);
+    }
+}
+
+// Purpose: Exercise the public rail hit region without moving the system cursor or showing a native dialog.
+// Inputs: Owned window and one of the eight documented page ordinals. Outputs: Complete native click dispatch.
+void click_native_navigation(HWND window, int page) {
+    const auto dpi = static_cast<int>(GetDpiForWindow(window));
+    const auto position =
+        MAKELPARAM(MulDiv(40, dpi, 96), MulDiv(flitzzip::app::kTopBar + 10 + 63 * page + 31, dpi, 96));
+    HiddenController::send(window, WM_LBUTTONDOWN, MK_LBUTTON, position);
+    HiddenController::send(window, WM_LBUTTONUP, 0, position);
+}
+
+}  // namespace
+
+// Purpose: Preserve the running job's page and prove normal native navigation recovers after actual completion.
+// Inputs: Real CPU ZIP work held by the existing instance-local gate, eight native rail selections and literal input.
+// Outputs: No premature archive, one real worker, locked selection, joined completion and exact recovered bytes.
+TEST_CASE(main_window_active_job_blocks_navigation_then_idle_reuses_native_commands) {
+    ControllerFixture fixture;
+    GatedLauncher launcher;
+    auto entered = launcher.entered.get_future();
+    auto completed = launcher.first_completed.get_future();
+    HWND window = nullptr;
+    {
+        HiddenController controller(launcher);
+        ReleaseOnExit release(launcher.released);
+        window = controller.wait_window();
+        fixture.prepare_compression(window);
+        RECT client{};
+        REQUIRE_TRUE(GetClientRect(window, &client) != FALSE);
+        QueueCapture frame(client.right, client.bottom);
+        require_native_navigation_selection(window, frame.dc(), 1);
+        fixture.start(window);
+        REQUIRE_TRUE(entered.wait_for(3s) == std::future_status::ready);
+        for (int page = 0; page < 8; ++page) {
+            click_native_navigation(window, page);
+            require_native_navigation_selection(window, frame.dc(), 1);
+        }
+        REQUIRE_EQ(launcher.attempts.load(), 1U);
+        REQUIRE_TRUE(completed.wait_for(0s) == std::future_status::timeout);
+        REQUIRE_TRUE(std::filesystem::is_empty(fixture.output));
+        release.release();
+        REQUIRE_TRUE(completed.wait_for(5s) == std::future_status::ready);
+        HiddenController::send(window, WM_TIMER, flitzzip::app::kClockTimer);
+        for (int page = 0; page < 8; ++page) {
+            click_native_navigation(window, page);
+            require_native_navigation_selection(window, frame.dc(), page);
+        }
+        REQUIRE_EQ(launcher.attempts.load(), 1U);
+        HiddenController::send(window, WM_CLOSE);
+        controller.require_closed();
+    }
+    REQUIRE_TRUE(IsWindow(window) == FALSE);
+    REQUIRE_TRUE(!launcher.release_timed_out.load());
+    const auto archive = fixture.output / L"FlitzZip-output.zip";
+    const auto restored = fixture.root / L"restored";
+    const auto stats = flitzzip::extract_zip(archive, restored, false);
+    REQUIRE_EQ(stats.output_bytes, 29U);
+    std::ifstream decoded(restored / L"source.txt", std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(decoded), {}), "controller ownership fixture\n");
+    std::ifstream unchanged(fixture.input, std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(unchanged), {}), "controller ownership fixture\n");
 }

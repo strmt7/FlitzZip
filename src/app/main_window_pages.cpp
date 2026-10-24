@@ -627,28 +627,6 @@ int MainWindow::history_details_max_scroll_pixels(const UiState& state) {
     return std::max(0, content_height - viewport_height);
 }
 
-// Purpose: Set the History details scroll offset immediately without animation.
-// Inputs: `offset_pixels` is the desired absolute pixel offset.
-// Outputs: Clamps visible and target offsets, clears details scroll animation, and repaints on change.
-bool MainWindow::set_history_details_scroll_offset_immediate(int offset_pixels) {
-    UiState state;
-    {
-        std::lock_guard lock(mutex_);
-        state = state_;
-    }
-    const int next = std::clamp(offset_pixels, 0, history_details_max_scroll_pixels(state));
-    const bool changed = next != history_details_scroll_pixels_ || next != history_details_scroll_target_pixels_ ||
-                         history_details_scroll_animation_start_ != std::chrono::steady_clock::time_point{};
-    history_details_scroll_pixels_ = next;
-    history_details_scroll_target_pixels_ = next;
-    history_details_scroll_animation_start_pixels_ = next;
-    history_details_scroll_animation_start_ = {};
-    if (changed) {
-        request_repaint();
-    }
-    return true;
-}
-
 // Purpose: Animate the History details scroll position to a bounded absolute target.
 // Inputs: `target_pixels` is the desired absolute pixel offset.
 // Outputs: Starts or updates the details smooth-scroll animation and returns whether a visible change is pending.
@@ -828,36 +806,6 @@ void MainWindow::draw_performance_monitor_card(HDC dc, const RECT& graph, const 
     const RECT graph_area = inset_rect(plot, scale(1), scale(1));
     draw_graph_series(dc, graph_area, history, color);
     draw_graph_axis_labels(dc, graph_area, graph_top_label, graph_bottom_label);
-    draw_text(dc, detail_rect, detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
-}
-
-// Purpose: Draw one paired metric card inside the live performance monitor.
-// Inputs: `dc` is the target; primary and secondary histories are normalized samples.
-// Outputs: Renders a shared-grid dual-line history graph without overflowing text.
-void MainWindow::draw_dual_performance_monitor_card(HDC dc, const RECT& graph, const wchar_t* label,
-                                                    const std::wstring& value, const std::wstring& detail,
-                                                    std::span<const double> primary_history,
-                                                    std::span<const double> secondary_history, COLORREF primary,
-                                                    COLORREF secondary, const std::wstring& graph_top_label,
-                                                    const std::wstring& graph_bottom_label) {
-    fill_round_rect(dc, graph, kPanel2, scale(4));
-    stroke_rect(dc, graph, kBorder);
-    RECT label_rect{graph.left + scale(12), graph.top + scale(8), graph.right - scale(12), graph.top + scale(30)};
-    RECT value_rect{graph.left + scale(12), graph.top + scale(30), graph.right - scale(12), graph.top + scale(60)};
-    SelectObject(dc, tiny_font_);
-    const auto body = make_performance_card_body(dc, graph, dpi_, detail);
-    const auto& plot = body.plot;
-    const auto& detail_rect = body.detail;
-    SelectObject(dc, small_font_);
-    draw_text(dc, label_rect, label, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    SelectObject(dc, body_font_);
-    draw_text(dc, value_rect, value, kWarn, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    SelectObject(dc, tiny_font_);
-    draw_graph_grid(dc, plot);
-    const RECT inset_plot = inset_rect(plot, scale(1), scale(1));
-    draw_graph_series(dc, inset_plot, primary_history, primary);
-    draw_graph_series(dc, inset_plot, secondary_history, secondary);
-    draw_graph_axis_labels(dc, inset_plot, graph_top_label, graph_bottom_label);
     draw_text(dc, detail_rect, detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
 }
 
