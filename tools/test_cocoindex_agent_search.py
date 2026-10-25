@@ -506,10 +506,11 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             repo.mkdir()
             oversized = repo / "large.py"
             oversized.write_text("pass\n", encoding="utf-8")
+            canonical_oversized = oversized.resolve()
             original_stat = concrete_path.stat
 
             def large_stat(path, *args, **kwargs):
-                if path == oversized:
+                if path == canonical_oversized:
                     return SimpleNamespace(st_mode=stat.S_IFREG, st_size=32 * 1024 * 1024 + 1)
                 return original_stat(path, *args, **kwargs)
 

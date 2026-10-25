@@ -161,12 +161,13 @@ class AgentContextTests(unittest.TestCase):
         Inputs: Modeled final resolution outside the checkout. Outputs: Refusal before reading.
         """
         outside = self.root.parent / "outside"
+        canonical_source = self.source.resolve()
         concrete_path = type(self.source)
         original = concrete_path.resolve
 
         def resolve(path, *args, **kwargs):
             """Purpose: Model final path escape. Inputs: Path/resolve options. Outputs: Actual root or outside file."""
-            if path == self.source:
+            if path == canonical_source:
                 return outside
             return original(path, *args, **kwargs)
 
