@@ -206,7 +206,15 @@ the skipped labels alone do not establish coverage or closure.
 | Vulnetix | External vulnerability-management upload for authorized live OpenVAS results | Vulnetix project |
 
 Semgrep produces JSON coverage evidence and SARIF in the same invocation. The
-coverage artifact compares `paths.scanned` with **all** Git-tracked paths,
+scanner retains `--error`: its finding-only exit status is accepted only after
+`tools/semgrep_findings.py` compares both complete outputs with the committed
+individual review ledger and the live source, callers, tests and scanner recipe.
+Every unmatched, changed, duplicated or malformed finding still fails the job;
+scanner errors also fail. Raw SARIF is uploaded even when this gate rejects a
+finding. This implements Semgrep's documented [finding exit-code contract](https://docs.semgrep.dev/cli-reference/#exit-codes)
+without disabling a rule or dropping a report.
+
+The coverage artifact compares `paths.scanned` with **all** Git-tracked paths,
 including deeply nested files, tests, vendor files, and agent skills; it does
 not inherit an extension, directory, or depth exclusion from the old log-only
 scope listings. Missing C/C++/Python/JavaScript/YAML source is a failing gate.

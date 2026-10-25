@@ -300,7 +300,7 @@ function Get-FlitzZipVerificationScope {
         '^tools/(flitzzip_verification\.psm1|test_verification_selector\.ps1|test_verification_runner\.ps1|ci_tool_contracts\.ps1|test_ci_tool_contracts\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
         '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
         '^tools/test_gitleaks_policy\.py$',
-        '^tools/(scanner_preflight|test_scanner_preflight|scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review)\.py$',
+        '^tools/(scanner_preflight|test_scanner_preflight|scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review|semgrep_findings|test_semgrep_findings)\.py$',
         '^tools/scan_trufflehog\.sh$',
         '^tools/(build_parallelism|test_build_parallelism|local_resources|test_workflow_checkpoint)\.ps1$',
         '^tools/(rocm_toolchain|test_rocm_toolchain|compile_hip_object|hip_architecture|test_hip_architecture)\.ps1$',
@@ -350,7 +350,7 @@ function Get-FlitzZipVerificationScope {
         '^tools/(security_scan|github_post_push_audit|verify_change_hygiene|wait_relevant_workflows|release_workflow_policy|test_release_workflow_policy)\.ps1$',
         '^tools/native_component_tests\.ps1$',
         '^tools/(release_metadata|test_release_metadata)\.py$',
-        '^tools/(test_semgrep_installation|test_semgrep_runtime|semgrep_distribution|test_semgrep_distribution|scanner_requirements|scanner_dependency_snapshot|test_scanner_dependency_snapshot|semgrep_coverage|test_semgrep_coverage|devskim_provenance|test_devskim_provenance|devskim_report|test_devskim_report|devskim_scope|test_devskim_scope)\.py$',
+        '^tools/(test_semgrep_installation|test_semgrep_runtime|semgrep_distribution|test_semgrep_distribution|scanner_requirements|scanner_dependency_snapshot|test_scanner_dependency_snapshot|semgrep_coverage|test_semgrep_coverage|semgrep_findings|test_semgrep_findings|devskim_provenance|test_devskim_provenance|devskim_report|test_devskim_report|devskim_scope|test_devskim_scope)\.py$',
         '^tools/test_gitleaks_policy\.py$',
         '^tools/(scanner_preflight|test_scanner_preflight)\.py$',
         '^tools/(scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review)\.py$',
@@ -472,6 +472,8 @@ function Get-FlitzZipToolVerificationCommand {
            Command = (Get-FlitzZipVerificationCommand -Id "scanner-installation-tests" -Stage "local" -Executable "powershell" -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/run_locked_python_tests.ps1', '-Modules', 'tools.test_semgrep_installation,tools.test_semgrep_distribution,tools.test_scanner_dependency_snapshot') -Reason "scanner provenance, packaging integrity, complete dependency hashes, installed graph reporting and the normal production install must remain aligned through a hash-locked isolated Python runtime; real Linux runtime and coverage checks remain mandatory in the security workflow") }
         @{ Pattern = @('^\.semgrepignore$', '^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^tools/(semgrep_coverage|test_semgrep_coverage)\.py$')
            Command = (Get-FlitzZipVerificationCommand -Id "scanner-coverage-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_semgrep_coverage") -Reason "scanner admission must be compared with complete tracked inventory without hiding diagnostics or publishing source snippets") }
+        @{ Pattern = @('^\.github/workflows/security-code-scanning\.yml$', '^\.github/scanner-false-positive-reviews\.csv$', '^tools/(semgrep_findings|test_semgrep_findings|scanner_hosted_review|test_scanner_hosted_review)\.py$')
+           Command = (Get-FlitzZipVerificationCommand -Id 'semgrep-findings-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_semgrep_findings') -Reason 'same-run Semgrep JSON and SARIF must retain every unreviewed finding as blocking while binding individual decisions to current source and scanner context') }
         @{ Pattern = @('^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^tools/(devskim_provenance|test_devskim_provenance)\.py$')
            Command = (Get-FlitzZipVerificationCommand -Id "devskim-provenance-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_devskim_provenance") -Reason "scanner download limits and exact size/hash verification must use one canonical provenance record") }
         @{ Pattern = @('^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^tools/(devskim_report|test_devskim_report)\.py$')

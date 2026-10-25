@@ -83,6 +83,8 @@ SEMGREP_CONFIGURATION = (
     ".github/requirements/semgrep-distribution.json",
     ".github/workflows/security-code-scanning.yml",
     "tools/scanner_hosted_review.py",
+    "tools/semgrep_findings.py",
+    "tools/test_semgrep_findings.py",
 )
 
 
