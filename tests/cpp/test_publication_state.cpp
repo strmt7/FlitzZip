@@ -117,6 +117,41 @@ TEST_CASE(publication_state_missing_payload_can_recover_once) {
     REQUIRE_EQ(publication_bytes(target), "replacement");
 }
 
+// Purpose: Refuse an alias of caller-owned bytes as a supposedly private publication payload.
+// Inputs: A real staged hard link beside an existing target, followed by an ordinary staged file.
+// Outputs: Preserves both caller files on refusal and publishes only the independently written retry.
+TEST_CASE(publication_state_rejects_aliased_staging_payload_and_recovers) {
+    const auto root = test_temp_dir("publication-aliased-payload");
+    const auto outside = root / "outside.txt";
+    const auto target = root / "final.txt";
+    std::ofstream(outside, std::ios::binary) << "caller-owned";
+    std::ofstream(target, std::ios::binary) << "original";
+
+    flitzzip::FilePublishTransaction transaction(target);
+    const auto stage = transaction.staging_path();
+    std::filesystem::create_hard_link(outside, stage);
+    REQUIRE_EQ(std::filesystem::hard_link_count(outside), 2U);
+
+    bool rejected = false;
+    try {
+        transaction.commit(true);
+    } catch (const flitzzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(publication_bytes(target), "original");
+    REQUIRE_EQ(publication_bytes(outside), "caller-owned");
+    REQUIRE_EQ(std::filesystem::hard_link_count(outside), 2U);
+
+    std::filesystem::remove(stage);
+    REQUIRE_EQ(std::filesystem::hard_link_count(outside), 1U);
+    std::ofstream(stage, std::ios::binary) << "verified replacement";
+    transaction.commit(true);
+    REQUIRE_EQ(publication_bytes(target), "verified replacement");
+    REQUIRE_EQ(publication_bytes(outside), "caller-owned");
+    REQUIRE_EQ(std::filesystem::hard_link_count(outside), 1U);
+}
+
 // Purpose: Ensure explicit cleanup invalidates every shared reservation owner permanently.
 // Inputs: Two owners of one staging file, repeated cleanup, and a later attempted commit.
 // Outputs: Removes private bytes exactly once, rejects the stale owner, and preserves the existing output.

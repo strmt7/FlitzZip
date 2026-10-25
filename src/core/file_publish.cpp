@@ -428,7 +428,7 @@ void create_private_staging_directory(const std::filesystem::path& target, FileP
 
 // Purpose: Validate a staged payload and open the exact file for handle-relative rename.
 // Inputs: `path` is a private staging file beneath pinned, reparse-free parents.
-// Outputs: Returns an owned read/delete handle or throws for reparse, directory, or open failures.
+// Outputs: Returns an owned read/delete handle for a singly linked ordinary file or throws without following aliases.
 HANDLE open_verified_payload(const std::filesystem::path& path) {
     const auto text = windows_api_path(path);
     ScopedHandle handle(CreateFileW(
@@ -438,9 +438,12 @@ HANDLE open_verified_payload(const std::filesystem::path& path) {
         throw ArchiveError("unable to open verified publication payload");
     }
     FILE_ATTRIBUTE_TAG_INFO attributes{};
+    FILE_STANDARD_INFO standard{};
     if (GetFileInformationByHandleEx(handle.get(), FileAttributeTagInfo, &attributes, sizeof(attributes)) == 0 ||
-        (attributes.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0U) {
-        throw SecurityError("publication payload is not an ordinary file");
+        (attributes.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0U ||
+        GetFileInformationByHandleEx(handle.get(), FileStandardInfo, &standard, sizeof(standard)) == 0 ||
+        standard.NumberOfLinks != 1U) {
+        throw SecurityError("publication payload is not an unlinked ordinary file");
     }
     return handle.release();
 }
@@ -514,11 +517,6 @@ void publish_quarantine_file(const std::filesystem::path& source, const std::fil
         const ScopedDirectoryChain source_parents(normalized_absolute_path(source).parent_path());
         prepare_quarantine_payload(source);
         ScopedHandle payload(open_verified_payload(source));
-        FILE_STANDARD_INFO standard{};
-        if (GetFileInformationByHandleEx(payload.get(), FileStandardInfo, &standard, sizeof(standard)) == 0 ||
-            standard.NumberOfLinks != 1U) {
-            throw SecurityError("quarantine publication requires an unlinked ordinary file");
-        }
         rename_payload_to_pinned_path(payload.get(), transaction.staging_path(), false);
     }
 #else
