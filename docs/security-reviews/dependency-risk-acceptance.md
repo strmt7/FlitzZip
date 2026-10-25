@@ -22,19 +22,22 @@ hash-locked requirements select its exact release URL. A package index cannot
 substitute another same-version wheel; every transitive dependency still resolves
 normally under its existing version and hash constraints.
 
-Aiohttp is pinned to `3.14.4`, the patched version for
+Aiohttp is pinned to `3.14.5`, the patched version for
 [GHSA-5wr8-gcqf-gqf3](https://github.com/advisories/GHSA-5wr8-gcqf-gqf3),
 [GHSA-494j-54xm-rwp3](https://github.com/advisories/GHSA-494j-54xm-rwp3) and
 [GHSA-2g87-pp6c-29x5](https://github.com/advisories/GHSA-2g87-pp6c-29x5).
-The complete crawler graph resolves normally. The upstream security regressions
-exercise initial-connection deadlines, Secure cookies and bounded parser,
-WebSocket, cookie and decompression behavior.
-
-The earlier candidate NLTK/aiohttp graph passed clean installation, installed API contracts, browser
-extraction and cache reuse on Windows, macOS and Linux. Website qualification
-retains both successful extraction and access failures; a timeout or a site
-challenge is not reported as a successful crawl. The exact pushed dependency
-audit reports the preceding alerts fixed, without manual dismissal.
+The [upstream 3.14.5 release](https://github.com/aio-libs/aiohttp/releases/tag/v3.14.5)
+also fixes a WebSocket control-frame compatibility issue. The current complete
+hash-locked graph passed clean Windows CPython 3.13 installation, `pip check`,
+the installed model and download consumers, and browser extraction. The 32-site
+qualification returned substantive content from 30 independent sites; one
+timed out and one presented a challenge. Both failures remain in the local
+native receipt. Hash-locked resolution also passed for Linux x64 with glibc
+2.28 and CPython 3.14, and macOS arm64 12 or later with CPython 3.13. Those
+cross-target resolutions do not establish runtime acceptance on those hosts.
+Earlier upstream security regressions exercised initial-connection deadlines,
+Secure cookies, and bounded parser, WebSocket, cookie and decompression behavior
+on the preceding patch release; their results do not transfer to the new wheel.
 
 Pillow is pinned to `13.0.0`, the patched release for the decoder advisories
 including [GHSA-8g5g-8vmr-9782](https://github.com/advisories/GHSA-8g5g-8vmr-9782).
@@ -42,8 +45,8 @@ Its JPEG decoder rejects output dimensions that exceed the declared tile before
 writing image data. The update satisfies Crawl4AI's published `pillow>=10.4`
 constraint normally; it introduces no dependency override or metadata patch.
 All admitted wheels retain official PyPI hashes. The complete graph resolves
-for Windows x64 CPython 3.13, Linux x64 CPython 3.14 and macOS arm64 CPython 3.13,
-with every other package version unchanged.
+for Windows x64 CPython 3.13 and the Linux and macOS targets described above;
+the aiohttp update leaves every other package version unchanged.
 
 The Pillow update has actual clean-install and installed-consumer qualification
 on Windows: valid PNG/JPEG decoding, malformed input rejection, a JPEG tile-size
