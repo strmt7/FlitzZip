@@ -160,28 +160,46 @@ function Assert-FlitzZipNativeSelectionHip {
     }
 }
 
-# Purpose: Execute each selected native case once and stop immediately on failure or registry disagreement.
-# Inputs: Selection and binaries are validated; CpuOnlyValidation requires an explicit HIP-OFF build receipt.
-# Outputs: Confirms exact cases and backend state; CPU-only completion never qualifies GPU assertions.
+# Purpose: Execute exact cases once, optionally retaining ordinary assertion failures for a development batch.
+# Inputs: Validated selection/binaries; CpuOnlyValidation requires HIP OFF. The caller owns process-tree deadlines.
+# Outputs: Throws for any failure; batch mode continues only after a complete one-case assertion result and retained
+# backend readiness. Registry disagreement, process failure and unavailable hardware always stop execution.
 function Invoke-FlitzZipNativeTestSelection {
     param([Parameter(Mandatory = $true)]$Selection,
-          [Parameter(Mandatory = $true)][string]$TestRunner, [string]$Cli, [switch]$CpuOnlyValidation)
+          [Parameter(Mandatory = $true)][string]$TestRunner, [string]$Cli, [switch]$CpuOnlyValidation,
+          [switch]$ContinueAfterAssertionFailure)
     if ($Selection.mode -ne 'component' -or -not $Selection.tests.Count -or
         @($Selection.tests | Sort-Object -Unique).Count -ne $Selection.tests.Count) {
         throw 'Native component execution requires a nonempty unique selection.'
     }
+    $failures = [Collections.Generic.List[string]]::new()
+    $requiresBackendCheck = $Selection.requireHip -or $CpuOnlyValidation.IsPresent
+    $backendCheckCurrent = $false
     if ($Selection.requireHip -or $CpuOnlyValidation.IsPresent) { Assert-FlitzZipNativeSelectionHip -Cli $Cli -CpuOnlyValidation:$CpuOnlyValidation }
     foreach ($name in $Selection.tests) {
         $output = @(& $TestRunner "=$name")
         $exitCode = $LASTEXITCODE
         $output
+        $backendCheckCurrent = $false
         $ran = @($output | Where-Object { $_ -match '^\[RUN \] ' })
-        if ($exitCode -ne 0 -or $output -notcontains '1 tests, 0 failed' -or
-            $ran.Count -ne 1 -or $ran[0] -ne "[RUN ] $name") {
-            throw "Selected native case did not run exactly once and pass: $name (exit $exitCode)."
+        $summaries = @($output | Where-Object { $_ -match '^\d+ tests, \d+ failed$' })
+        $complete = $ran.Count -eq 1 -and $ran[0] -ceq "[RUN ] $name" -and $summaries.Count -eq 1
+        if ($complete -and $exitCode -eq 0 -and $summaries[0] -ceq '1 tests, 0 failed') { continue }
+        if ($ContinueAfterAssertionFailure.IsPresent -and $complete -and $exitCode -eq 1 -and
+            $summaries[0] -ceq '1 tests, 1 failed') {
+            $failures.Add($name)
+            if ($requiresBackendCheck) {
+                Assert-FlitzZipNativeSelectionHip -Cli $Cli -CpuOnlyValidation:$CpuOnlyValidation
+                $backendCheckCurrent = $true
+            }
+            continue
         }
+        throw "Selected native case did not run exactly once and pass: $name (exit $exitCode)."
     }
-    if ($Selection.requireHip -or $CpuOnlyValidation.IsPresent) { Assert-FlitzZipNativeSelectionHip -Cli $Cli -CpuOnlyValidation:$CpuOnlyValidation }
+    if ($requiresBackendCheck -and -not $backendCheckCurrent) {
+        Assert-FlitzZipNativeSelectionHip -Cli $Cli -CpuOnlyValidation:$CpuOnlyValidation
+    }
+    if ($failures.Count) { throw "Native batch assertion failures: $($failures -join ', ')." }
     if ($CpuOnlyValidation.IsPresent) {
         Write-Output "CPU-only component validation completed: $($Selection.tests.Count) invocations; GPU assertions are not qualified."
     } else {

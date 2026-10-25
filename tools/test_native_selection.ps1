@@ -269,9 +269,14 @@ function Invoke-NativeFixtureCase {
     Assert-NativeSelection ($Filter.StartsWith('=')) 'production component calls must use exact selection'
     $Name = $Filter.Substring(1)
     $script:NativeFixtureCalls.Add("case:$Name")
-    $global:LASTEXITCODE = if ($script:NativeFixtureMode -eq 'failure') { 1 } else { 0 }
+    $assertionFailed = $script:NativeFixtureMode -eq 'assertion-failure' -or
+        ($script:NativeFixtureMode -eq 'mixed-failure' -and $Name -eq 'first')
+    $global:LASTEXITCODE = if ($script:NativeFixtureMode -eq 'crash') { -1073741819 }
+        elseif ($script:NativeFixtureMode -eq 'failure' -or $assertionFailed) { 1 } else { 0 }
     if ($script:NativeFixtureMode -eq 'wrong-name') { '[RUN ] unexpected_case' } else { "[RUN ] $Name" }
     if ($script:NativeFixtureMode -eq 'wrong-count') { '[RUN ] unexpected_second_case'; '2 tests, 0 failed' }
+    elseif ($script:NativeFixtureMode -eq 'conflicting-summary') { '1 tests, 1 failed'; '1 tests, 0 failed' }
+    elseif ($assertionFailed) { '1 tests, 1 failed' }
     elseif ($script:NativeFixtureMode -ne 'no-summary') { '1 tests, 0 failed' }
 }
 
@@ -284,6 +289,40 @@ foreach ($mode in @('failure', 'wrong-name', 'wrong-count', 'no-summary')) {
     Assert-NativeSelectionRejected { Invoke-FlitzZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli } 'did not run exactly once and pass'
     Assert-NativeSelection (($script:NativeFixtureCalls -join '|') -eq 'cli:gpu-info|case:first') "stop after first failed case: $mode"
 }
+$script:NativeFixtureMode = 'assertion-failure'
+$script:NativeFixtureCalls.Clear()
+Assert-NativeSelectionRejected { Invoke-FlitzZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli } 'did not run exactly once and pass'
+Assert-NativeSelection (($script:NativeFixtureCalls -join '|') -eq 'cli:gpu-info|case:first') 'default execution still stops on an ordinary assertion failure'
+foreach ($mode in @('assertion-failure', 'mixed-failure')) {
+    $script:NativeFixtureMode = $mode
+    $script:NativeFixtureCalls.Clear()
+    $expectedFailures = if ($mode -eq 'assertion-failure') { 'first, second' } else { 'first' }
+    Assert-NativeSelectionRejected {
+        Invoke-FlitzZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli -ContinueAfterAssertionFailure
+    } "Native batch assertion failures: $expectedFailures"
+    Assert-NativeSelection (($script:NativeFixtureCalls -join '|') -eq 'cli:gpu-info|case:first|cli:gpu-info|case:second|cli:gpu-info') 'batch executes each case once and retains readiness after failures'
+}
+foreach ($mode in @('failure', 'wrong-name', 'wrong-count', 'no-summary', 'crash', 'conflicting-summary')) {
+    $script:NativeFixtureMode = $mode
+    $script:NativeFixtureCalls.Clear()
+    Assert-NativeSelectionRejected {
+        Invoke-FlitzZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli -ContinueAfterAssertionFailure
+    } 'did not run exactly once and pass'
+    Assert-NativeSelection (($script:NativeFixtureCalls -join '|') -eq 'cli:gpu-info|case:first') "batch stops on process/registry failure: $mode"
+}
+$script:NativeFixtureMode = 'assertion-failure'
+$script:NativeFixtureHipMode = 'lost'
+$script:NativeFixtureCalls.Clear()
+Assert-NativeSelectionRejected {
+    Invoke-FlitzZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli -ContinueAfterAssertionFailure
+} 'requires a compiled HIP backend'
+Assert-NativeSelection (($script:NativeFixtureCalls -join '|') -eq 'cli:gpu-info|case:first|cli:gpu-info') 'batch must stop if an assertion failure coincides with lost HIP readiness'
+$script:NativeFixtureHipMode = 'ready'
+$script:NativeFixtureMode = 'pass'
+$script:NativeFixtureCalls.Clear()
+$batchOutput = @(Invoke-FlitzZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli -ContinueAfterAssertionFailure)
+Assert-NativeSelection (($script:NativeFixtureCalls -join '|') -eq 'cli:gpu-info|case:first|case:second|cli:gpu-info') 'passing batch does not repeat cases or readiness checks'
+Assert-NativeSelection (@($batchOutput | Where-Object { $_ -match '^Native component tests passed: 2 cases;' }).Count -eq 1) 'passing batch emits exactly one truthful summary'
 $script:NativeFixtureMode = 'pass'
 foreach ($mode in @('not-compiled', 'unavailable', 'lost')) {
     $script:NativeFixtureCalls.Clear()

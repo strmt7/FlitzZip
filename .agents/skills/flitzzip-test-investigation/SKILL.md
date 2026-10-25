@@ -1,16 +1,37 @@
 ---
 name: flitzzip-test-investigation
-description: Investigate FlitzZip bugs, intermittent failures and coverage gaps; design tests with independent oracles and prove failure cleanup and recovery.
+description: Design meaningful FlitzZip test batches and investigate failures; use independent oracles, reproducible inputs, lifecycle assertions and source-bound coverage.
 ---
 
 # FlitzZip Test Investigation
 
-Use for an unexplained failure or a missing behavioral test. Routine execution
+Use for a test-authoring batch, an unexplained failure or a missing behavioral test. Routine execution
 of already selected checks belongs to `flitzzip-build-test`. Follow
 [debugging strategy](../../../docs/debugging-strategy.md#investigation-contract)
 for the investigation contract and
 [meaningful tests](../../../docs/code-coverage.md#meaningful-tests) for oracle
-selection. Those guides own evidence and fault-injection requirements.
+selection. Those guides own evidence and fault-injection requirements. Their
+[research and adoption decisions](../../../docs/code-coverage.md#research-and-tool-adoption)
+explain which current techniques fit the existing native/Python/HIP toolchain.
+
+## When adding a batch
+
+- Start from retained gaps and public behavior, not a target test count. State
+  each case's invariant, independent oracle and plausible defect it must reject.
+  Prefer explicit boundary/transition tables to duplicated test bodies.
+- Write the planned coherent cases before coverage collection. Use the existing
+  runtime and fixtures; do not add a test framework merely because a source uses it.
+  Generated sequences need bounded inputs, replay data and a reduced failing case.
+- Challenge uncertain assertions with a targeted old-source or isolated fault
+  control. Never derive the expected result by calling the same production logic.
+- Run the positive exact cohort once through the canonical bounded executor.
+  Its optional `-ContinueAfterAssertionFailure` mode retains independent assertion
+  failures; process/registry failures and lost backend readiness still stop it.
+  The batch must remain failed if any case fails. Do not retry into a pass.
+- Measure after the batch, preserving scope and source/tool identities. Add tests
+  for remaining behavior gaps; group exposed problems by the first violated
+  contract for repair. Repair a broken observation mechanism before interpreting
+  its measurement. Keep deferred gates explicit; this is not release acceptance.
 
 ## Work from the boundary
 
