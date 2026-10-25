@@ -6,11 +6,12 @@ import hashlib
 import io
 import json
 import os
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -400,6 +401,12 @@ class HipRegistrationTests(unittest.TestCase):
         before = copy.deepcopy(self.completion["after"] if content == completed_bytes else self.completion["before"])
         before["module_ir_sha256"] = hashlib.sha256(content).hexdigest()
         if "--complete" not in command:
+            if fault == "wrong-probe" and log.stem == "original":
+                before["device_data_records"] = 3
+            if fault == "path-dependent-digest" and log.stem == "digest-relocated":
+                before["module_ir_sha256"] = "c" * 64
+            if fault == "constant-digest" and log.stem == "digest-text-changed":
+                before["module_ir_sha256"] = hashlib.sha256(self.source.read_bytes()).hexdigest()
             if fault == "persisted-inventory" and log.stem == "idempotence-persisted":
                 before["registered_data_records"] = 1
             return before
@@ -425,7 +432,16 @@ class HipRegistrationTests(unittest.TestCase):
     # Inputs: Real owned files and one wrong inventory/hash per native-producer scenario.
     # Outputs: All disconnected evidence chains fail; valid completion preserves the existing output.
     def test_native_completion_requires_continuous_persisted_evidence(self):
-        for fault in (None, "reported-original", "reported-completed", "persisted-inventory", "idempotence-program"):
+        for fault in (
+            None,
+            "reported-original",
+            "reported-completed",
+            "persisted-inventory",
+            "idempotence-program",
+            "wrong-probe",
+            "path-dependent-digest",
+            "constant-digest",
+        ):
             checker = self.native_checker(fault or "complete-valid")
             result = {
                 "exit_code": 1,
@@ -455,7 +471,7 @@ class HipRegistrationTests(unittest.TestCase):
                     )
                     owner.return_value.run_bounded_command.assert_called_once()
                 else:
-                    with self.assertRaisesRegex(ValueError, "inventory|evidence"):
+                    with self.assertRaisesRegex(ValueError, "inventory|evidence|digest|helper-inclusive"):
                         checker.valid_controls()
                     owner.return_value.run_bounded_command.assert_not_called()
             self.assertEqual(self.source.read_text(encoding="utf-8"), "independent source identity")
@@ -513,9 +529,11 @@ class HipRegistrationTests(unittest.TestCase):
             "  call void @__hipRegisterVar(ptr %0, ptr @__llvm_profile_shadow_data_probe, "
             "ptr @1, ptr @1, i32 0, i64 8, i32 0, i32 0)"
         )
-        for fault in (None, "before", "after", "persisted"):
+        for fault in (None, "before", "after", "persisted", "wrong-repair", "missing-call"):
             checker = self.native_checker("absent-" + (fault or "valid"))
             checker.text = "\n".join([*lines, program, call]) + "\n"
+            if fault == "missing-call":
+                checker.text = checker.text.replace(call + "\n", "")
             initial = copy.deepcopy(self.completion["before"])
             initial.update(registered_data_records=0, absent_host_profile_groups=1)
             initial["missing"] = ["__profd_independent_helper", "__profd_independent_kernel"]
@@ -540,6 +558,8 @@ class HipRegistrationTests(unittest.TestCase):
                     "original_program_values_preserved": True,
                 }
                 Path(command[command.index("-o") + 1]).write_bytes(b"completed absent-group fixture")
+                if complete and fault == "wrong-repair":
+                    return copy.deepcopy(self.completion)
                 if complete and fault in ("before", "after"):
                     result[fault]["module_ir_sha256"] = "c" * 64
                 return result
@@ -554,13 +574,18 @@ class HipRegistrationTests(unittest.TestCase):
                     negative.assert_called_once()
                     self.assertIn("i64 16,", negative.call_args.kwargs["ir"])
                 else:
-                    with self.assertRaisesRegex(ValueError, "inventory evidence"):
+                    with self.assertRaisesRegex(
+                        ValueError, "inventory evidence|did not reconcile|original data registration"
+                    ):
                         checker.absent_metadata_controls()
                     negative.assert_not_called()
-                    self.assertEqual(checker.positive_outcomes, [])
+                    if fault != "missing-call":
+                        self.assertEqual(checker.positive_outcomes, [])
+                    self.assertFalse((checker.output / "qualification.json").exists())
             mutated = (checker.output / "absent-profile-group.ll").read_text()
             self.assertIn(program, mutated)
-            self.assertIn(call, mutated)
+            if fault != "missing-call":
+                self.assertIn(call, mutated)
             for prefix in ("__profd_", "__profc_", "__llvm_prf_unifcnt_"):
                 self.assertIn(prefix + "_Z5probej", mutated)
 
@@ -606,6 +631,158 @@ class HipRegistrationTests(unittest.TestCase):
                     self.assertEqual(checker.outcomes, [])
             retained = json.loads((checker.output / "case/process.json").read_text())
             self.assertEqual({key: retained[key] for key in result}, result)
+
+    # Purpose: Refuse incompatible compiler fixtures before a control can claim that it altered its intended boundary.
+    # Inputs: Missing, partial and ambiguous registration declarations. Outputs: Explicit failure and no final receipt.
+    def test_native_control_fixtures_require_unambiguous_compiler_structure(self):
+        arguments = ", ptr @name, ptr @name, i32 0, i64 8, i32 0, i32 0)"
+        data = "  call void @__hipRegisterVar(ptr %0, ptr @__llvm_profile_shadow_data_probe" + arguments
+        table = "  call void @__hipRegisterVar(ptr %0, ptr @__llvm_profile_sections_0123" + arguments
+        groups = "\n".join(
+            "  call void @__llvm_profile_offload_register_section_shadow_variable(i32 " + str(index) + ")"
+            for index in range(4)
+        )
+        cases = (
+            ("namespace_controls", "", "translation-unit identity"),
+            ("absent_metadata_controls", "", "profile data identity"),
+            ("absent_metadata_controls", '@1 = private constant [10 x i8] c"__profd_x\\00"', "profile name tuple"),
+            ("host_group_controls", groups.splitlines()[0], "four-section registration group"),
+            ("host_group_controls", groups, "table identity"),
+            ("host_group_controls", groups + "\n" + table, "immutable profile data name"),
+            ("host_abi_controls", data + "\n" + table, "expected pointer shadow"),
+        )
+        for index, (method, fixture, diagnostic) in enumerate(cases):
+            checker = self.native_checker("shape-" + str(index))
+            checker.text = fixture
+            with (
+                self.subTest(method=method, diagnostic=diagnostic),
+                patch.object(checker, "rejected"),
+                patch.object(native_checks, "native_metadata") as metadata,
+                self.assertRaisesRegex(ValueError, diagnostic),
+            ):
+                getattr(checker, method)()
+            metadata.assert_not_called()
+            self.assertFalse((checker.output / "qualification.json").exists())
+        for index, fixture in enumerate(("", data + "\n" + data)):
+            checker = self.native_checker("ambiguous-call-" + str(index))
+            checker.text = fixture
+            with self.assertRaisesRegex(ValueError, "single-kernel"):
+                checker.change_call(lambda line: line.replace("i64 8", "i64 16"))
+            self.assertEqual(checker.text, fixture)
+
+    # Purpose: Detect coverage shadow collisions or omissions even when the producer reports valid inventory counts.
+    # Inputs: Independent symbol sets from two emitted translation units. Outputs: No positive namespace verdict.
+    def test_native_namespace_control_rejects_overlapping_or_missing_shadows(self):
+        for fault in ("collision", "missing"):
+            checker = self.native_checker("namespace-" + fault)
+            checker.text = "@__llvm_profile_sections_0123 = global ptr null\n"
+            (checker.output / "completed.bc").write_bytes(b"original completed fixture")
+
+            # Purpose: Supply actual compiler output text. Inputs: Typed argv and stage. Outputs: Owned symbol fixture.
+            def emit(command, log, fault=fault):
+                second = log.stem == "namespace-1"
+                count = 2 if second and fault == "missing" else 3
+                start = 4 if second and fault == "missing" else 1
+                text = "\n".join(
+                    "@__flitzzip_hip_profile_shadow_" + format(index, "064x") + " = global ptr null"
+                    for index in range(start, start + count)
+                )
+                Path(command[command.index("-o") + 1]).write_text(text)
+
+            with (
+                self.subTest(fault=fault),
+                patch.object(native_checks, "native_metadata", return_value=copy.deepcopy(self.completion)),
+                patch.object(coverage, "checked", side_effect=emit),
+                self.assertRaisesRegex(ValueError, "shadows collide"),
+            ):
+                checker.namespace_controls()
+            self.assertEqual(checker.positive_outcomes, [])
+
+    # Purpose: Frame a minimal ELF64 section table independently of LLVM and the production fixture mutator.
+    # Inputs: None. Outputs: Mutable bytes with null, text and string-table sections; no executable device code.
+    def section_table_fixture(self):
+        names = b"\0.text\0.shstrtab\0"
+        data = bytearray(256) + names
+        data[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<Q", data, 40, 64)
+        struct.pack_into("<HHH", data, 58, 64, 3, 2)
+        struct.pack_into("<I", data, 128, 1)
+        struct.pack_into("<I", data, 192, 7)
+        struct.pack_into("<QQ", data, 216, 256, len(names))
+        return data
+
+    # Purpose: Prevent fixture generation from inventing a valid metadata-budget control from incompatible image bytes.
+    # Inputs: Independently framed table geometry and a wrong native inventory response.
+    # Outputs: Rejection before excessive-section generation, with original bytes preserved and no positive verdict.
+    def test_native_metadata_budget_control_requires_compatible_image_and_inventory(self):
+        for fault in ("signature", "geometry", "no-text", "strings-extent", "inventory"):
+            checker = self.native_checker("elf-" + fault)
+            data = self.section_table_fixture()
+            if fault == "signature":
+                data[0] = 0
+            elif fault == "geometry":
+                struct.pack_into("<H", data, 58, 63)
+            elif fault == "no-text":
+                data[257:262] = b".data"
+            elif fault == "strings-extent":
+                struct.pack_into("<Q", data, 224, len(data) + 1)
+            checker.device = checker.output / "fixture.elf"
+            checker.device.write_bytes(data)
+            with (
+                self.subTest(fault=fault),
+                patch.object(
+                    coverage,
+                    "checked",
+                    return_value={
+                        "stdout": json.dumps(
+                            {
+                                "device_data_records": 3,
+                                "registered_data_records": 1,
+                            }
+                        )
+                    },
+                ) as native,
+                self.assertRaisesRegex(ValueError, "ELF64|geometry|text section|profile admission"),
+            ):
+                checker.metadata_budget_controls()
+            self.assertEqual(native.call_count, 1 if fault == "inventory" else 0)
+            self.assertEqual(checker.device.read_bytes(), data)
+            self.assertFalse((checker.output / "excessive-sections.elf").exists())
+            self.assertEqual(checker.positive_outcomes, [])
+
+    # Purpose: Reject a stale overall verdict even when every individual native control has returned successfully.
+    # Inputs: Real source mutation after the last controlled native stage. Outputs: Failure with raw artifacts retained.
+    def test_native_control_run_does_not_publish_after_input_drift(self):
+        checker = self.native_checker("input-drift")
+        (self.root / "llvm-objcopy.exe").write_bytes(b"independent objcopy identity")
+        stages = (
+            "valid_controls",
+            "namespace_controls",
+            "absent_metadata_controls",
+            "host_abi_controls",
+            "host_group_controls",
+            "device_controls",
+            "metadata_budget_controls",
+        )
+
+        # Purpose: Model the compiler's owned output. Inputs: Real command/log. Outputs: Readable probe bytes.
+        def render(command, log):
+            Path(command[command.index("-o") + 1]).write_text("independent rendered module")
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(native_checks, "SOURCE_DIRECTORY", self.native_source))
+            stack.enter_context(patch.object(native_checks, "admit_tool"))
+            stack.enter_context(patch.object(coverage, "checked", side_effect=render))
+            mocks = [stack.enter_context(patch.object(checker, name)) for name in stages]
+            mocks[-1].side_effect = lambda: self.source.write_bytes(b"changed during final native control")
+            with self.assertRaisesRegex(ValueError, "inputs changed during static checks"):
+                checker.run()
+            for control in mocks:
+                control.assert_called_once_with()
+        self.assertFalse((checker.output / "qualification.json").exists())
+        self.assertEqual(self.source.read_bytes(), b"changed during final native control")
+        self.assertEqual(self.tool.read_bytes(), b"native tool identity")
+        self.assertEqual((checker.output / "host.ll").read_text(), "independent rendered module")
 
 
 class HipToolchainTests(unittest.TestCase):
