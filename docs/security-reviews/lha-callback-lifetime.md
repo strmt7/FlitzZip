@@ -13,7 +13,10 @@ destroyed first.
 
 Every compiled caller follows that lifetime:
 
-- `LhaReaderSession` owns its `std::ifstream` with `std::unique_ptr`. It frees
+- `LhaReaderSession` owns its `LhaInputContext` with `std::unique_ptr`; that
+  context owns the `std::ifstream`, the pinned source's sealed size, delivered
+  offset and sticky failure state. The outer `PinnedSourceFile` outlives both
+  synchronous reader sessions. The session frees
   the Lhasa reader and stream in its destructor body, before member destruction
   closes the C++ stream. Reader-allocation failure frees the C stream before
   constructor unwinding destroys the input owner. Stream-allocation failure
@@ -33,6 +36,12 @@ reader borrow the stream; they do not retain work beyond their destruction.
 No compiled caller releases its context while the stream can still invoke a
 callback. The regression suite also exercises fragmented reads, injected input
 errors, failed skips and clean termination with these real callback contexts.
+The native read-lock regression additionally exercises constructor/destructor
+unwinding after a real later-header read refusal, proves source handles are
+released, and decodes both members after the refusal is removed. The production
+callback catches exceptions at the C boundary and rejects every short read
+before the sealed extent even if the CRT also sets its EOF flag. These input
+integrity checks do not transfer ownership of the borrowed callback context.
 
 This is separate from the callback-table lifetime defect reported as alert
 8396. That defect was repaired: the stream now owns a complete callback-table

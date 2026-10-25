@@ -159,9 +159,18 @@ With parallel collection, combine the completed commands before reporting. When
 adding observations to an existing consolidated data file, use
 `coverage combine --append --keep`; a plain combine starts a new consolidated
 result and can discard earlier observations. `coverage run --append` cannot be
-used in parallel mode. Retain raw data and a consolidated snapshot so an export
-or supplemental test cannot silently replace the cohort. A small independent
-control should demonstrate both loss without append and preservation with it.
+used in parallel mode.
+
+Reporting commands also combine parallel data automatically. Preserve raw files
+during JSON export with `coverage json --keep-combined -o coverage.json`;
+`combine --append --keep` does not control a later reporting invocation. See the
+[JSON command](https://coverage.readthedocs.io/en/7.16.2/commands/cmd_json.html)
+and [reporting change log](https://coverage.readthedocs.io/en/7.16.2/changes.html#version-7-15-0-2026-07-02).
+Before and after each export, require the same complete raw-profile path and
+SHA-256 inventory and unchanged consolidated-data SHA-256. Retain raw data and a
+consolidated snapshot so an export or supplemental test cannot silently replace
+the cohort. A small independent control should demonstrate loss without append,
+preservation with it, and raw-file preservation across repeated exports.
 
 Path aliases may unify exact source copies used by isolated process tests only
 when the fixture proves byte equality with the frozen production inputs. Never

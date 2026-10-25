@@ -57,23 +57,45 @@ std::uint64_t checked_add_lha_bytes(std::uint64_t total, std::uint64_t size) {
     return total;
 }
 
-// Purpose: Read bytes from a heap-owned C++ stream for the Lhasa C API.
-// Inputs: `handle` points to an open `std::ifstream`, `buffer` receives bytes, and `buffer_len` is the requested byte
-// count. Outputs: Returns bytes read or -1 when the stream reports a non-EOF read failure.
-int lha_stream_read(void* handle, void* buffer, std::size_t buffer_len) {
+struct LhaInputContext {
+    std::ifstream input;
+    std::uint64_t size = 0;
+    std::uint64_t delivered = 0;
+    bool failed = false;
+};
+
+// Purpose: Distinguish verified physical EOF from an unreadable extent across the Lhasa C boundary.
+// Inputs: `handle` borrows a session-owned context bound to a live pinned source; `buffer_len` bounds `buffer`.
+// Outputs: Returns complete bounded reads, zero at the sealed extent or for an empty request, or sticky -1; never
+// throws.
+int lha_stream_read(void* handle, void* buffer, std::size_t buffer_len) noexcept {
     constexpr auto kMaxCallbackRead = static_cast<std::size_t>(std::numeric_limits<int>::max());
-    if (handle == nullptr || buffer_len > kMaxCallbackRead) {
+    if (handle == nullptr) {
         return -1;
     }
-    auto* input = static_cast<std::ifstream*>(handle);
-    input->read(static_cast<char*>(buffer), static_cast<std::streamsize>(buffer_len));
-    const auto read = input->gcount();
-    if (input->bad() || (input->fail() && !input->eof())) {
+    auto& context = *static_cast<LhaInputContext*>(handle);
+    if (context.failed || context.delivered > context.size || buffer_len > kMaxCallbackRead ||
+        (buffer == nullptr && buffer_len != 0)) {
+        context.failed = true;
         return -1;
     }
-    if (read == static_cast<std::streamsize>(buffer_len) || input->eof()) {
-        return static_cast<int>(std::max<std::streamsize>(0, read));
+    const auto request =
+        static_cast<std::streamsize>(std::min<std::uint64_t>(buffer_len, context.size - context.delivered));
+    if (request == 0) {
+        return 0;
     }
+    try {
+        context.input.read(static_cast<char*>(buffer), request);
+        // Some CRT read failures set eofbit as well as failbit. A short read
+        // before the pinned size is an error regardless of the stream's EOF flag.
+        if (context.input.gcount() == request && !context.input.fail()) {
+            context.delivered += static_cast<std::uint64_t>(request);
+            return static_cast<int>(request);
+        }
+    } catch (...) {
+        // Never unwind C++ exceptions through Lhasa callbacks.
+    }
+    context.failed = true;
     return -1;
 }
 
@@ -88,12 +110,14 @@ const LHAInputStreamType kFlitzZipLhaInputStreamType{
 class LhaReaderSession {
   public:
     // Purpose: Open one LHA/LZH archive and bind it to a Lhasa reader.
-    // Inputs: `archive_path` identifies the archive to decode.
+    // Inputs: `source` pins the exact archive object and byte extent throughout this session.
     // Outputs: Owns the C stream/reader state or throws on open/allocation failure.
-    explicit LhaReaderSession(const std::filesystem::path& archive_path) {
-        input_ = std::make_unique<std::ifstream>(archive_path, std::ios::binary);
-        if (!input_ || !*input_) {
-            throw ArchiveError("cannot open LHA archive: " + path_diagnostic_utf8(archive_path));
+    explicit LhaReaderSession(const PinnedSourceFile& source) {
+        input_ = std::make_unique<LhaInputContext>();
+        input_->size = source.size();
+        input_->input.open(source.path(), std::ios::binary);
+        if (!input_->input) {
+            throw ArchiveError("cannot open LHA archive: " + path_diagnostic_utf8(source.path()));
         }
         stream_ = lha_input_stream_new(&kFlitzZipLhaInputStreamType, input_.get());
         if (stream_ == nullptr) {
@@ -145,7 +169,7 @@ class LhaReaderSession {
     }
 
   private:
-    std::unique_ptr<std::ifstream> input_;
+    std::unique_ptr<LhaInputContext> input_;
     LHAInputStream* stream_ = nullptr;
     LHAReader* reader_ = nullptr;
 };
@@ -201,11 +225,11 @@ std::string lha_header_path(const LHAFileHeader& header) {
 }
 
 // Purpose: Validate every LHA member path and payload before destination writes start.
-// Inputs: `archive_path` identifies the archive to scan.
+// Inputs: `source` pins the archive object and seals its physical byte extent for the complete scan.
 // Outputs: Returns safe metadata; throws on parser failure, unsafe path, unsupported entry type, CRC mismatch, or
 // resource exhaustion.
-LhaMetadata scan_lha_metadata(const std::filesystem::path& archive_path) {
-    LhaReaderSession session(archive_path);
+LhaMetadata scan_lha_metadata(const PinnedSourceFile& source) {
+    LhaReaderSession session(source);
     LhaMetadata metadata;
     std::vector<ArchivePathValidationEntry> validation_entries;
     std::uint32_t entry_count = 0;
@@ -297,13 +321,13 @@ void publish_lha_payload(LHAReader* reader, const LhaEntry& entry, const std::fi
 }
 
 // Purpose: Extract validated LHA entries to disk.
-// Inputs: `archive_path` identifies the archive, `metadata` contains safe entries, `destination` is the extraction
-// root, and `overwrite`/progress fields control publication behavior. Outputs: Writes directories and files below
-// `destination`, or throws before leaving untracked temporary files.
-void extract_lha_payloads(const std::filesystem::path& archive_path, const LhaMetadata& metadata,
+// Inputs: `source` pins the archive and its byte extent, `metadata` contains safe entries, `destination` is the
+// extraction root, and `overwrite`/progress fields control publication behavior. Outputs: Writes directories and files
+// below `destination`, or throws before leaving untracked temporary files.
+void extract_lha_payloads(const PinnedSourceFile& source, const LhaMetadata& metadata,
                           const std::filesystem::path& destination, bool overwrite,
                           const ProgressCallback& progress_callback) {
-    LhaReaderSession session(archive_path);
+    LhaReaderSession session(source);
     ProgressState progress;
     progress.start(OperationKind::Extract, metadata.total_file_bytes, metadata.entries.size());
     std::size_t metadata_index = 0;
@@ -348,9 +372,9 @@ OperationStats extract_lha(const std::filesystem::path& archive_path, const std:
                            bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
-    const auto metadata = scan_lha_metadata(archive_source.path());
+    const auto metadata = scan_lha_metadata(archive_source);
     create_verified_directories(destination);
-    extract_lha_payloads(archive_source.path(), metadata, destination, overwrite, progress_callback);
+    extract_lha_payloads(archive_source, metadata, destination, overwrite, progress_callback);
 
     OperationStats stats;
     stats.input_bytes = archive_source.size();

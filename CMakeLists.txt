@@ -1044,6 +1044,10 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_zstd_compat.cpp
     tests/cpp/test_zip_compat.cpp
     tests/cpp/test_zip_verification.cpp)
+  if(WIN32)
+    target_sources(flitzzip_test_objects
+                   PRIVATE tests/cpp/test_compression_stream_io.cpp)
+  endif()
   if(TARGET flitzzip_gui)
     target_sources(flitzzip_test_objects
                    PRIVATE tests/cpp/test_main_window_lifecycle.cpp)
