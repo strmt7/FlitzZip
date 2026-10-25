@@ -30,8 +30,9 @@ class HistorySession final {
     bool queued = false;
 
     // Purpose: Share ordinary serial work and controlled interleaving fixtures without replacing the worker.
-    // Inputs: Whether to release the instance's gate immediately. Outputs: Ordinary jobs or explicitly held work.
-    explicit HistorySession(bool release_workers = true) {
+    // Inputs: Whether to release the gate immediately and enable saved archive integrity checks.
+    // Outputs: Ordinary jobs or explicitly held work with the selected initial settings.
+    explicit HistorySession(bool release_workers = true, bool integrity = false) : ui(integrity) {
         if (release_workers) {
             ui.launcher.released.set_value();
         }

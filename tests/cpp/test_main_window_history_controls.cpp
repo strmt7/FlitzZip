@@ -1,4 +1,5 @@
 #include "native_window_history_fixture.hpp"
+#include "zip/zip_adapter.hpp"
 
 using namespace flitzzip_test::native_window;
 
@@ -18,6 +19,27 @@ TEST_CASE(main_window_history_text_oracle_rejects_wrong_values_under_focus) {
     REQUIRE_TRUE(!native_cell_text_matches(s.ui.frame.dc(), cells[1], dpi, L"Compress", flitzzip::app::kText));
     REQUIRE_TRUE(!native_cell_text_matches(s.ui.frame.dc(), cells[2], dpi, L"Settingx"));
     REQUIRE_TRUE(!native_cell_text_matches(s.ui.frame.dc(), cells[4], dpi, L"Failure", flitzzip::app::kOk));
+    s.finish();
+}
+
+// Purpose: Record a real archive SHA-256 check only after successful ZIP publication.
+// Inputs: Saved integrity preference, a Windows publication refusal, then a valid small source.
+// Outputs: Failed work has no Security result; successful ZIP readback has its own successful Security row.
+TEST_CASE(main_window_history_integrity_result_requires_published_archive) {
+    HistorySession s(true, true);
+    s.compress(false);
+    s.open();
+    s.filter(3, 0);
+    s.require_placeholder(L"No operations match the current filters.");
+
+    s.compress(true);
+    const auto restored = s.ui.fixture.root / L"restored";
+    flitzzip::extract_zip(s.artifacts.back().first, restored, false);
+    REQUIRE_EQ(read_native_fixture(restored / L"source.txt"), "controller ownership fixture\n");
+    s.rows.push_back({L"Security", L"FlitzZip-output.zip", true});
+    s.open();
+    s.filter(3, 1);
+    s.require_row(0, 2);
     s.finish();
 }
 

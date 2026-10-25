@@ -22,6 +22,11 @@ class VisualSession final {
     RECT client = native_client_bounds(window);
     QueueCapture frame{client.right, client.bottom};
 
+    // Purpose: Start a hidden native window with the requested saved integrity preference.
+    // Inputs: Whether successful compression must record an archive SHA-256 result.
+    // Outputs: An isolated controller whose settings exist before window initialization.
+    explicit VisualSession(bool integrity = false) : fixture(integrity) {}
+
     // Purpose: Scale public design geometry. Inputs: DIP extent. Outputs: Current-window physical pixels.
     int px(int value) const {
         return MulDiv(value, static_cast<int>(GetDpiForWindow(window)), 96);
