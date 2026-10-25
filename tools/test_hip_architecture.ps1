@@ -76,13 +76,24 @@ $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot "compile_hip_object.ps1"), [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count -ne 0) { throw "HIP compiler wrapper did not parse." }
-foreach ($functionName in @('Invoke-HipCompile', 'Add-HipDeviceDependency', 'ConvertTo-HipDependencyPath', 'Invoke-HipCompileCleanup')) {
+foreach ($functionName in @('Invoke-HipCompile', 'Add-HipDeviceDependency', 'ConvertTo-HipDependencyPath',
+        'Invoke-HipCompileCleanup', 'Resolve-VcvarsVersion')) {
     $definition = $ast.Find({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
     }, $false)
     if ($null -eq $definition) { throw "HIP compiler function is missing: $functionName" }
     . ([scriptblock]::Create($definition.Extent.Text))
 }
+$selectedToolset = Resolve-VcvarsVersion -AvailableVersions @('14.44.35207', '14.51.36231', '14.42.34433') -RequestedVersion ''
+$requestedToolset = Resolve-VcvarsVersion -AvailableVersions @('14.51.36231') -RequestedVersion '14.44'
+if ($selectedToolset -cne '14.51' -or $requestedToolset -cne '14.44') {
+    throw 'HIP compilation must choose one newest installed toolset or the exact requested override.'
+}
+$missingToolsetRejected = $false
+try { Resolve-VcvarsVersion -AvailableVersions @() -RequestedVersion '' | Out-Null } catch {
+    $missingToolsetRejected = $_.Exception.Message -ceq 'No numbered MSVC toolset was found beside vcvarsall.bat.'
+}
+if (-not $missingToolsetRejected) { throw 'Missing MSVC inventory must fail before compilation.' }
 if ((ConvertTo-HipDependencyPath -Path 'C:\with # and $ signs\header.hpp') -cne 'C:/with\ \#\ and\ $$\ signs/header.hpp') {
     throw 'Dependency escaping must preserve Windows paths containing Make-significant characters.'
 }

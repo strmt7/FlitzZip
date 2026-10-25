@@ -82,7 +82,7 @@ Development systems additionally need:
 - Visual Studio C++ build tools.
 - CPython 3.13 or 3.14 for the shared development and provisioning tools.
 - CMake 4.4.4, provisioned and checksum-verified by the build tools.
-- The complete ROCm Core SDK 10.0.0 Windows distribution, provisioned using the
+- The complete ROCm Core SDK 10.1.0 Windows distribution, provisioned using the
   [shared local/hosted toolchain](docs/rocm-toolchain.md). `-HipPath` supports a
   custom installation directory; compiler settings are process-scoped.
 

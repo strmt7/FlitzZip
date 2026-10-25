@@ -56,7 +56,7 @@ The compiler supports multiple target images as documented in
 The original target selection used AMD's
 [HIP SDK 7.1.1 Windows support table](https://rocm.docs.amd.com/projects/install-on-windows/en/docs-7.1.1/reference/system-requirements.html).
 Current GPU, OS and driver prerequisites must be checked against AMD's
-[ROCm 10 compatibility selector](https://rocm.docs.amd.com/en/docs-10.0.0/compatibility/compatibility-matrix.html)
+[ROCm 10 compatibility selector](https://rocm.docs.amd.com/en/docs-10.1.0/compatibility/compatibility-matrix.html)
 and the [selected whole SDK](rocm-toolchain.md); historical support is not
 current hardware qualification.
 An unsupported target or incompatible SDK must fail compilation, not silently
