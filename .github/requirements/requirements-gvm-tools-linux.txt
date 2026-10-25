@@ -231,9 +231,9 @@ cryptography==50.0.2 \
     --hash=sha256:f9f6143a8c75945eb960d9eb98905a441394abfa24afaae239d514ffb2586480 \
     --hash=sha256:fa8f5efb344d6908a1ce62f4a24e2e5780f825d6f53f5f50ec5ffacac72936cb \
     --hash=sha256:fdd28f912fccfec1846a94e2e1e8f9b0012f557f0c46fe4f3eb0d7a87afcf90b
-gvm-tools==26.1.1 \
-    --hash=sha256:96b9f2d16649b177787b49eb2c8cdec329239fe114891dd525ed03a7175c4b4d \
-    --hash=sha256:ad47053f1f3add5a521675a55483078261344f69129368ea69e6a244e8bad8ef
+gvm-tools==26.1.2 \
+    --hash=sha256:d2968dd9d44c35a6816f891790a8e83969787dcaa3a3a5efb9acb34b332fe333 \
+    --hash=sha256:e216e530c23d3ed715fb4223c72db8eff51d1a0dbe8677abaade08a9f7ae75e7
 h11==0.16.0 \
     --hash=sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1 \
     --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
@@ -246,7 +246,7 @@ hpack==4.2.0 \
 httpcore==1.0.9 \
     --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55 \
     --hash=sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8
-httpx[http2]==0.28.1 \
+httpx==0.28.1 \
     --hash=sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc \
     --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
 hyperframe==6.1.0 \

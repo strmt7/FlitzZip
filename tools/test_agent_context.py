@@ -161,7 +161,8 @@ class AgentContextTests(unittest.TestCase):
         Inputs: Modeled final resolution outside the checkout. Outputs: Refusal before reading.
         """
         outside = self.root.parent / "outside"
-        original = Path.resolve
+        concrete_path = type(self.source)
+        original = concrete_path.resolve
 
         def resolve(path, *args, **kwargs):
             """Purpose: Model final path escape. Inputs: Path/resolve options. Outputs: Actual root or outside file."""
@@ -170,7 +171,7 @@ class AgentContextTests(unittest.TestCase):
             return original(path, *args, **kwargs)
 
         with (
-            patch.object(Path, "resolve", autospec=True, side_effect=resolve),
+            patch.object(concrete_path, "resolve", autospec=True, side_effect=resolve),
             self.assertRaisesRegex(ValueError, "escapes checkout"),
         ):
             context.safe_path(self.root, "guide.md")
