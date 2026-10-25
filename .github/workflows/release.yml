@@ -243,7 +243,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           # WiX 7.0.0 ships a net8.0 tool; use its supported runtime explicitly.
-          dotnet-version: "8.0.x"
+          dotnet-version: "8.0.426"
 
       - name: Install WiX
         env:

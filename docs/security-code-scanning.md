@@ -238,6 +238,10 @@ local-only NuGet source. `.github/requirements/devskim-packaging.json` owns
 the version, measured package size, and digest; `tools/devskim_provenance.py`
 derives curl's byte ceiling from that same record. Offline tests cover invalid
 metadata, truncation, growth, corruption, and streaming chunk boundaries.
+Hosted .NET setup uses exact SDK versions verified against Microsoft's release
+metadata. Floating selectors can resolve before their corresponding SDK assets
+are published; the workflow policy rejects them. Update an SDK pin only after
+confirming the exact platform asset exists and running its affected workflow.
 An isolated empty NuGet cache and cleared fallback folders prevent reuse of
 a different same-version package. The configuration follows
 [NuGet's documented lookup order](https://learn.microsoft.com/en-us/nuget/reference/nuget-config-file#fallbackpackagefolders-section).

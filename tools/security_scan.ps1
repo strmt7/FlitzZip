@@ -168,6 +168,16 @@ if ($forbidden) {
     throw "Build artifacts found outside build directory: $($forbidden[0].FullName)"
 }
 
+# Purpose: Reject floating .NET SDK selectors that can resolve to unpublished artifacts.
+# Inputs: One workflow line and its source location. Outputs: Returns on non-SDK or exact-version lines; otherwise throws.
+function Assert-ExactDotnetSdkVersion {
+    param([string]$Line, [string]$WorkflowPath, [int]$LineNumber)
+    if ($Line -notmatch '^\s*dotnet-version\s*:') { return }
+    if ($Line -notmatch '^\s*dotnet-version\s*:\s*["'']?\d+\.\d+\.\d+["'']?\s*(?:#.*)?$') {
+        throw "Workflow .NET SDK must use an exact published version: $WorkflowPath`:$LineNumber"
+    }
+}
+
 # Purpose: Verify workflow policy rules that prevent deployments, suppressed failures, and source-scan blind spots.
 # Inputs: Reads tracked GitHub workflow/configuration files from `.github`.
 # Outputs: Throws when workflow policy is violated; otherwise returns normally.
@@ -185,6 +195,7 @@ function Test-WorkflowSecurityPolicy {
         $lines = Get-Content -LiteralPath $file.FullName
         for ($i = 0; $i -lt $lines.Count; ++$i) {
             $line = $lines[$i]
+            Assert-ExactDotnetSdkVersion -Line $line -WorkflowPath $file.FullName -LineNumber ($i + 1)
             if ($line -match '^\s*environment\s*:') {
                 throw "Workflow environment blocks are forbidden because they can create GitHub deployment records: $($file.FullName):$($i + 1)"
             }
