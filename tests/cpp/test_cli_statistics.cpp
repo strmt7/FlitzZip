@@ -5,6 +5,7 @@
 #include "test_util.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <locale>
 #include <map>
 #include <sstream>
@@ -19,6 +20,18 @@ constexpr std::string_view kGpuFields =
     " gpu_h2d_bytes=11 gpu_d2h_bytes=13 gpu_device_allocation_bytes=17 gpu_host_pinned_allocation_bytes=19"
     " gpu_host_pinned_output_bytes=23 gpu_pattern_blocks=29 gpu_prefix_blocks=31 gpu_dictionary_blocks=37"
     " gpu_sparse_pattern_blocks=41";
+
+// Purpose: Compare computed finite statistics at a precision tighter than their serialized representation.
+// Inputs: Actual and independently expected values. Outputs: Rejects nonfinite values or material arithmetic drift.
+void require_close(double actual, double expected) {
+    REQUIRE_TRUE(std::isfinite(actual) && std::isfinite(expected) && std::abs(actual - expected) <= 1e-12);
+}
+
+// Purpose: Keep the exact zero-result contract for empty input and invalid elapsed time.
+// Inputs: One computed statistic. Outputs: Rejects nonzero values, including tiny residuals and nonfinite values.
+void require_zero(double actual) {
+    REQUIRE_EQ(std::fpclassify(actual), FP_ZERO);
+}
 
 // Purpose: Distinguish every projected counter without presenting component fixtures as measured GPU performance.
 // Inputs: None. Outputs: Owned, deliberately nonuniform serialization values; no codec or device work executes.
@@ -109,14 +122,14 @@ class LimitedOutput final : public std::streambuf {
 // Purpose: Keep the shared arithmetic's established empty-input and elapsed-time boundaries.
 // Inputs: Independently computed MiB examples and zero/nonpositive time. Outputs: Exact throughput and ratio values.
 TEST_CASE(cli_statistics_shared_units_and_zero_boundaries) {
-    REQUIRE_EQ(mib_per_second(4194304, 2), 2.0);
-    REQUIRE_EQ(mib_per_second(1048576, 0.25), 4.0);
-    REQUIRE_EQ(mib_per_second(0, 2), 0.0);
-    REQUIRE_EQ(mib_per_second(4194304, 0), 0.0);
-    REQUIRE_EQ(mib_per_second(4194304, -1), 0.0);
-    REQUIRE_EQ(compression_ratio(4194304, 1048576), 0.25);
-    REQUIRE_EQ(compression_ratio(0, 1048576), 0.0);
-    REQUIRE_EQ(compression_ratio(4194304, 0), 0.0);
+    require_close(mib_per_second(4194304, 2), 2.0);
+    require_close(mib_per_second(1048576, 0.25), 4.0);
+    require_zero(mib_per_second(0, 2));
+    require_zero(mib_per_second(4194304, 0));
+    require_zero(mib_per_second(4194304, -1));
+    require_close(compression_ratio(4194304, 1048576), 0.25);
+    require_zero(compression_ratio(0, 1048576));
+    require_zero(compression_ratio(4194304, 0));
 }
 
 // Purpose: Preserve the tuner's actual weighted-score consumer after sharing its arithmetic with ordinary output.
@@ -132,15 +145,15 @@ TEST_CASE(cli_statistics_benchmark_observation_preserves_score_and_complete_size
     result.compression_level = 7;
     result.block_size = 262144;
     const auto observation = make_benchmark_suite_observation(result);
-    REQUIRE_EQ(observation.gpu_score, 20.0);
-    REQUIRE_EQ(observation.compression_ratio, 0.250244140625);
+    require_close(observation.gpu_score, 20.0);
+    require_close(observation.compression_ratio, 0.250244140625);
     REQUIRE_EQ(observation.compression_level, 7);
     REQUIRE_EQ(observation.block_size, 262144U);
     result.stats.input_bytes = 0;
     result.compress_seconds = result.verify_seconds = result.extract_seconds = 0;
     const auto empty = make_benchmark_suite_observation(result);
-    REQUIRE_EQ(empty.gpu_score, 0.0);
-    REQUIRE_EQ(empty.compression_ratio, 0.0);
+    require_zero(empty.gpu_score);
+    require_zero(empty.compression_ratio);
 }
 
 // Purpose: Detect swapped counters, renamed keys, changed order or invented terminators in the common projection.

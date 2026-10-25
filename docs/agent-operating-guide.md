@@ -713,6 +713,9 @@ manufacture a clean scan. Individual authorizations belong in review records.
   A null pointer or zero-byte read alone cannot prove successful completion.
   When the input extent is known, account for every expected member boundary;
   premature physical EOF must not shorten the validated publication plan.
+  A native read refusal can set a C++ stream's EOF flag: establish physical
+  termination from the sealed source extent and delivered-byte count, not that
+  flag alone. Retain a real late-read refusal after an independently valid member.
   Test malformed next headers after a CRC-correct prefix, non-EOF input errors,
   and unread compressed extents; validation must reject them before publication.
   Keep documented clean termination and buffered short-read behavior covered.
