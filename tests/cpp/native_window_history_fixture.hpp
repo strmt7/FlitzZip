@@ -29,9 +29,12 @@ class HistorySession final {
     int status = 0;
     bool queued = false;
 
-    // Purpose: Release the existing worker gate for ordinary serial jobs. Inputs: Owned session. Outputs: No retry.
-    HistorySession() {
-        ui.launcher.released.set_value();
+    // Purpose: Share ordinary serial work and controlled interleaving fixtures without replacing the worker.
+    // Inputs: Whether to release the instance's gate immediately. Outputs: Ordinary jobs or explicitly held work.
+    explicit HistorySession(bool release_workers = true) {
+        if (release_workers) {
+            ui.launcher.released.set_value();
+        }
     }
 
     // Purpose: Derive History geometry from the documented public DPI layout.
@@ -78,11 +81,7 @@ class HistorySession final {
         const auto archive = destination / L"FlitzZip-output.zip";
         flitzzip::windows_detail::HandleOwner publication_blocker;
         if (!success) {
-            std::ofstream(archive, std::ios::binary) << "preserve existing destination\n";
-            publication_blocker.reset(CreateFileW(flitzzip::windows_api_path(archive).c_str(), GENERIC_READ,
-                                                  FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-                                                  nullptr));
-            REQUIRE_TRUE(publication_blocker.get() != INVALID_HANDLE_VALUE);
+            publication_blocker = hold_native_publication_target(archive);
         }
         if (!queued) {
             click_native_navigation(ui.window, 0);
@@ -258,21 +257,10 @@ class HistorySession final {
     // Purpose: Complete the native lifecycle and prove presentation did not change archive or source bytes.
     // Inputs: Completed jobs and retained artifacts. Outputs: Joined UI, stable file identities and bounded footprint.
     void finish() {
-        HiddenController::send(ui.window, WM_CLOSE);
-        ui.controller.require_closed();
-        REQUIRE_EQ(ui.launcher.attempts.load(), jobs);
-        REQUIRE_EQ(ui.launcher.completed.load(), jobs);
-        REQUIRE_EQ(read_native_fixture(ui.fixture.input), "controller ownership fixture\n");
+        ui.finish(jobs, jobs);
         for (const auto& [path, bytes] : artifacts) {
             REQUIRE_EQ(read_native_fixture(path), bytes);
         }
-        std::uintmax_t footprint = 0;
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(ui.fixture.root)) {
-            if (entry.is_regular_file()) {
-                footprint += entry.file_size();
-            }
-        }
-        REQUIRE_TRUE(footprint <= 64ULL * 1024ULL * 1024ULL);
     }
 };
 

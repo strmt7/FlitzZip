@@ -11,19 +11,6 @@ inline RECT native_client_bounds(HWND window) {
     return bounds;
 }
 
-// Purpose: Poll an observable condition while preserving a finite deadline and the original failing assertion.
-// Inputs: Instance-local observation and diagnostic. Outputs: Success or a descriptive timeout; never retries work.
-template <class Predicate> void require_native_observation(Predicate&& observe, const char* diagnostic) {
-    const auto deadline = std::chrono::steady_clock::now() + 3s;
-    do {
-        if (observe()) {
-            return;
-        }
-        std::this_thread::sleep_for(10ms);
-    } while (std::chrono::steady_clock::now() < deadline);
-    throw std::runtime_error(diagnostic);
-}
-
 // Purpose: Share real hidden-window ownership and independent pixel observations across ordinary interaction tests.
 // Inputs: Small redirected fixture. Outputs: Owned UI thread, memory-only frame and no access to private UI state.
 class VisualSession final {
@@ -103,14 +90,25 @@ class VisualSession final {
                                MAKELPARAM(client_point.x, client_point.y));
     }
 
-    // Purpose: Complete an interaction-only case and prove it did not launch archive work or alter its source.
-    // Inputs: Live idle controller. Outputs: Joined window thread, unchanged source and empty archive destination.
-    void finish() {
+    // Purpose: Join the real UI and verify exact worker accounting, source preservation and bounded writes.
+    // Inputs: Expected admission/completion counts. Outputs: Closed controller and no timeout; idle output is empty.
+    void finish(unsigned attempts = 0, unsigned completions = 0) {
         HiddenController::send(window, WM_CLOSE);
         controller.require_closed();
-        REQUIRE_EQ(launcher.attempts.load(), 0U);
+        REQUIRE_EQ(launcher.attempts.load(), attempts);
+        REQUIRE_EQ(launcher.completed.load(), completions);
+        REQUIRE_TRUE(!launcher.release_timed_out.load());
         REQUIRE_EQ(read_native_fixture(fixture.input), "controller ownership fixture\n");
-        REQUIRE_TRUE(std::filesystem::is_empty(fixture.output));
+        if (completions == 0) {
+            REQUIRE_TRUE(std::filesystem::is_empty(fixture.output));
+        }
+        std::uintmax_t footprint = 0;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(fixture.root)) {
+            if (entry.is_regular_file()) {
+                footprint += entry.file_size();
+            }
+        }
+        REQUIRE_TRUE(footprint <= 64ULL * 1024ULL * 1024ULL);
     }
 };
 

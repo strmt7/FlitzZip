@@ -140,6 +140,17 @@ Windows capture ownership, both scroll endpoints, cancellation and column bounds
 Required failure cases use real OS refusal at the affected boundary; an existing
 output file alone does not establish a failure when replacement is supported.
 
+Job-presentation regressions hold real work at thread admission and observe the
+actual completion notification before checking summaries or destination requests.
+Preferences take effect at job admission; unapplied drafts and later jobs must not
+reuse a previous result. Active-job navigation remains blocked by product policy.
+An instance-local FIFO fence acknowledges a separate posted marker and forwards
+product messages unchanged; it never forces a completion handler or repaint.
+Its context outlives the window and is removed during native destruction.
+Destination assertions preserve the complete input path and account independently
+for persistent-log escaping. Failed and cancelled jobs must not request opening
+a destination, and successful requests are consumed once.
+
 An owned HWND can exist before its initialization finishes. The hidden-window
 fixture therefore uses its original creation deadline for the initial native
 acknowledgement, then keeps the shorter normal-input responsiveness deadline.
