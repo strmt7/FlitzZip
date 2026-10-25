@@ -436,6 +436,7 @@ foreach ($path in @('.github/gitleaks.toml', 'tools/test_gitleaks_policy.py')) {
     Assert-Selector (-not (Test-RequiredCommand -Plan $secretPolicyPlan -Id 'release-build')) "secret scanner policy alone must not rebuild the product: $path"
 }
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "scanner-coverage-tests") "workflow changes must test complete scanner coverage evidence"
+Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id 'semgrep-findings-tests') 'workflow changes must test exact Semgrep finding admission'
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "devskim-provenance-tests") "workflow changes must test exact scanner package provenance"
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "devskim-report-tests") "workflow changes must test lossless scanner report publication"
 Assert-Selector (-not (Test-RequiredCommand -Plan $workflowPlan -Id "greenbone-config-tests")) "scanner workflow changes must not test an unrelated broker"
@@ -446,6 +447,13 @@ foreach ($path in @(".semgrepignore", "tools/semgrep_coverage.py", "tools/test_s
     Assert-Selector (Test-Workflow -Plan $coveragePlan -Name "security") "coverage changes must exercise the real scanner report: $path"
     Assert-Selector (Test-RequiredCommand -Plan $coveragePlan -Id "security-scan") "scanner coverage inputs must retain local security policy enforcement: $path"
     Assert-Selector (-not (Test-RequiredCommand -Plan $coveragePlan -Id "release-build")) "coverage metadata changes alone must not rebuild the product: $path"
+}
+
+foreach ($path in @('tools/semgrep_findings.py', 'tools/test_semgrep_findings.py', '.github/scanner-false-positive-reviews.csv')) {
+    $findingPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $findingPlan -Id 'semgrep-findings-tests') "finding-gate inputs must run direct admission tests: $path"
+    Assert-Selector (Test-Workflow -Plan $findingPlan -Name 'security') "finding-gate changes must exercise the hosted scan: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $findingPlan -Id 'release-build')) "finding admission alone must not rebuild the product: $path"
 }
 
 foreach ($path in @("tools/devskim_provenance.py", "tools/test_devskim_provenance.py", ".github/requirements/devskim-packaging.json")) {

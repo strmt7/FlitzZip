@@ -325,9 +325,11 @@ jobs:
           path: ${{ runner.temp }}/scanner-dependencies.json
           if-no-files-found: error
       - name: Run Semgrep
+        id: semgrep_scan
         shell: bash
         run: |
           set -euo pipefail
+          set +e
           "$RUNNER_TEMP/semgrep/bin/semgrep" scan \
             --error \
             --sarif \
@@ -339,6 +341,26 @@ jobs:
             --config p/default \
             --config p/github-actions \
             . > semgrep-results.sarif
+          scanner_status=$?
+          set -e
+          if [[ "$scanner_status" -gt 1 ]]; then
+            exit "$scanner_status"
+          fi
+          echo "scanner_status=$scanner_status" >> "$GITHUB_OUTPUT"
+      - name: Enforce exact Semgrep finding reviews
+        if: ${{ !cancelled() && steps.semgrep_scan.outputs.scanner_status != '' }}
+        shell: bash
+        env:
+          SCANNER_EXIT: ${{ steps.semgrep_scan.outputs.scanner_status }}
+        run: |
+          set -euo pipefail
+          python -m unittest tools.test_semgrep_findings
+          python -m tools.semgrep_findings \
+            --json-report "$RUNNER_TEMP/semgrep-results.json" \
+            --sarif-report semgrep-results.sarif \
+            --scanner-exit "$SCANNER_EXIT" \
+            --commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY"
       - name: Audit actual Semgrep coverage
         if: ${{ !cancelled() }}
         shell: bash
