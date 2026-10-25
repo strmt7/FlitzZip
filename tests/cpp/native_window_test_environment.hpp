@@ -5,6 +5,7 @@
 #include "app/form_layout.hpp"
 #include "app/gdi_dc_state.hpp"
 #include "app/table_columns.hpp"
+#include "core/windows_handle.hpp"
 #include "test_environment.hpp"
 
 #include <fstream>
@@ -18,6 +19,19 @@
 namespace flitzzip_test::native_window {
 
 using namespace std::chrono_literals;
+
+// Purpose: Poll an observable condition without retrying input or work.
+// Inputs: Instance-local predicate and diagnostic. Outputs: Success within three seconds or a descriptive failure.
+template <class Predicate> void require_native_observation(Predicate&& observe, const char* diagnostic) {
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    do {
+        if (observe()) {
+            return;
+        }
+        std::this_thread::sleep_for(10ms);
+    } while (std::chrono::steady_clock::now() < deadline);
+    throw std::runtime_error(diagnostic);
+}
 
 class GatedLauncher final : public flitzzip::app::JobThreadLauncher {
   public:
@@ -209,6 +223,37 @@ inline void click_native_point(HWND window, POINT center) {
 // Inputs: Owned HWND and physical control rectangle. Outputs: Acknowledged native press/release.
 inline void click_native_control(HWND window, const RECT& rect) {
     click_native_point(window, native_rect_center(rect));
+}
+
+// Purpose: Recognize a settled Settings switch without accessing controller state.
+// Inputs: Owned HWND/frame, public switch bounds and expected value. Outputs: Independent knob/track pixel match.
+inline void require_native_toggle(HWND window, HDC frame, const RECT& rect, bool enabled) {
+    const auto dpi = static_cast<int>(GetDpiForWindow(window));
+    const int left = rect.left + MulDiv(10, dpi, 96);
+    const int right = rect.left + MulDiv(32, dpi, 96);
+    const int middle = (rect.top + rect.bottom) / 2;
+    require_native_observation(
+        [&] {
+            HiddenController::send(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(frame), PRF_CLIENT);
+            return GetPixel(frame, left, middle) == (enabled ? RGB(43, 111, 72) : flitzzip::app::kMuted) &&
+                   GetPixel(frame, right, middle) == (enabled ? flitzzip::app::kOk : RGB(57, 69, 75));
+        },
+        "Settings switch did not render its expected native state");
+}
+
+// Purpose: Induce real Windows publication refusal without replacing the writer or consuming host resources.
+// Inputs: Owned temporary target. Outputs: Sentinel file and an adopted no-delete-sharing handle; source unchanged.
+inline flitzzip::windows_detail::HandleOwner hold_native_publication_target(const std::filesystem::path& path) {
+    {
+        std::ofstream output(path, std::ios::binary);
+        output << "preserve existing destination\n";
+        REQUIRE_TRUE(output.good());
+    }
+    flitzzip::windows_detail::HandleOwner held(CreateFileW(flitzzip::windows_api_path(path).c_str(), GENERIC_READ,
+                                                           FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                                           FILE_ATTRIBUTE_NORMAL, nullptr));
+    REQUIRE_TRUE(held.get() != INVALID_HANDLE_VALUE);
+    return held;
 }
 
 class ControllerFixture final {
