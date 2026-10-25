@@ -3,9 +3,11 @@
 import copy
 import ctypes
 import io
+import itertools
 import json
 import os
 import runpy
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -14,6 +16,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from tools import hip_coverage as coverage
 from tools import hip_coverage_export as capture
+from tools.native_coverage import process_owner
 
 
 class HipCoverageTests(unittest.TestCase):
@@ -273,8 +276,8 @@ class HipCoverageTests(unittest.TestCase):
         self.assertFalse((output / "qualification.json").exists())
 
     # Purpose: Bind accepted counters to the exact source and executable that produced them.
-    # Inputs: Independent valid counter reports, plus source or binary mutation after counter validation.
-    # Outputs: Only unchanged inputs receive a pass; changed inputs retain unqualified original evidence.
+    # Inputs: Both compiler lanes, independent counter reports, and source/binary mutation after validation.
+    # Outputs: Only the selected compiler runs; unchanged inputs pass and mutations retain unqualified evidence.
     def test_qualification_rechecks_source_and_binary_before_acceptance(self):
         original = self.source.read_bytes()
         executable = self.root / "probe.exe"
@@ -283,13 +286,16 @@ class HipCoverageTests(unittest.TestCase):
         image.write_bytes(b"independent-image-fixture")
         for profile in profiles:
             profile.write_bytes(b"independent-profile-fixture")
+        registration_tool = self.root / "registration-reader.exe"
+        registration_tool.write_bytes(b"nonexecutable registration transport fixture")
         validate_original = coverage.validate_controls
-        for mutation in ("source", "binary", "none"):
-            with self.subTest(mutation=mutation):
+        for registered, mutation in itertools.product((False, True), ("source", "binary", "none")):
+            with self.subTest(registered=registered, mutation=mutation):
                 self.source.write_bytes(original)
                 executable.write_bytes(b"independent-binary-fixture")
                 inputs = coverage.identities([self.source])
-                output = self.root / mutation
+                output = self.root / f"{mutation}-{registered}"
+                options = {"registration_tool": registration_tool} if registered else {}
 
                 # Purpose: Inject mutation only after real independent counter validation succeeds.
                 # Inputs: Actual reports and probe path; a frozen mutation choice. Outputs: Counter evidence.
@@ -302,25 +308,36 @@ class HipCoverageTests(unittest.TestCase):
                 with (
                     patch.object(coverage, "ROOT", self.root),
                     patch.object(coverage, "PROBE", self.source),
-                    patch.object(coverage, "compile_probe", return_value=(executable, inputs)),
+                    patch.object(coverage, "compile_probe", return_value=(executable, inputs)) as direct,
+                    patch(
+                        "tools.hip_coverage_registration.compile_registered_probe", return_value=(executable, inputs)
+                    ) as registration,
                     patch.object(coverage, "device_image", return_value=image),
                     patch.object(coverage, "run_controls", return_value=profiles),
                     patch.object(coverage, "export_profile", side_effect=copy.deepcopy(self.reports)),
                     patch.object(coverage, "validate_controls", side_effect=validate_and_mutate),
                 ):
                     if mutation == "none":
-                        result = coverage.qualify(self.root, self.root, self.source, "gfx1201", output)
+                        result = coverage.qualify(self.root, self.root, self.source, "gfx1201", output, **options)
                         self.assertEqual(result["qualification"], "passed")
                         self.assertEqual(result["inputs"], inputs)
                         self.assertIn(str((output / "probe-source.hip.cpp").resolve()), result["artifacts"])
                     else:
                         with self.assertRaisesRegex(ValueError, "inputs or measured binary changed"):
-                            coverage.qualify(self.root, self.root, self.source, "gfx1201", output)
+                            coverage.qualify(self.root, self.root, self.source, "gfx1201", output, **options)
                         self.assertFalse((output / "qualification.json").exists())
                     pending = json.loads((output / "measurement-inputs.json").read_text(encoding="utf-8"))
                     self.assertEqual(pending["qualification"], "not-qualified")
                     self.assertEqual(pending["inputs"], inputs)
                     self.assertEqual((output / "probe-source.hip.cpp").read_bytes(), original)
+                    if registered:
+                        direct.assert_not_called()
+                        registration.assert_called_once_with(
+                            self.root, self.root, self.source, registration_tool, "gfx1201", output
+                        )
+                    else:
+                        registration.assert_not_called()
+                        direct.assert_called_once_with(self.root, self.root, self.source, "gfx1201", output)
 
     # Purpose: Detect changed binary/profile bytes and refuse missing or redirected evidence.
     # Inputs: Small owned file with successive values. Outputs: Distinct identities and explicit invalid-path refusal.
@@ -632,6 +649,141 @@ class HipCoverageTests(unittest.TestCase):
         ):
             runpy.run_path(str(Path(capture.__file__).resolve()), run_name="__main__")
         self.assertEqual(status.exception.code, 0)
+
+
+class HipCoverageCommandTests(unittest.TestCase):
+    # Purpose: Own real command diagnostics and would-be outputs without installing or selecting a GPU.
+    # Inputs: None. Outputs: Cleanup-bound Unicode paths and the canonical bounded process owner.
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="flitzzip-coverage-cli-")
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name) / "command paths Ω"
+        self.directory.mkdir()
+        self.owner = process_owner()
+
+    # Purpose: Execute the supported module interface with actual import, parser and exit-status handling.
+    # Inputs: Module name and literal arguments. Outputs: Complete bounded diagnostics or a test failure.
+    def command(self, module, *arguments):
+        result = self.owner.run_bounded_command(
+            [sys.executable, "-X", "utf8", "-B", "-m", module, *map(str, arguments)],
+            timeout_seconds=15,
+            max_output_bytes=65536,
+            response_tail_bytes=65536,
+            working_directory=coverage.ROOT,
+        )
+        for field in ("timed_out", "output_truncated", "output_limit_exceeded"):
+            self.assertIs(result[field], False, result)
+        self.assertNotIn("Traceback", result["stderr"], result)
+        return result
+
+    # Purpose: Keep help usable before compiler discovery, device admission or output publication.
+    # Inputs: Every public module and subcommand help interface. Outputs: Successful readable help and no files.
+    def test_real_module_help_needs_no_compiler_or_device(self):
+        cases = (
+            ("tools.hip_coverage", (), ("--compiler-root", "--device-runtime", "--arch")),
+            ("tools.hip_coverage_toolchain", (), ("--lock", "--field")),
+            ("tools.hip_coverage_product", (), ("build", "admit")),
+            ("tools.hip_coverage_product", ("build",), ("--qualification", "--output")),
+            ("tools.hip_coverage_product", ("admit",), ("--manifest", "--sdk", "--arch")),
+            ("tools.hip_coverage_measure", (), ("admit", "build-and-measure")),
+            ("tools.hip_coverage_measure", ("admit",), ("--manifest", "--build-root")),
+            ("tools.hip_coverage_measure", ("build-and-measure",), ("--filter", "--output")),
+        )
+        for module, command, options in cases:
+            with self.subTest(module=module, command=command):
+                result = self.command(module, *command, "--help")
+                self.assertEqual(result["exit_code"], 0, result)
+                self.assertEqual(result["stderr"], "", result)
+                self.assertTrue(result["stdout"].startswith("usage: "), result)
+                for option in options:
+                    self.assertIn(option, result["stdout"])
+                self.assertEqual(list(self.directory.iterdir()), [])
+
+    # Purpose: Reject incomplete automation requests through argparse before any qualification work.
+    # Inputs: Missing required arguments for every public command. Outputs: Exit two, clear diagnostics, no files.
+    def test_real_commands_reject_incomplete_requests(self):
+        cases = (
+            ("tools.hip_coverage", (), "--compiler-root"),
+            ("tools.hip_coverage_toolchain", (), "--field"),
+            ("tools.hip_coverage_product", (), "command"),
+            ("tools.hip_coverage_product", ("build",), "--qualification"),
+            ("tools.hip_coverage_product", ("admit",), "--manifest"),
+            ("tools.hip_coverage_measure", (), "command"),
+            ("tools.hip_coverage_measure", ("admit",), "--manifest"),
+            ("tools.hip_coverage_measure", ("build-and-measure",), "--filter"),
+        )
+        for module, arguments, missing in cases:
+            with self.subTest(module=module, arguments=arguments):
+                result = self.command(module, *arguments)
+                self.assertEqual(result["exit_code"], 2, result)
+                self.assertEqual(result["stdout"], "", result)
+                self.assertIn("error:", result["stderr"])
+                self.assertIn(missing, result["stderr"])
+                self.assertEqual(list(self.directory.iterdir()), [])
+
+    # Purpose: Reject unknown options even after all mandatory arguments have been supplied.
+    # Inputs: Syntactically complete commands with nonexistent inputs and one unknown switch.
+    # Outputs: Parser rejection rather than input access, compilation, a traceback or output creation.
+    def test_real_commands_reject_unknown_options_before_work(self):
+        missing, output = self.directory / "missing input", self.directory / "unused output"
+        cases = (
+            (
+                "tools.hip_coverage",
+                (
+                    "--compiler-root",
+                    missing,
+                    "--sdk",
+                    missing,
+                    "--device-runtime",
+                    missing,
+                    "--arch",
+                    "gfx1100",
+                    "--output",
+                    output,
+                ),
+            ),
+            ("tools.hip_coverage_toolchain", ("--lock", missing, "--field", "revision")),
+            ("tools.hip_coverage_product", ("build", "--qualification", missing, "--output", output)),
+            ("tools.hip_coverage_product", ("admit", "--manifest", missing, "--sdk", missing, "--arch", "gfx1100")),
+            ("tools.hip_coverage_measure", ("admit", "--manifest", missing, "--build-root", missing)),
+            (
+                "tools.hip_coverage_measure",
+                (
+                    "build-and-measure",
+                    "--manifest",
+                    missing,
+                    "--build-root",
+                    missing,
+                    "--filter",
+                    "=unused",
+                    "--output",
+                    output,
+                ),
+            ),
+        )
+        for module, arguments in cases:
+            with self.subTest(module=module, arguments=arguments):
+                result = self.command(module, *arguments, "--unexpected-option")
+                self.assertEqual(result["exit_code"], 2, result)
+                self.assertEqual(result["stdout"], "", result)
+                self.assertIn("unrecognized arguments: --unexpected-option", result["stderr"])
+                self.assertEqual(list(self.directory.iterdir()), [])
+
+    # Purpose: Verify the actual scalar interface consumed by CMake, including an explicit spaced Unicode path.
+    # Inputs: The pinned record and an identical private copy. Outputs: Exactly one requested scalar per process.
+    def test_real_toolchain_command_emits_only_requested_scalar(self):
+        lock = coverage.ROOT / "tools/hip-coverage-toolchain.json"
+        copied = self.directory / "explicit provenance.json"
+        copied.write_bytes(lock.read_bytes())
+        record = json.loads(copied.read_text(encoding="utf-8"))
+        for field, options in (("revision", ()), ("llvm_major", ("--lock", copied))):
+            with self.subTest(field=field):
+                result = self.command("tools.hip_coverage_toolchain", *options, "--field", field)
+                self.assertEqual(result["exit_code"], 0, result)
+                self.assertEqual(result["stderr"], "", result)
+                self.assertEqual(result["stdout"].splitlines(), [str(record[field])])
+                self.assertEqual(copied.read_bytes(), lock.read_bytes())
+                self.assertEqual(list(self.directory.iterdir()), [copied])
 
 
 if __name__ == "__main__":
