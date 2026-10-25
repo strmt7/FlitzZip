@@ -1051,7 +1051,9 @@ if(FLITZZIP_BUILD_TESTS)
   endif()
   if(TARGET flitzzip_gui)
     target_sources(flitzzip_test_objects
-                   PRIVATE tests/cpp/test_main_window_lifecycle.cpp)
+                   PRIVATE tests/cpp/test_main_window_lifecycle.cpp
+                           tests/cpp/test_main_window_settings.cpp
+                           tests/cpp/test_main_window_extraction.cpp)
     target_link_libraries(flitzzip_test_objects PRIVATE flitzzip_gui)
   else()
     target_sources(
