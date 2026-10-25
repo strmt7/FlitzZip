@@ -808,6 +808,28 @@ Error writeCompletedModule(const Module& module, StringRef path) {
     return Error::success();
 }
 
+// Purpose: Report the completed artifact that subsequent compiler invocations will actually read.
+// Inputs: Newly written bitcode, its device inventory and the validated in-memory registration inventory.
+// Outputs: Persisted IR digest and unchanged registration fields, or refusal; no device code executes.
+Expected<json::Object> readCompletedReport(StringRef path, const DeviceProfile& device, json::Object expected) {
+    if (auto error = admitInput(path))
+        return error;
+    LLVMContext context;
+    SMDiagnostic diagnostic;
+    auto persisted = parseIRFile(path, diagnostic, context);
+    if (!persisted || verifyModule(*persisted, &errs()))
+        return reject("Completed host bitcode failed independent readback");
+    auto report = makeReport(*persisted, device);
+    if (!report)
+        return report.takeError();
+    // Bind the output digest to the parsed artifact and require every registration
+    // inventory field to persist unchanged across serialization and readback.
+    expected["module_ir_sha256"] = report->getString("module_ir_sha256")->str();
+    if (expected != *report)
+        return reject("Completed host bitcode changed its registration inventory on readback");
+    return report;
+}
+
 // Purpose: Run bounded static analysis through LLVM's own IR and object parsers.
 // Inputs: Explicit host/device artifacts. Outputs: JSON on success; diagnostic and failure without output mutation.
 Error analyze() {
@@ -869,6 +891,9 @@ Error analyze() {
             return reject("Completed module still omits device profile records");
         if (auto error = writeCompletedModule(*module, OutputPath))
             return error;
+        after = readCompletedReport(OutputPath, *device, std::move(*after));
+        if (!after)
+            return after.takeError();
         outs() << formatv(
             "{0:2}\n",
             json::Value(json::Object{{"scope", "Registration completion only; no execution or counter qualification"},

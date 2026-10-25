@@ -412,6 +412,15 @@ controls. Wrong contexts, flags, pointer storage, extents, section groups, sourc
 identities and incomplete device symbols must fail without publishing output.
 Raw failures remain in the owned evidence directory.
 
+Completion reports must form a continuous inventory chain: the first report's
+input matches the original inspection, its output matches the next inspection,
+and the repeated completion matches the persisted output. Compare complete
+inventories, not just their counts or IR digests. Existing-output refusal must
+retain complete process diagnostics and unchanged destination bytes; a timeout,
+truncated response or exceeded output limit cannot qualify that control.
+The native tool parses its newly written bitcode to compute the output inventory
+and digest, and requires all registration fields to survive serialization unchanged.
+
 Idempotence compares LLVM's complete printed IR, excluding only its initial
 input-filename comment. Source filenames, targets, instructions, attributes,
 profiling metadata and embedded device bytes remain in the digest. Equivalent
