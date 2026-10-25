@@ -8,12 +8,12 @@ import importlib.util
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import uuid
 from pathlib import Path, PurePosixPath
 
+from tools.bootstrap_scanners import provision_missing_scanners
 from tools.devskim_scope import validate_report_directory, write_options
 from tools.scanner_hosted_review import (
     CURRENT_POLICY,
@@ -275,19 +275,15 @@ def scan_snapshot(snapshot: Path, directory: Path, gitleaks: str, devskim: str) 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="HEAD")
-    parser.add_argument("--gitleaks", default=os.environ.get("FLITZZIP_GITLEAKS") or shutil.which("gitleaks"))
-    parser.add_argument("--devskim", default=os.environ.get("FLITZZIP_DEVSKIM") or shutil.which("devskim"))
+    parser.add_argument("--gitleaks", default=os.environ.get("FLITZZIP_GITLEAKS"))
+    parser.add_argument("--devskim", default=os.environ.get("FLITZZIP_DEVSKIM"))
     args = parser.parse_args()
     publication_paths = changed_paths(ROOT, args.base)
     validate_report_directory(ROOT)
     if not publication_paths:
         print("Scanner preflight: no changed publication inputs; no scan qualification claimed.")
         return 0
-    if not args.gitleaks or not args.devskim:
-        raise ValueError(
-            "Pinned detectors unavailable: pass --gitleaks/--devskim or set process-scoped "
-            "FLITZZIP_GITLEAKS/FLITZZIP_DEVSKIM after complete-tool provisioning"
-        )
+    args.gitleaks, args.devskim = provision_missing_scanners(args.gitleaks, args.devskim)
     args.gitleaks = str(Path(args.gitleaks).resolve())
     args.devskim = str(Path(args.devskim).resolve())
     tools = require_versions(args.gitleaks, args.devskim)

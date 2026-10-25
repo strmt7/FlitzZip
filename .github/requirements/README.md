@@ -1,5 +1,10 @@
 # Python Tooling Locks
 
+The Gitleaks and DevSkim packaging manifests in this directory also pin the
+exact upstream scanner artifacts used by the local preflight bootstrap. The
+Gitleaks version must match the hosted container pin; DevSkim's NuGet package
+must match its complete byte length and SHA-256 digest before local installation.
+
 The `.in` files declare direct tools and advisory minimum versions. The `.txt`
 files contain the complete, hash-locked dependency graph used by CI. Update the
 inputs and resolve the graph together. Do not silently force a transitive version
@@ -16,13 +21,13 @@ wheel as the scanner and research locks. The component workflow explicitly selec
 CPython 3.13, installs this small hash-locked graph, and directs `py -3` to that
 same version. Runner images and unrelated local tools are not dependency providers.
 
-For local component execution, install the lock into the selected test interpreter
-with `py -3.13 -m pip install --require-hashes --only-binary=:all: -r
-.github/requirements/requirements-contracts.txt` and set the process-scoped
-`PY_PYTHON3` to `3.13` before running `tools/ci_tool_contracts.ps1`. Other isolated
-test environments can run the Python test modules directly with their own
-interpreter after installing the same lock. These dependencies do not enter
-product binaries or packages.
+For local component execution, the verification planner invokes
+`tools/run_locked_python_tests.ps1` for the scanner dependency contracts. It
+selects an installed supported Python interpreter and provisions this hash-locked
+graph into an ignored, isolated environment. `FLITZZIP_PYTHON` can select an
+explicit supported interpreter. Direct execution of other component commands may
+set process-scoped `PY_PYTHON3` after installing the same lock into that
+interpreter. These dependencies do not enter product binaries or packages.
 
 ## Refresh
 

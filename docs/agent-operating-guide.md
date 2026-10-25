@@ -1119,9 +1119,12 @@ manufacture a clean scan. Individual authorizations belong in review records.
   changed-file hygiene gate. Do not run unrelated heavyweight checks unless the
   selector escalates or there is evidence of a broader problem.
 - The selected `scanner-preflight` gate runs the pinned Gitleaks and DevSkim
-  tools on frozen changed publication files before expensive checks. Provision
-  the complete pinned tools and supply their executable paths through
-  process-scoped `FLITZZIP_GITLEAKS`/`FLITZZIP_DEVSKIM` or PATH. Missing tools,
+  tools on frozen changed publication files before expensive checks. On a
+  supported Windows development host it provisions missing tools into the
+  ignored repository cache from exact verified upstream packages. A .NET SDK
+  is required for the pinned DevSkim tool. Explicit process-scoped
+  `FLITZZIP_GITLEAKS`/`FLITZZIP_DEVSKIM` paths remain available and must match
+  the pins; unrelated PATH installations are not selected implicitly. Missing tools,
   findings, invalid reports and source mutation fail admission. Keep raw reports;
   investigate findings before publishing, including metadata false positives.
   This gate supplements full hosted scans; it does not replace them.
