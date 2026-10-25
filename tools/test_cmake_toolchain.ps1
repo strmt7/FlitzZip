@@ -25,7 +25,7 @@ try {
     Assert-CMakeToolHash -Path $fixture -Expected $expected
     [IO.File]::WriteAllText($fixture, 'abd', [Text.UTF8Encoding]::new($false))
     Assert-CMakeRejection { Assert-CMakeToolHash -Path $fixture -Expected $expected }
-    $bin = Join-Path $root 'out/tools/cmake-4.4.3/cmake-4.4.3-windows-x86_64/bin'
+    $bin = Join-Path $root 'out/tools/cmake-4.4.4/cmake-4.4.4-windows-x86_64/bin'
     New-Item -ItemType Directory -Path $bin | Out-Null
     $fake = Join-Path $bin 'cmake.exe'
     [IO.File]::WriteAllText($fake, 'not an executable', [Text.UTF8Encoding]::new($false))
@@ -41,8 +41,8 @@ try {
 }
 $cmake = Find-CMake -RepoRoot $repo
 $version = & $cmake --version
-if ($LASTEXITCODE -ne 0 -or $version[0] -ne 'cmake version 4.4.3') {
-    throw 'The repository must use the verified CMake 4.4.3 toolchain.'
+if ($LASTEXITCODE -ne 0 -or $version[0] -ne 'cmake version 4.4.4') {
+    throw 'The repository must use the verified CMake 4.4.4 toolchain.'
 }
 Write-Output 'CMake toolchain integrity tests passed.'
 
@@ -146,7 +146,7 @@ function Test-CMakeToolchainManifest {
             ($original + $lines[0] + "`n"),
             (($lines | Select-Object -Skip 1) -join "`n"),
             ('x' + $original.Substring(1)),
-            ($original + $lines[0].Replace('cmake-4.4.3-windows-x86_64.zip', 'unknown.exe') + "`n"),
+            ($original + $lines[0].Replace('cmake-4.4.4-windows-x86_64.zip', 'unknown.exe') + "`n"),
             ('x' * 16385))) {
             [IO.File]::WriteAllText($fixture, $mutation)
             Assert-CMakeRejection { Get-CMakeToolchainLock -Path $fixture }

@@ -107,8 +107,8 @@ try {
     }
     $workflow = '.github/workflows/release.yml'
     foreach ($mutation in @(
-            @($workflow, 'uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97', 'uses: ./.github/actions/untrusted', 'Assert-ReleaseWorkflowIdentity'),
-            @($workflow, 'uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97', 'uses: $/.github/actions/untrusted', 'Assert-ReleaseWorkflowIdentity'),
+            @($workflow, 'uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0', 'uses: ./.github/actions/untrusted', 'Assert-ReleaseWorkflowIdentity'),
+            @($workflow, 'uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0', 'uses: $/.github/actions/untrusted', 'Assert-ReleaseWorkflowIdentity'),
             @($workflow, '      - name: Checkout', "      - name: Before checkout`n        run: Write-Output before`n      - name: Checkout", 'Assert-ReleaseWorkflowIdentity'),
             @($workflow, 'ref: ${{ github.sha }}', 'ref: main', 'Assert-ReleaseWorkflowIdentity'),
             @($workflow, 'persist-credentials: false', 'persist-credentials: true', 'Assert-ReleaseWorkflowIdentity'),

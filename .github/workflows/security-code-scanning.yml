@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Setup Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14.8"
       - name: Select from native and query inputs
@@ -82,7 +82,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14.8"
       - name: Provision pinned HIP headers and compiler
@@ -98,7 +98,7 @@ jobs:
           $sdkRoot = Assert-RocmSdkRoot -Root ([string]$sdkRoot)
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "HIP_PATH=$sdkRoot"
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: c-cpp
           build-mode: manual
@@ -115,7 +115,7 @@ jobs:
         run: tools/build.ps1 -Configuration Release -HipArch gfx1201 -HipPath $env:HIP_PATH
       - name: Analyze C++
         id: analyze_cpp
-        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: ${{ env.FLITZZIP_CODEQL_CONFIGURATION == 'cpu' && '/language:c-cpp' || '/language:c-cpp/configuration:hip-host' }}
           output: out/codeql-cpp-sarif
@@ -157,13 +157,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: actions
           config-file: ./.github/codeql/codeql-config.yml
           queries: security-extended,security-and-quality
       - name: Analyze GitHub Actions
-        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: /language:actions
 
@@ -187,7 +187,7 @@ jobs:
           go-version: "1.27.1"
           cache: false
       - name: Setup Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14.8"
       - name: Audit scan scope
@@ -213,7 +213,7 @@ jobs:
           zizmor --format sarif --persona auditor .github/workflows > zizmor-results.sarif
       - name: Upload zizmor SARIF
         if: always() && hashFiles('zizmor-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: zizmor-results.sarif
           category: zizmor
@@ -260,7 +260,7 @@ jobs:
           exit-code: "1"
       - name: Upload Trivy SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy-results.sarif
           category: trivy-fs
@@ -282,7 +282,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14.8"
       - name: Audit scan scope
@@ -378,7 +378,7 @@ jobs:
           if-no-files-found: error
       - name: Upload Semgrep SARIF
         if: always() && hashFiles('semgrep-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: semgrep-results.sarif
           category: semgrep
@@ -398,7 +398,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14.8"
       - name: Retrieve this run's verified graph
@@ -501,7 +501,7 @@ jobs:
           python -m tools.devskim_report "$RUNNER_TEMP/devskim-raw.sarif" devskim-results.sarif
       - name: Upload DevSkim SARIF
         if: always() && hashFiles('devskim-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: devskim-results.sarif
           category: devskim
@@ -544,7 +544,7 @@ jobs:
           output-file: grype-results.sarif
       - name: Upload Grype SARIF
         if: always() && hashFiles('grype-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: grype-results.sarif
           category: grype-fs

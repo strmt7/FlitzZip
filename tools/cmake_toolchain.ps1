@@ -29,7 +29,7 @@ function Get-CMakeToolchainLock {
         }
         $records[$Matches[2]] = $Matches[1]
     }
-    $archive = 'cmake-4.4.3-windows-x86_64.zip'
+    $archive = 'cmake-4.4.4-windows-x86_64.zip'
     $keys = @($archive, 'bin/cmake.exe', 'bin/cpack.exe', 'bin/ctest.exe',
         'Modules/CMakeCompilerABI.upstream.h', 'Modules/CMakeCompilerABI.guarded.h',
         'Modules/CMakeCompilerABI.previous.h')
@@ -37,7 +37,7 @@ function Get-CMakeToolchainLock {
         throw 'Pinned CMake provenance inventory is invalid.'
     }
     return [pscustomobject]@{
-        version = '4.4.3'
+        version = '4.4.4'
         archive_sha256 = $records[$archive]
         executables_sha256 = [pscustomobject]@{
             'cmake.exe' = $records['bin/cmake.exe']
