@@ -47,7 +47,9 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             marker = base / "active" / (mirror.name + ".json")
             marker.parent.mkdir()
             marker.write_text(
-                json.dumps({"source_digest": digest, "config_digest": CONFIG_DIGEST, "cocoindex_code": "0.2.41"}),
+                json.dumps(
+                    {"source_digest": digest, "config_digest": CONFIG_DIGEST, "cocoindex_code": agent_search.VERSION}
+                ),
                 encoding="utf-8",
             )
             hit = dict(file_path="source.py", start_line=1, end_line=1, score=0.9, content="pass")
@@ -90,7 +92,7 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
                     {
                         "source_digest": source_digest(entries),
                         "config_digest": CONFIG_DIGEST,
-                        "cocoindex_code": "0.2.41",
+                        "cocoindex_code": agent_search.VERSION,
                     }
                 ),
                 encoding="utf-8",
@@ -163,7 +165,9 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             mirror = paths(base, base)[1]
             marker = base / "active" / (mirror.name + ".json")
             marker.parent.mkdir()
-            marker.write_text(json.dumps({"source_digest": "incorrect", "cocoindex_code": "0.2.41"}), encoding="utf-8")
+            marker.write_text(
+                json.dumps({"source_digest": "incorrect", "cocoindex_code": agent_search.VERSION}), encoding="utf-8"
+            )
             with (
                 patch("tools.cocoindex_agent_search.tracked_files", return_value=[("source.py", source)]),
                 self.assertRaisesRegex(RuntimeError, "index is stale"),
@@ -174,6 +178,9 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
             self.assertNotEqual(paths(base, base / "a")[1], paths(base, base / "b")[1])
+            environment, _mirror, _config, runtime = paths(base, base / "a")
+            self.assertEqual(environment.name, f"venv-{agent_search.VERSION}")
+            self.assertEqual(runtime.parent.name, agent_search.VERSION)
 
     def test_tracked_files_rejects_escape_and_real_env(self):
         with tempfile.TemporaryDirectory() as temp:

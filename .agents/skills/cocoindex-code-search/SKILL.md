@@ -21,8 +21,8 @@ never scanner runtime or training data.
 3. Confirm candidates with exact `rg -n` and source reads. Rankings are hints,
    not proof of correctness or completeness. For a miss, use bounded `rg -l`
    and refine once. Never edit from a semantic hit alone.
-4. Use exact `--path` filters; wildcard filters are rejected because the pinned
-   provider returned empty results for them on the reference Windows host.
+4. Use exact `--path` filters; wildcard filters are rejected by this wrapper's
+   exact-path contract.
    Otherwise route semantically, then narrow paths with `rg`.
 5. Preserve and disclose exact failures. Restore the tool before dependent broad
    navigation; do not substitute `rg` for semantic search. Independent work and
