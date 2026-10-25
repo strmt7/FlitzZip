@@ -1,3 +1,5 @@
+#include "cli/usage_output.hpp"
+#include "cli/statistics_output.hpp"
 #include "cli/memory_benchmark.hpp"
 #include "cli/memory_benchmark_source.hpp"
 #include "core/host_memory_budget.hpp"
@@ -58,8 +60,6 @@
 
 namespace {
 
-constexpr std::string_view kBlockSizeUsage = "256|512|1024|2048|4096|8192|16384";
-
 // Purpose: Preserve Windows Unicode arguments before parsing command options.
 // Inputs: One UTF-16 argument from the wide-character CRT entry point.
 // Outputs: Returns exact UTF-8 text; rejects invalid UTF-16 rather than using code-page replacement characters.
@@ -89,101 +89,6 @@ std::string encode_cli_argument(std::wstring_view argument) {
 // Outputs: Returns the corresponding native path without changing its spelling or resolving it.
 std::filesystem::path cli_path_argument(const std::string& argument) {
     return std::filesystem::path(std::u8string(argument.begin(), argument.end()));
-}
-
-// Purpose: Print command-line help for supported FlitzZip operations.
-// Inputs: None.
-// Outputs: Writes usage text to stdout.
-void usage() {
-    std::cout
-        << "FlitzZip CLI\n"
-        << "Usage:\n"
-        << "  flitzzip_cli --help\n"
-        << "  flitzzip_cli --version\n"
-        << "  flitzzip_cli gpu-info\n"
-        << "  flitzzip_cli gpu-diagnostic [--seconds <1-30>] [--buffer-mib <16-512>] [--inner-iterations <1-4096>]\n"
-        << "  flitzzip_cli dependency-check\n"
-        << "  flitzzip_cli formats\n"
-        << "  flitzzip_cli identify <archive>\n"
-        << "  flitzzip_cli memory-benchmark --size-mib <n> --profile "
-           "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord|LongSparseRecord|SegmentedRecords "
-           "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
-        << kBlockSizeUsage
-        << ">] [--compression-level <1-9>] [--neutron-star] [--inflight <n>] [--decode-inflight <n>] [--plan-only]\n"
-        << "  flitzzip_cli memory-benchmark --source-file <file> --source-sha256 <lowercase-hex> [--plan-only] "
-           "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
-        << kBlockSizeUsage
-        << ">] [--compression-level <1-9>] [--neutron-star] [--inflight <n>] [--decode-inflight <n>]\n"
-        << "  flitzzip_cli memory-benchmark --source-stdin --source-bytes <1-4294967295> "
-           "--source-sha256 <lowercase-hex> [--neutron-star] [--plan-only] [the same corpus options]\n"
-        << "  flitzzip_cli benchmark-suite [--size-mib <n>] [--profile "
-           "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord|LongSparseRecord|SegmentedRecords] "
-           "[--workers "
-           "<n>] [--block-size-kib <"
-        << kBlockSizeUsage << ">] [--compression-level <1-9>] [--tune] [--tune-levels]\n"
-        << "  flitzzip_cli compress --format flzip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] "
-           "[--inflight <n>] [--block-size-kib <"
-        << kBlockSizeUsage
-        << ">] [--compression-level <1-9>] [--neutron-star] "
-           "[--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
-        << "  flitzzip_cli compress --format "
-           "zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|cpio|cpio.gz|"
-           "cpgz|ar --output <archive> [--compression-level <1-9>] "
-           "[--verify-after-write] [--sha256] [--defender-scan] <path>... (ZIP only)\n"
-        << "  flitzzip_cli extract --format flzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] "
-           "[--inflight <n>] [--overwrite] [--validate-before-publish] [--sha256] [--defender-scan] <archive.flzip>\n"
-        << "  flitzzip_cli extract --format "
-           "auto|zip|zipx|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|tar.lz|tlz|tar.zst|tzst|gz|gzip|bz2|bzip2|xz|lzma|"
-           "lz|lzip|zst|zstd|z|compress|b64|base64|hqx|binhex|xxe|xxencode|uue|uu|macbinary|macbin|cab|iso|cpio|cpio."
-           "gz|cpgz|ar|arj|arc|ark|deb|rpm|7z|lha|lzh|wim|swm|xar --output <directory> [--overwrite] [--sha256] "
-           "[--defender-scan] [--validate-before-publish] [--name-encoding utf8|system] <archive>\n"
-        << "  flitzzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] "
-           "[--defender-scan] <archive.flzip|archive.zip|archive.zipx> (GPU options: FLZIP only)\n"
-        << "  Use -- before positional paths in compress, extract, or verify to preserve option-shaped filenames.\n";
-}
-
-// Purpose: Convert byte/second statistics to MiB/s for display.
-// Inputs: `bytes` is the processed byte count and `seconds` is elapsed wall time.
-// Outputs: Returns MiB per second, or zero when elapsed time is zero.
-double mib_per_second(std::uint64_t bytes, double seconds) {
-    return seconds > 0.0 ? (static_cast<double>(bytes) / (1024.0 * 1024.0)) / seconds : 0.0;
-}
-
-// Purpose: Compute an archive size ratio for benchmark records.
-// Inputs: `input_bytes` and `output_bytes` are uncompressed and compressed byte counters.
-// Outputs: Returns output/input, or zero when no input bytes exist.
-double compression_ratio(std::uint64_t input_bytes, std::uint64_t output_bytes) {
-    return input_bytes == 0 ? 0.0 : static_cast<double>(output_bytes) / static_cast<double>(input_bytes);
-}
-
-// Purpose: Print archive operation statistics in a stable key/value format.
-// Inputs: `stats` is the completed operation result.
-// Outputs: Writes one line to stdout; includes optional adapter phase timings only when measured.
-void print_stats(const flitzzip::OperationStats& stats) {
-    std::cout << "entries=" << stats.entries << " input_bytes=" << stats.input_bytes
-              << " output_bytes=" << stats.output_bytes << " workers=" << stats.workers
-              << " inflight_chunks=" << stats.inflight_chunks << " gpu_used=" << (stats.gpu_used ? "true" : "false")
-              << " gpu_encode_chunks=" << stats.gpu_runtime.encode_chunks
-              << " gpu_decode_chunks=" << stats.gpu_runtime.decode_chunks
-              << " gpu_kernel_launches=" << stats.gpu_runtime.kernel_launches
-              << " gpu_kernel_ms=" << stats.gpu_runtime.kernel_ms << " gpu_h2d_bytes=" << stats.gpu_runtime.h2d_bytes
-              << " gpu_d2h_bytes=" << stats.gpu_runtime.d2h_bytes
-              << " gpu_device_allocation_bytes=" << stats.gpu_runtime.device_allocation_bytes
-              << " gpu_host_pinned_allocation_bytes=" << stats.gpu_runtime.host_pinned_allocation_bytes
-              << " gpu_host_pinned_output_bytes=" << stats.gpu_runtime.host_pinned_output_bytes
-              << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
-              << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks
-              << " gpu_dictionary_blocks=" << stats.gpu_runtime.dictionary_blocks
-              << " gpu_sparse_pattern_blocks=" << stats.gpu_runtime.sparse_pattern_blocks
-              << " seconds=" << stats.seconds
-              << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
-              << " compression_ratio=" << compression_ratio(stats.input_bytes, stats.output_bytes);
-    if (stats.phases) {
-        std::cout << " setup_seconds=" << stats.phases->setup_seconds
-                  << " stream_seconds=" << stats.phases->stream_seconds
-                  << " publication_seconds=" << stats.phases->publication_seconds;
-    }
-    std::cout << '\n';
 }
 
 // Purpose: Print the archive formats that FlitzZip recognizes and whether each is implemented.
@@ -604,7 +509,7 @@ flitzzip::OperationStats compress_by_format(flitzzip::ArchiveFormat archive_form
 int run_compress_command(const std::vector<std::string>& args) {
     const auto command = parse_compress_command(args);
     if (command.output.empty() || command.sources.empty()) {
-        usage();
+        flitzzip::cli::print_usage(std::cout);
         return 2;
     }
     if (command.require_gpu && command.force_cpu) {
@@ -622,7 +527,7 @@ int run_compress_command(const std::vector<std::string>& args) {
             print_integrity_hash(archive_source.path());
         }
     }
-    print_stats(stats);
+    flitzzip::cli::print_operation_stats(std::cout, stats);
     return 0;
 }
 
@@ -837,7 +742,7 @@ flitzzip::OperationStats extract_by_format(flitzzip::ArchiveFormat archive_forma
 int run_extract_command(const std::vector<std::string>& args) {
     auto command = parse_extract_command(args);
     if (command.output.empty() || command.archive.empty()) {
-        usage();
+        flitzzip::cli::print_usage(std::cout);
         return 2;
     }
     if (command.require_gpu && command.force_cpu) {
@@ -873,7 +778,7 @@ int run_extract_command(const std::vector<std::string>& args) {
         },
         inspect_output);
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - extraction_start).count();
-    print_stats(stats);
+    flitzzip::cli::print_operation_stats(std::cout, stats);
     if (command.sha256) {
         print_integrity_hash(command.output, "output_integrity");
     }
@@ -1112,7 +1017,7 @@ CliVerifyCommand parse_verify_command(const std::vector<std::string>& args) {
 int run_verify_command(const std::vector<std::string>& args) {
     auto command = parse_verify_command(args);
     if (command.archive.empty()) {
-        usage();
+        flitzzip::cli::print_usage(std::cout);
         return 2;
     }
     if (command.require_gpu && command.force_cpu) {
@@ -1141,7 +1046,7 @@ int run_verify_command(const std::vector<std::string>& args) {
     if (command.defender_scan) {
         print_defender_scan(command.archive, true);
     }
-    print_stats(stats);
+    flitzzip::cli::print_operation_stats(std::cout, stats);
     return 0;
 }
 
@@ -1151,11 +1056,11 @@ int run_verify_command(const std::vector<std::string>& args) {
 std::optional<int> run_info_command(const std::vector<std::string>& args) {
     if (args[0] == "--help" || args[0] == "--version") {
         if (args.size() != 1) {
-            usage();
+            flitzzip::cli::print_usage(std::cout);
             return 2;
         }
         if (args[0] == "--help") {
-            usage();
+            flitzzip::cli::print_usage(std::cout);
         } else {
             std::cout << "FlitzZip " << FLITZZIP_VERSION << "\n";
         }
@@ -1163,7 +1068,7 @@ std::optional<int> run_info_command(const std::vector<std::string>& args) {
     }
     if (args[0] == "gpu-info") {
         if (args.size() != 1) {
-            usage();
+            flitzzip::cli::print_usage(std::cout);
             return 2;
         }
         const auto info = flitzzip::query_gpu_info();
@@ -1172,7 +1077,7 @@ std::optional<int> run_info_command(const std::vector<std::string>& args) {
     }
     if (args[0] == "dependency-check") {
         if (args.size() != 1) {
-            usage();
+            flitzzip::cli::print_usage(std::cout);
             return 2;
         }
         const auto info = flitzzip::query_gpu_info();
@@ -1189,7 +1094,7 @@ std::optional<int> run_info_command(const std::vector<std::string>& args) {
     }
     if (args[0] == "formats") {
         if (args.size() != 1) {
-            usage();
+            flitzzip::cli::print_usage(std::cout);
             return 2;
         }
         print_format_registry();
@@ -1197,7 +1102,7 @@ std::optional<int> run_info_command(const std::vector<std::string>& args) {
     }
     if (args[0] == "identify") {
         if (args.size() != 2) {
-            usage();
+            flitzzip::cli::print_usage(std::cout);
             return 2;
         }
         const auto format = resolve_cli_archive_format("auto", cli_path_argument(args[1]), true);
@@ -1258,7 +1163,7 @@ int run_cli_command(const std::vector<std::string>& args) {
     if (args[0] == "verify") {
         return run_verify_command(args);
     }
-    usage();
+    flitzzip::cli::print_usage(std::cout);
     return 2;
 }
 
@@ -1274,7 +1179,7 @@ int wmain(int argc, wchar_t** argv) {
             args.push_back(encode_cli_argument(argv[index]));
         }
         if (args.empty()) {
-            usage();
+            flitzzip::cli::print_usage(std::cout);
             return 2;
         }
         return run_cli_command(args);

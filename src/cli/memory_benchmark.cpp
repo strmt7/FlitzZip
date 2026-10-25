@@ -1,3 +1,4 @@
+#include "cli/statistics_output.hpp"
 #include "cli/memory_benchmark.hpp"
 #include "cli/benchmark_suite_policy.hpp"
 #include "cli/memory_benchmark_source.hpp"
@@ -79,20 +80,6 @@ struct BenchmarkSuiteCase {
     double speedup = 0.0;
     double compression_ratio = 1.0;
 };
-
-// Purpose: Convert byte/second statistics to MiB/s for display.
-// Inputs: `bytes` is the processed byte count and `seconds` is elapsed wall time.
-// Outputs: Returns MiB per second, or zero when elapsed time is zero.
-double mib_per_second(std::uint64_t bytes, double seconds) {
-    return seconds > 0.0 ? (static_cast<double>(bytes) / (1024.0 * 1024.0)) / seconds : 0.0;
-}
-
-// Purpose: Compute an archive size ratio for benchmark records.
-// Inputs: `input_bytes` and `output_bytes` are uncompressed and compressed byte counters.
-// Outputs: Returns output/input, or zero when no input bytes exist.
-double compression_ratio(std::uint64_t input_bytes, std::uint64_t output_bytes) {
-    return input_bytes == 0 ? 0.0 : static_cast<double>(output_bytes) / static_cast<double>(input_bytes);
-}
 
 // Purpose: Compute a single throughput metric from benchmark phase throughput.
 // Inputs: `result` contains measured compress, verify, and extract timings.
@@ -637,27 +624,16 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
     const auto& stages = stats.gpu_runtime.encode_stage_worker_seconds;
     const auto& classification = stats.gpu_runtime.classification_stage_worker_seconds;
     const auto& decode_stages = stats.gpu_runtime.owned_decode_stage_worker_seconds;
+    std::cout << "entries=" << stats.entries << " input_bytes=" << stats.input_bytes
+              << " output_bytes=" << stats.output_bytes << " archive_bytes=" << result.archive_bytes
+              << " workers=" << stats.workers << " inflight_chunks=" << stats.inflight_chunks
+              << " codec_workers=" << result.codec_workers
+              << " decode_inflight_chunks=" << result.decode_inflight_chunks
+              << " block_size_bytes=" << result.block_size << " decode_codec_workers=" << result.decode_codec_workers
+              << " compression_level=" << result.compression_level << " compression_mode="
+              << (result.compression_mode == NativeCompressionMode::NeutronStar ? "neutron_star" : "standard");
+    write_gpu_runtime_stats(std::cout, stats.gpu_runtime, stats.gpu_used);
     std::cout
-        << "entries=" << stats.entries << " input_bytes=" << stats.input_bytes << " output_bytes=" << stats.output_bytes
-        << " archive_bytes=" << result.archive_bytes << " workers=" << stats.workers
-        << " inflight_chunks=" << stats.inflight_chunks << " codec_workers=" << result.codec_workers
-        << " decode_inflight_chunks=" << result.decode_inflight_chunks << " block_size_bytes=" << result.block_size
-        << " decode_codec_workers=" << result.decode_codec_workers << " compression_level=" << result.compression_level
-        << " compression_mode="
-        << (result.compression_mode == NativeCompressionMode::NeutronStar ? "neutron_star" : "standard")
-        << " gpu_used=" << (stats.gpu_used ? "true" : "false")
-        << " gpu_encode_chunks=" << stats.gpu_runtime.encode_chunks
-        << " gpu_decode_chunks=" << stats.gpu_runtime.decode_chunks
-        << " gpu_kernel_launches=" << stats.gpu_runtime.kernel_launches
-        << " gpu_kernel_ms=" << stats.gpu_runtime.kernel_ms << " gpu_h2d_bytes=" << stats.gpu_runtime.h2d_bytes
-        << " gpu_d2h_bytes=" << stats.gpu_runtime.d2h_bytes
-        << " gpu_device_allocation_bytes=" << stats.gpu_runtime.device_allocation_bytes
-        << " gpu_host_pinned_allocation_bytes=" << stats.gpu_runtime.host_pinned_allocation_bytes
-        << " gpu_host_pinned_output_bytes=" << stats.gpu_runtime.host_pinned_output_bytes
-        << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
-        << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks
-        << " gpu_dictionary_blocks=" << stats.gpu_runtime.dictionary_blocks
-        << " gpu_sparse_pattern_blocks=" << stats.gpu_runtime.sparse_pattern_blocks
         << " gpu_readiness_worker_seconds=" << stages[static_cast<std::size_t>(flitzzip::GpuEncodeStage::Readiness)]
         << " gpu_analysis_worker_seconds=" << stages[static_cast<std::size_t>(flitzzip::GpuEncodeStage::HostAnalysis)]
         << " gpu_classification_worker_seconds="
