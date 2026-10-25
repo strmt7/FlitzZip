@@ -477,19 +477,20 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "escapes target"):
                 prepare_mirror(mirror, [("../outside.py", source)])
             target = mirror / "source.py"
-            original_is_symlink = Path.is_symlink
+            concrete_path = type(target)
+            original_is_symlink = concrete_path.is_symlink
 
             def redirected(path):
                 return path == target or original_is_symlink(path)
 
             with (
-                patch.object(Path, "is_symlink", autospec=True, side_effect=redirected),
+                patch.object(concrete_path, "is_symlink", autospec=True, side_effect=redirected),
                 self.assertRaisesRegex(ValueError, "mirror path is a link"),
             ):
                 prepare_mirror(mirror, [("source.py", source)])
             stale = mirror / "stale.py"
             stale.write_text("stale", encoding="utf-8")
-            original_resolve = Path.resolve
+            original_resolve = concrete_path.resolve
 
             def escaped(path, *args, **kwargs):
                 if path == stale:
@@ -497,7 +498,7 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
                 return original_resolve(path, *args, **kwargs)
 
             with (
-                patch.object(Path, "resolve", autospec=True, side_effect=escaped),
+                patch.object(concrete_path, "resolve", autospec=True, side_effect=escaped),
                 self.assertRaisesRegex(ValueError, "stale mirror path escapes"),
             ):
                 prepare_mirror(mirror, [])
@@ -505,7 +506,7 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             repo.mkdir()
             oversized = repo / "large.py"
             oversized.write_text("pass\n", encoding="utf-8")
-            original_stat = Path.stat
+            original_stat = concrete_path.stat
 
             def large_stat(path, *args, **kwargs):
                 if path == oversized:
@@ -514,7 +515,7 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
 
             with (
                 patch.object(agent_search.subprocess, "run") as run,
-                patch.object(Path, "stat", autospec=True, side_effect=large_stat),
+                patch.object(concrete_path, "stat", autospec=True, side_effect=large_stat),
                 self.assertRaisesRegex(ValueError, "exceeds 32 MiB"),
             ):
                 run.return_value.stdout = b"large.py\0"

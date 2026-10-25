@@ -1,6 +1,6 @@
 --index-url https://pypi.org/simple
 --only-binary=:all:
-gvm-tools==26.1.1
+gvm-tools==26.1.2
 # Advisory floors must also hold when upstream dependency constraints change.
 certifi>=2026.10.19
 cryptography>=50.0.2
