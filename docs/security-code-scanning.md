@@ -64,6 +64,15 @@ styles, complete contracts and long-function body documentation. It operates on
 actual changed functions; it does not suppress queries or replace native tests.
 The scanner preflight freezes changed publication bytes and uses the pinned
 detectors. Hosted acceptance still requires the exact analyzed commit.
+On supported Windows development hosts, its first changed-file run downloads
+the pinned Gitleaks release ZIP and DevSkim NuGet package into an ignored
+repository cache, checks their complete byte lengths and SHA-256 digests before
+execution, and installs DevSkim from that verified package through an isolated
+local-only NuGet feed. A .NET SDK must be available. Later runs reuse validated
+tools; explicit executable paths remain available for controlled environments.
+The pins are recorded in `.github/requirements/gitleaks-packaging.json` and
+`.github/requirements/devskim-packaging.json`. Source and report acceptance is
+unchanged by tool provisioning.
 
 GitHub documents that [stable file paths and SARIF fingerprints](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support)
 prevent duplicate alerts across runs. Preserve paths, rule IDs, categories and

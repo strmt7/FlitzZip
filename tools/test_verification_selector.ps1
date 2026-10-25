@@ -114,6 +114,10 @@ foreach ($path in @('README.md', 'src/cli/main.cpp', 'docs/benchmarks/data/new-s
 }
 $preflightToolPlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/scanner_preflight.py')
 Assert-Selector (Test-RequiredCommand -Plan $preflightToolPlan -Id 'scanner-preflight-tests') 'scanner admission changes require boundary contracts'
+foreach ($path in @('tools/bootstrap_scanners.py', 'tools/test_bootstrap_scanners.py', '.github/requirements/gitleaks-packaging.json')) {
+    $bootstrapPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $bootstrapPlan -Id 'scanner-preflight-tests') "scanner bootstrap changes require offline provenance and cache contracts: $path"
+}
 Assert-Selector (-not (Test-RequiredCommand -Plan $preflightToolPlan -Id 'release-build')) 'scanner admission alone must not rebuild the app'
 Assert-Selector (-not (Test-FlitzZipToolContractCommand -Command ([pscustomobject]@{id='scanner-preflight'}))) 'offline contracts must not pretend to execute provisioned detectors'
 foreach ($workflow in @('fuzzing', 'greenbone-openvas-vulnetix')) {

@@ -377,9 +377,9 @@ class ScannerPreflightTests(unittest.TestCase):
         self.assertEqual(devskim_command[devskim_command.index("-O") + 1], str(reports / "devskim.sarif"))
         self.assertTrue((reports / "devskim-options.json").is_file())
 
-    # Purpose: Exercise no-change, missing-tool and redirected-output admission before detector execution.
+    # Purpose: Exercise no-change, provisioning failure and redirected-output admission before detector execution.
     # Inputs: Controlled path inventories, explicit empty/tool arguments and a simulated output junction.
-    # Outputs: No-change returns cleanly; the two unsafe states raise before source copying.
+    # Outputs: No-change returns cleanly; provisioning and unsafe output states fail before source copying.
     def test_main_early_admission_boundaries(self):
         with (
             patch.object(preflight, "ROOT", self.root),
@@ -394,6 +394,9 @@ class ScannerPreflightTests(unittest.TestCase):
             patch.object(preflight, "ROOT", self.root),
             patch.object(preflight, "changed_paths", return_value=["source.py"]),
             patch.object(preflight, "validate_report_directory"),
+            patch.object(
+                preflight, "provision_missing_scanners", side_effect=ValueError("Pinned detectors unavailable")
+            ),
             patch("sys.argv", ["scanner_preflight", "--gitleaks", "", "--devskim", ""]),
             self.assertRaisesRegex(ValueError, "Pinned detectors unavailable"),
         ):
