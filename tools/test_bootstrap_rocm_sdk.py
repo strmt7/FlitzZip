@@ -25,7 +25,7 @@ class RocmBootstrapTests(unittest.TestCase):
         Inputs: Actual lock and controlled schema/provenance mutations. Outputs: Exact metadata or ValueError.
         """
         valid = bootstrap.read_lock()
-        self.assertEqual(valid["version"], "10.0.0")
+        self.assertEqual(valid["version"], "10.1.0")
         variants = (
             valid | {"version": True},
             valid | {"archive_bytes": True},
@@ -39,7 +39,7 @@ class RocmBootstrapTests(unittest.TestCase):
                 path.write_text(json.dumps(candidate), encoding="utf-8")
                 with self.subTest(candidate=candidate), self.assertRaisesRegex(ValueError, "ROCm SDK"):
                     bootstrap.read_lock(path)
-            duplicate = json.dumps(valid).replace('{"version":', '{"version":"10.0.0","version":', 1)
+            duplicate = json.dumps(valid).replace('{"version":', '{"version":"10.1.0","version":', 1)
             path.write_text(duplicate, encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "duplicate"):
                 bootstrap.read_lock(path)

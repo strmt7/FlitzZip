@@ -108,10 +108,10 @@ function Get-MsvcToolsetVersion {
     )
 }
 
-# Purpose: Choose a HIP-compatible MSVC toolset prefix when the caller did not provide one.
-# Inputs: AvailableVersions is the installed MSVC list; RequestedVersion is the optional caller override.
-# Outputs: Returns candidate vcvars versions in preferred order, with an empty string meaning Visual Studio default.
-function Resolve-VcvarsVersionCandidate {
+# Purpose: Select one MSVC toolset for this HIP object compilation.
+# Inputs: AvailableVersions lists installed toolsets; RequestedVersion is an explicit caller override.
+# Outputs: Returns the newest installed major.minor prefix or the requested version; refuses an empty inventory.
+function Resolve-VcvarsVersion {
     param(
         [string[]]$AvailableVersions,
         [AllowEmptyString()]
@@ -119,25 +119,18 @@ function Resolve-VcvarsVersionCandidate {
     )
 
     if ($RequestedVersion) {
-        return @($RequestedVersion)
+        return $RequestedVersion
     }
 
-    $candidates = New-Object System.Collections.Generic.List[string]
-    foreach ($prefix in @("14.44", "14.42")) {
-        $match = @(
-            $AvailableVersions |
-                Where-Object { $_ -eq $prefix -or $_.StartsWith("$prefix.") } |
-                Sort-Object { [version]$_ } -Descending |
-                Select-Object -First 1
-        )
-        if ($match.Count -gt 0) {
-            $candidates.Add($prefix)
-            break
-        }
+    $newest = @($AvailableVersions |
+            Where-Object { $_ -match '^[0-9]+(\.[0-9]+){1,3}$' } |
+            Sort-Object { [version]$_ } -Descending |
+            Select-Object -First 1)
+    if ($newest.Count -ne 1) {
+        throw 'No numbered MSVC toolset was found beside vcvarsall.bat.'
     }
-
-    $candidates.Add("")
-    return @($candidates.ToArray())
+    $parts = $newest[0].Split('.')
+    return "$($parts[0]).$($parts[1])"
 }
 
 # Purpose: Escape one compiler-reported path for a CMake Make-format dependency rule.
@@ -263,18 +256,12 @@ New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
 $include = Join-Path $RepoRoot "src"
 $availableToolsets = @(Get-MsvcToolsetVersion -VcvarsAll $vcvars)
-$vcvarsCandidates = @(Resolve-VcvarsVersionCandidate -AvailableVersions $availableToolsets -RequestedVersion $VcvarsVersion)
+$selectedVcvarsVersion = Resolve-VcvarsVersion -AvailableVersions $availableToolsets -RequestedVersion $VcvarsVersion
 
-$attempts = New-Object System.Collections.Generic.List[string]
 Invoke-RocmCompilerEnvironment -Root $sdkRoot -Action {
-foreach ($candidate in $vcvarsCandidates) {
-    $label = if ($candidate) { $candidate } else { "default" }
-    $exitCode = Invoke-HipCompile -VcvarsAll $vcvars -CandidateVersion $candidate -HipccPath $hipcc -IncludePath $include
-    if ($exitCode -eq 0) {
-        return
+    $exitCode = Invoke-HipCompile -VcvarsAll $vcvars -CandidateVersion $selectedVcvarsVersion `
+        -HipccPath $hipcc -IncludePath $include
+    if ($exitCode -ne 0) {
+        throw "hipcc failed with MSVC toolset ${selectedVcvarsVersion}: exit code $exitCode."
     }
-    $attempts.Add("${label}: exit code $exitCode")
-}
-
-throw "hipcc failed for all MSVC toolset candidates ($($attempts -join '; '))."
 }

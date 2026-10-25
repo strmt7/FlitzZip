@@ -101,30 +101,26 @@ validation requires a normal rebuild, rather than editing the receipt.
 
 ## Distribution And Component Versions
 
-Checked on 2026-10-02 against AMD's [release notes](https://rocm.docs.amd.com/en/docs-10.0.0/about/release-notes.html)
+The selected 10.1.0 distribution follows AMD's [release notes](https://rocm.docs.amd.com/en/docs-10.1.0/about/release-notes.html)
 and [native Windows installation guide](https://rocmdocs.amd.com/en/latest/install/rocm.html).
 The shared lock records the official complete Windows multiarchitecture archive
 and its locally observed HTTPS SHA-256. That digest is not an independently
 published AMD checksum.
 
-The archive identifies ROCm `10.0.0` and package build `10.0.0rc4`, but reports
-HIP `7.15.26333-6b0e43f341` and AMD Clang `23.0.0git`. AMD's release-note table
-instead lists HIP 10 and LLVM 24. The whole distribution identity controls
-admission; API availability and performance claims must use the observed headers,
-compiler and runtime. Renaming component versions or substituting individual
-packages would conceal the discrepancy and is prohibited.
+The archive identifies ROCm `10.1.0` and package build `10.1.0rc3`; its headers
+and compiler report HIP `7.16.26385-7da43026e4` and AMD Clang `24.0.0git`.
+The complete distribution identity controls admission. API availability and
+performance claims use the observed headers, compiler and runtime; bundled
+components are never replaced independently.
 
-The six-target compatibility fixture compiled with MSVC 14.44. The latest local
-MSVC 14.51 rejected this compiler's device math declarations. The wrapper keeps
-its compatible toolset selection and an explicit `-VcvarsVersion` override;
-it never patches AMD or Microsoft headers to force compatibility. Main product
-host compilation can use the installed CMake-selected MSVC toolchain.
-
-All five production HIP objects and their dependency scans also compiled for
-all six release targets using a fresh build tree and the provisioned SDK at
-paths containing spaces. The main product passed 570 native tests and all 33
-full local verification commands. Hardware execution covers the available
-`gfx1201`; compilation alone does not qualify the other GPUs.
+The HIP wrapper selects the newest numbered MSVC toolset installed beside the
+resolved `vcvarsall.bat`, or the exact `-VcvarsVersion` requested by the caller.
+Each object compilation makes one selection and fails on compilation errors
+instead of silently retrying another toolset. Pass `-VcvarsVersion` to
+`tools/build.ps1` when one exact toolset is required across the whole build.
+MSVC 14.52 compiled all five production HIP objects
+for the six release targets on the validation host. Hardware execution covers
+the tested `gfx1201` device; compilation does not qualify other GPUs.
 
 ## Compiler And Runtime Environment
 

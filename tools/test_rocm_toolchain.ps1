@@ -4,6 +4,9 @@ $fixture = Join-Path ([IO.Path]::GetTempPath()) ('flitzzip-rocm-' + [guid]::NewG
 $manifest = Join-Path $fixture 'share/therock/therock_manifest.json'
 $inputs = @('bin/hipcc.exe', 'lib/amdhip64.lib', 'include/hip/hip_version.h',
     'lib/llvm/bin/clang.exe', 'lib/llvm/amdgcn/bitcode/ocml.bc')
+$pin = Get-RocmSdkLock
+$validManifest = @{ rocm_version = $pin.version; rocm_package_version = $pin.observed_package_version } |
+    ConvertTo-Json -Compress
 $null = New-Item -ItemType Directory -Path $fixture
 try {
     foreach ($relative in $inputs + @('share/therock/therock_manifest.json')) {
@@ -11,17 +14,17 @@ try {
         $null = [IO.Directory]::CreateDirectory((Split-Path -Parent $file))
         [IO.File]::WriteAllText($file, 'fixture; never executed')
     }
-    [IO.File]::WriteAllText($manifest, '{"rocm_version":"10.0.0","rocm_package_version":"10.0.0rc4"}')
+    [IO.File]::WriteAllText($manifest, $validManifest)
     if ((Resolve-RocmSdkRoot -RepoRoot $fixture -RequestedPath $fixture) -cne $fixture) {
         throw 'The explicit complete SDK must override discovery.'
     }
-    foreach ($version in @('7.2.0', '10.1.0', '', $null)) {
+    foreach ($version in @('7.2.0', '10.0.0', '', $null)) {
         [IO.File]::WriteAllText($manifest, (@{ rocm_version = $version } | ConvertTo-Json))
         $rejected = $false
         try { Assert-RocmSdkRoot -Root $fixture | Out-Null } catch { $rejected = $true }
         if (-not $rejected) { throw 'A different or unavailable SDK version was accepted.' }
     }
-    [IO.File]::WriteAllText($manifest, '{"rocm_version":"10.0.0"}')
+    [IO.File]::WriteAllText($manifest, $validManifest)
     foreach ($relative in $inputs) {
         $file = Join-Path $fixture $relative
         [IO.File]::Delete($file)
