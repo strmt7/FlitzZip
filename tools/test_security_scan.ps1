@@ -13,6 +13,27 @@ $function = $ast.Find({ param($node)
 if ($null -eq $function) { throw 'Production comparison policy is missing.' }
 $policy = [ScriptBlock]::Create($function.Extent.Text + [Environment]::NewLine + 'Test-ExternalComparisonNamePolicy')
 
+$dotnetFunction = $ast.Find({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Assert-ExactDotnetSdkVersion'
+}, $false)
+if ($null -eq $dotnetFunction) { throw 'Exact .NET SDK workflow policy is missing.' }
+$dotnetPolicy = [ScriptBlock]::Create(
+    $dotnetFunction.Extent.Text + [Environment]::NewLine +
+    'Assert-ExactDotnetSdkVersion -Line $candidate -WorkflowPath fixture.yml -LineNumber 1')
+foreach ($candidate in @('  dotnet-version: "10.0.402"', 'dotnet-version: 8.0.426 # released', 'steps: []')) {
+    & $dotnetPolicy
+}
+foreach ($candidate in @('dotnet-version: "10.0.x"', 'dotnet-version: "10.0"', 'dotnet-version: ${{ env.SDK }}')) {
+    $rejected = $false
+    try { & $dotnetPolicy }
+    catch {
+        if ($_.Exception.Message -notlike '*exact published version*') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected) { throw "Floating .NET SDK selector was accepted: $candidate" }
+}
+
 # Purpose: Reject traversal outside the production policy's source boundary before filesystem enumeration.
 # Inputs: The production function's real enumeration call. Outputs: Actual source files or an explicit boundary failure.
 $enumerationGuard = {
