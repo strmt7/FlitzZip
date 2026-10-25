@@ -1135,7 +1135,7 @@ class CrawlerContracts(unittest.TestCase):
         self.assertEqual(len(domains), len(sites))
         self.assertTrue(all(site["marker"] for site in sites))
         self.assertTrue(all(urlsplit(site["url"]).scheme == "https" for site in sites))
-        license_text = (tool.ROOT / "docs/licenses/Crawl4AI-0.9.4.txt").read_text(encoding="utf-8")
+        license_text = (tool.ROOT / "docs/licenses/Crawl4AI-0.9.5.txt").read_text(encoding="utf-8")
         self.assertIn(tool.ATTRIBUTION, license_text)
 
 

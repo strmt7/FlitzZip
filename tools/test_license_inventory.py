@@ -102,7 +102,7 @@ class LicenseInventoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unreviewed"):
                 inventory.audit(root)
             new.rmdir()
-            notice = root / "docs/licenses/Crawl4AI-0.9.4.txt"
+            notice = root / "docs/licenses/Crawl4AI-0.9.5.txt"
             notice.write_text("Apache-2.0 only; attribution omitted", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "differs"):
                 inventory.audit(root)

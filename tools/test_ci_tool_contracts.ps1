@@ -71,14 +71,14 @@ Assert-CiContractPlan -Path 'third_party/upstream/nltk/source.zip' -Required @('
 Assert-CiContractPlan -Path 'tools/test_memory_benchmark_corpus.ps1' -Required @('binary-corpus-transport-tests')
 Assert-CiContractPlan -Path 'tools/cpp_security_plan.py' -Required @('cpp-security-plan-tests')
 Assert-CiContractPlan -Path 'tools/crawl4ai_download_opener.py' -Required @('crawl4ai-source-contracts', 'crawl4ai-contracts')
-Assert-CiContractPlan -Path 'third_party/upstream/crawl4ai/0.9.4/build.json' -Required @('crawl4ai-source-contracts')
+Assert-CiContractPlan -Path 'third_party/upstream/crawl4ai/0.9.5/build.json' -Required @('crawl4ai-source-contracts')
 Assert-CiContractPlan -Path '.github/workflows/security-code-scanning.yml' -Required @('cpp-security-plan-tests')
 
 # Load the actual production comparison helper without executing any selected command.
 . $runner -ChangedPath 'README.md' -PlanOnly | Out-Null
 foreach ($path in @('tools/requirements/crawl4ai.txt', 'tools/requirements/python-build.txt',
         'tools/crawl4ai_tool.py', 'tools/crawl4ai_source_build.py', 'tools/nltk_distribution.py', 'tools/python_wheel.py',
-        'tools/crawl4ai_download_opener.py', 'third_party/upstream/crawl4ai/0.9.4/build.json',
+        'tools/crawl4ai_download_opener.py', 'third_party/upstream/crawl4ai/0.9.5/build.json',
         'third_party/upstream/nltk/source.zip', '.github/workflows/component-contracts.yml')) {
     if (-not (Test-FlitzZipResearchLockChange -Paths @('README.md', $path))) {
         throw "Dependency integration omitted changed input: $path"

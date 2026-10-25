@@ -6,13 +6,14 @@ import hashlib
 import os
 import tarfile
 import tempfile
+import urllib.request
 import venv
 from pathlib import Path, PurePosixPath
 
 from tools import python_wheel as packaging
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE_ROOT = ROOT / "third_party/upstream/crawl4ai/0.9.4"
+SOURCE_ROOT = ROOT / "third_party/upstream/crawl4ai/0.9.5"
 OPENER = ROOT / "tools/crawl4ai_download_opener.py"
 BUILD_LOCK = packaging.BUILD_LOCK
 
@@ -28,24 +29,64 @@ def recipe() -> dict:
             "upstream_version",
             "version",
             "source",
+            "source_bytes",
             "source_date_epoch",
             "source_url",
         }
         or type(data.get("schema")) is not int
         or data["schema"] != 1
         or data.get("project") != "crawl4ai"
-        or data.get("upstream_version") != "0.9.4"
-        or data.get("version") != "0.9.4+flitzzip.portable2"
-        or data.get("source") != "crawl4ai-0.9.4.tar.gz"
-        or data.get("source_date_epoch") != 1790165349
+        or data.get("upstream_version") != "0.9.5"
+        or data.get("version") != "0.9.5+flitzzip.portable1"
+        or data.get("source") != "crawl4ai-0.9.5.tar.gz"
+        or type(data.get("source_bytes")) is not int
+        or data["source_bytes"] != 577411
+        or data.get("source_date_epoch") != 1791973529
         or data.get("source_url")
-        != "https://files.pythonhosted.org/packages/fc/df/39bf85e67faf31b6c1587d849ffb74b4cfb078c6f646e158a18768b15cdb/crawl4ai-0.9.4.tar.gz"
+        != "https://files.pythonhosted.org/packages/ea/ad/44b57b650c3c0afaeea917bd7e6b87a64cd1108be53431690483cde0eb2d/crawl4ai-0.9.5.tar.gz"
     ):
         raise ValueError("Unsupported Crawl4AI source build recipe")
-    archive = SOURCE_ROOT / data["source"]
-    if packaging.digest(archive) != packaging.expected_digest(SOURCE_ROOT / (data["source"] + ".sha256")):
-        raise ValueError("Crawl4AI source archive digest mismatch")
+    packaging.expected_digest(SOURCE_ROOT / (data["source"] + ".sha256"))
     return data
+
+
+def source_archive(home: Path | None = None) -> Path:
+    """Purpose: Acquire pinned upstream source outside Git. Inputs: Tool cache. Outputs: Verified regular archive."""
+    from tools.crawl4ai_tool import cache_home, installation_lock
+
+    data = recipe()
+    home = cache_home(str(home) if home is not None else None)
+    expected = packaging.expected_digest(SOURCE_ROOT / (data["source"] + ".sha256"))
+    directory = home / "source" / expected
+    if any(path.is_symlink() or path.is_junction() for path in (directory.parent, directory)):
+        raise ValueError("Crawl4AI source cache is redirected")
+    with installation_lock(directory, timeout=180):
+        destination = directory / data["source"]
+        if destination.exists() or destination.is_symlink():
+            if destination.stat().st_size != data["source_bytes"] or packaging.digest(destination) != expected:
+                raise ValueError("Crawl4AI cached source differs from pinned provenance")
+            return destination
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(prefix="source-", suffix=".part", dir=directory, delete=False) as stage:
+                temporary = Path(stage.name)
+                request = urllib.request.Request(data["source_url"], headers={"Accept": "application/octet-stream"})
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    remaining = data["source_bytes"]
+                    while chunk := response.read(min(65536, remaining + 1)):
+                        remaining -= len(chunk)
+                        if remaining < 0:
+                            raise ValueError("Crawl4AI source download exceeds pinned length")
+                        stage.write(chunk)
+                    if remaining != 0:
+                        raise ValueError("Crawl4AI source download is incomplete")
+            if packaging.digest(temporary) != expected:
+                raise ValueError("Crawl4AI source download differs from pinned digest")
+            os.replace(temporary, destination)
+            return destination
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
 
 def identity() -> str:
@@ -53,10 +94,16 @@ def identity() -> str:
     from tools.crawl4ai_tool import text_identity
 
     data = recipe()
-    values = [packaging.digest(SOURCE_ROOT / data["source"])]
+    values = [packaging.expected_digest(SOURCE_ROOT / (data["source"] + ".sha256"))]
     values.extend(
         text_identity(path)
-        for path in (SOURCE_ROOT / "build.json", SOURCE_ROOT / "crawl4ai-wheel.sha256", OPENER, BUILD_LOCK)
+        for path in (
+            SOURCE_ROOT / "build.json",
+            SOURCE_ROOT / (data["source"] + ".sha256"),
+            SOURCE_ROOT / "crawl4ai-wheel.sha256",
+            OPENER,
+            BUILD_LOCK,
+        )
     )
     return hashlib.sha256("\n".join(values).encode("ascii")).hexdigest()
 
@@ -79,7 +126,7 @@ def extract_source(archive: Path, destination: Path) -> Path:
             if (
                 path.is_absolute()
                 or not path.parts
-                or path.parts[0] != "crawl4ai-0.9.4"
+                or path.parts[0] != "crawl4ai-0.9.5"
                 or ".." in path.parts
                 or "\\" in item.name
                 or ":" in item.name
@@ -139,17 +186,17 @@ def patched_strategy(original: str) -> str:
 
 def patched_version(original: str, version: str) -> str:
     """Purpose: Identify the modified package. Inputs: Original version text/identity. Outputs: Source or refusal."""
-    if original.count('__version__ = "0.9.4"') != 1:
+    if original.count('__version__ = "0.9.5"') != 1:
         raise ValueError("Upstream Crawl4AI version changed")
-    return original.replace('__version__ = "0.9.4"', f'__version__ = "{version}"')
+    return original.replace('__version__ = "0.9.5"', f'__version__ = "{version}"')
 
 
 def runtime_hashes() -> dict[str, str]:
     """Purpose: Refuse changed installed repairs. Inputs: Source/local repair. Outputs: Exact runtime digests."""
     data = recipe()
-    with tarfile.open(SOURCE_ROOT / data["source"], "r:gz") as source:
-        strategy = source.extractfile("crawl4ai-0.9.4/crawl4ai/async_crawler_strategy.py").read().decode("utf-8")
-        version = source.extractfile("crawl4ai-0.9.4/crawl4ai/__version__.py").read().decode("utf-8")
+    with tarfile.open(source_archive(), "r:gz") as source:
+        strategy = source.extractfile("crawl4ai-0.9.5/crawl4ai/async_crawler_strategy.py").read().decode("utf-8")
+        version = source.extractfile("crawl4ai-0.9.5/crawl4ai/__version__.py").read().decode("utf-8")
     files = {
         "crawl4ai/async_crawler_strategy.py": patched_strategy(strategy),
         "crawl4ai/__version__.py": patched_version(version, data["version"]),
@@ -173,9 +220,9 @@ def repair_source(source: Path, data: dict) -> None:
         raise ValueError("Upstream license packaging changed")
     notice = (
         "FlitzZip Crawl4AI development-tool source build\n\n"
-        "Upstream: https://github.com/unclecode/crawl4ai/releases/tag/v0.9.4\n"
+        "Upstream: https://github.com/unclecode/crawl4ai/releases/tag/v0.9.5\n"
         f"Downstream version: {data['version']}\n"
-        "Modified 5 October 2026: async_crawler_strategy.py delegates its download opener\n"
+        "Modified 25 October 2026: async_crawler_strategy.py delegates its download opener\n"
         "and pre-open filename validation to the included Apache-2.0 flitzzip_download.py.\n"
         "Reserved Windows basenames are rejected before path normalization and opening.\n"
         "Windows uses a native no-follow\n"
@@ -229,7 +276,7 @@ def build_wheel(home: Path, output: Path, data: dict) -> Path:
         run([str(python), "-m", "pip", "check"], env, 60)
         output.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="crawl4ai-source-", dir=output) as owned:
-            source = extract_source(SOURCE_ROOT / data["source"], Path(owned) / "source")
+            source = extract_source(source_archive(home), Path(owned) / "source")
             repair_source(source, data)
             # Upstream setup.py prepares/removes a cache. Confine that build-only side effect to this owned tree.
             env["CRAWL4_AI_BASE_DIRECTORY"] = str(source)
