@@ -114,6 +114,15 @@ exercise real message dispatch, controlled thread admission refusal, subsequent
 reuse, cancellation and responsive close. They supplement the visible all-page
 smoke and screenshot review; they do not replace it.
 
+Settings regressions observe rendered controls and persisted bytes independently:
+drafts must not persist before Apply, failed file replacement must preserve the
+last applied preferences, and a subsequent save and restart must recover normally.
+Extraction regressions wait for rendered Queue metadata before admission, preserve
+existing files when confirmation is cancelled, keep overwrite approval local to
+one operation, and check literal output bytes from batches with identical archive
+names. Shared native fixtures retain ownership of windows, threads and off-screen
+bitmaps; their message failures include the calling line and Windows error.
+
 `tools/native_coverage.py` verifies the native build receipt, all selected
 executables, their symbols and scenario drivers before and after collection.
 It retains process diagnostics locally within its 8 MiB output budget, separately
