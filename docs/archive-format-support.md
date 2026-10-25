@@ -756,7 +756,9 @@ The LHA/LZH path uses the ISC-licensed Lhasa 0.6.0 decoder in process:
    at most 127 `0x1A` bytes from the final CP/M record. Partial next headers,
    malformed full headers, missing compressed bytes, nonzero trailing data and
    I/O errors fail validation before
-   destination writes. Level-2 headers with a zero low length byte remain valid;
+   destination writes. Both passes bound physical reads to the pinned source's
+   sealed size; a short read before that extent remains an error even if the
+   underlying C++ stream sets its EOF flag. Level-2 headers with a zero low length byte remain valid;
    they must not be mistaken for a terminator.
 5. Reopen the archive for the publish pass, verify that metadata matches the
    validation pass, then publish only approved directories and regular files

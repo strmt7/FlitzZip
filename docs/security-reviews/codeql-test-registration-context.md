@@ -12,8 +12,8 @@ under each individual anchor.
 ## Changed build context and current consumers
 
 The test registration includes test_gpu_huffman_decode.cpp,
-test_gpu_neutron_writer.cpp and the Windows-only test_compression_stream_io.cpp
-in the existing test object target. Existing
+test_gpu_neutron_writer.cpp, test_gpu_kernel_rejection.cpp and the Windows-only
+test_compression_stream_io.cpp in the existing test object target. Existing
 compiler flags, preprocessor definitions, target properties, library links,
 reported sources, registration macro and scanner recipes are
 unchanged. The source-list additions do not remove or replace these four
@@ -22,15 +22,17 @@ reachability or induction invariants on the unrelated fixture bodies was
 found. Every original context path remains bound, including CMakeLists.txt;
 the LHA consumer and lifetime review are also bound in their changed entirety.
 Other decisions and shared evidence remain unchanged.
+The direct-device rejection fixtures use the existing private kernel interface,
+bounded resident buffers and independent output oracles. They add no product
+exports, allocation configuration or scanner settings. Their execution remains
+a separate qualification from these unchanged reported-source invariants.
 
-The preceding required-HIP Release qualification passed all five exact direct consumers
-listed under the individual decisions below.
-Build receipt: `21634c97bbf26099caa0e0084f52517111db6f3dee3d8533f62e3c6ba3be586a`; executable-input digest:
-`5ed12d98519470e9d8a90802f7e2dac54d79dc83cf5ebd3fbf11b04bb17e47c6`. Root retained complete bounded process results and
-verified the same build identity before and after all five selected consumers.
-The retained qualification digest is `9baa4e8cac8d8ade24da96cc35366c9dd80ad4066ae3adc30f598429407d0b50`. The earlier Debug
-attempt refused a stale configuration and ran no tests; no Debug result is
-claimed for this review.
+The current required-HIP Release build passed all six exact direct consumers
+listed under the individual decisions below. Its build receipt is
+`b746e93ebedd694ba2e2f8dddef394563b2c016fdcbfd4e7f1f5661dfd1dd6da`;
+the test executable's SHA-256 is
+`98a2c566d6d412a26427d925f63915a4d442fdc96997bb8527353d3b4b42caf4`.
+These focused results qualify the stated consumers, not the entire release.
 
 ## Individual decisions
 

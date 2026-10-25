@@ -8,7 +8,9 @@ DevSkim `DS161085` identifies `malloc` at
 `third_party/miniz/miniz_common.h:76:11–76:33`. The complete source remains
 unchanged. This is the individually reviewed sanitizer allocator described in
 [the source review](current-source-findings.md#alert-8348), rather than a
-production defect or an exemption for other allocations.
+production defect or an exemption for other allocations. The newly registered
+direct-device test changes a bound build-context file, so its exact-context
+review must be refreshed even though the allocator source has not changed.
 
 The allocator uses the matching `malloc`/`realloc`/`free` family only when both
 `FLITZZIP_MINIZ_FUZZ_ALLOCATOR` and
@@ -42,6 +44,9 @@ The Windows compression-stream I/O test translation unit similarly adds only
 test consumers. Its byte-range locks affect owned Gzip and Bzip2 fixtures;
 registration changes no miniz source, target, allocator definition or sanitizer
 recipe. It does not qualify the sanitizer allocator by exercising those codecs.
+The direct-device kernel rejection translation unit also consumes only existing
+HIP and LZ4 interfaces. Its retained materializer, Huffman, writer and sparse
+fixtures add no allocator definitions, miniz callers or product exports.
 
 The optional development HIP coverage manifest replaces only the five kernel
 object inputs. Its dynamic CRT setting applies only to the private HIP DLL;
