@@ -3,12 +3,18 @@
 FlitzZip uses [Crawl4AI](https://github.com/unclecode/crawl4ai) as a local
 development tool for reading and crawling web pages. It is separate from the
 archive application and requires no cloud account, API key, paid service or
-public server. The [latest stable release reviewed on 5 October 2026](https://github.com/unclecode/crawl4ai/releases/tag/v0.9.4)
-is 0.9.4. Its base package and dependency wheels are pinned with upstream
-SHA-256 digests in [the installation lock](../tools/requirements/crawl4ai.txt).
-The installed crawler is the explicitly identified `0.9.4+flitzzip.portable2`
+public server. The [stable release reviewed on 25 October 2026](https://github.com/unclecode/crawl4ai/releases/tag/v0.9.5)
+is 0.9.5. Its source URL, complete byte length and SHA-256 are pinned in
+[the source recipe](../third_party/upstream/crawl4ai/0.9.5/build.json) and its
+digest sidecar. The repaired wheel and dependency wheels have separate SHA-256
+pins in their own sidecars and [the installation lock](../tools/requirements/crawl4ai.txt).
+The installer fetches the original source into an ignored local tool cache and
+verifies it before extraction, so the upstream archive is not committed to Git.
+The installed crawler is the explicitly identified `0.9.5+flitzzip.portable1`
 source build. It repairs the upstream HTTP download opener on Windows while
-preserving POSIX no-follow behavior; see [the repair and qualification](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/development/crawl4ai-portable-download-repair-2026-10-05.md).
+preserving POSIX no-follow behavior. The [source builder](../tools/crawl4ai_source_build.py),
+[provenance](../third_party/upstream/crawl4ai/0.9.5/README.md) and
+[regressions](../tools/test_crawl4ai_source_build.py) define the current repair.
 NLTK uses the unmodified official stable `v3.10.4` asset, with unchanged
 package version `3.10.4`, to address the model-artifact sandbox advisory. See
 [dependency remediation](security-reviews/dependency-risk-acceptance.md).
@@ -218,7 +224,7 @@ research must not repeatedly crawl the entire manifest or rebuild the app.
 
 ## License And Attribution
 
-The [exact upstream license](licenses/Crawl4AI-0.9.4.txt) contains Apache 2.0
+The [exact upstream license](licenses/Crawl4AI-0.9.5.txt) contains Apache 2.0
 terms **and an appended attribution requirement**. Preserve the entire file;
 do not describe that combined text as an unmodified Apache-2.0 license.
 Installed dependencies and Chromium retain their own upstream notices.

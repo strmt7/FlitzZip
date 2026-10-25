@@ -618,7 +618,7 @@ foreach ($corpusPath in @('tools/neutron_corpus_benchmark.py', 'tools/neutron_co
 }
 foreach ($crawlerPath in @('tools/crawl4ai_tool.py', 'tools/crawl4ai_research.py', 'tools/test_crawl4ai_tool.py',
         'tools/crawl4ai_source_build.py', 'tools/test_crawl4ai_source_build.py',
-        'tools/crawl4ai_download_opener.py', 'tools/test_crawl4ai_downloads.py', 'third_party/upstream/crawl4ai/0.9.4/build.json',
+        'tools/crawl4ai_download_opener.py', 'tools/test_crawl4ai_downloads.py', 'third_party/upstream/crawl4ai/0.9.5/build.json',
         'tools/nltk_distribution.py', 'tools/python_wheel.py', 'tools/test_nltk_distribution.py', 'tools/test_nltk_model_security.py',
         'third_party/upstream/nltk/README.md', 'tools/requirements/python-build.txt',
         'tools/crawl4ai_sites.json', 'tools/requirements/crawl4ai.txt', 'docs/crawl4ai.md')) {
@@ -629,13 +629,20 @@ foreach ($crawlerPath in @('tools/crawl4ai_tool.py', 'tools/crawl4ai_research.py
         Assert-Selector (-not (Test-RequiredCommand -Plan $crawlerPlan -Id $id)) "crawler-only checks must not select $id"
     }
 }
+$crawlerRuntimePlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/crawl4ai_tool.py')
+$crawlerContract = @($crawlerRuntimePlan.requiredLocalCommands | Where-Object { $_.id -eq 'crawl4ai-contracts' })[0]
+Assert-Selector ($crawlerContract.executable -eq 'powershell' -and
+    @($crawlerContract.arguments) -contains 'tools/run_locked_python_tests.ps1') 'crawler contract must select a qualified Python runtime'
 foreach ($crawlerSourcePath in @('tools/crawl4ai_source_build.py', 'tools/test_crawl4ai_source_build.py',
-        'tools/crawl4ai_download_opener.py', 'tools/test_crawl4ai_downloads.py', 'third_party/upstream/crawl4ai/0.9.4/build.json')) {
+        'tools/crawl4ai_download_opener.py', 'tools/test_crawl4ai_downloads.py', 'third_party/upstream/crawl4ai/0.9.5/build.json')) {
     $sourcePlan = Get-FlitzZipVerificationPlan -ChangedPath @($crawlerSourcePath)
     Assert-Selector (Test-RequiredCommand -Plan $sourcePlan -Id 'crawl4ai-source-contracts') 'crawler source changes require the actual source/platform contract'
     Assert-Selector (-not (Test-Workflow -Plan $sourcePlan -Name 'crawl4ai-security')) 'qualified research setup must not select a retired continuous workflow'
     Assert-Selector (-not (Test-RequiredCommand -Plan $sourcePlan -Id 'release-build')) 'crawler source changes do not build the archive application'
 }
+$sourceContract = @($sourcePlan.requiredLocalCommands | Where-Object { $_.id -eq 'crawl4ai-source-contracts' })[0]
+Assert-Selector ($sourceContract.executable -eq 'powershell' -and
+    @($sourceContract.arguments) -contains 'tools/run_locked_python_tests.ps1') 'crawler source contract must select a qualified Python runtime'
 foreach ($nltkPath in @('tools/nltk_distribution.py', 'tools/python_wheel.py', 'tools/test_nltk_distribution.py', 'tools/test_nltk_model_security.py',
         'tools/requirements/python-build.txt', 'tools/requirements/crawl4ai.txt', 'third_party/upstream/nltk/README.md')) {
     $nltkPlan = Get-FlitzZipVerificationPlan -ChangedPath @($nltkPath)

@@ -1,10 +1,10 @@
-"""Offline admission, source-delta and security contracts for the portable Crawl4AI source build."""
+"""Source acquisition, source-delta and security contracts for the portable Crawl4AI build."""
 
 from __future__ import annotations
 
+import hashlib
 import io
 import os
-import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -20,19 +20,57 @@ from tools import crawl4ai_source_build as build
 class SourceContracts(unittest.TestCase):
     """Verify exact original provenance, narrow source changes and the real platform opener."""
 
-    def test_provenance_archive_is_visible_to_normal_git_inventory(self):
-        """Purpose: Preserve hosted source availability. Inputs: Actual ignore policy/archive. Outputs: Not ignored."""
-        archive = (build.SOURCE_ROOT / build.recipe()["source"]).relative_to(build.ROOT).as_posix()
-        result = subprocess.run(
-            ["git", "-C", str(build.ROOT), "check-ignore", archive], capture_output=True, timeout=10, check=False
-        )
-        self.assertEqual(result.returncode, 1, "Published source archive must be visible without forced staging")
+    def test_source_acquisition_is_exact_and_reused_outside_checkout(self):
+        """Purpose: Pin cache reuse outside Git. Inputs: Source bytes and cache. Outputs: Exact file."""
+        payload = b"pinned source fixture"
+        digest = hashlib.sha256(payload).hexdigest()
+        data = build.recipe() | {"source_bytes": len(payload)}
+        with tempfile.TemporaryDirectory() as owned:
+            home = Path(owned)
+            with (
+                patch.object(build, "recipe", return_value=data),
+                patch.object(build.packaging, "expected_digest", return_value=digest),
+                patch.object(build.urllib.request, "urlopen", return_value=io.BytesIO(payload)) as download,
+            ):
+                archive = build.source_archive(home)
+                self.assertEqual(archive.read_bytes(), payload)
+                self.assertEqual(build.source_archive(home), archive)
+                download.assert_called_once()
+            self.assertNotIn(build.ROOT, archive.parents)
+
+    def test_source_acquisition_refuses_incomplete_excess_and_changed_cache(self):
+        """Purpose: Refuse bad transport and cache bytes. Inputs: Bad source. Outputs: No admitted file."""
+        digest = hashlib.sha256(b"expected").hexdigest()
+        data = build.recipe() | {"source_bytes": len(b"expected")}
+        with tempfile.TemporaryDirectory() as owned:
+            home = Path(owned)
+            for payload in (b"short", b"too many bytes", b"badbytes"):
+                with (
+                    self.subTest(payload=payload),
+                    patch.object(build, "recipe", return_value=data),
+                    patch.object(build.packaging, "expected_digest", return_value=digest),
+                    patch.object(build.urllib.request, "urlopen", return_value=io.BytesIO(payload)),
+                    self.assertRaises(ValueError),
+                ):
+                    build.source_archive(home)
+                self.assertFalse((home / "source" / digest / data["source"]).exists())
+                self.assertEqual(list((home / "source" / digest).glob("*.part")), [])
+            cache = home / "source" / digest / data["source"]
+            cache.write_bytes(b"badbytes")
+            with (
+                patch.object(build, "recipe", return_value=data),
+                patch.object(build.packaging, "expected_digest", return_value=digest),
+                patch.object(build.urllib.request, "urlopen") as download,
+                self.assertRaisesRegex(ValueError, "cached source differs"),
+            ):
+                build.source_archive(home)
+            download.assert_not_called()
 
     def test_source_repair_preserves_all_other_runtime_files_and_original_license(self):
         """Purpose: Bound the repair delta. Inputs: Actual source/recipe. Outputs: Exact unaffected source/notices."""
         data = build.recipe()
         with tempfile.TemporaryDirectory() as owned:
-            source = build.extract_source(build.SOURCE_ROOT / data["source"], Path(owned) / "source")
+            source = build.extract_source(build.source_archive(), Path(owned) / "source")
             before = {p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file()}
             build.repair_source(source, data)
             changed = {
@@ -43,7 +81,7 @@ class SourceContracts(unittest.TestCase):
             for path, contents in before.items():
                 if path not in changed:
                     self.assertEqual((source / path).read_bytes(), contents)
-            original_license = (build.ROOT / "docs/licenses/Crawl4AI-0.9.4.txt").read_text(encoding="utf-8")
+            original_license = (build.ROOT / "docs/licenses/Crawl4AI-0.9.5.txt").read_text(encoding="utf-8")
             self.assertEqual((source / "LICENSE").read_text(encoding="utf-8"), original_license)
             notice = (source / "FLITZZIP_BUILD_NOTICE.txt").read_text()
             self.assertIn("downstream build", notice)
@@ -56,7 +94,10 @@ class SourceContracts(unittest.TestCase):
 
     def test_tampered_artifacts_and_unknown_source_refused(self):
         """Purpose: Refuse substituted source. Inputs: Wrong digest and changed opener. Outputs: Errors."""
-        with patch.object(build.packaging, "digest", return_value="different"), self.assertRaises(ValueError):
+        with (
+            patch.object(build.packaging, "expected_digest", side_effect=ValueError("bad digest")),
+            self.assertRaisesRegex(ValueError, "bad digest"),
+        ):
             build.recipe()
         with tempfile.TemporaryDirectory() as owned:
             root = Path(owned)
@@ -77,6 +118,7 @@ class SourceContracts(unittest.TestCase):
         self.assertEqual(len(build.identity()), 64)
         variants = (
             data | {"source_url": "https://example.invalid/crawl4ai.tar.gz"},
+            data | {"source_bytes": data["source_bytes"] + 1},
             data | {"source_date_epoch": data["source_date_epoch"] + 1},
             data | {"unreviewed": True},
         )
@@ -92,10 +134,10 @@ class SourceContracts(unittest.TestCase):
         """Purpose: Protect owned extraction. Inputs: Hostile synthetic tar members. Outputs: No published payload."""
         with tempfile.TemporaryDirectory() as owned:
             root = Path(owned)
-            for index, name in enumerate(("crawl4ai-0.9.4/../escape", "/absolute", "crawl4ai-0.9.4/name:stream")):
+            for index, name in enumerate(("crawl4ai-0.9.5/../escape", "/absolute", "crawl4ai-0.9.5/name:stream")):
                 archive = root / f"bad-{index}.tar.gz"
                 with tarfile.open(archive, "w:gz") as output:
-                    first = tarfile.TarInfo("crawl4ai-0.9.4/valid")
+                    first = tarfile.TarInfo("crawl4ai-0.9.5/valid")
                     first.size = 1
                     output.addfile(first, io.BytesIO(b"x"))
                     bad = tarfile.TarInfo(name)
@@ -107,7 +149,7 @@ class SourceContracts(unittest.TestCase):
             for kind in (tarfile.SYMTYPE, tarfile.LNKTYPE):
                 archive = root / "link.tar.gz"
                 with tarfile.open(archive, "w:gz") as output:
-                    item = tarfile.TarInfo("crawl4ai-0.9.4/link")
+                    item = tarfile.TarInfo("crawl4ai-0.9.5/link")
                     item.type = kind
                     item.linkname = "../outside"
                     output.addfile(item)
@@ -116,7 +158,7 @@ class SourceContracts(unittest.TestCase):
 
             archive = root / "bounded.tar.gz"
             with tarfile.open(archive, "w:gz") as output:
-                item = tarfile.TarInfo("crawl4ai-0.9.4/payload")
+                item = tarfile.TarInfo("crawl4ai-0.9.5/payload")
                 item.size = 1
                 output.addfile(item, io.BytesIO(b"x"))
             with patch.object(build.packaging, "MAX_SOURCE_BYTES", 0), self.assertRaisesRegex(ValueError, "extent"):
@@ -137,7 +179,7 @@ class SourceContracts(unittest.TestCase):
             build.patched_version('__version__ = "9.9.9"', "1.0")
         data = build.recipe()
         with tempfile.TemporaryDirectory() as owned:
-            source = build.extract_source(build.SOURCE_ROOT / data["source"], Path(owned) / "source")
+            source = build.extract_source(build.source_archive(), Path(owned) / "source")
             before = {path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()}
             config = source / "pyproject.toml"
             config.write_text(
@@ -182,6 +224,7 @@ class SourceContracts(unittest.TestCase):
                     side_effect=lambda command, env, *args: commands.append((command, dict(env), args)),
                 ),
                 patch.object(build.venv, "EnvBuilder") as builder,
+                patch.object(build, "source_archive", return_value=root / "verified-source.tar.gz"),
                 patch.object(build, "extract_source", side_effect=extract),
                 patch.object(build, "repair_source") as repair,
                 patch.object(build.packaging, "canonical_wheel", side_effect=canonical) as package,

@@ -16,9 +16,9 @@
       "sha256": "40e82e1afe000f110e37de76229be158e1c8def078e35f855a453c068666e19d"
     },
     {
-      "name": "Crawl4AI 0.9.4",
-      "source": "docs/licenses/Crawl4AI-0.9.4.txt",
-      "upstream": "https://raw.githubusercontent.com/unclecode/crawl4ai/v0.9.4/LICENSE",
+      "name": "Crawl4AI 0.9.5",
+      "source": "docs/licenses/Crawl4AI-0.9.5.txt",
+      "upstream": "https://raw.githubusercontent.com/unclecode/crawl4ai/v0.9.5/LICENSE",
       "terms": "Apache-2.0 terms plus appended attribution requirement",
       "sha256": "193fe32704bee15cd74f5153e569cdf830e26445e19798a55daee32da40758aa"
     },

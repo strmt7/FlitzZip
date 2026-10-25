@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if not __package__:
     sys.path.insert(0, str(ROOT))
 LOCK = ROOT / "tools/requirements/crawl4ai.txt"
-VERSION = "0.9.4+flitzzip.portable2"
+VERSION = "0.9.5+flitzzip.portable1"
 ATTRIBUTION = (
     "This product includes software developed by UncleCode (https://x.com/unclecode) "
     "as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai)."
