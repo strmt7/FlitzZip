@@ -65,14 +65,6 @@ void MainWindow::close_active_dropdown() {
     }
 }
 
-struct DropdownSelectionFeedback {
-    int performance_seconds = 0;
-    bool io_drive_changed = false;
-    bool add_log = false;
-    LogSeverity log_severity = LogSeverity::Information;
-    std::string log_message;
-};
-
 // Purpose: Apply a non-Settings dropdown choice to synchronized UI state.
 // Inputs: `state` is locked UI state, `id` is the dropdown, `option_index` is the selected row, and `feedback` receives
 // side effects. Outputs: Mutates `state`; unsupported IDs are ignored.
@@ -135,9 +127,9 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
     normalize_compression_selection(state);
 }
 
-// Purpose: Apply a Settings dropdown choice to synchronized UI state.
+// Purpose: Change a Settings draft without publishing preferences or deleting existing log rows.
 // Inputs: `state` is locked UI state, `id` is the dropdown, `option_index` is the selected row, and `feedback` receives
-// log data. Outputs: Mutates `state`; unsupported IDs are ignored.
+// log data. Outputs: Updates the draft and feedback only; unsupported IDs are ignored.
 void apply_settings_dropdown_selection(UiState& state, DropdownId id, int option_index,
                                        DropdownSelectionFeedback& feedback) {
     switch (id) {
@@ -158,7 +150,6 @@ void apply_settings_dropdown_selection(UiState& state, DropdownId id, int option
         break;
     case DropdownId::SettingsLogRetention:
         state.log_retention_index = std::clamp(option_index, 0, 2);
-        prune_log_entries(state.logs, std::chrono::system_clock::now(), state.log_retention_index, kMaxLogEntries);
         state.status = "Log retention changed";
         feedback.add_log = true;
         feedback.log_severity = LogSeverity::Debug;

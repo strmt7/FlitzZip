@@ -230,6 +230,11 @@ class MainWindow {
     // Outputs: Applies validated settings, creates defaults when needed, and logs nonfatal parse/write failures.
     void initialize_settings();
 
+    // Purpose: Publish one admitted settings snapshot to runtime consumers and its editable draft.
+    // Inputs: Validated settings; the window thread holds mutex_ and has completed any required file publication.
+    // Outputs: Updates applied/draft state together and prunes logs using the newly applied retention policy.
+    void publish_applied_settings_locked(const AppSettings& settings);
+
     // Purpose: Save the current Settings draft as the applied snapshot.
     // Inputs: None; reads Settings fields from synchronized UI state.
     // Outputs: Writes the per-user config atomically and updates the applied snapshot.
@@ -1512,6 +1517,7 @@ class MainWindow {
     PDH_HCOUNTER disk_read_counter_ = nullptr;
     PDH_HCOUNTER disk_write_counter_ = nullptr;
     std::wstring disk_counter_instance_;
+    // Window-thread reads are serialized by native dispatch; worker reads and all writes require mutex_.
     AppSettings applied_settings_{};
 };
 

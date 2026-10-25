@@ -28,6 +28,22 @@
 
 namespace flitzzip::app {
 
+// Purpose: Carry dropdown feedback without giving draft selection ownership of runtime side effects.
+// Inputs: Ordinary native option handlers. Outputs: Owned values consumed after the UI-state lock is released.
+struct DropdownSelectionFeedback {
+    int performance_seconds = 0;
+    bool io_drive_changed = false;
+    bool add_log = false;
+    LogSeverity log_severity = LogSeverity::Information;
+    std::string log_message;
+};
+
+// Purpose: Change a Settings dropdown draft without publishing preferences or deleting log rows.
+// Inputs: Locked state, Settings dropdown id, option index and feedback sink; unrelated ids are ignored.
+// Outputs: Clamped draft, visible status and owned feedback. Persistence and pruning belong to successful Apply.
+void apply_settings_dropdown_selection(UiState& state, DropdownId id, int option_index,
+                                       DropdownSelectionFeedback& feedback);
+
 constexpr int kTopBar = 52;
 constexpr int kRailWidth = 86;
 constexpr int kStatusBar = 34;

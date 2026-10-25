@@ -1059,6 +1059,8 @@ if(FLITZZIP_BUILD_TESTS)
                            tests/cpp/test_main_window_history_controls.cpp
                            tests/cpp/test_main_window_history_scrollbars.cpp
                            tests/cpp/test_main_window_job_presentation.cpp
+                           tests/cpp/test_main_window_logging_preferences.cpp
+                           tests/cpp/test_settings_dropdown_draft.cpp
                            tests/cpp/test_main_window_compression_controls.cpp
                            tests/cpp/test_native_window_readiness.cpp)
     target_link_libraries(flitzzip_test_objects PRIVATE flitzzip_gui)

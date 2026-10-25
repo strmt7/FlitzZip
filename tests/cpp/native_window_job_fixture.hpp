@@ -34,8 +34,7 @@ class NativeJobSession final {
         // Leaving Settings restores applied values; the method never infers a value from a prior abandoned draft.
         click_native_navigation(ui.window, 7);
         click_native_navigation(ui.window, 6);
-        const auto form =
-            flitzzip::app::make_settings_layout(native_content_rect(ui.window), GetDpiForWindow(ui.window));
+        const auto form = native_settings_layout(ui.window);
         require_native_toggle(ui.window, ui.frame.dc(), form.show_operation_summary, applied_summary_);
         require_native_toggle(ui.window, ui.frame.dc(), form.open_destination_after_operation, applied_open_);
         if (summary != applied_summary_) {
@@ -121,21 +120,7 @@ class NativeJobSession final {
         const auto index = history.rows.size() - 1;
         history.require_row(static_cast<int>(index), index);
         history.require_selected(static_cast<int>(index));
-        require_log_count("Operation summary shown: Compress", dispatches);
-    }
-
-    // Purpose: Check exact dispatch counts after real FIFO completion, without waiting for a negative event.
-    // Inputs: Literal public log marker and count. Outputs: Exact occurrences in the owned log only.
-    void require_log_count(std::string_view marker, std::size_t expected) const {
-        const auto text = read_native_fixture(flitzzip::app::log_file_path());
-        std::size_t count = 0;
-        for (auto at = text.find(marker); at != std::string::npos; at = text.find(marker, at + marker.size())) {
-            ++count;
-        }
-        if (count != expected) {
-            throw std::runtime_error("Native log count for '" + std::string(marker) +
-                                     "': expected=" + std::to_string(expected) + " actual=" + std::to_string(count));
-        }
+        require_native_log_count("Operation summary shown: Compress", dispatches);
     }
 
     // Purpose: Observe the captured destination request without starting Explorer or relying on timing.
@@ -150,10 +135,10 @@ class NativeJobSession final {
             }
             expected.push_back(static_cast<char>(byte));
         }
-        require_log_count("Destination folder open suppressed (GUI smoke): " + expected, count);
-        require_log_count("Destination folder open suppressed (GUI smoke): ", count);
-        require_log_count("Destination folder opened:", 0);
-        require_log_count("Open destination failed:", 0);
+        require_native_log_count("Destination folder open suppressed (GUI smoke): " + expected, count);
+        require_native_log_count("Destination folder open suppressed (GUI smoke): ", count);
+        require_native_log_count("Destination folder opened:", 0);
+        require_native_log_count("Open destination failed:", 0);
     }
 
     // Purpose: Verify one-shot consumption after further ordinary input and queued paint processing.

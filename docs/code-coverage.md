@@ -117,6 +117,11 @@ smoke and screenshot review; they do not replace it.
 Settings regressions observe rendered controls and persisted bytes independently:
 drafts must not persist before Apply, failed file replacement must preserve the
 last applied preferences, and a subsequent save and restart must recover normally.
+Runtime logging must continue using the applied policy while a draft is edited,
+abandoned or refused by persistence. Retention drafts must preserve existing rows;
+successful settings publication applies the new pruning policy under the same
+lock used by worker log events. These checks pair actual native commands with
+independent persisted-byte, event-count and timestamped-row observations.
 Extraction regressions wait for rendered Queue metadata before admission, preserve
 existing files when confirmation is cancelled, keep overwrite approval local to
 one operation, and check literal output bytes from batches with identical archive
