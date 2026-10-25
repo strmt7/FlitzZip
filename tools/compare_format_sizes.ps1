@@ -16,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $cli = Join-Path $repo "build\$Configuration\flitzzip_cli.exe"
 $sevenZip = if ($SevenZipPath) { [IO.Path]::GetFullPath($SevenZipPath) } else {
-    Join-Path $repo 'out\tools\7zip-26.03\x64\7za.exe'
+    Join-Path $repo 'out\tools\7zip-26.05\x64\7za.exe'
 }
 $zstd = Join-Path $repo 'out\tools\zstd-v1.5.7-win64\zstd.exe'
 $bsdtar = (Get-Command tar.exe -ErrorAction Stop).Source

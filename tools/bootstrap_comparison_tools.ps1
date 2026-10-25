@@ -135,11 +135,11 @@ if ($Tool -eq 'Hyperfine') {
     return
 }
 
-$sevenDir = Join-Path $toolRoot '7zip-26.03\x64'
+$sevenDir = Join-Path $toolRoot '7zip-26.05\x64'
 $sevenFiles = @(
-    @('7za.exe', 'EDBEE35370E14030E4C785CF88200F42DC651C1EB4217C1E3963C38A12F099B0'),
-    @('7za.dll', '876077825E49F5A39FB472532080B91A41FEC508C714EAB8A51AF5A51183EBA0'),
-    @('7zxa.dll', '6509B5D4895103250405AB516421B4068E78B67CABC0C6EEF774DF31572D9FAD')
+    @('7za.exe', '7DDF0A3BC451E166679296BE630D6F0573EB386159C04184761C43020C484291'),
+    @('7za.dll', '7B3043136452637C58A01FBB0C6A6B9B0B1A749FBA644C5968E7C21A539207E0'),
+    @('7zxa.dll', 'DF75045376EBC3442ACECF8E07ECD639675160F68B16CA4B6E74AC337F8CCC0B')
 )
 $zstdDir = Join-Path $toolRoot 'zstd-v1.5.7-win64'
 foreach ($ownedToolDirectory in @($sevenDir, $zstdDir)) {
@@ -175,13 +175,13 @@ $stage = Join-Path $stageRoot ([guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
     if (-not $sevenReady) {
-        $release = 'https://github.com/ip7z/7zip/releases/download/26.03/'
+        $release = 'https://github.com/ip7z/7zip/releases/download/26.05/'
         $extractor = Get-ComparisonAsset -Uri ($release + '7zr.exe') `
-            -Expected 'AD4C82FADCBDF93C03B4FC440F300509C7D60C5C2F4D183E35D9D70D6957037D' `
-            -Path (Join-Path $cache '7zr-26.03.exe') -CacheOnly $Offline.IsPresent
-        $archive = Get-ComparisonAsset -Uri ($release + '7z2603-extra.7z') `
-            -Expected '191894E6ACB3647FFB69CE630479FF318523B2E2B9890AA7F05C1127C2E59B8F' `
-            -Path (Join-Path $cache '7z2603-extra.7z') -CacheOnly $Offline.IsPresent
+            -Expected '9BF582B894DFA665F852D7E9112B02290A1C303C2D95A21FCDC41FFCB03143B7' `
+            -Path (Join-Path $cache '7zr-26.05.exe') -CacheOnly $Offline.IsPresent
+        $archive = Get-ComparisonAsset -Uri ($release + '7z2605-extra.7z') `
+            -Expected 'F27A8F103C84785026EDCBA1F67FAF1357225DF9D19DDB0B7760D55947141BC7' `
+            -Path (Join-Path $cache '7z2605-extra.7z') -CacheOnly $Offline.IsPresent
         & $extractor x -y "-o$stage" $archive 'x64/7za.exe' 'x64/7za.dll' 'x64/7zxa.dll' | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "7-Zip asset extraction failed: $LASTEXITCODE" }
         foreach ($entry in $sevenFiles) {

@@ -108,14 +108,14 @@ validates runtime version `10507` (`1.5.7`), and never shells out to `zstd.exe`.
 The original source archive, official Win64 package, and checksums are stored
 under `third_party/upstream/zstd/v1.5.7/` for provenance.
 
-## LZMA SDK 26.03
+## LZMA SDK 26.05
 
 FlitzZip vendors the minimal ANSI-C decoder subset from the official LZMA SDK
-release `26.03` for extract-only 7z, LZMA-Alone, and lzip compatibility.
+release `26.05` for extract-only 7z, LZMA-Alone, and lzip compatibility.
 
 - Upstream: <https://www.7-zip.org/sdk.html>
-- Release archive: <https://github.com/ip7z/7zip/releases/download/26.03/lzma2603.7z>
-- SHA-256: `86c213f752520ab5325c310f50bef63ec344b56dd1c80b0246d06dc6cec953b2`
+- Release archive: <https://github.com/ip7z/7zip/releases/download/26.05/lzma2605.7z>
+- SHA-256: `668fda469b7f584f246008cf28359c66ef98d65fafb3b22a52672eebe6970c28`
 - License: public domain, as stated in `DOC/lzma-sdk.txt` inside the upstream
   archive
 
@@ -124,7 +124,7 @@ the `.tar.lz` stream adapter. It does not ship or execute SDK sample tools or
 call `7z.exe`, and does not use the SDK as a FLZIP codec or GPU path. The
 patched production copy is under `third_party/lzma_sdk/`, while the unmodified
 upstream archive and checksum are stored under
-`third_party/upstream/lzma-sdk/26.03/`. The older 26.01 provenance is retained.
+`third_party/upstream/lzma-sdk/26.05/`. Earlier provenance remains in Git.
 
 ## Lhasa 0.6.0
 

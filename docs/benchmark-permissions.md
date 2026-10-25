@@ -28,7 +28,7 @@ It cannot substitute for FlitzZip application or GPU measurements.
 
 | Candidate | Execution / original numeric results | Decision and source |
 | --- | --- | --- |
-| 7-Zip 26.03 | Eligible with original notices | [LGPL/BSD/component terms](https://www.7-zip.org/license.txt); no RAR algorithm recreation. |
+| 7-Zip 26.05 | Eligible with original notices | [LGPL/BSD/component terms](https://www.7-zip.org/license.txt); no RAR algorithm recreation. |
 | Zstd 1.5.7 | Eligible with original notices | [BSD option](https://github.com/facebook/zstd/blob/v1.5.7/LICENSE); no implied endorsement. |
 | Bandizip 7.46 Standard | Eligible after verifying the edition | Controlling [Korean EULA](https://kr.bandisoft.com/bandizip/eula/eula.kr.pdf), sections 1(4), 2 and 11(4); commercial Standard use is permitted. No benchmark restriction was found. No software/manual/artwork redistribution is authorized here. |
 | Hyperfine 1.20.0 | Eligible, timing only | [MIT option](https://github.com/sharkdp/hyperfine/blob/v1.20.0/LICENSE-MIT); retain notices, do not bundle the tool. |
@@ -93,10 +93,26 @@ Beta builds, paid editions and new codec modules need separate review.
   screenshots. Generated design studies are not measurements. Asset rights
   and provenance must also be recorded before publishing a generated image.
 
+## 7-Zip 26.05 Comparator Review
+
+The 26.05 `7zr.exe` and `7z2605-extra.7z` came from the official GitHub release.
+Their complete downloads matched the publisher's release-asset SHA-256 fields.
+The extracted `7za.exe`, `7za.dll` and `7zxa.dll` were independently hashed;
+the exact values in `tools/benchmark_permissions.json` and the installer pins
+match those bytes. An isolated fresh installation passed the binary identity
+check, displayed the 26.05 version, and matched the official stable-release API.
+The bundled `License.txt` permits commercial execution; the comparator is kept
+outside release packages. The three digest reports in that manifest identify
+public binary integrity metadata, not credentials. A changed binary or manifest
+expires this review without changing scanner output or scope.
+
 ## Enforcement And Remaining Release Work
 
 `tools/benchmark_permissions.json` records action-specific decisions, exact
 reviewed software versions, edition/module limits, sources, and conditions.
+An updated subject carries its own review date; other subjects keep the
+catalog date and expire independently rather than inheriting an unreviewed
+renewal.
 `require_permission` fails closed on an unknown subject, hold, restriction,
 expired review, changed version, or unreviewed scope. The comparison runner
 checks execution rights before version probes or timed product commands.

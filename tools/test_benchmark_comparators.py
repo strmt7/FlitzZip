@@ -185,8 +185,8 @@ class ComparatorPreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported permission action"):
             comparators.require_permission("HIGGS", "unreviewed action")
         with patch.object(comparators, "datetime", wraps=datetime) as clock:
-            clock.now.return_value = datetime(2026, 10, 1, tzinfo=UTC)
-            comparators.require_permission("7-Zip", "execute", version="26.03")
+            clock.now.return_value = datetime(2026, 10, 25, tzinfo=UTC)
+            comparators.require_permission("7-Zip", "execute", version="26.05")
             comparators.require_permission("Bandizip", "publish_results", version="7.46", edition="Standard")
             comparators.require_permission("lzbench", "execute", version="2.4", modules=("lz4", "zstd"))
             comparators.require_permission("HIGGS", "execute")
@@ -203,12 +203,16 @@ class ComparatorPreflightTests(unittest.TestCase):
                 with self.subTest(modules=modules), self.assertRaises(ValueError):
                     comparators.require_permission("lzbench", "execute", version="2.4", modules=modules)
             with self.assertRaises(ValueError):
-                comparators.require_permission("7-Zip", "execute", version="26.04")
-            with self.assertRaises(ValueError):
-                comparators.require_permission("7-Zip", "redistribute", version="26.03")
-            clock.now.return_value = datetime(2026, 11, 2, tzinfo=UTC)
-            with self.assertRaisesRegex(ValueError, "expired"):
                 comparators.require_permission("7-Zip", "execute", version="26.03")
+            with self.assertRaises(ValueError):
+                comparators.require_permission("7-Zip", "redistribute", version="26.05")
+            clock.now.return_value = datetime(2026, 11, 2, tzinfo=UTC)
+            comparators.require_permission("7-Zip", "execute", version="26.05")
+            with self.assertRaisesRegex(ValueError, "expired"):
+                comparators.require_permission("Bandizip", "publish_results", version="7.46", edition="Standard")
+            clock.now.return_value = datetime(2026, 11, 26, tzinfo=UTC)
+            with self.assertRaisesRegex(ValueError, "expired"):
+                comparators.require_permission("7-Zip", "execute", version="26.05")
 
     # Purpose: Require independently pinned executable bytes rather than trusting a product name.
     # Inputs: A temporary catalog and synthetic binary fixture with a known hash.

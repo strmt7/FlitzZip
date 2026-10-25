@@ -190,12 +190,12 @@ already real archive/package formats in FlitzZip's matrix.
 | `.tar.gz`, `.tgz` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored miniz 3.1.2 raw deflate |
 | `.tar.bz2`, `.tbz`, `.tbz2` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored libbzip2 1.0.8 |
 | `.tar.xz`, `.txz` | No | Yes | Extract-only compatibility format | native TAR stream adapter over vendored XZ Embedded |
-| `.tar.lz`, `.tlz` | No | Yes | Extract-only compatibility format | native TAR stream adapter over lzip wrapper checks and vendored LZMA SDK 26.03 |
+| `.tar.lz`, `.tlz` | No | Yes | Extract-only compatibility format | native TAR stream adapter over lzip wrapper checks and vendored LZMA SDK 26.05 |
 | `.gz` | Yes | Yes | Single-file compatibility stream | vendored miniz 3.1.2 raw deflate |
 | `.bz2` | Yes | Yes | Single-file compatibility stream | vendored libbzip2 1.0.8 |
 | `.xz` | No | Yes | Extract-only single-file compatibility stream | vendored XZ Embedded |
-| `.lzma` | No | Yes | Extract-only single-file legacy LZMA-Alone stream | vendored LZMA SDK 26.03 decoder with FlitzZip path/publish pipeline |
-| `.lz` | No | Yes | Extract-only single-file lzip stream | native lzip wrapper checks over vendored LZMA SDK 26.03 decoder |
+| `.lzma` | No | Yes | Extract-only single-file legacy LZMA-Alone stream | vendored LZMA SDK 26.05 decoder with FlitzZip path/publish pipeline |
+| `.lz` | No | Yes | Extract-only single-file lzip stream | native lzip wrapper checks over vendored LZMA SDK 26.05 decoder |
 | `.Z` | Yes | Yes | Single-file compatibility stream | native bounded Unix Compress LZW adapter |
 | `.b64` | No | Yes | Extract-only single-file legacy transfer stream | native bounded Base64 adapter with strict padding and optional wrapper-header validation |
 | `.hqx` | No | Yes | Extract-only single-file legacy transfer stream | native bounded BinHex 4.0 adapter with strict HQX alphabet, RLE expansion, path-safe header names, and header/data/resource CRC validation |
@@ -209,7 +209,7 @@ already real archive/package formats in FlitzZip's matrix.
 | `.iso` | No | Yes | Extract-only compatibility format | native basic ISO 9660 adapter |
 | `.rpm` | No | Yes | Extract-only compatibility format | native RPM package adapter over CPIO payloads |
 | `.cab` | No | Yes | Extract-only compatibility format | native CAB metadata scanner plus Windows FDI |
-| `.7z` | No | Yes | Extract-only compatibility format | vendored LZMA SDK 26.03 ANSI-C decoder |
+| `.7z` | No | Yes | Extract-only compatibility format | vendored LZMA SDK 26.05 ANSI-C decoder |
 | `.lha`, `.lzh` | No | Yes | Extract-only compatibility format | vendored Lhasa 0.6.0 decoder with FlitzZip path/publish pipeline |
 | `.wim` | No | Yes | Extract-only standalone WIM compatibility format | bundled app-local wimlib 1.14.5 runtime with FlitzZip path/publish pipeline |
 | `.swm` | No | No | Recognized split-WIM part | rejected until multipart reference handling is implemented and tested |
@@ -418,7 +418,7 @@ legacy code-page semantics. Invalid UTF-8 and collisions between decoded names
 are rejected before publication.
 
 7z support is intentionally extract-only. FlitzZip embeds the public-domain
-LZMA SDK 26.03 ANSI-C decoder and does not call `7z.exe`, PowerShell,
+LZMA SDK 26.05 ANSI-C decoder and does not call `7z.exe`, PowerShell,
 or other host archive tools from product code. Archive filenames are converted
 from SDK UTF-16 metadata, normalized, validated archive-wide, and decoded twice:
 one validation pass verifies payload CRC/size before destination writes, then
@@ -714,7 +714,7 @@ flowchart TD
 
 ## 7z Security Contract
 
-The 7z path uses the official LZMA SDK 26.03 decoder in process:
+The 7z path uses the official LZMA SDK 26.05 decoder in process:
 
 1. Open the archive through a bounded SDK input buffer and a FlitzZip allocator
    budget.
@@ -1058,7 +1058,7 @@ flowchart TD
 
 ## LZMA Security Contract
 
-The LZMA path is in-process through the official LZMA SDK 26.03 decoder and
+The LZMA path is in-process through the official LZMA SDK 26.05 decoder and
 follows the same publication rules as other single-file stream adapters:
 
 1. `.lzma` accepts exactly one LZMA-Alone stream and derives one output file
@@ -1089,7 +1089,7 @@ flowchart TD
 ## Lzip Security Contract
 
 The lzip path is in-process through FlitzZip's lzip wrapper decoder over the
-vendored LZMA SDK 26.03 decoder:
+vendored LZMA SDK 26.05 decoder:
 
 1. `.lz` derives one safe output file from the archive filename.
 2. `.tar.lz`/`.tlz` routes through the native TAR scanner, so all TAR paths are

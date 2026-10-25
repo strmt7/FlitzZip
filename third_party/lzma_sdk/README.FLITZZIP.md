@@ -1,10 +1,10 @@
-# LZMA SDK 26.03
+# LZMA SDK 26.05
 
-FlitzZip vendors the minimal ANSI-C decoder subset from LZMA SDK 26.03.
+FlitzZip vendors the minimal ANSI-C decoder subset from LZMA SDK 26.05.
 
 - Upstream: <https://www.7-zip.org/sdk.html>
-- Archive: `lzma2603.7z` from the official `ip7z/7zip` release `26.03`.
-- SHA-256: `86c213f752520ab5325c310f50bef63ec344b56dd1c80b0246d06dc6cec953b2`
+- Archive: `lzma2605.7z` from the official `ip7z/7zip` release `26.05`.
+- SHA-256: `668fda469b7f584f246008cf28359c66ef98d65fafb3b22a52672eebe6970c28`
 - License: public domain, as stated in `DOC/lzma-sdk.txt` in the upstream archive.
   `LICENSE` is an exact text copy of that upstream file for build-time license
   notice generation on hosts that cannot extract `.7z` archives.
@@ -12,8 +12,8 @@ FlitzZip vendors the minimal ANSI-C decoder subset from LZMA SDK 26.03.
 Only the C decoder files needed by the `7zDec` path are copied into
 `third_party/lzma_sdk/C/`. FlitzZip does not ship or call the SDK's prebuilt
 executables. The original upstream archive and checksum are stored under
-`third_party/upstream/lzma-sdk/26.03/` for provenance. The older 26.01
-provenance archive remains unchanged.
+`third_party/upstream/lzma-sdk/26.05/` for provenance. Earlier provenance
+archives remain unchanged.
 
 FlitzZip uses this SDK for read-only `.7z`, `.lzma`, and `.lz` compatibility,
 including the `.tar.lz` stream adapter. Native `.flzip` GPU compression remains
@@ -36,6 +36,13 @@ FlitzZip byte-copy/fill helpers remain in the production subset. Unused
 upstream `Z7_ANALYZE_MODE` warning suppressions are not imported. Some unchanged
 files retain historical comment removal; the upstream archive contains the
 unmodified complete source and public-domain notices.
+
+The 26.05 production-subset comparison found no decoder algorithm changes:
+among 34 upstream-derived `C/` files, only the version header and constant
+64-bit byte-swap macros in `CpuArch.h` changed. Both are imported while
+preserving FlitzZip's byte-access adapter. The 26.05 release's other fixes are
+outside this extract-only subset; release notes do not establish additional
+security or performance claims for this decoder.
 
 `CpuArch.h` routes wire integer access through `CpuArchByteAccess.h`. This local
 component decodes and encodes explicit little/big-endian fields, including the

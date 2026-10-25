@@ -373,6 +373,17 @@ EXTERN_C_BEGIN
        | (((UInt32)(v) >>  8) & (UInt32)0xff00  ) \
        | (((UInt32)(v) >> 24)                   ))
 
+#define Z7_BSWAP64_CONST(v) \
+       ( ( ( (UInt64)(v)                           ) << 8 * 7 ) \
+       | ( ( (UInt64)(v) & ((UInt32)0xff << 8 * 1) ) << 8 * 5 ) \
+       | ( ( (UInt64)(v) & ((UInt32)0xff << 8 * 2) ) << 8 * 3 ) \
+       | ( ( (UInt64)(v) & ((UInt32)0xff << 8 * 3) ) << 8 * 1 ) \
+       | ( ( (UInt64)(v) >> 8 * 1 ) & ((UInt32)0xff << 8 * 3) ) \
+       | ( ( (UInt64)(v) >> 8 * 3 ) & ((UInt32)0xff << 8 * 2) ) \
+       | ( ( (UInt64)(v) >> 8 * 5 ) & ((UInt32)0xff << 8 * 1) ) \
+       | ( ( (UInt64)(v) >> 8 * 7 )                           ) \
+       )
+
 
 #if defined(_MSC_VER) && (_MSC_VER >= 1300)
 
@@ -416,16 +427,7 @@ EXTERN_C_BEGIN
 
 #define Z7_BSWAP32(v) Z7_BSWAP32_CONST(v)
 
-#define Z7_BSWAP64(v) \
-       ( ( ( (UInt64)(v)                           ) << 8 * 7 ) \
-       | ( ( (UInt64)(v) & ((UInt32)0xff << 8 * 1) ) << 8 * 5 ) \
-       | ( ( (UInt64)(v) & ((UInt32)0xff << 8 * 2) ) << 8 * 3 ) \
-       | ( ( (UInt64)(v) & ((UInt32)0xff << 8 * 3) ) << 8 * 1 ) \
-       | ( ( (UInt64)(v) >> 8 * 1 ) & ((UInt32)0xff << 8 * 3) ) \
-       | ( ( (UInt64)(v) >> 8 * 3 ) & ((UInt32)0xff << 8 * 2) ) \
-       | ( ( (UInt64)(v) >> 8 * 5 ) & ((UInt32)0xff << 8 * 1) ) \
-       | ( ( (UInt64)(v) >> 8 * 7 )                           ) \
-       )
+#define Z7_BSWAP64(v) Z7_BSWAP64_CONST(v)
 
 #endif
 
@@ -498,11 +500,15 @@ EXTERN_C_BEGIN
 #if defined(MY_CPU_BE)
 #define Z7_CONV_BE_TO_NATIVE_CONST32(v)  (v)
 #define Z7_CONV_LE_TO_NATIVE_CONST32(v)  Z7_BSWAP32_CONST(v)
+#define Z7_CONV_BE_TO_NATIVE_CONST64(v)  (v)
+#define Z7_CONV_LE_TO_NATIVE_CONST64(v)  Z7_BSWAP64_CONST(v)
 #define Z7_CONV_NATIVE_TO_BE_32(v)       (v)
 
 #elif defined(MY_CPU_LE)
 #define Z7_CONV_BE_TO_NATIVE_CONST32(v)  Z7_BSWAP32_CONST(v)
 #define Z7_CONV_LE_TO_NATIVE_CONST32(v)  (v)
+#define Z7_CONV_BE_TO_NATIVE_CONST64(v)  Z7_BSWAP64_CONST(v)
+#define Z7_CONV_LE_TO_NATIVE_CONST64(v)  (v)
 #define Z7_CONV_NATIVE_TO_BE_32(v)       Z7_BSWAP32(v)
 
 #else

@@ -336,6 +336,9 @@ reproducibility data just to reduce an alert count.
 
 DevSkim rule `DS173237` matches quoted hexadecimal strings of at least 30
 characters, including ordinary benchmark SHA-256 digests and commit IDs.
+The current 7-Zip comparator binary hashes have [individual provenance and
+execution review](benchmark-permissions.md#7-zip-2605-comparator-review);
+the metadata ledger binds each highlighted value to the complete manifest.
 Before marking an individual result false positive, verify the highlighted
 value and its structured field (`*_sha256` or `source_commit`) against the
 record producer; historical Silesia `md5` metadata and pinned SHA-256 corpus
