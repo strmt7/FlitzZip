@@ -123,6 +123,21 @@ one operation, and check literal output bytes from batches with identical archiv
 names. Shared native fixtures retain ownership of windows, threads and off-screen
 bitmaps; their message failures include the calling line and Windows error.
 
+Ordinary interaction regressions also check generated license headings, modal
+input isolation, scroll endpoints, fractional wheel input, drag cancellation and
+deferred button release. Queue tests compare literal rendered filenames against
+an independent row model, keep checkbox inclusion separate from row focus, and
+verify that removal and scrolling preserve the original files. Compression-form
+tests check displayed formats, output extensions, numeric effort boundaries and
+disabled controls; preferred-HIP policy must not offer Neutron star mode.
+
+An owned HWND can exist before its initialization finishes. The hidden-window
+fixture therefore uses its original creation deadline for the initial native
+acknowledgement, then keeps the shorter normal-input responsiveness deadline.
+Controlled native-window tests retain the premature-check rejection, bounded
+startup refusal and successful recovery. This separates test readiness from
+product responsiveness; it does not relax the latter or resolve unrelated hangs.
+
 `tools/native_coverage.py` verifies the native build receipt, all selected
 executables, their symbols and scenario drivers before and after collection.
 It retains process diagnostics locally within its 8 MiB output budget, separately
@@ -253,18 +268,71 @@ unmeasured code visible as separate questions.
 
 ### Batch Development
 
-Develop coverage in coherent batches from the retained uncovered-line inventory.
-Compile incrementally and run the new tests and their direct consumers while
-editing; investigate failures immediately. Repeat complete coverage collection
-after a substantial batch, rather than after each small assertion. Keep all
-planner-selected checks pending until the batch is qualified, and perform the
-accumulated final suites, hosted checks and release gates before acceptance.
-Focused development results never replace that final qualification.
+Develop coverage in substantial, coherent batches from the retained uncovered-line
+inventory. Define independent assertions and write the planned behavior cases
+before measuring the batch; test quantity is not evidence of coverage or quality.
+Compile the additions together and retain the result of each independently bounded
+case. Stop a cohort if process ownership, deadlines or resource containment fail;
+ordinary assertion failures remain visible for grouped diagnosis.
+
+Use the resulting gap inventory to prioritize the next test additions. Group
+exposed defects by their first violated contract for subsequent repair batches,
+retaining the original failures and regression assertions. Correct harness defects
+that prevent valid observation without weakening the product contract. A report
+from failing tests remains diagnostic evidence, never a passing qualification.
+Avoid complete recollection after individual assertions. Keep all planner-selected
+checks pending until the batch is qualified, and perform the accumulated final
+suites, hosted checks and release gates before acceptance. Focused development
+results never replace that final qualification.
+
+The canonical `Invoke-FlitzZipNativeTestSelection` executor in
+`tools/native_test_selection.ps1` supports an opt-in
+`-ContinueAfterAssertionFailure` development mode. It continues only when the
+native runner reports one exact selected case and one ordinary assertion-failure
+summary with the matching failure exit status. It retains each case's output,
+checks required backend readiness after a failure, and throws a combined failure
+at the end. Conflicting summaries, unexpected exits, missing cases and backend
+loss stop immediately. Default verification remains fail-fast. Run either mode
+inside the existing bounded process owner; the option does not add a timeout,
+retry work, broaden the selected cohort or replace receipt validation.
+The runner's complete failure result is not a root-cause classification: review
+its diagnostics before deciding whether the product, assertion or fixture failed.
 
 For focused native runs, use `^prefix_` to select a test-name prefix or `=full_name`
 for one exact case. Unadorned filters retain substring matching and can cross
 module boundaries: a format label may also occur inside another codec or mode
 name. Check the emitted selected names before interpreting the cohort's scope.
+
+### Research And Tool Adoption
+
+Current upstream documentation and the primary studies below inform test design.
+The research was checked with the repository's isolated Crawl4AI provider in
+October 2026; native captures, access results and content digests remain in local
+evidence. Current documentation is not proof that a different tool version is
+installed or qualified here. Retain the repository's pinned runtimes and avoid
+introducing a framework solely to reproduce a paper's workflow.
+
+| Decision | Primary evidence and application here |
+| --- | --- |
+| Separate execution gaps from bug-detection strength | [CoverUp, FSE 2025](https://doi.org/10.1145/3729398) supports coverage-guided contextual feedback, but its regression-generation premise can assume existing source is correct. Keep independently specified assertions; never ratify current behavior just to turn a test green. |
+| Check whether an assertion detects a relevant fault | [Meta's 2025 mutation-guided testing work](https://engineering.fb.com/2025/02/05/security/revolutionizing-software-testing-llm-powered-bug-catchers-meta-ach/) motivates targeted fault controls. Use isolated, reviewed mutations or original failing source; a killed mutant does not establish universal correctness. Inspect equivalent or irrelevant mutants instead of chasing their count. |
+| Distinguish state space from input size | [Hypothesis stateful testing](https://hypothesis.readthedocs.io/en/latest/stateful.html) and [RapidCheck](https://github.com/emil-e/rapidcheck) motivate bounded action sequences and shrinking. Model Queue membership, publication ownership and cancellation independently. Preserve the reduced input, operation order and generator identity, not only a random seed. |
+| Control the source of nondeterminism | [Hypothesis flaky failures](https://hypothesis.readthedocs.io/en/latest/tutorial/flaky.html) and [pytest's diagnosis guidance](https://docs.pytest.org/en/stable/explanation/flaky.html) distinguish global state, timing and lifetime causes. Own clocks, gates, temporary files and native handles; assert observable readiness and cleanup. A later pass does not explain a failure. |
+| Measure the right denominator | [Clang source coverage](https://clang.llvm.org/docs/SourceBasedCodeCoverage.html), [LLVM libc coverage](https://libc.llvm.org/dev/code_coverage.html) and [coverage.py branches](https://coverage.readthedocs.io/en/latest/branch.html) distinguish lines, branches and condition independence. Keep uninstrumented files, device instructions and unreachable compiler mappings explicit. Do not label line coverage as branch or MC/DC coverage. |
+| Use public behavior and readable data tables | [Google's behavior-focused tests](https://testing.googleblog.com/2013/08/testing-on-toilet-test-behavior-not.html), [GoogleTest parameterization](https://google.github.io/googletest/advanced.html) and [Google's unit-testing guidance](https://abseil.io/resources/swe-book/html/ch12.html) support stable consumer assertions and reusable fixtures. Keep the native test harness; apply the design principles without importing GoogleTest. |
+| Cover interactions without blind Cartesian expansion | [NIST combinatorial testing](https://csrc.nist.gov/Projects/automated-combinatorial-testing-for-software) motivates explicit interaction matrices. Review boundaries and known higher-order interactions separately; pairwise input coverage alone does not prove archive or concurrency correctness. No new combinatorial runtime is required. |
+| Preserve cheap feedback and necessary integration | [Google's larger-test guidance](https://abseil.io/resources/swe-book/html/ch14.html) and [Microsoft's testing strategy](https://learn.microsoft.com/en-us/azure/well-architected/operational-excellence/testing) motivate narrow contract tests plus real consumers. Use the changed-contract planner; do not import a fixed test-percentage quota or discard required tests because they are expensive. |
+| Keep repeat experiments distinct from qualification | [CTest repeat modes](https://cmake.org/cmake/help/latest/manual/ctest.1.html) distinguish failure hunting from retry-until-pass. Use a bounded repeat only to test a stated scheduling hypothesis. [Resource locks](https://cmake.org/cmake/help/latest/prop_test/RESOURCE_LOCK.html) illustrate exclusive ownership; retain this repository's serial GPU and shared-memory policy. |
+| Keep startup and live-input contracts distinct | Microsoft's [window lifecycle](https://learn.microsoft.com/en-us/windows/win32/winmsg/using-windows) and [SendMessageTimeout](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendmessagetimeoutw) document native creation and dispatch semantics. A discovered window handle is not a completed initialization. Test both bounded startup refusal and responsiveness after admission. |
+
+[Google's coverage guidance](https://testing.googleblog.com/2020/08/code-coverage-best-practices.html)
+supports using coverage as actionable evidence rather than a complete quality
+score. The maintained [Hypothesis changelog](https://hypothesis.readthedocs.io/en/latest/changelog.html)
+also documents generator and stateful-testing corrections as recently as October
+2026. Generator versions and replay inputs therefore belong in evidence;
+upgrading dependencies is a separate compatibility decision.
+
+### Behavioral Contract Examples
 
 Container admission tests compare plain and compressed readers at structural
 truncation boundaries, preserving existing destination bytes on rejection.

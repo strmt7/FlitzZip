@@ -84,7 +84,7 @@ class HiddenController final {
         const auto deadline = std::chrono::steady_clock::now() + 10s;
         do {
             if (const auto window = find_window()) {
-                send(window, WM_NULL);
+                wait_for_startup(window, deadline);
                 REQUIRE_TRUE(IsWindowVisible(window) == FALSE);
                 return window;
             }
@@ -94,6 +94,26 @@ class HiddenController final {
             }
         } while (std::chrono::steady_clock::now() < deadline);
         throw std::runtime_error("controller window creation deadline expired");
+    }
+
+    // Purpose: Await initialization within the existing creation budget, before applying ordinary input deadlines.
+    // Inputs: Newly discovered owned HWND and the original ten-second creation deadline. Outputs: Acknowledged
+    // native dispatch or a diagnostic failure; discovering an HWND alone does not establish message-pump readiness.
+    static void wait_for_startup(HWND window, std::chrono::steady_clock::time_point deadline) {
+        const auto remaining =
+            std::chrono::ceil<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+        if (remaining <= 0ms || remaining > 10s) {
+            throw std::runtime_error("controller window creation deadline is expired or invalid");
+        }
+        DWORD_PTR result = 0;
+        SetLastError(ERROR_SUCCESS);
+        // Initialization can legitimately own this thread before GetMessage starts. This is not the live-input test.
+        const auto sent =
+            SendMessageTimeoutW(window, WM_NULL, 0, 0, SMTO_BLOCK, static_cast<UINT>(remaining.count()), &result);
+        if (sent == 0) {
+            throw std::runtime_error("controller initialization dispatch failed: win32_error=" +
+                                     std::to_string(GetLastError()));
+        }
     }
 
     // Purpose: Confirm actual native teardown and propagate unexpected controller failure.

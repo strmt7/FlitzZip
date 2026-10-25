@@ -28,6 +28,11 @@ admission, tool provisioning, checkpoint intent and post-push acceptance.
 4. Run `tools/verify_changes.ps1` with the planned scope. Diagnose failures
    before expanding coverage. Reuse checks only while relevant source, recipe,
    tool and output identities still match.
+   For an explicitly selected development test batch, the canonical native
+   executor's `-ContinueAfterAssertionFailure` retains complete independent
+   failures for grouped diagnosis without retries or a passing summary. Keep its
+   owning process deadline, exact-name checks and backend admission intact.
+   Default qualification still stops on its first failure.
 5. Review the final diff and commit intentional source, documentation and
    configuration. Follow the operating guide's exact-commit workflow procedure;
    final acceptance covers the accumulated change range and required audit.
