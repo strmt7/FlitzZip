@@ -537,22 +537,22 @@ void MainWindow::clear_expired_progress() {
     }
 }
 
-// Purpose: Append one bounded log entry when enabled by the active log level.
-// Inputs: `severity` is the visible category and `message` is safe session text.
+// Purpose: Append one bounded log entry when enabled by the successfully applied logging policy.
+// Inputs: `severity` is the visible category and `message` is safe session text; drafts never change runtime policy.
 // Outputs: Adds a timestamped row, persists it to the per-user log file, prunes rows, and queues repaint.
 void MainWindow::append_log_entry(LogSeverity severity, std::string message) {
     std::chrono::system_clock::time_point timestamp{};
     int log_level = 0;
     {
         std::lock_guard lock(mutex_);
-        log_level = state_.log_level_index;
+        log_level = applied_settings_.log_level_index;
         if (!log_level_allows(log_level, severity)) {
             return;
         }
         timestamp = std::chrono::system_clock::now();
-        prune_log_entries(state_.logs, timestamp, state_.log_retention_index, kMaxLogEntries);
+        prune_log_entries(state_.logs, timestamp, applied_settings_.log_retention_index, kMaxLogEntries);
         state_.logs.push_back(LogEntry{.severity = severity, .message = message, .timestamp = timestamp});
-        prune_log_entries(state_.logs, timestamp, state_.log_retention_index, kMaxLogEntries);
+        prune_log_entries(state_.logs, timestamp, applied_settings_.log_retention_index, kMaxLogEntries);
     }
     try {
         append_log_file_entry(log_file_path(), severity, message, timestamp);

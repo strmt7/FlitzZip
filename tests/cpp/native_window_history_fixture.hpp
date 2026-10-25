@@ -62,8 +62,7 @@ class HistorySession final {
     // Purpose: Record a real saved Settings result. Inputs: Current draft. Outputs: One independently expected row.
     void settings() {
         click_native_navigation(ui.window, 6);
-        const auto form =
-            flitzzip::app::make_settings_layout(native_content_rect(ui.window), GetDpiForWindow(ui.window));
+        const auto form = native_settings_layout(ui.window);
         click_native_control(ui.window, form.apply);
         rows.push_back({L"Settings", L"Settings", true});
     }

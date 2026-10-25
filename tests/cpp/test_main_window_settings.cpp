@@ -6,12 +6,6 @@ namespace {
 using namespace flitzzip_test::native_window;
 using namespace std::chrono_literals;
 
-// Purpose: Locate ordinary Settings controls through the current DPI-aware public form layout.
-// Inputs: Owned hidden window. Outputs: Physical control rectangles independent of the host's display dimensions.
-flitzzip::app::SettingsLayout native_settings_layout(HWND window) {
-    return flitzzip::app::make_settings_layout(native_content_rect(window), GetDpiForWindow(window));
-}
-
 // Purpose: Observe the persisted file independently of the product's settings parser.
 // Inputs: The fixture-owned, bounded settings file. Outputs: Exact serialized bytes with the stream already closed.
 std::string current_settings_bytes() {
@@ -105,10 +99,7 @@ TEST_CASE(main_window_settings_failed_save_preserves_applied_state_and_recovers)
     click_native_control(window, layout.show_operation_summary);
     require_native_toggle(window, frame.dc(), layout.show_operation_summary, true);
     {
-        flitzzip::windows_detail::HandleOwner held(CreateFileW(flitzzip::app::settings_file_path().c_str(),
-                                                               GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                                                               FILE_ATTRIBUTE_NORMAL, nullptr));
-        REQUIRE_TRUE(held.get() != INVALID_HANDLE_VALUE);
+        auto held = hold_native_replacement_target(flitzzip::app::settings_file_path());
         click_native_control(window, layout.apply);
         REQUIRE_EQ(current_settings_bytes(), original);
         require_native_toggle(window, frame.dc(), layout.show_operation_summary, true);

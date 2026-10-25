@@ -14,7 +14,7 @@ TEST_CASE(main_window_job_summary_success_resets_filters_and_selects_result) {
     s.complete();
     s.require_summary();
     s.more_input();
-    s.require_log_count("Operation summary shown: Compress", 1);
+    require_native_log_count("Operation summary shown: Compress", 1);
     s.finish();
 }
 
@@ -60,7 +60,7 @@ TEST_CASE(main_window_job_active_navigation_preserves_applied_settings) {
     }
     s.complete();
     require_native_navigation_selection(s.history.ui.window, s.history.ui.frame.dc(), 1);
-    s.require_log_count("Operation summary shown: Compress", 0);
+    require_native_log_count("Operation summary shown: Compress", 0);
     s.require_destination(s.history.ui.fixture.output, 0);
     s.finish();
 }
@@ -73,7 +73,7 @@ TEST_CASE(main_window_job_summary_enabled_next_job_selects_new_result) {
     s.start();
     s.complete();
     require_native_navigation_selection(s.history.ui.window, s.history.ui.frame.dc(), 1);
-    s.require_log_count("Operation summary shown: Compress", 0);
+    require_native_log_count("Operation summary shown: Compress", 0);
     s.preferences(true, false);
     s.history.compress(true);
     s.settle();
@@ -94,7 +94,7 @@ TEST_CASE(main_window_job_summary_disabled_next_job_does_not_replay_selection) {
     s.history.compress(true);
     s.settle();
     require_native_navigation_selection(s.history.ui.window, s.history.ui.frame.dc(), 1);
-    s.require_log_count("Operation summary shown: Compress", 1);
+    require_native_log_count("Operation summary shown: Compress", 1);
     s.finish();
 }
 
@@ -107,7 +107,7 @@ TEST_CASE(main_window_job_unapplied_preferences_do_not_change_admission) {
     s.start();
     s.complete();
     require_native_navigation_selection(s.history.ui.window, s.history.ui.frame.dc(), 1);
-    s.require_log_count("Operation summary shown: Compress", 0);
+    require_native_log_count("Operation summary shown: Compress", 0);
     s.require_destination(s.history.ui.fixture.output, 0);
     s.preferences(false, false, false);
     s.finish();
@@ -230,7 +230,7 @@ TEST_CASE(main_window_job_summary_and_destination_are_independent_one_shot_actio
     s.require_summary();
     s.require_destination(s.history.ui.fixture.output, 1);
     s.more_input();
-    s.require_log_count("Operation summary shown: Compress", 1);
+    require_native_log_count("Operation summary shown: Compress", 1);
     s.require_destination(s.history.ui.fixture.output, 1);
     s.finish();
 }

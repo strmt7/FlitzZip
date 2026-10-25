@@ -27,11 +27,11 @@ namespace flitzzip::app {
 void MainWindow::initialize_settings() {
     try {
         ensure_app_storage();
-        applied_settings_ = read_settings_file(settings_read_path(settings_file_path()));
+        const auto loaded = read_settings_file(settings_read_path(settings_file_path()));
         {
             std::lock_guard lock(mutex_);
-            apply_settings_to_state(applied_settings_, state_);
-            if (applied_settings_.compression_level_index == state_.compression_level_index) {
+            publish_applied_settings_locked(loaded);
+            if (loaded.compression_level_index == state_.compression_level_index) {
                 state_.status = "Settings loaded";
             }
             applied_settings_ = settings_from_state(state_);
@@ -48,6 +48,16 @@ void MainWindow::initialize_settings() {
     }
 }
 
+// Purpose: Publish one admitted settings snapshot without exposing partially applied runtime logging policy.
+// Inputs: Validated settings; the window thread owns mutex_ after successful persistence or startup admission.
+// Outputs: Updates the applied snapshot and draft, pruning existing rows only with the admitted retention policy.
+void MainWindow::publish_applied_settings_locked(const AppSettings& settings) {
+    applied_settings_ = settings;
+    apply_settings_to_state(applied_settings_, state_);
+    prune_log_entries(state_.logs, std::chrono::system_clock::now(), applied_settings_.log_retention_index,
+                      kMaxLogEntries);
+}
+
 // Purpose: Save the current Settings draft as the applied snapshot.
 // Inputs: None; reads Settings fields from synchronized UI state.
 // Outputs: Writes the per-user config atomically, updates the applied snapshot and records its UTF-8 path.
@@ -58,10 +68,9 @@ void MainWindow::apply_settings() {
         draft = settings_from_state(state_);
     }
     write_settings_file(settings_file_path(), draft);
-    applied_settings_ = draft;
     {
         std::lock_guard lock(mutex_);
-        apply_settings_to_state(applied_settings_, state_);
+        publish_applied_settings_locked(draft);
         state_.status = "Settings applied";
     }
     reset_performance_timer(applied_settings_.performance_update_seconds);
@@ -96,10 +105,9 @@ void MainWindow::revert_settings_draft() {
 void MainWindow::reset_settings_to_defaults() {
     const AppSettings defaults;
     write_settings_file(settings_file_path(), defaults);
-    applied_settings_ = defaults;
     {
         std::lock_guard lock(mutex_);
-        apply_settings_to_state(applied_settings_, state_);
+        publish_applied_settings_locked(defaults);
         state_.destination_directory.clear();
         normalize_queue_selection_locked();
         state_.selected_queue_index = state_.queued_paths.empty() ? -1 : 0;

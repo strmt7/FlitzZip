@@ -211,6 +211,12 @@ inline flitzzip::app::CompressLayout native_compression_layout(HWND window) {
     return flitzzip::app::make_compress_layout(native_content_rect(window), GetDpiForWindow(window));
 }
 
+// Purpose: Locate Settings through the public DPI layout shared by drawing and hit testing.
+// Inputs: Owned HWND. Outputs: Complete physical control rectangles without private model access.
+inline flitzzip::app::SettingsLayout native_settings_layout(HWND window) {
+    return flitzzip::app::make_settings_layout(native_content_rect(window), GetDpiForWindow(window));
+}
+
 // Purpose: Deliver native input to one owned point without moving the desktop cursor.
 // Inputs: Live HWND and client point. Outputs: Acknowledged press/release messages.
 inline void click_native_point(HWND window, POINT center) {
@@ -241,6 +247,16 @@ inline void require_native_toggle(HWND window, HDC frame, const RECT& rect, bool
         "Settings switch did not render its expected native state");
 }
 
+// Purpose: Refuse replacement through actual Windows sharing while preserving an existing fixture file.
+// Inputs: Owned regular file. Outputs: Adopted no-delete-sharing handle; no file content is changed.
+inline flitzzip::windows_detail::HandleOwner hold_native_replacement_target(const std::filesystem::path& path) {
+    flitzzip::windows_detail::HandleOwner held(CreateFileW(flitzzip::windows_api_path(path).c_str(), GENERIC_READ,
+                                                           FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                                           FILE_ATTRIBUTE_NORMAL, nullptr));
+    REQUIRE_TRUE(held.get() != INVALID_HANDLE_VALUE);
+    return held;
+}
+
 // Purpose: Induce real Windows publication refusal without replacing the writer or consuming host resources.
 // Inputs: Owned temporary target. Outputs: Sentinel file and an adopted no-delete-sharing handle; source unchanged.
 inline flitzzip::windows_detail::HandleOwner hold_native_publication_target(const std::filesystem::path& path) {
@@ -249,11 +265,7 @@ inline flitzzip::windows_detail::HandleOwner hold_native_publication_target(cons
         output << "preserve existing destination\n";
         REQUIRE_TRUE(output.good());
     }
-    flitzzip::windows_detail::HandleOwner held(CreateFileW(flitzzip::windows_api_path(path).c_str(), GENERIC_READ,
-                                                           FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                                                           FILE_ATTRIBUTE_NORMAL, nullptr));
-    REQUIRE_TRUE(held.get() != INVALID_HANDLE_VALUE);
-    return held;
+    return hold_native_replacement_target(path);
 }
 
 class ControllerFixture final {
@@ -450,6 +462,21 @@ inline std::string read_native_fixture(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     REQUIRE_TRUE(input.good());
     return std::string(std::istreambuf_iterator<char>(input), {});
+}
+
+// Purpose: Check exact dispatch counts in the fixture's log after acknowledged native events.
+// Inputs: Nonempty literal marker and count. Outputs: Exact occurrences with bounded, useful failure evidence.
+inline void require_native_log_count(std::string_view marker, std::size_t expected) {
+    REQUIRE_TRUE(!marker.empty());
+    const auto text = read_native_fixture(flitzzip::app::log_file_path());
+    std::size_t count = 0;
+    for (auto at = text.find(marker); at != std::string::npos; at = text.find(marker, at + marker.size())) {
+        ++count;
+    }
+    if (count != expected) {
+        throw std::runtime_error("Native log count for '" + std::string(marker) +
+                                 "': expected=" + std::to_string(expected) + " actual=" + std::to_string(count));
+    }
 }
 
 // Purpose: Derive the first Queue size-cell from the public layout constants and the untouched column defaults.
