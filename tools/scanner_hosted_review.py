@@ -78,6 +78,12 @@ CURRENT_CONFIGURATION = (
     "tools/devskim_scope.py",
     "tools/devskim_report.py",
 )
+SEMGREP_CONFIGURATION = (
+    ".github/requirements/requirements-semgrep-linux.txt",
+    ".github/requirements/semgrep-distribution.json",
+    ".github/workflows/security-code-scanning.yml",
+    "tools/scanner_hosted_review.py",
+)
 
 
 # Purpose: Reject ambiguous or redirected review input names before filesystem or Git access.
@@ -136,10 +142,14 @@ def read_current_reviews(payload: bytes) -> list[dict[str, str]]:
                 raise ValueError("Invalid reviewed alert or location")
         if (int(row["end_line"]), int(row["end_column"])) < (int(row["start_line"]), int(row["start_column"])):
             raise ValueError("Reversed reviewed location")
-        if row["tool"] not in ("CodeQL", "devskim") or any(
+        if row["tool"] not in ("CodeQL", "devskim", "Semgrep OSS") or any(
             re.fullmatch(r"[0-9a-f]{64}", row[key]) is None for key in ("input_sha256", "context_sha256")
         ):
             raise ValueError("Invalid reviewed scanner or digest")
+        if row["tool"] == "Semgrep OSS" and (
+            row["category"] != "semgrep" or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", row["version"]) is None
+        ):
+            raise ValueError("Invalid reviewed Semgrep analysis identity")
         review_path(row["path"])
         context = row["context_paths"].split("|")
         if len(context) > 64 or context != sorted(set(context)):
@@ -150,7 +160,8 @@ def read_current_reviews(payload: bytes) -> list[dict[str, str]]:
         review_path(evidence)
         if not separator or anchor != "alert-" + row["alert"] or evidence not in context:
             raise ValueError("Individual false-positive evidence is missing")
-        if not set(CURRENT_CONFIGURATION).issubset(context) or row["path"] not in context:
+        required = SEMGREP_CONFIGURATION if row["tool"] == "Semgrep OSS" else CURRENT_CONFIGURATION
+        if not set(required).issubset(context) or row["path"] not in context:
             raise ValueError("False-positive review omits source or scanner configuration")
         incident = (row["repository"], int(row["alert"]))
         identity = (*incident, row["category"])

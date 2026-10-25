@@ -490,6 +490,48 @@ class CurrentFalsePositiveTests(unittest.TestCase):
             self.assertEqual(alerts, before)
         self.assertEqual(self.match(repository="another/repository"), [])
 
+    # Purpose: Admit only a reviewed Semgrep report with its scanner and source context.
+    # Inputs: Committed fixture, then rule/version/source/configuration mutations. Outputs: Exact identity or refusal.
+    def test_semgrep_review_requires_complete_scanner_and_source_identity(self):
+        source = self.root / "src/example.py"
+        source.write_bytes(b"from urllib.request import urlopen\n")
+        self.context = sorted((*review.SEMGREP_CONFIGURATION, "src/example.py", "docs/review.md"))
+        for name in review.SEMGREP_CONFIGURATION:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"scanner fixture\n")
+        self.row.update(
+            tool="Semgrep OSS",
+            version="1.181.0",
+            category="semgrep",
+            path="src/example.py",
+            rule="python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected",
+            context_paths="|".join(self.context),
+        )
+        self.alert.update(tool={"name": "Semgrep OSS", "version": "1.181.0"}, rule={"id": self.row["rule"]})
+        self.alert["most_recent_instance"].update(category="semgrep")
+        self.alert["most_recent_instance"]["location"]["path"] = self.row["path"]
+        self.write_policy()
+        self.commit = self.save_commit()
+        self.alert["most_recent_instance"]["commit_sha"] = self.commit
+        hashes = {name: hashlib.sha256((self.root / name).read_bytes()).hexdigest() for name in self.context}
+        self.assertEqual(self.row["input_sha256"], hashes[self.row["path"]])
+        self.assertEqual(self.row["context_sha256"], hashlib.sha256(review.canonical(hashes)).hexdigest())
+        self.assertIn("### Alert 17", (self.root / "docs/review.md").read_text(encoding="utf-8"))
+        self.assertTrue(review.current_context_matches(self.row, lambda name: (self.root / name).read_bytes()))
+        self.assertEqual(self.match(), [17])
+        self.alert["tool"]["version"] = "1.182.0"
+        self.assertEqual(self.match(), [])
+        self.alert["tool"]["version"] = "1.181.0"
+        self.row["context_paths"] = "|".join(name for name in self.context if name != review.SEMGREP_CONFIGURATION[0])
+        self.write_policy()
+        with self.assertRaisesRegex(ValueError, "omits source or scanner"):
+            review.read_current_reviews((self.root / review.CURRENT_POLICY).read_bytes())
+        self.row["context_paths"] = "|".join(self.context)
+        self.write_policy()
+        source.write_bytes(b"changed source\n")
+        self.assertEqual(self.match(commit=self.save_commit()), [])
+
     # Purpose: Prove scanner, location, rule and incident identity changes cannot inherit a review.
     # Inputs: Independent one-field mutations including malformed numeric coordinates.
     # Outputs: Every different finding remains unadmitted; duplicate reports fail closed.

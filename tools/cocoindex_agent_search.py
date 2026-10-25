@@ -27,7 +27,7 @@ else:
     from agent_context import relative_source_path, safe_path
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "0.2.41"
+VERSION = "0.2.42"
 MODEL = "Snowflake/snowflake-arctic-embed-xs"
 INDEX_SUFFIXES = (
     ".py",
@@ -94,7 +94,12 @@ def home() -> Path:
 def paths(base: Path, repo: Path = ROOT) -> tuple[Path, Path, Path, Path]:
     """Purpose: Scope tool, mirror, and runtime state. Inputs: base/repo. Outputs: four external paths."""
     digest = hashlib.sha256(str(repo.resolve()).encode("utf-8")).hexdigest()[:16]
-    return (base / "venv", base / "mirrors" / digest, base / "config" / digest, base / "runtime" / digest)
+    return (
+        base / f"venv-{VERSION}",
+        base / "mirrors" / digest,
+        base / "config" / digest,
+        base / "runtime" / VERSION / digest,
+    )
 
 
 def ccc_path(venv: Path) -> Path:
@@ -355,7 +360,8 @@ def search(base: Path, query: str, limit: int, repo: Path = ROOT, path: str | No
     """Purpose: Route a conceptual query. Inputs: fresh index/query/limit/path. Outputs: bounded hints."""
     if path and any(mark in path for mark in "*?["):
         raise ValueError(
-            "wildcard path filters are unreliable in CocoIndex Code 0.2.41; search broadly, then validate files with rg"
+            "wildcard path filters are outside this wrapper's exact-path contract; "
+            "search broadly, then validate files with rg"
         )
     venv, mirror, config, runtime = paths(base, repo)
     marker = base / "active" / (mirror.name + ".json")
