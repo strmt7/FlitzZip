@@ -4,6 +4,7 @@
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
+#include "core/windows_handle.hpp"
 #include "lha/lha_adapter.hpp"
 
 #include <array>
@@ -166,6 +167,64 @@ std::vector<unsigned char> stored_lha_member(unsigned char level, bool wide = fa
     return bytes;
 }
 
+// Purpose: Independently frame stored level-zero members with arbitrary bounded payloads for real read failures.
+// Inputs: Exactly eight ASCII name bytes and at most 8160 payload bytes. Outputs: Header, bitwise ARC CRC and payload.
+std::vector<unsigned char> read_failure_lha_member(std::string_view name, std::string_view payload) {
+    REQUIRE_EQ(name.size(), 8U);
+    REQUIRE_TRUE(payload.size() <= 8160U);
+    std::uint16_t crc = 0;
+    for (const auto value : payload) {
+        crc ^= static_cast<unsigned char>(value);
+        for (unsigned bit = 0; bit < 8U; ++bit)
+            crc = static_cast<std::uint16_t>((crc >> 1U) ^ ((crc & 1U) ? 0xA001U : 0U));
+    }
+    std::vector<unsigned char> bytes(32, 0);
+    bytes[0] = 30;
+    constexpr std::string_view method = "-lh0-";
+    std::copy(method.begin(), method.end(), bytes.begin() + 2);
+    for (unsigned shift = 0; shift < 4U; ++shift) {
+        bytes[7U + shift] = bytes[11U + shift] = static_cast<unsigned char>((payload.size() >> (shift * 8U)) & 255U);
+    }
+    bytes[19] = 0x20;
+    bytes[21] = 8;
+    std::copy(name.begin(), name.end(), bytes.begin() + 22);
+    bytes[30] = static_cast<unsigned char>(crc & 255U);
+    bytes[31] = static_cast<unsigned char>(crc >> 8U);
+    unsigned checksum = 0;
+    for (std::size_t index = 2; index < bytes.size(); ++index)
+        checksum += bytes[index];
+    bytes[1] = static_cast<unsigned char>(checksum & 255U);
+    bytes.insert(bytes.end(), payload.begin(), payload.end());
+    return bytes;
+}
+
+class LhaFixtureReadLock {
+  public:
+    // Purpose: Refuse a later archive read on a separate compatible handle without mutating source bytes.
+    // Inputs: Owned archive path and bounded byte offset. Outputs: An immediate one-byte lock or a test failure.
+    LhaFixtureReadLock(const std::filesystem::path& path, DWORD offset)
+        : handle_(CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)) {
+        REQUIRE_TRUE(handle_ && handle_.get() != INVALID_HANDLE_VALUE);
+        position_.Offset = offset;
+        locked_ = LockFileEx(handle_.get(), LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &position_) !=
+                  FALSE;
+        REQUIRE_TRUE(locked_);
+    }
+
+    // Purpose: Release the owned read refusal on all assertion and extraction exits.
+    // Inputs: The owned handle only. Outputs: Unlocks before the handle owner closes; never throws during unwinding.
+    ~LhaFixtureReadLock() {
+        if (locked_)
+            UnlockFileEx(handle_.get(), 0, 1, 0, &position_);
+    }
+
+  private:
+    flitzzip::windows_detail::HandleOwner handle_;
+    OVERLAPPED position_{};
+    bool locked_ = false;
+};
+
 // Purpose: Replace name/path extensions in the independently framed level-two stored member.
 // Inputs: Bounded filename and optional raw directory bytes. Outputs: Member with known payload/CRC and exact lengths.
 std::vector<unsigned char> named_level_two_lha_member(std::string_view name, std::string_view directory = {}) {
@@ -310,6 +369,71 @@ TEST_CASE(lha_extraction_reads_nested_payload) {
     REQUIRE_TRUE(!stats.gpu_used);
     REQUIRE_EQ(read_text_file(output / "subdir" / "subdir2" / "hello.txt"), "hello world\n");
     flitzzip_test::export_compat_fixture(archive, output);
+}
+
+// Purpose: Reject a real late native read failure before publishing an apparently valid archive prefix.
+// Inputs: Independent two-member stored archive, unlocked controls and a one-byte second-header read lock.
+// Outputs: Both overwrite policies reject without progress or writes; source ownership releases and exact recovery
+// succeeds.
+TEST_CASE(lha_extraction_rejects_native_read_failure_before_publication) {
+    const auto root = test_temp_dir("lha-native-read-failure");
+    const auto archive = root / "two-members.lha";
+    const std::string first(8160, 'A');
+    constexpr std::string_view second = "hello world\n";
+    auto bytes = read_failure_lha_member("lead.bin", first);
+    const auto tail = read_failure_lha_member("tail.txt", second);
+    REQUIRE_EQ(bytes.size(), 8192U);
+    REQUIRE_EQ(tail[30], 0x78U);
+    REQUIRE_EQ(tail[31], 0x97U);
+    bytes.insert(bytes.end(), tail.begin(), tail.end());
+    bytes.push_back(0);
+    REQUIRE_EQ(bytes.size(), 8237U);
+    write_lha_fixture(archive, bytes);
+    const auto control = root / "control";
+    REQUIRE_EQ(flitzzip::extract_lha(archive, control, false).entries, 2U);
+    REQUIRE_EQ(read_text_file(control / "lead.bin"), first);
+    REQUIRE_EQ(read_text_file(control / "tail.txt"), second);
+    for (const bool overwrite : {false, true}) {
+        const auto output = root / (overwrite ? "existing" : "new");
+        if (overwrite) {
+            std::filesystem::create_directories(output);
+            std::ofstream(output / "lead.bin", std::ios::binary) << "caller original";
+            std::ofstream(output / "sentinel.txt", std::ios::binary) << "unrelated owner";
+        }
+        std::size_t progress_calls = 0;
+        bool rejected = false;
+        {
+            const LhaFixtureReadLock lock(archive, 8192);
+            try {
+                static_cast<void>(
+                    flitzzip::extract_lha(archive, output, overwrite, [&](const auto&) { ++progress_calls; }));
+            } catch (const flitzzip::ArchiveError&) {
+                rejected = true;
+            }
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(progress_calls, 0U);
+        if (overwrite) {
+            REQUIRE_EQ(read_text_file(output / "lead.bin"), "caller original");
+            REQUIRE_EQ(read_text_file(output / "sentinel.txt"), "unrelated owner");
+            REQUIRE_EQ(count_regular_files(output), 2U);
+        } else {
+            REQUIRE_TRUE(!std::filesystem::exists(output));
+        }
+        {
+            const flitzzip::windows_detail::HandleOwner owner(
+                CreateFileW(archive.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+            REQUIRE_TRUE(owner && owner.get() != INVALID_HANDLE_VALUE);
+        }
+        const auto source = read_text_file(archive);
+        REQUIRE_EQ(source.size(), bytes.size());
+        REQUIRE_TRUE(std::equal(bytes.begin(), bytes.end(), source.begin(), [](unsigned char expected, char actual) {
+            return expected == static_cast<unsigned char>(actual);
+        }));
+        REQUIRE_EQ(flitzzip::extract_lha(archive, output, overwrite).entries, 2U);
+        REQUIRE_EQ(read_text_file(output / "lead.bin"), first);
+        REQUIRE_EQ(read_text_file(output / "tail.txt"), second);
+    }
 }
 
 // Purpose: Qualify LHA name/path bounds before CRC work or destination publication with independently framed names.

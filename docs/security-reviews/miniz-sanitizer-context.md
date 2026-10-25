@@ -38,6 +38,10 @@ likewise add only native test translation units. They consume the public GPU
 decoder and LZ4 interfaces; their CMake registration changes no allocator target,
 compile definition, sanitizer recipe or miniz source. Their behavioral
 qualification is separate from this review of the unchanged allocator context.
+The Windows compression-stream I/O test translation unit similarly adds only
+test consumers. Its byte-range locks affect owned Gzip and Bzip2 fixtures;
+registration changes no miniz source, target, allocator definition or sanitizer
+recipe. It does not qualify the sanitizer allocator by exercising those codecs.
 
 The optional development HIP coverage manifest replaces only the five kernel
 object inputs. Its dynamic CRT setting applies only to the private HIP DLL;

@@ -1,28 +1,29 @@
-# CodeQL review after two test-registration additions
+# CodeQL review of native test registration and LHA context ownership
 
 The maintainer's standing authorization, “Fix defects; allow exact proven
 false-positive dispositions,” applies individually to the four decisions below.
-All eight original category rows matched their complete normalized source and
-bound HEAD context before review. Source, rule, scanner version, location and
-existing callers remain unchanged; old approval is identity evidence, not a
+The original category rows matched their complete normalized source and
+bound HEAD context before review. Reported source, rule, scanner version and
+location remain unchanged; the LHA callback consumer changes as described below.
+Old approval is identity evidence, not a
 transferable safety conclusion. Canonical finding rationales remain linked
 under each individual anchor.
 
 ## Changed build context and current consumers
 
-The sole changed original bound context is CMakeLists.txt: it adds
-test_gpu_huffman_decode.cpp and test_gpu_neutron_writer.cpp to the existing
-flitzzip_tests source list, adding their object files to that target. Existing
+The test registration includes test_gpu_huffman_decode.cpp,
+test_gpu_neutron_writer.cpp and the Windows-only test_compression_stream_io.cpp
+in the existing test object target. Existing
 compiler flags, preprocessor definitions, target properties, library links,
-reported sources, direct callers, registration macro and scanner recipes are
+reported sources, registration macro and scanner recipes are
 unchanged. The source-list additions do not remove or replace these four
 consumers. No concrete dependence of the reported local numeric, callback,
-reachability or induction invariants on the unrelated GPU fixture bodies was
+reachability or induction invariants on the unrelated fixture bodies was
 found. Every original context path remains bound, including CMakeLists.txt;
-only this context document is added. Other decisions and shared evidence are
-unchanged by this renewal.
+the LHA consumer and lifetime review are also bound in their changed entirety.
+Other decisions and shared evidence remain unchanged.
 
-The current required-HIP Release build passed all five exact direct consumers
+The preceding required-HIP Release qualification passed all five exact direct consumers
 listed under the individual decisions below.
 Build receipt: `21634c97bbf26099caa0e0084f52517111db6f3dee3d8533f62e3c6ba3be586a`; executable-input digest:
 `5ed12d98519470e9d8a90802f7e2dac54d79dc83cf5ebd3fbf11b04bb17e47c6`. Root retained complete bounded process results and
@@ -57,8 +58,12 @@ Current exact Release consumer(s):
 85:2–85:25.
 
 lha_input_stream_new borrows its opaque context until stream release.
-Production LhaReaderSession frees reader and stream before its owned ifstream;
-failure unwinding preserves that order. Test inputs outlive their stream
+Production LhaReaderSession frees reader and stream before its heap-owned
+LhaInputContext and the ifstream inside it. The outer pinned source outlives
+both synchronous sessions; the context also holds the sealed byte extent,
+delivered count and sticky error state. The callback never throws through C;
+native refusal before the sealed end is an error even when the CRT sets EOF.
+Failure unwinding preserves that order. Test inputs outlive their stream
 owners. The direct callback regression resets the stream while its stack
 context is live and observes exactly one original close callback. Callback-
 table copying is a separate repaired contract and does not change context
@@ -67,6 +72,7 @@ ownership.
 Current exact Release consumer(s):
 
 - `=lha_stream_owns_callback_configuration`
+- `=lha_extraction_rejects_native_read_failure_before_publication`
 
 ### Alert 8422
 

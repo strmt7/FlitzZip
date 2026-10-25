@@ -727,3 +727,149 @@ TEST_CASE(wim_missing_external_resource_rejects_before_staging_and_recovers) {
     REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
                2);
 }
+
+namespace {
+
+struct WimFixtureNameObservation {
+    std::wstring_view expected;
+    unsigned directories = 0;
+    unsigned payloads = 0;
+    unsigned ordinary_files = 0;
+};
+
+// Purpose: Compare library-owned, terminated filename units without normalizing or allocating.
+// Inputs: Documented wimlib filename and the independently selected expected units.
+// Outputs: True only for the complete exact filename, including any unpaired surrogate.
+bool wim_fixture_name_equals(const wchar_t* actual, std::wstring_view expected) noexcept {
+    if (actual == nullptr)
+        return false;
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        if (actual[index] == L'\0' || actual[index] != expected[index])
+            return false;
+    }
+    return actual[expected.size()] == L'\0';
+}
+
+// Purpose: Independently observe the written WIM's native filename units and ordinary tree shape.
+// Inputs: Real pinned-library entries and a caller-owned observation; root is excluded by iteration flags.
+// Outputs: Counts the exact directory, ordinary file and renamed payload; never unwinds through the C callback.
+int observe_wim_fixture_names(const wimlib_dir_entry* entry, void* context) noexcept {
+    auto* observation = static_cast<WimFixtureNameObservation*>(context);
+    if (entry == nullptr || observation == nullptr)
+        return 1;
+    if ((entry->attributes & WIMLIB_FILE_ATTRIBUTE_DIRECTORY) != 0U) {
+        if (entry->depth != 1U || !wim_fixture_name_equals(entry->filename, L"ordinary"))
+            return 1;
+        ++observation->directories;
+    } else {
+        if (entry->depth != 2U || entry->num_named_streams != 0U)
+            return 1;
+        if (wim_fixture_name_equals(entry->filename, observation->expected))
+            ++observation->payloads;
+        else if (wim_fixture_name_equals(entry->filename, L"keep.txt"))
+            ++observation->ordinary_files;
+        else
+            return 1;
+    }
+    return 0;
+}
+
+// Purpose: Build a tiny integrity-checked WIM using the documented native-name rename operation.
+// Inputs: Existing ordinary source tree, output archive and exact destination filename code units.
+// Outputs: Writes through supported independent APIs, then proves the raw name survived a real reopen.
+void write_wim_native_name_fixture(const std::filesystem::path& source, const std::filesystem::path& archive,
+                                   std::wstring_view name) {
+    const auto module = GetModuleHandleW(L"libwim-15.dll");
+    REQUIRE_TRUE(module != nullptr);
+    const auto create = require_wim_export<decltype(&wimlib_create_new_wim)>(module, "wimlib_create_new_wim");
+    const auto add = require_wim_export<decltype(&wimlib_add_image)>(module, "wimlib_add_image");
+    const auto rename = require_wim_export<decltype(&wimlib_rename_path)>(module, "wimlib_rename_path");
+    const auto write = require_wim_export<decltype(&wimlib_write)>(module, "wimlib_write");
+    const auto release = require_wim_export<decltype(&wimlib_free)>(module, "wimlib_free");
+    WIMStruct* raw = nullptr;
+    const int status = create(WIMLIB_COMPRESSION_TYPE_NONE, &raw);
+    WimFixtureOwner owner(raw, release);
+    REQUIRE_EQ(status, 0);
+    REQUIRE_TRUE(owner != nullptr);
+    REQUIRE_EQ(add(owner.get(), source.c_str(), L"native-name", nullptr,
+                   WIMLIB_ADD_FLAG_NO_ACLS | WIMLIB_ADD_FLAG_NO_UNSUPPORTED_EXCLUDE),
+               0);
+    const auto renamed = std::wstring(L"/ordinary/") + std::wstring(name);
+    REQUIRE_EQ(rename(owner.get(), 1, L"/payload.txt", renamed.c_str()), 0);
+    REQUIRE_EQ(write(owner.get(), archive.c_str(), WIMLIB_ALL_IMAGES, WIMLIB_WRITE_FLAG_CHECK_INTEGRITY, 1U), 0);
+    owner.reset();
+    REQUIRE_TRUE(std::filesystem::file_size(archive) < 1024U * 1024U);
+    const auto reopened = open_wim_resource_fixture(archive);
+    const auto iterate = require_wim_export<decltype(&wimlib_iterate_dir_tree)>(module, "wimlib_iterate_dir_tree");
+    WimFixtureNameObservation observation{name};
+    constexpr int flags = WIMLIB_ITERATE_DIR_TREE_FLAG_CHILDREN | WIMLIB_ITERATE_DIR_TREE_FLAG_RECURSIVE;
+    REQUIRE_EQ(iterate(reopened.get(), 1, nullptr, flags, observe_wim_fixture_names, &observation), 0);
+    REQUIRE_EQ(observation.directories, 1U);
+    REQUIRE_EQ(observation.payloads, 1U);
+    REQUIRE_EQ(observation.ordinary_files, 1U);
+}
+
+// Purpose: Reject the adapter's unsupported UTF-16 name before creating any output directory.
+// Inputs: Real library-written archive, absent owned destination and the exact Windows conversion diagnosis.
+// Outputs: No progress, no output creation and an explicit domain error rather than replacement-character output.
+void require_wim_utf16_rejected_without_output(const std::filesystem::path& archive,
+                                               const std::filesystem::path& destination) {
+    REQUIRE_TRUE(!std::filesystem::exists(destination));
+    unsigned callbacks = 0;
+    bool rejected = false;
+    try {
+        (void)flitzzip::extract_wim(archive, destination, false,
+                                    [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
+    } catch (const flitzzip::ArchiveError& error) {
+        REQUIRE_EQ(std::string(error.what()), "wimlib returned invalid UTF-16 text: Windows error 1113");
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(callbacks, 0U);
+    REQUIRE_TRUE(!std::filesystem::exists(destination));
+}
+
+}  // namespace
+
+// Purpose: Enforce UTF-8 path admission while preserving valid ordinary and supplementary-character WIM names.
+// Inputs: Independent writer renames to lone high/low surrogates and a legal pair in a real ordinary directory.
+// Outputs: Clear prepublication rejection, exact source/caller preservation, released handles and valid reuse.
+TEST_CASE(wim_native_utf16_name_boundary_preserves_output_and_recovers) {
+    const auto root = test_temp_dir("wim-native-utf16-name-boundary");
+    const auto source = wim_failure_source(root);
+    std::filesystem::create_directory(source / L"ordinary");
+    std::ofstream(source / L"ordinary" / L"keep.txt", std::ios::binary) << "keep";
+    const std::string expected = "Independent WIM boundary payload.";
+    const std::wstring paired = L"paired-\U0001f680.txt";
+    const auto valid = root / "paired.wim";
+    write_wim_native_name_fixture(source, valid, paired);
+    const auto valid_bytes = flitzzip_test::source_session_fixture_bytes(valid);
+    for (const wchar_t surrogate : {static_cast<wchar_t>(0xd800), static_cast<wchar_t>(0xdc00)}) {
+        const auto directory = root / (surrogate == 0xd800 ? L"high" : L"low");
+        std::filesystem::create_directory(directory);
+        const std::wstring invalid = std::wstring(L"unpaired-") + surrogate + L".txt";
+        const auto archive = directory / L"invalid.wim";
+        write_wim_native_name_fixture(source, archive, invalid);
+        const auto archive_bytes = flitzzip_test::source_session_fixture_bytes(archive);
+        require_wim_utf16_rejected_without_output(archive, directory / "absent");
+        const auto destination = directory / "out";
+        require_wim_metadata_rejected(archive, destination, "wimlib returned invalid UTF-16 text: Windows error 1113");
+        REQUIRE_EQ(flitzzip_test::source_session_fixture_bytes(archive), archive_bytes);
+        DWORD error = ERROR_SUCCESS;
+        REQUIRE_TRUE(flitzzip_test::source_writer_available(archive, error));
+        const auto stats = flitzzip::extract_wim(valid, destination, false);
+        REQUIRE_EQ(stats.entries, 3U);
+        REQUIRE_EQ(stats.output_bytes, expected.size() + 4U);
+        REQUIRE_EQ(read_text(destination / L"ordinary" / paired), expected);
+        REQUIRE_EQ(read_text(destination / L"ordinary" / L"keep.txt"), "keep");
+        REQUIRE_EQ(read_text(destination / "sentinel.txt"), "preserve caller data");
+        REQUIRE_EQ(std::distance(std::filesystem::recursive_directory_iterator(destination),
+                                 std::filesystem::recursive_directory_iterator{}),
+                   4);
+        REQUIRE_EQ(flitzzip_test::source_session_fixture_bytes(archive), archive_bytes);
+        REQUIRE_EQ(flitzzip_test::source_session_fixture_bytes(valid), valid_bytes);
+        REQUIRE_TRUE(flitzzip_test::source_writer_available(valid, error));
+        REQUIRE_EQ(read_text(source / "payload.txt"), expected);
+        REQUIRE_EQ(read_text(source / L"ordinary" / L"keep.txt"), "keep");
+    }
+}
