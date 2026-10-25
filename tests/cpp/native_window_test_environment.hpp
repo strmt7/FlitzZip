@@ -22,6 +22,7 @@ using namespace std::chrono_literals;
 class GatedLauncher final : public flitzzip::app::JobThreadLauncher {
   public:
     mutable std::atomic_uint attempts{0};
+    mutable std::atomic_uint completed{0};
     mutable std::promise<void> entered;
     mutable std::promise<void> first_completed;
     mutable std::atomic_bool first_notified{false};
@@ -49,6 +50,7 @@ class GatedLauncher final : public flitzzip::app::JobThreadLauncher {
             if (first) {
                 first_completed.set_value();
             }
+            completed.fetch_add(1);
         });
     }
 };
@@ -173,6 +175,42 @@ class HiddenController final {
     std::thread thread_;
 };
 
+// Purpose: Derive the actual content bounds for native form interactions.
+// Inputs: Owned hidden HWND. Outputs: DPI-aware client content rectangle, without private controller access.
+inline RECT native_content_rect(HWND window) {
+    RECT client{};
+    REQUIRE_TRUE(GetClientRect(window, &client) != FALSE);
+    const auto dpi = static_cast<int>(GetDpiForWindow(window));
+    client.left += MulDiv(flitzzip::app::kRailWidth, dpi, 96);
+    client.top += MulDiv(flitzzip::app::kTopBar, dpi, 96);
+    client.bottom -= MulDiv(flitzzip::app::kStatusBar, dpi, 96);
+    return client;
+}
+
+// Purpose: Find the native center of a control. Inputs: Physical bounds. Outputs: Integer client point.
+inline POINT native_rect_center(const RECT& rect) {
+    return POINT{(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
+}
+
+// Purpose: Locate the shared compression form. Inputs: Owned window. Outputs: Current public layout at actual DPI.
+inline flitzzip::app::CompressLayout native_compression_layout(HWND window) {
+    return flitzzip::app::make_compress_layout(native_content_rect(window), GetDpiForWindow(window));
+}
+
+// Purpose: Deliver native input to one owned point without moving the desktop cursor.
+// Inputs: Live HWND and client point. Outputs: Acknowledged press/release messages.
+inline void click_native_point(HWND window, POINT center) {
+    const auto point = MAKELPARAM(center.x, center.y);
+    HiddenController::send(window, WM_LBUTTONDOWN, MK_LBUTTON, point);
+    HiddenController::send(window, WM_LBUTTONUP, 0, point);
+}
+
+// Purpose: Activate a real control without changing system input or another window's state.
+// Inputs: Owned HWND and physical control rectangle. Outputs: Acknowledged native press/release.
+inline void click_native_control(HWND window, const RECT& rect) {
+    click_native_point(window, native_rect_center(rect));
+}
+
 class ControllerFixture final {
   public:
     const std::filesystem::path root = test_temp_dir("hidden-controller");
@@ -206,8 +244,8 @@ class ControllerFixture final {
     void prepare_compression(HWND window) const {
         queue_path(window, input);
         show_compression(window);
-        const auto layout = compression_layout(window);
-        click(window, midpoint(layout.destination));
+        const auto layout = native_compression_layout(window);
+        click_native_control(window, layout.destination);
     }
 
     // Purpose: Admit a real file or folder through the normal Queue drop boundary.
@@ -239,63 +277,38 @@ class ControllerFixture final {
         REQUIRE_TRUE(GetClientRect(window, &client) != FALSE);
         const auto dpi = GetDpiForWindow(window);
         const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
-        click(window, POINT{client.right - scale(flitzzip::app::kPageInsetX) - scale(36),
-                            scale(flitzzip::app::kTopBar) + scale(flitzzip::app::kPageInsetY) +
-                                scale(flitzzip::app::kPageHeaderHeight) / 2});
+        click_native_point(window, POINT{client.right - scale(flitzzip::app::kPageInsetX) - scale(36),
+                                         scale(flitzzip::app::kTopBar) + scale(flitzzip::app::kPageInsetY) +
+                                             scale(flitzzip::app::kPageHeaderHeight) / 2});
     }
 
     // Purpose: Activate the normal Compress button, allowing repeat attempts to expose stuck admission.
     // Inputs: Owned HWND on the Compress page. Outputs: Native mouse dispatch through actual hit testing.
     static void start(HWND window) {
-        click(window, midpoint(compression_layout(window).start));
+        click_native_control(window, native_compression_layout(window).start);
     }
 
     // Purpose: Exercise the real Stop control instead of treating window closure as equivalent cancellation.
     // Inputs: Owned Compress page with admitted work. Outputs: Native Stop press/release through actual hit testing.
     static void stop(HWND window) {
-        click(window, midpoint(compression_layout(window).stop));
+        click_native_control(window, native_compression_layout(window).stop);
     }
 
     // Purpose: Select the empty compression page through normal input.
     // Inputs: Owned idle controller. Outputs: Compress page without adding sources or admitting work.
     static void show_compression(HWND window) {
         const auto dpi = static_cast<int>(GetDpiForWindow(window));
-        click(window, POINT{MulDiv(40, dpi, 96), MulDiv(156, dpi, 96)});
+        click_native_point(window, POINT{MulDiv(40, dpi, 96), MulDiv(156, dpi, 96)});
     }
 
     // Purpose: Return to Queue before dropping a valid source after an empty-start refusal.
     // Inputs: Owned idle controller. Outputs: Queue page through its native navigation hit region.
     static void show_queue(HWND window) {
         const auto dpi = static_cast<int>(GetDpiForWindow(window));
-        click(window, POINT{MulDiv(40, dpi, 96), MulDiv(104, dpi, 96)});
+        click_native_point(window, POINT{MulDiv(40, dpi, 96), MulDiv(104, dpi, 96)});
     }
 
   private:
-    // Purpose: Derive actual DPI/client form bounds without hardcoded host display dimensions.
-    // Inputs: Owned HWND. Outputs: Production layout at current DPI.
-    static flitzzip::app::CompressLayout compression_layout(HWND window) {
-        RECT client{};
-        REQUIRE_TRUE(GetClientRect(window, &client) != FALSE);
-        const auto dpi = GetDpiForWindow(window);
-        client.left += MulDiv(flitzzip::app::kRailWidth, static_cast<int>(dpi), 96);
-        client.top += MulDiv(flitzzip::app::kTopBar, static_cast<int>(dpi), 96);
-        client.bottom -= MulDiv(flitzzip::app::kStatusBar, static_cast<int>(dpi), 96);
-        return flitzzip::app::make_compress_layout(client, dpi);
-    }
-
-    // Purpose: Select an interior native hit point. Inputs: Physical rectangle. Outputs: Its integer midpoint.
-    static POINT midpoint(const RECT& rect) {
-        return POINT{(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
-    }
-
-    // Purpose: Deliver owned-window mouse messages without moving the system cursor or activating a window.
-    // Inputs: Client point and owned HWND. Outputs: Complete native press/release sequence.
-    static void click(HWND window, POINT point) {
-        const auto position = MAKELPARAM(point.x, point.y);
-        HiddenController::send(window, WM_LBUTTONDOWN, MK_LBUTTON, position);
-        HiddenController::send(window, WM_LBUTTONUP, 0, position);
-    }
-
     flitzzip_test::ScopedEnvironment temp_{L"TEMP"};
     flitzzip_test::ScopedEnvironment tmp_{L"TMP"};
     flitzzip_test::ScopedEnvironment redirect_{L"FLITZZIP_GUI_SMOKE_SETTINGS_REDIRECT"};
@@ -382,30 +395,8 @@ inline void require_native_navigation_selection(HWND window, HDC frame, int expe
 // Inputs: Owned window and one of the eight documented page ordinals. Outputs: Complete native click dispatch.
 inline void click_native_navigation(HWND window, int page) {
     const auto dpi = static_cast<int>(GetDpiForWindow(window));
-    const auto position =
-        MAKELPARAM(MulDiv(40, dpi, 96), MulDiv(flitzzip::app::kTopBar + 10 + 63 * page + 31, dpi, 96));
-    HiddenController::send(window, WM_LBUTTONDOWN, MK_LBUTTON, position);
-    HiddenController::send(window, WM_LBUTTONUP, 0, position);
-}
-
-// Purpose: Derive the actual content bounds for native form interactions.
-// Inputs: Owned hidden HWND. Outputs: DPI-aware client content rectangle, without private controller access.
-inline RECT native_content_rect(HWND window) {
-    RECT client{};
-    REQUIRE_TRUE(GetClientRect(window, &client) != FALSE);
-    const auto dpi = static_cast<int>(GetDpiForWindow(window));
-    client.left += MulDiv(flitzzip::app::kRailWidth, dpi, 96);
-    client.top += MulDiv(flitzzip::app::kTopBar, dpi, 96);
-    client.bottom -= MulDiv(flitzzip::app::kStatusBar, dpi, 96);
-    return client;
-}
-
-// Purpose: Activate a real control without changing system input or another window's state.
-// Inputs: Owned HWND and physical control rectangle. Outputs: Acknowledged native press/release.
-inline void click_native_control(HWND window, const RECT& rect) {
-    const auto point = MAKELPARAM((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
-    HiddenController::send(window, WM_LBUTTONDOWN, MK_LBUTTON, point);
-    HiddenController::send(window, WM_LBUTTONUP, 0, point);
+    click_native_point(window,
+                       POINT{MulDiv(40, dpi, 96), MulDiv(flitzzip::app::kTopBar + 10 + 63 * page + 31, dpi, 96)});
 }
 
 // Purpose: Observe bounded fixture bytes independently of the product's codecs and settings parser.
@@ -435,10 +426,11 @@ inline RECT first_queue_size_cell(HWND window) {
 }
 
 // Purpose: Independently recognize one exact rendered table status using native reference glyphs.
-// Inputs: Actual captured frame, size-cell bounds, DPI and literal expected text; no product formatter is called.
+// Inputs: Actual frame, bounds, DPI, literal text, color and native text flags; no product formatter is called.
 // Outputs: Exact RGB comparison against DrawTextW, excluding the scaled table border.
 inline bool native_cell_text_matches(HDC actual, const RECT& cell, UINT dpi, std::wstring_view expected,
-                                     COLORREF color = flitzzip::app::kMuted) {
+                                     COLORREF color = flitzzip::app::kMuted,
+                                     UINT flags = DT_LEFT | DT_VCENTER | DT_SINGLELINE) {
     const int width = cell.right - cell.left;
     const int height = cell.bottom - cell.top;
     QueueCapture reference(width, height);
@@ -459,8 +451,7 @@ inline bool native_cell_text_matches(HDC actual, const RECT& cell, UINT dpi, std
     REQUIRE_TRUE(SelectObject(reference.dc(), font.get()) != nullptr);
     SetBkMode(reference.dc(), TRANSPARENT);
     SetTextColor(reference.dc(), color);
-    REQUIRE_TRUE(DrawTextW(reference.dc(), expected.data(), static_cast<int>(expected.size()), &bounds,
-                           DT_LEFT | DT_VCENTER | DT_SINGLELINE) != 0);
+    REQUIRE_TRUE(DrawTextW(reference.dc(), expected.data(), static_cast<int>(expected.size()), &bounds, flags) != 0);
     for (int y = border; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             if (GetPixel(actual, cell.left + x, cell.top + y) != GetPixel(reference.dc(), x, y)) {

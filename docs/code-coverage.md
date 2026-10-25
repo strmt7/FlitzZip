@@ -131,6 +131,15 @@ verify that removal and scrolling preserve the original files. Compression-form
 tests check displayed formats, output extensions, numeric effort boundaries and
 disabled controls; preferred-HIP policy must not offer Neutron star mode.
 
+History regressions generate real Settings and ZIP results, check filter
+conjunctions and preserve archive bytes across selection, scrolling and clearing.
+The shared fixture owns the row model, control input and independent native text
+observations. Text comparisons exclude control borders while retaining complete
+glyphs, with wrong-value controls under keyboard focus. Drag tests check actual
+Windows capture ownership, both scroll endpoints, cancellation and column bounds.
+Required failure cases use real OS refusal at the affected boundary; an existing
+output file alone does not establish a failure when replacement is supported.
+
 An owned HWND can exist before its initialization finishes. The hidden-window
 fixture therefore uses its original creation deadline for the initial native
 acknowledgement, then keeps the shorter normal-input responsiveness deadline.

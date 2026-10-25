@@ -11,6 +11,19 @@ inline RECT native_client_bounds(HWND window) {
     return bounds;
 }
 
+// Purpose: Poll an observable condition while preserving a finite deadline and the original failing assertion.
+// Inputs: Instance-local observation and diagnostic. Outputs: Success or a descriptive timeout; never retries work.
+template <class Predicate> void require_native_observation(Predicate&& observe, const char* diagnostic) {
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    do {
+        if (observe()) {
+            return;
+        }
+        std::this_thread::sleep_for(10ms);
+    } while (std::chrono::steady_clock::now() < deadline);
+    throw std::runtime_error(diagnostic);
+}
+
 // Purpose: Share real hidden-window ownership and independent pixel observations across ordinary interaction tests.
 // Inputs: Small redirected fixture. Outputs: Owned UI thread, memory-only frame and no access to private UI state.
 class VisualSession final {
@@ -56,6 +69,32 @@ class VisualSession final {
         HiddenController::send(window, WM_KEYDOWN, value);
     }
 
+    // Purpose: Commit a public dropdown choice through ordinary native keyboard input.
+    // Inputs: Owned field and bounded zero-based option. Outputs: One Home/Down/Enter selection.
+    void choose_option(const RECT& field, int index) const {
+        REQUIRE_TRUE(index >= 0 && index < 64);
+        click_native_control(window, field);
+        key(VK_HOME);
+        for (int step = 0; step < index; ++step) {
+            key(VK_DOWN);
+        }
+        key(VK_RETURN);
+    }
+
+    // Purpose: Recognize public field values independently of product state and formatting.
+    // Inputs: Field geometry, literal value and select/enabled appearance. Outputs: Exact interior glyph equality.
+    void require_field(const RECT& field, std::wstring_view text, bool select = true, bool enabled = true) {
+        const RECT cell{field.left + px(10), field.top + px(21), field.right - px(select ? 30 : 10),
+                        field.bottom - px(1)};
+        require_native_observation(
+            [&] {
+                paint();
+                return native_cell_text_matches(frame.dc(), cell, GetDpiForWindow(window), text,
+                                                enabled ? flitzzip::app::kText : flitzzip::app::kSubtle);
+            },
+            "Native field does not display the independently expected value");
+    }
+
     // Purpose: Deliver wheel input using the Win32 screen-coordinate contract without moving the user's cursor.
     // Inputs: Signed wheel delta and client point. Outputs: One acknowledged native wheel event.
     void wheel(short delta, POINT client_point) const {
@@ -74,18 +113,5 @@ class VisualSession final {
         REQUIRE_TRUE(std::filesystem::is_empty(fixture.output));
     }
 };
-
-// Purpose: Poll an observable condition while preserving a finite deadline and the original failing assertion.
-// Inputs: Instance-local observation and diagnostic. Outputs: Success or a descriptive timeout; never retries work.
-template <class Predicate> void require_native_observation(Predicate&& observe, const char* diagnostic) {
-    const auto deadline = std::chrono::steady_clock::now() + 3s;
-    do {
-        if (observe()) {
-            return;
-        }
-        std::this_thread::sleep_for(10ms);
-    } while (std::chrono::steady_clock::now() < deadline);
-    throw std::runtime_error(diagnostic);
-}
 
 }  // namespace flitzzip_test::native_window
