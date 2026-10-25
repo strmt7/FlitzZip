@@ -199,6 +199,26 @@ test names or collector heuristics. The collector's
 [Debug guidance](https://github.com/OpenCppCoverage/OpenCppCoverage/wiki#release-versus-debug)
 explains the mapping limitation.
 
+### Investigating Zero-Hit Lines
+
+Classify each gap against the exact source, binary and raw report before adding
+tests. OpenCppCoverage's [FAQ](https://github.com/OpenCppCoverage/OpenCppCoverage/wiki/FAQ)
+documents PDB mappings to unreachable exception epilogues and brace instructions.
+This does not establish that any particular missing line is harmless. Trace the
+mapped instruction or source region: a real unexecuted condition, cleanup action
+or callback still needs a meaningful behavior test. A passing surrounding
+function is insufficient evidence. Preserve the original report and do not
+exclude braces, manufacture hits or reshape production control flow for counters.
+
+An independent [source-counter measurement](https://clang.llvm.org/docs/SourceBasedCodeCoverage.html)
+can help distinguish mapping artifacts from behavior gaps. A small calibration
+does not qualify a replacement collector. Before adopting one, validate its
+compiler/runtime identities, opposite branch controls, exceptions, linked-module
+ownership, profile shutdown and merging, then replay the native, CLI and GUI
+consumers in their actual configurations. Keep HIP host and device measurements
+separate. Different mapping schemes have different denominators; compare their
+scopes explicitly and retain the existing CI report until replacement is qualified.
+
 ## Python contract measurements
 
 Python tooling and MCP measurements are separate from the native Codecov badge.
