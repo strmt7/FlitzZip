@@ -983,6 +983,7 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_gpu_kernel_rejection.cpp
     tests/cpp/test_host_memory_budget.cpp
     tests/cpp/test_memory_benchmark_source.cpp
+    tests/cpp/test_cli_statistics.cpp
     src/cli/memory_benchmark.cpp
     src/cli/memory_benchmark_source.cpp
     tests/cpp/test_worker_budget.cpp

@@ -1,3 +1,4 @@
+#include "stdout_capture.hpp"
 #include "test_util.hpp"
 
 #include "cli/benchmark_suite_policy.hpp"
@@ -20,27 +21,7 @@
 #include <utility>
 
 namespace {
-// Purpose: Capture benchmark telemetry while restoring stdout even when execution throws.
-// Inputs: The current process stdout buffer; tests run serially.
-// Outputs: Owns captured text and restores the borrowed original buffer at destruction.
-class BenchmarkOutputCapture {
-    std::ostringstream output_;
-    std::streambuf* original_;
-
-  public:
-    // Purpose: Redirect stdout into owned storage. Inputs: None. Outputs: Installs a temporary stream buffer.
-    BenchmarkOutputCapture() : original_(std::cout.rdbuf(output_.rdbuf())) {}
-    BenchmarkOutputCapture(const BenchmarkOutputCapture&) = delete;
-    BenchmarkOutputCapture& operator=(const BenchmarkOutputCapture&) = delete;
-    // Purpose: Restore stdout before releasing storage. Inputs: None. Outputs: Restores the original buffer.
-    ~BenchmarkOutputCapture() {
-        std::cout.rdbuf(original_);
-    }
-    // Purpose: Inspect complete telemetry. Inputs: None. Outputs: A separate readable stream with captured bytes.
-    std::istringstream input() const {
-        return std::istringstream(output_.str());
-    }
-};
+using flitzzip_test::StdoutCapture;
 
 constexpr std::array<std::string_view, 7> profiles{"Mixed",           "Compressible", "Incompressible",
                                                    "RepeatedRecord",  "SparseRecord", "LongSparseRecord",
@@ -278,11 +259,9 @@ TEST_CASE(memory_benchmark_cpu_pipeline_is_byte_exact_and_ram_only) {
     REQUIRE_TRUE(result.archive_bytes > result.stats.output_bytes);
     REQUIRE_TRUE(result.wall_seconds >= result.validation_seconds);
 
-    std::ostringstream output;
-    auto* original = std::cout.rdbuf(output.rdbuf());
+    StdoutCapture capture;
     flitzzip::cli::print_memory_benchmark_stats(result);
-    std::cout.rdbuf(original);
-    const auto text = output.str();
+    const auto text = capture.text();
     REQUIRE_TRUE(text.find("source_sha256=" + sha256) != std::string::npos);
     REQUIRE_TRUE(text.find("gpu_used=false") != std::string::npos);
     REQUIRE_TRUE(text.find("validated_bytes=" + std::to_string(source.size())) != std::string::npos);
@@ -299,7 +278,7 @@ TEST_CASE(memory_benchmark_suite_rejects_small_synthetic_workloads_without_parti
             options.size_mib = 1U;
             options.tune = tune;
             options.tune_levels = tune_levels;
-            BenchmarkOutputCapture capture;
+            StdoutCapture capture;
             bool rejected = false;
             try {
                 flitzzip::cli::run_benchmark_suite(options);

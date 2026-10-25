@@ -128,6 +128,12 @@ one operation, and check literal output bytes from batches with identical archiv
 names. Shared native fixtures retain ownership of windows, threads and off-screen
 bitmaps; their message failures include the calling line and Windows error.
 
+CLI presentation tests compare complete literal records, independently distinct
+counters, optional phase presence and caller-owned stream failures. Shared output
+projection must preserve command help, field names, ordering and unit conversions.
+Component telemetry fixtures are not performance measurements; actual small CPU
+RAM and ZIP readback controls qualify their production consumers separately.
+
 Ordinary interaction regressions also check generated license headings, modal
 input isolation, scroll endpoints, fractional wheel input, drag cancellation and
 deferred button release. Queue tests compare literal rendered filenames against
