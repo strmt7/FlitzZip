@@ -17,6 +17,7 @@ from unittest.mock import patch
 from tools import hip_coverage as coverage
 from tools import hip_coverage_registration as registration
 from tools import hip_coverage_toolchain as toolchain
+from tools import hip_registration_native_checks as native_checks
 from tools import scanner_metadata_review as metadata_review
 
 
@@ -380,6 +381,231 @@ class HipRegistrationTests(unittest.TestCase):
                     compiler.assert_not_called()
                 execute.assert_not_called()
             (self.native_source / "hip_profile_registration.cpp").write_bytes(immutable_source)
+
+    # Purpose: Own minimal native-tool inputs without compiling or executing device code.
+    # Inputs: Fresh scenario name. Outputs: A real qualification owner with independent file contents.
+    def native_checker(self, name):
+        with patch.object(coverage, "ROOT", self.root):
+            checker = native_checks.NativeChecks(self.tool, self.tool, self.source, self.tool, self.root / name)
+        checker.text = self.source.read_text(encoding="utf-8")
+        return checker
+
+    # Purpose: Model the native producer at its command boundary while preserving actual artifact reads/writes.
+    # Inputs: One independent report fault and command/log paths. Outputs: Metadata and exact owned output bytes.
+    def completion_producer(self, fault, command, log, timeout):
+        self.assertEqual(timeout, 30)
+        host = Path(command[command.index("--host") + 1])
+        content = host.read_bytes()
+        completed_bytes = b"independently completed host module"
+        before = copy.deepcopy(self.completion["after"] if content == completed_bytes else self.completion["before"])
+        before["module_ir_sha256"] = hashlib.sha256(content).hexdigest()
+        if "--complete" not in command:
+            if fault == "persisted-inventory" and log.stem == "idempotence-persisted":
+                before["registered_data_records"] = 1
+            return before
+        destination = Path(command[command.index("-o") + 1])
+        self.assertFalse(destination.exists())
+        destination.write_bytes(completed_bytes)
+        after = copy.deepcopy(self.completion["after"])
+        after["module_ir_sha256"] = hashlib.sha256(completed_bytes).hexdigest()
+        report = {
+            "before": before,
+            "after": after,
+            "completed_records": 0 if content == completed_bytes else 1,
+            "retired_profile_groups": 0,
+            "original_program_values_preserved": True,
+        }
+        if log.stem == "complete" and fault in ("reported-original", "reported-completed"):
+            report["before" if fault == "reported-original" else "after"]["module_ir_sha256"] = "c" * 64
+        if log.stem == "idempotence" and fault == "idempotence-program":
+            report["after"]["module_ir_sha256"] = "c" * 64
+        return report
+
+    # Purpose: Reject internally plausible reports that do not describe the artifacts actually consumed next.
+    # Inputs: Real owned files and one wrong inventory/hash per native-producer scenario.
+    # Outputs: All disconnected evidence chains fail; valid completion preserves the existing output.
+    def test_native_completion_requires_continuous_persisted_evidence(self):
+        for fault in (None, "reported-original", "reported-completed", "persisted-inventory", "idempotence-program"):
+            checker = self.native_checker(fault or "complete-valid")
+            result = {
+                "exit_code": 1,
+                "timed_out": False,
+                "output_limit_exceeded": False,
+                "output_truncated": False,
+                "stderr": "output already exists",
+            }
+
+            # Purpose: Inject only a producer-report fault. Inputs: Native argv/log. Outputs: Independent file evidence.
+            def producer(command, log, timeout, fault=fault):
+                return self.completion_producer(fault, command, log, timeout)
+
+            with (
+                self.subTest(fault=fault),
+                patch.object(native_checks, "native_metadata", side_effect=producer),
+                patch.object(coverage, "process_owner") as owner,
+            ):
+                owner.return_value.run_bounded_command.return_value = result
+                if fault is None:
+                    checker.valid_controls()
+                    self.assertEqual(
+                        (checker.output / "completed.bc").read_bytes(), b"independently completed host module"
+                    )
+                    self.assertEqual(
+                        (checker.output / "completed-again.bc").read_bytes(), b"independently completed host module"
+                    )
+                    owner.return_value.run_bounded_command.assert_called_once()
+                else:
+                    with self.assertRaisesRegex(ValueError, "inventory|evidence"):
+                        checker.valid_controls()
+                    owner.return_value.run_bounded_command.assert_not_called()
+            self.assertEqual(self.source.read_text(encoding="utf-8"), "independent source identity")
+
+    # Purpose: Distinguish normal existing-output refusal from failed diagnostic capture.
+    # Inputs: Actual preserved destination bytes and independent bounded-process failure flags.
+    # Outputs: A truncated/overflowed/timed-out attempt never qualifies as a successful preservation control.
+    def test_native_existing_output_requires_complete_process_evidence(self):
+        for flag in ("output_limit_exceeded", "output_truncated", "timed_out", "exit_code", "changed-output"):
+            checker = self.native_checker(flag)
+            result = {
+                "exit_code": 1,
+                "timed_out": False,
+                "output_limit_exceeded": False,
+                "output_truncated": False,
+                "stderr": "output already exists",
+            }
+            if flag in result:
+                result[flag] = 0 if flag == "exit_code" else True
+
+            # Purpose: Preserve real file operations in the producer. Inputs: Native argv. Outputs: Owned files.
+            def producer(command, log, timeout):
+                return self.completion_producer(None, command, log, timeout)
+
+            # Purpose: Model a refusal that changes a file. Inputs: Native argv/bounds. Outputs: Real bytes.
+            def refusal(command, *, timeout_seconds, flag=flag, result=result):
+                self.assertEqual(timeout_seconds, 30)
+                if flag == "changed-output":
+                    Path(command[command.index("-o") + 1]).write_bytes(b"unexpected replacement")
+                return result
+
+            with (
+                self.subTest(flag=flag),
+                patch.object(native_checks, "native_metadata", side_effect=producer),
+                patch.object(coverage, "process_owner") as owner,
+            ):
+                owner.return_value.run_bounded_command.side_effect = refusal
+                with self.assertRaisesRegex(ValueError, "evidence|output"):
+                    checker.valid_controls()
+            self.assertEqual(json.loads((checker.output / "existing-output.json").read_text()), result)
+            expected = b"unexpected replacement" if flag == "changed-output" else b"independently completed host module"
+            self.assertEqual((checker.output / "completed.bc").read_bytes(), expected)
+
+    # Purpose: Require the absent-global repair to retain the same inventory chain as ordinary completion.
+    # Inputs: A metadata tuple with a neighboring program constant and independently computed repair inventories.
+    # Outputs: Unchanged program text and matching persisted evidence; disconnection stops the next control.
+    def test_absent_metadata_repair_retains_inventory_and_program_text(self):
+        stem = "_Z5probev"
+        lines = [
+            f'@{index} = private unnamed_addr constant [{len(prefix + stem) + 1} x i8] c"{prefix + stem}\\00"'
+            for index, prefix in enumerate(("__profd_", "__profc_", "__llvm_prf_unifcnt_"), 1)
+        ]
+        program = '@program = private constant [18 x i8] c"__profd__Z5probev\\00"'
+        call = (
+            "  call void @__hipRegisterVar(ptr %0, ptr @__llvm_profile_shadow_data_probe, "
+            "ptr @1, ptr @1, i32 0, i64 8, i32 0, i32 0)"
+        )
+        for fault in (None, "before", "after", "persisted"):
+            checker = self.native_checker("absent-" + (fault or "valid"))
+            checker.text = "\n".join([*lines, program, call]) + "\n"
+            initial = copy.deepcopy(self.completion["before"])
+            initial.update(registered_data_records=0, absent_host_profile_groups=1)
+            initial["missing"] = ["__profd_independent_helper", "__profd_independent_kernel"]
+            final = copy.deepcopy(self.completion["after"])
+
+            # Purpose: Describe independently specified native repair stages. Inputs: Real argv. Outputs: Owned bytes.
+            def producer(command, log, timeout, fault=fault, initial=initial, final=final):
+                self.assertEqual(timeout, 30)
+                if log.stem == "absent-original":
+                    return copy.deepcopy(initial)
+                if log.stem == "absent-idempotence-persisted":
+                    result = copy.deepcopy(final)
+                    if fault == "persisted":
+                        result["host_profile_groups"] = 1
+                    return result
+                complete = log.stem == "absent-completion"
+                result = {
+                    "before": copy.deepcopy(initial if complete else final),
+                    "after": copy.deepcopy(final),
+                    "completed_records": 2 if complete else 0,
+                    "retired_profile_groups": 1 if complete else 0,
+                    "original_program_values_preserved": True,
+                }
+                Path(command[command.index("-o") + 1]).write_bytes(b"completed absent-group fixture")
+                if complete and fault in ("before", "after"):
+                    result[fault]["module_ir_sha256"] = "c" * 64
+                return result
+
+            with (
+                self.subTest(fault=fault),
+                patch.object(native_checks, "native_metadata", side_effect=producer),
+                patch.object(checker, "rejected") as negative,
+            ):
+                if fault is None:
+                    checker.absent_metadata_controls()
+                    negative.assert_called_once()
+                    self.assertIn("i64 16,", negative.call_args.kwargs["ir"])
+                else:
+                    with self.assertRaisesRegex(ValueError, "inventory evidence"):
+                        checker.absent_metadata_controls()
+                    negative.assert_not_called()
+                    self.assertEqual(checker.positive_outcomes, [])
+            mutated = (checker.output / "absent-profile-group.ll").read_text()
+            self.assertIn(program, mutated)
+            self.assertIn(call, mutated)
+            for prefix in ("__profd_", "__profc_", "__llvm_prf_unifcnt_"):
+                self.assertIn(prefix + "_Z5probej", mutated)
+
+    # Purpose: Keep negative controls sensitive to execution failure, the expected diagnostic and publication.
+    # Inputs: Independent status changes plus a real unexpected output file. Outputs: Raw reports retained on refusal.
+    def test_native_rejection_requires_complete_refusal_without_publication(self):
+        for fault in (
+            None,
+            "exit_code",
+            "timed_out",
+            "output_limit_exceeded",
+            "output_truncated",
+            "stderr",
+            "publication",
+        ):
+            checker = self.native_checker("rejection-" + (fault or "valid"))
+            result = {
+                "exit_code": 1,
+                "timed_out": False,
+                "output_limit_exceeded": False,
+                "output_truncated": False,
+                "stderr": "independent expected refusal",
+            }
+            if fault in result:
+                result[fault] = {"exit_code": 0, "stderr": "unrelated failure"}.get(fault, True)
+
+            # Purpose: Control only external execution and its artifact. Inputs: Actual argv/bounds. Outputs: Result.
+            def execute(command, *, timeout_seconds, max_output_bytes, fault=fault, result=result):
+                self.assertEqual((timeout_seconds, max_output_bytes), (30, 65536))
+                self.assertEqual(Path(command[command.index("--host") + 1]).read_text(), "malformed fixture")
+                if fault == "publication":
+                    Path(command[command.index("-o") + 1]).write_bytes(b"unexpected publication")
+                return result
+
+            with self.subTest(fault=fault), patch.object(coverage, "process_owner") as owner:
+                owner.return_value.run_bounded_command.side_effect = execute
+                if fault is None:
+                    checker.rejected("case", "expected refusal", ir="malformed fixture")
+                    self.assertEqual(checker.outcomes, ["case"])
+                else:
+                    with self.assertRaisesRegex(ValueError, "rejection contract failed"):
+                        checker.rejected("case", "expected refusal", ir="malformed fixture")
+                    self.assertEqual(checker.outcomes, [])
+            retained = json.loads((checker.output / "case/process.json").read_text())
+            self.assertEqual({key: retained[key] for key in result}, result)
 
 
 class HipToolchainTests(unittest.TestCase):

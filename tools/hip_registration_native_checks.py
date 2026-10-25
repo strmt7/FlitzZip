@@ -20,6 +20,21 @@ from tools.hip_coverage_toolchain import LOCK
 from tools.native_coverage import owned_path
 
 
+# Purpose: Bind completion and idempotence claims to every independently read artifact inventory.
+# Inputs: Original inventory, two validated completion reports and the persisted second output inventory.
+# Outputs: Refusal if a report describes another artifact, drops metadata or changes an already complete module.
+def validate_inventory_chain(original: dict, completed: dict, repeated: dict, persisted: dict) -> None:
+    if (
+        completed["before"] != original
+        or completed["after"] != repeated["before"]
+        or repeated["before"] != repeated["after"]
+        or repeated["after"] != persisted
+        or repeated["completed_records"]
+        or repeated["retired_profile_groups"]
+    ):
+        raise ValueError("Native registration inventory evidence is disconnected or not idempotent")
+
+
 class NativeChecks:
     # Purpose: Own fresh, bounded native probe evidence. Inputs: Explicit same-compilation tools/files. Outputs: Owner.
     def __init__(self, tool: Path, compiler: Path, host: Path, device: Path, output: Path):
@@ -92,13 +107,7 @@ class NativeChecks:
         repeated = self.inspect(completed, "idempotence", second)
         validate_completion(repeated)
         persisted = self.inspect(second, "idempotence-persisted")
-        if (
-            repeated["completed_records"]
-            or repeated["retired_profile_groups"]
-            or repeated["before"]["module_ir_sha256"] != repeated["after"]["module_ir_sha256"]
-            or repeated["before"]["module_ir_sha256"] != persisted["module_ir_sha256"]
-        ):
-            raise ValueError("Native registration completion is not IR-idempotent")
+        validate_inventory_chain(original, report, repeated, persisted)
         before = coverage.digest(completed)
         result = coverage.process_owner().run_bounded_command(
             [
@@ -114,8 +123,14 @@ class NativeChecks:
             timeout_seconds=30,
         )
         (self.output / "existing-output.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-        if result["exit_code"] != 1 or result["timed_out"] or coverage.digest(completed) != before:
-            raise ValueError("Native registration completion overwrote existing evidence")
+        if (
+            result["exit_code"] != 1
+            or result["timed_out"]
+            or result["output_limit_exceeded"]
+            or result["output_truncated"]
+            or coverage.digest(completed) != before
+        ):
+            raise ValueError("Native existing-output refusal lacks complete evidence or changed the output")
 
     # Purpose: Prove the IR digest ignores only artifact identity and detects changed program storage.
     # Inputs: Unmodified inventory and exact host bytes. Outputs: Independent same-content and changed-content controls.
@@ -231,6 +246,7 @@ class NativeChecks:
             phantom = phantom[:start] + prefix + replacement + phantom[start + len(prefix + stem) :]
         host = self.output / "absent-profile-group.ll"
         host.write_text(phantom, encoding="utf-8")
+        original = self.inspect(host, "absent-original")
         completed = self.output / "absent-completed.bc"
         report = self.inspect(host, "absent-completion", completed)
         validate_completion(report)
@@ -245,13 +261,7 @@ class NativeChecks:
         repeated = self.inspect(completed, "absent-idempotence", again)
         validate_completion(repeated)
         persisted = self.inspect(again, "absent-idempotence-persisted")
-        if (
-            repeated["retired_profile_groups"]
-            or repeated["completed_records"]
-            or repeated["before"]["module_ir_sha256"] != repeated["after"]["module_ir_sha256"]
-            or repeated["before"]["module_ir_sha256"] != persisted["module_ir_sha256"]
-        ):
-            raise ValueError("Absent-profile metadata repair is not IR-idempotent")
+        validate_inventory_chain(original, report, repeated, persisted)
         self.positive_outcomes.append("absent-profile-only-registrations-reconciled")
         call = re.search(
             r"^  call void @__hipRegisterVar\(ptr %0, ptr @__llvm_profile_shadow_data_[^\n]+$", phantom, re.MULTILINE
