@@ -55,16 +55,18 @@ lock selects a narrower supported interpreter range explicitly.
 Windows:
 
 ```powershell
-py -3 tools/crawl4ai_tool.py crawl https://docs.crawl4ai.com/ -o markdown -c check_robots_txt=true
+py -3.13 tools/crawl4ai_tool.py crawl https://docs.crawl4ai.com/ -o markdown -c check_robots_txt=true
 ```
 
 Linux or macOS, using the chosen compatible interpreter:
 
 ```sh
-python3 tools/crawl4ai_tool.py crawl https://docs.crawl4ai.com/ -o markdown -c check_robots_txt=true
+python3.13 tools/crawl4ai_tool.py crawl https://docs.crawl4ai.com/ -o markdown -c check_robots_txt=true
 ```
 
-An explicit interpreter path works in place of `py -3` or `python3`. Every
+Use `3.14` in either example when that is the compatible interpreter installed
+on the host. An explicit interpreter path also works. A generic `py -3` or
+`python3` may select an unsupported newer Python version. Every
 crawler command provisions a missing environment automatically; no separate
 installation step is needed for ordinary use. The installer creates a dedicated
 environment in the user's OS cache and installs
