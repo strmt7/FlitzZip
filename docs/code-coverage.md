@@ -178,6 +178,25 @@ alias a test double or modified copy to a production module. Report production
 totals separately from measured test bodies, retain zero-hit production lines,
 and disclose line and branch results independently.
 
+Resolve coverage data from the declared configuration, rather than assuming
+that it lives beside the configuration file. Check that boundary with a real
+export whose configuration and data directories differ. Require export to
+preserve both the raw-profile inventory and consolidated bytes.
+
+A zero-byte raw artifact contains no persisted observations. Preserve its exact
+bytes and identify it as unbound; do not invent schema rows, execution hits or a
+process identity. Keep this case distinct from a nonempty database with no
+observations. Nonempty unknown schemas, malformed data and inconsistent rows
+must still fail admission.
+
+After a reader-only repair, completed tests need not run again when their
+relevant source, tracer, configuration, process results and original raw bytes
+remain verifiably unchanged. Retain the original failed collection, identify
+the replacement reader, and record reanalysis separately from new execution.
+For device profiles, cumulative reuse also requires identical device images
+and compatible native counter identities; a cumulative union does not establish
+that every retained test ran against the latest host binary.
+
 ## Meaningful tests
 
 Choose a missing behavior or concrete failure mode before writing a test. Prefer

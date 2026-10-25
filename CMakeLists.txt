@@ -980,6 +980,7 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_gpu_kernel_boundaries.cpp
     tests/cpp/test_gpu_huffman_decode.cpp
     tests/cpp/test_gpu_neutron_writer.cpp
+    tests/cpp/test_gpu_kernel_rejection.cpp
     tests/cpp/test_host_memory_budget.cpp
     tests/cpp/test_memory_benchmark_source.cpp
     src/cli/memory_benchmark.cpp

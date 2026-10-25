@@ -538,7 +538,8 @@ def run_bounded_command(
     """Purpose: Run one allowlisted command with aggregate memory, process-tree, time, and streaming-output limits.
     Inputs: Fixed argv, positive limits and checkout-contained directory; cancellation stops only this tree.
     Trusted local artifact consumers may request more retained characters; stdio tools retain the default response cap.
-    Outputs: Returns bounded outcome and admitted job-memory bytes; output read failures raise after cleanup.
+    Outputs: Returns the owned root PID, bounded outcome and admitted job-memory bytes;
+    output read failures raise after cleanup. The PID identifies this launch, not a later live process.
     No child runs before verified containment.
     """
     if (
@@ -632,6 +633,7 @@ def run_bounded_command(
     stdout, stdout_truncated = output.render("stdout")
     stderr, stderr_truncated = output.render("stderr")
     return {
+        "root_pid": process.pid,
         "exit_code": process.returncode,
         "stdout": stdout,
         "stderr": stderr,

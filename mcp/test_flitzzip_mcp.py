@@ -41,6 +41,39 @@ class FailedReadPipe:
 
 
 class ProtocolTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows owned-child identity contract")
+    def test_bounded_result_identifies_root_child_on_success_and_nonzero_exit(self) -> None:
+        """Purpose: Bind command results to the real owned root rather than its caller or descendant.
+        Inputs: Direct base-interpreter roots, each launching one bounded tiny child, with exit codes zero and seven.
+        Outputs: PID equals the root's independent self-report; descendant/caller differ; outcome remains explicit.
+        """
+        script = (
+            "import json, os, subprocess, sys; "
+            "child = subprocess.check_output([sys.executable, '-c', 'import os; print(os.getpid())'], "
+            "text=True, timeout=5); "
+            "print(json.dumps({'pid': os.getpid(), 'parent_pid': os.getppid(), "
+            "'descendant_pid': int(child)}), flush=True); "
+            "sys.exit(int(sys.argv[1]))"
+        )
+        base_python = Path(sys.base_prefix) / "python.exe"
+        self.assertTrue(base_python.is_file())
+        for expected_exit in (0, 7):
+            with self.subTest(exit_code=expected_exit):
+                result = flitzzip_mcp.run_bounded_command(
+                    [str(base_python), "-c", script, str(expected_exit)], timeout_seconds=15
+                )
+                self.assertEqual(result["exit_code"], expected_exit, result["stderr"])
+                self.assertFalse(result["timed_out"])
+                self.assertFalse(result["output_limit_exceeded"])
+                self.assertFalse(result["output_truncated"])
+                observed = json.loads(result["stdout"])
+                self.assertIs(type(result["root_pid"]), int)
+                self.assertGreater(result["root_pid"], 0)
+                self.assertEqual(result["root_pid"], observed["pid"])
+                self.assertEqual(observed["parent_pid"], os.getpid())
+                self.assertNotEqual(result["root_pid"], os.getpid())
+                self.assertNotEqual(result["root_pid"], observed["descendant_pid"])
+
     def test_local_character_budget_preserves_protocol_default_and_byte_bounds(self) -> None:
         """Purpose: Separate local log retention from RPC clipping without removing byte bounds.
         Inputs: UTF-8 text larger than a normal response, explicit local character budgets and a short byte tail.

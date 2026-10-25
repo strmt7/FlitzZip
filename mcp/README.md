@@ -35,6 +35,12 @@ covering its 60-minute remote deadline plus the audit rather than killing it
 prematurely after 15 minutes. Cancellation and output limits still apply.
 Aggregate child output is limited to 16 MiB;
 only bounded stdout/stderr tails are returned with explicit truncation flags.
+Command results include `root_pid`, the native process created and contained
+for that launch. It remains useful for matching retained process evidence after
+completion; it does not assert that the PID still identifies a live process.
+An interpreter's native launcher may create a separate Python child, so startup
+evidence must verify that relationship before treating a child's receipt as the
+root interpreter's receipt.
 Protocol replies retain the 12,000-character output cap. Trusted repository
 artifact collectors can request an explicit larger internal character budget
 when saving bounded local evidence. Byte limits, deadlines and process-tree
