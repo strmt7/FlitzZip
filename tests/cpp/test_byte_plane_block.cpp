@@ -8,10 +8,12 @@
 #include <array>
 #include <algorithm>
 #include <fstream>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -113,6 +115,24 @@ std::pair<std::vector<std::byte>, std::vector<std::byte>> context_plane_fixture(
         }
     }
     return {std::move(frame), std::move(expected)};
+}
+
+// Purpose: Supply a field-separated source whose independent contexts beat the ordinary GPU block.
+// Inputs: A supported record width. Outputs: Bounded records with one varying field and a partial final record.
+std::vector<std::byte> interleaved_context_source(std::uint8_t width) {
+    std::vector<std::byte> input(static_cast<std::size_t>(width) * 8192U + width - 1U);
+    std::uint32_t random = 0x9E37ACD1U;
+    for (std::size_t record = 0U; record < 8192U; ++record) {
+        random ^= random << 13U;
+        random ^= random >> 17U;
+        random ^= random << 5U;
+        input[record * width] = static_cast<std::byte>(random & 255U);
+        for (std::size_t plane = 1U; plane < width; ++plane) {
+            input[record * width + plane] = static_cast<std::byte>(plane * 17U);
+        }
+    }
+    std::fill(input.end() - (width - 1U), input.end(), static_cast<std::byte>((width - 1U) * 17U));
+    return input;
 }
 
 }  // namespace
@@ -482,18 +502,7 @@ TEST_CASE(flzip_neutron_wide_context_selection) {
         return;
     }
     for (const std::uint8_t width : {4U, 8U}) {
-        std::vector<std::byte> input(static_cast<std::size_t>(width) * 8192U + width - 1U);
-        std::uint32_t random = 0x9E37ACD1U;
-        for (std::size_t record = 0U; record < 8192U; ++record) {
-            random ^= random << 13U;
-            random ^= random >> 17U;
-            random ^= random << 5U;
-            input[record * width] = static_cast<std::byte>(random & 255U);
-            for (std::size_t plane = 1U; plane < width; ++plane) {
-                input[record * width + plane] = static_cast<std::byte>(plane * 17U);
-            }
-        }
-        std::fill(input.end() - (width - 1U), input.end(), static_cast<std::byte>((width - 1U) * 17U));
+        const auto input = interleaved_context_source(width);
         const flitzzip::GpuCodecOptions options{.require_gpu = true,
                                                 .block_size = 262144U,
                                                 .compression_level = 9,
@@ -513,6 +522,58 @@ TEST_CASE(flzip_neutron_wide_context_selection) {
             REQUIRE_EQ(decoded, input);
         }
     }
+}
+
+// Purpose: Verify the production Neutron writer selects a version-eleven container for context blocks.
+// Inputs: One bounded field-separated source and required HIP. Outputs: Independently checks footer version,
+// exact CPU/HIP extraction and real kernel telemetry; no benchmark timing or size claim is made.
+TEST_CASE(flzip_neutron_context_archive_writer_version_and_readback) {
+    if (!flitzzip::query_gpu_info().available) {
+        std::cout << "[SKIP] Neutron archive writer requires HIP\n";
+        return;
+    }
+    const auto root = test_temp_dir("neutron-context-archive");
+    const auto source = root / "context.bin";
+    const auto archive = root / "context.flzip";
+    const auto expected = interleaved_context_source(4U);
+    {
+        std::ofstream output(source, std::ios::binary);
+        output.write(reinterpret_cast<const char*>(expected.data()), static_cast<std::streamsize>(expected.size()));
+        REQUIRE_TRUE(output.good());
+    }
+    flitzzip::CompressOptions options;
+    options.gpu_required = true;
+    options.compression_level = 9;
+    options.compression_mode = flitzzip::NativeCompressionMode::NeutronStar;
+    options.chunk_size = 262144U;
+    options.block_size = 262144U;
+    options.worker_count = 1U;
+    options.max_inflight_chunks = 1U;
+    options.verify_after_write = true;
+    const auto stats = flitzzip::compress_flzip({source}, archive, options);
+    REQUIRE_TRUE(stats.gpu_used && stats.gpu_runtime.kernel_launches > 0U);
+    std::array<char, 24> footer{};
+    {
+        std::ifstream input(archive, std::ios::binary);
+        REQUIRE_TRUE(input.is_open());
+        input.seekg(-static_cast<std::streamoff>(footer.size()), std::ios::end);
+        input.read(footer.data(), static_cast<std::streamsize>(footer.size()));
+        REQUIRE_EQ(input.gcount(), static_cast<std::streamsize>(footer.size()));
+    }
+    REQUIRE_EQ(static_cast<unsigned char>(footer[4]), 11U);
+    REQUIRE_TRUE(std::all_of(footer.begin() + 5, footer.begin() + 8, [](char byte) { return byte == 0; }));
+    const auto index = flitzzip_test::read_test_archive_index(archive);
+    REQUIRE_EQ(index.version, 11U);
+    REQUIRE_TRUE(flitzzip_test::archive_contains_block_kind(index, flitzzip::BlockKind::GpuBytePlaneContexts));
+    for (const bool gpu : {false, true}) {
+        const auto destination = root / (gpu ? "hip" : "cpu");
+        const auto extracted = flitzzip::extract_flzip(
+            archive, destination,
+            {.gpu_required = gpu, .force_cpu = !gpu, .worker_count = 1U, .max_inflight_chunks = 1U});
+        REQUIRE_EQ(extracted.gpu_used, gpu);
+        REQUIRE_TRUE(flitzzip_test::files_are_equal(source, destination / "context.bin"));
+    }
+    std::filesystem::remove_all(root);
 }
 
 // Purpose: Exercise real GPU forward transforms and complete-cost selection independently of source naming.
