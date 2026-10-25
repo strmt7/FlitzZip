@@ -10,7 +10,7 @@
 [![Scorecard](https://img.shields.io/github/actions/workflow/status/strmt7/FlitzZip/scorecard.yml?branch=main&label=scorecard)](https://github.com/strmt7/FlitzZip/actions/workflows/scorecard.yml)
 [![Release](https://img.shields.io/github/actions/workflow/status/strmt7/FlitzZip/release.yml?branch=main&label=release)](https://github.com/strmt7/FlitzZip/actions/workflows/release.yml)
 [![Commit activity](https://img.shields.io/github/commit-activity/m/strmt7/FlitzZip)](https://github.com/strmt7/FlitzZip/commits/main)
-[![codecov](https://codecov.io/gh/strmt7/FlitzZip/graph/badge.svg)](https://codecov.io/gh/strmt7/FlitzZip)
+[![Codecov](https://img.shields.io/codecov/c/github/strmt7/FlitzZip?label=Codecov&logo=codecov)](https://codecov.io/gh/strmt7/FlitzZip)
 [![cocoindex-code](https://img.shields.io/static/v1?label=&message=cocoindex-code&color=555&logo=github&logoColor=white)](https://github.com/cocoindex-io/cocoindex-code)
 [![caveman](https://img.shields.io/static/v1?label=&message=caveman&color=555&logo=github&logoColor=white)](https://github.com/JuliusBrussee/caveman)
 [![crawl4ai](https://img.shields.io/static/v1?label=&message=crawl4ai&color=555&logo=github&logoColor=white)](https://github.com/unclecode/crawl4ai)
