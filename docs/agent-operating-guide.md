@@ -388,11 +388,11 @@ product conformance, eliminate required verification or override maintainer inte
 - `src/hqx/`: Extract-only BinHex 4.0 `.hqx` data-fork adapter with strict HQX alphabet parsing, RLE expansion, header/data/resource CRC validation, path-safe header names, and verified file publication.
 - `src/iso/`: Read-only basic ISO 9660 compatibility adapter with two-pass path validation and verified file publication.
 - `src/lha/`: Read-only LHA/LZH adapter using the vendored Lhasa 0.6.0 decoder with two-pass validation and verified file publication.
-- `src/lzip/`: Read-only lzip `.lz` stream adapter and TAR.LZ filter using the vendored LZMA SDK 26.03 decoder with CRC32/data-size/member-size validation and verified file publication.
-- `src/lzma/`: Read-only LZMA-Alone `.lzma` single-file adapter using the vendored LZMA SDK 26.03 decoder with bounded allocation and verified file publication.
+- `src/lzip/`: Read-only lzip `.lz` stream adapter and TAR.LZ filter using the vendored LZMA SDK 26.05 decoder with CRC32/data-size/member-size validation and verified file publication.
+- `src/lzma/`: Read-only LZMA-Alone `.lzma` single-file adapter using the vendored LZMA SDK 26.05 decoder with bounded allocation and verified file publication.
 - `src/macbinary/`: Extract-only MacBinary data-fork adapter with path-safe ASCII header names, data/resource extent validation, MacBinary II/III header CRC validation, and verified file publication.
 - `src/rpm/`: Read-only RPM package adapter that validates RPM headers, decodes supported CPIO payload compression, and delegates extracted package paths to the CPIO adapter.
-- `src/sevenzip/`: Read-only 7z adapter using the vendored LZMA SDK 26.03 decoder with two-pass validation and verified file publication.
+- `src/sevenzip/`: Read-only 7z adapter using the vendored LZMA SDK 26.05 decoder with two-pass validation and verified file publication.
 - `src/tar/`: TAR, TAR.GZ, TAR.BZ2, TAR.XZ, TAR.LZ, and TAR.ZST compatibility adapter with two-pass path validation and verified file publication.
 - `src/unix_compress/`: Unix Compress `.Z` single-file compatibility adapter with bounded LZW dictionaries and verified file publication.
 - `src/uue/`: UUencode `.uue`/`.uu` single-file compatibility adapter with strict begin-line parsing, bounded lines, path-safe header names, and verified file publication.
@@ -413,8 +413,8 @@ product conformance, eliminate required verification or override maintainer inte
 - `third_party/upstream/bzip2/1.0.8/`: unmodified upstream bzip2 1.0.8 source archive and checksum for provenance.
 - `third_party/xz_embedded/`: production XZ Embedded decoder copy used for extract-only `.xz` and `.tar.xz` compatibility.
 - `third_party/upstream/xz-embedded/ae63ae3a36ed01724674e8f3d750dc47bf125410/`: upstream XZ Embedded source archive and checksum for provenance.
-- `third_party/lzma_sdk/`: production LZMA SDK 26.03 decoder subset plus an exact `DOC/lzma-sdk.txt` license copy for host-agnostic notice generation.
-- `third_party/upstream/lzma-sdk/26.03/`: unmodified upstream LZMA SDK 26.03 release archive and checksum for provenance.
+- `third_party/lzma_sdk/`: production LZMA SDK 26.05 decoder subset plus an exact `DOC/lzma-sdk.txt` license copy for host-agnostic notice generation.
+- `third_party/upstream/lzma-sdk/26.05/`: unmodified upstream LZMA SDK 26.05 release archive and checksum for provenance.
 - `third_party/zstd/`: production Zstandard runtime metadata and license files. Do not track extracted runtime DLLs here.
 - `third_party/upstream/zstd/v1.5.7/`: upstream Zstandard source archive, official Win64 runtime package, and checksums for provenance.
 - `third_party/lhasa/`: production Lhasa 0.6.0 copy with FlitzZip-local hardening patches documented in `README.FLITZZIP.md`.
@@ -778,7 +778,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
   plus Windows FDI for streaming decompression. Reject spanned cabinets, validate
   names and sizes before FDI output is accepted, and publish only through the
   verified temporary-file path.
-- 7z compatibility is extraction-only and uses the vendored LZMA SDK 26.03
+- 7z compatibility is extraction-only and uses the vendored LZMA SDK 26.05
   decoder in process. Keep SDK allocations bounded, reject unsafe paths and
   unsupported special-file attributes before output, validate payload CRC/size
   before publishing, and do not advertise 7z creation until a vetted
@@ -842,7 +842,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
   advertise XZ creation until an encoder path is deliberately added with tests.
 - Lzip compatibility is extract-only for `.lz` and TAR-stream-only for
   `.tar.lz`/`.tlz`. Keep the lzip wrapper decoder in process over the vendored
-  LZMA SDK 26.03 decoder, validate version `1`, dictionary-size codes, EOS
+  LZMA SDK 26.05 decoder, validate version `1`, dictionary-size codes, EOS
   markers, CRC32, data size, and member size for every concatenated member,
   reject trailing non-member data and empty members before another member, and
   publish single-file output only through verified temporary paths.

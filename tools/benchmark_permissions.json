@@ -4,17 +4,18 @@
   "review_valid_days": 30,
   "subjects": {
     "7-Zip": {
-      "versions": ["26.03"],
+      "reviewed_on": "2026-10-25",
+      "versions": ["26.05"],
       "binaries": {
-        "7za.exe": "edbee35370e14030e4c785cf88200f42dc651c1eb4217c1e3963c38a12f099b0",
-        "7za.dll": "876077825e49f5a39fb472532080b91a41fec508c714eab8a51af5a51183eba0",
-        "7zxa.dll": "6509b5d4895103250405ab516421b4068e78b67cabc0c6eef774df31572d9fad"
+        "7za.exe": "7ddf0a3bc451e166679296be630d6f0573eb386159c04184761c43020c484291",
+        "7za.dll": "7b3043136452637c58a01fbb0c6a6b9b0b1a749fba644c5968e7c21a539207e0",
+        "7zxa.dll": "df75045376ebc3442acecf8e07ecd639675160f68b16ca4b6e74ac337f8ccc0b"
       },
       "execute": "allowed",
       "publish_results": "allowed",
       "redistribute": "hold",
-      "basis": "LGPL-2.1-or-later; BSD components and unRAR restrictions remain applicable. Standalone ZIP/7z benchmarking does not copy or recreate RAR code.",
-      "evidence": ["https://www.7-zip.org/license.txt"],
+      "basis": "The official 26.05 Extra package licenses 7za.exe under LGPL-2.1-or-later with BSD components and permits commercial execution. Standalone ZIP/7z benchmarking does not copy or recreate RAR code.",
+      "evidence": ["https://www.7-zip.org/license.txt", "https://github.com/ip7z/7zip/releases/download/26.05/7z2605-extra.7z"],
       "conditions": ["Use an unmodified official executable and its supplied notices.", "Publish original measurements, not copied vendor charts or artwork.", "Do not bundle comparator binaries with FlitzZip."]
     },
     "Zstd": {

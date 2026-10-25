@@ -171,14 +171,15 @@ def require_permission(
     catalog = parse_metadata(PERMISSIONS_PATH.read_text(encoding="utf-8"))
     if type(catalog.get("schema_version")) is not int or catalog["schema_version"] != 1:
         raise ValueError("unsupported benchmark permission schema")
-    reviewed = datetime.strptime(catalog["reviewed_on"], "%Y-%m-%d").date()
+    decision = catalog["subjects"].get(subject)
+    if not isinstance(decision, dict):
+        raise ValueError(f"unreviewed benchmark subject: {subject}")
+    review_date = decision.get("reviewed_on", catalog["reviewed_on"])
+    reviewed = datetime.strptime(review_date, "%Y-%m-%d").date()
     age = (datetime.now(UTC).date() - reviewed).days
     validity = catalog["review_valid_days"]
     if type(validity) is not int or not 1 <= validity <= 30 or not 0 <= age <= validity:
         raise ValueError("benchmark permission review is expired or invalid; review the current terms")
-    decision = catalog["subjects"].get(subject)
-    if not isinstance(decision, dict):
-        raise ValueError(f"unreviewed benchmark subject: {subject}")
     if decision.get(action) != "allowed":
         raise ValueError(f"{subject} {action} is {decision.get(action, 'unreviewed')}: {decision['basis']}")
     if "versions" in decision and version not in decision["versions"]:
@@ -191,7 +192,7 @@ def require_permission(
     return {
         "subject": subject,
         "action": action,
-        "reviewed_on": catalog["reviewed_on"],
+        "reviewed_on": review_date,
         "basis": decision["basis"],
         "evidence": decision["evidence"],
         "conditions": decision["conditions"],
