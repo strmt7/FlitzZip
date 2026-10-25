@@ -112,7 +112,8 @@ def wheel_files(path: Path) -> dict[str, bytes]:
 
 def canonical_wheel(built: Path, destination: Path, data: dict, *, project: str) -> None:
     """Purpose: Make pure wheels reproducible without accepting ambiguous package identities.
-    Inputs: Standard wheel and recipe. Outputs: Canonical wheel; missing or repeated identity headers fail first.
+    Inputs: Standard wheel and recipe with an integral POSIX epoch representable by ZIP's 1980..2107 timestamp.
+    Outputs: Canonical wheel; invalid identity or timestamp fails before creating the destination.
     """
     if destination.exists() or destination.is_symlink():
         raise FileExistsError("Canonical Python wheel destination already exists or is redirected")
@@ -128,6 +129,17 @@ def canonical_wheel(built: Path, destination: Path, data: dict, *, project: str)
         or metadata.get_all("Version") != [data["version"]]
     ):
         raise ValueError(f"{project} wheel identity mismatch")
+    epoch = data["source_date_epoch"]
+    timestamp_error = "Python wheel source_date_epoch must be an integer within ZIP years 1980..2107"
+    if type(epoch) is not int:
+        raise ValueError(timestamp_error)
+    try:
+        # UTC arithmetic supports ZIP's complete date range without the host C runtime's time_t limits.
+        stamp = datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC) + datetime.timedelta(seconds=epoch)
+    except OverflowError as error:
+        raise ValueError(timestamp_error) from error
+    if not 1980 <= stamp.year <= 2107:
+        raise ValueError(timestamp_error)
     # Setuptools writes platform line endings; normalize generated metadata only.
     files[metadata_path] = files[metadata_path].replace(b"\r\n", b"\n")
     record_path = info + "RECORD"
@@ -139,7 +151,6 @@ def canonical_wheel(built: Path, destination: Path, data: dict, *, project: str)
         writer.writerow((name, "sha256=" + value, len(contents)))
     writer.writerow((record_path, "", ""))
     files[record_path] = record.getvalue().encode("utf-8")
-    stamp = datetime.datetime.fromtimestamp(data["source_date_epoch"], datetime.UTC)
     # Stored members avoid cross-host zlib variation; Python code and license payloads stay byte-exact.
     with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_STORED) as output:
         for name, contents in sorted(files.items()):
