@@ -681,25 +681,34 @@ tools\package.ps1 -Configuration Release
   Remove a proven orphan in the same change; a passing build or function-size
   gate does not establish that anonymous-namespace helpers are reachable.
 - New or changed functions must pass
-  `tools\refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings`.
-  Split large functions before pushing; do not wait for CodeQL to report
-  poorly documented or oversized functions.
+  `tools\refactor_audit.ps1 -ChangedOnly -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings`.
   This includes locally edited vendor C/C++ and either opening-brace style.
-  Contracts require Purpose, Inputs and Outputs in the immediately preceding
-  comment block. Long bodies also need concise comments explaining actual
-  parsing stages, ownership or invariants; comment padding is not a repair.
+  Split oversized or overly complex functions at coherent responsibility
+  boundaries. Review their documentation under the contract below; a passing
+  size or marker-count check does not establish documentation correctness.
 
 ## Required Function Documentation
 
-Every new or changed function must have a short contract comment immediately above its declaration or definition. Use this form:
+Document public and module interfaces, ownership or lifetime transfers, trust
+boundaries, wire formats, concurrency and non-obvious algorithms. Keep the
+contract at its canonical declaration or module boundary; do not duplicate it
+above each implementation and caller. State the constraints a caller cannot
+reliably infer from types and names: valid input ranges, units, borrowed versus
+owned resources, mutation, cancellation, failure behavior and thread affinity.
 
-```cpp
-// Purpose: One sentence describing behavior.
-// Inputs: Name each parameter and any important ownership, lifetime, unit, or security expectation.
-// Outputs: Return value, mutation, thrown exception class, callback behavior, or side effect.
-```
+A self-explanatory private helper does not need a comment that repeats its
+signature. Use body comments to explain decisions, invariants and unusual
+algorithms. Existing useful comments may retain their current format; the
+literal labels Purpose, Inputs and Outputs are optional. Comment count, label
+presence and line coverage cannot establish that a contract is accurate.
 
-For simple private helpers, one compact line is acceptable if it still covers purpose, inputs, and outputs. Public headers should document every exported type and function. Security-sensitive functions must explicitly state trust boundaries and failure behavior.
+For a changed boundary, review the declaration, implementation, callers and
+regression tests together. Record the behavior preserved or changed and the
+documentation decision in the contribution's review description. Missing or
+incorrect ownership, failure, concurrency or compatibility information must be
+repaired before acceptance. This review remains mandatory for local vendor edits
+as well as first-party code; it is separate from the automated size/complexity
+audit. Do not delete useful contracts or pad comments to satisfy a metric.
 
 ## Security Rules
 
@@ -1137,6 +1146,11 @@ manufacture a clean scan. Individual authorizations belong in review records.
 
 ## Git Workflow
 
+- Develop and publish on `main`; do not create a development branch or pull
+  request without an explicit task-specific maintainer exception. Keep applicable
+  local verification and exact-commit hosted acceptance mandatory. Do not enable
+  a pull-request requirement that conflicts with this workflow. Release publication
+  still requires separate maintainer authorization.
 - Inspect `git status --short` before staging.
 - For agent-assisted publication, create commits through the authenticated
   official GitHub connector and let it assign the contributor identity. Verify

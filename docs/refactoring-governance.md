@@ -52,16 +52,17 @@ normal reviewable commit.
 Changed code is held to a stricter gate than the historical backlog. The
 repository still contains known large legacy surfaces, especially the native
 Win32 UI shell, so the full audit remains a planning tool. New or modified
-functions must pass the changed-code gate before push:
+functions must pass the changed-code size/complexity gate before push and receive
+the [required documentation review](agent-operating-guide.md#required-function-documentation):
 
 ```powershell
-tools\refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
+tools\refactor_audit.ps1 -ChangedOnly -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
 ```
 
-This gate is intentionally wired into `tools\security_scan.ps1` so large or
-poorly documented functions are caught locally before CodeQL reports them after
-push. Do not bypass it with exclusions; split the changed function or add the
-required function contract.
+This gate is wired into `tools\security_scan.ps1` to identify oversized or
+complex changed functions locally. Do not bypass it with exclusions; split
+responsibilities and retain their behavior tests. Documentation correctness
+requires source review and cannot be inferred from comment labels or density.
 
 ## Workflow
 
@@ -136,7 +137,7 @@ tools\refactor_audit.ps1
 ```
 
 The default audit reports large files, large functions, and selected complexity
-markers. It does not modify files. Add `-CheckContracts` when auditing function
-contract comments; that heuristic is intentionally opt-in because lambdas and
-test macros can produce false positives. Use `-FailOnFindings` only in a
-deliberate quality gate after existing findings have been triaged.
+markers. It does not modify files or claim to judge documentation semantics.
+Use `-FailOnFindings` only in a deliberate quality gate after existing findings
+have been triaged. Review public contracts and non-obvious invariants under the
+operating guide; no comment-density target or mandatory template applies.

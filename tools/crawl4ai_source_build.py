@@ -37,7 +37,7 @@ def recipe() -> dict:
         or data["schema"] != 1
         or data.get("project") != "crawl4ai"
         or data.get("upstream_version") != "0.9.5"
-        or data.get("version") != "0.9.5+flitzzip.portable1"
+        or data.get("version") != "0.9.5+flitzzip.portable2"
         or data.get("source") != "crawl4ai-0.9.5.tar.gz"
         or type(data.get("source_bytes")) is not int
         or data["source_bytes"] != 577411
@@ -113,7 +113,8 @@ def extract_source(archive: Path, destination: Path) -> Path:
     if destination.exists() or destination.is_symlink():
         raise ValueError("Crawl4AI source destination must be new and unredirected")
     with tarfile.open(archive, "r:gz") as source:
-        entries, total = [], 0
+        entries: list[tarfile.TarInfo] = []
+        total = 0
         for item in source:
             total += item.size
             if item.size < 0 or len(entries) >= 2000 or total > packaging.MAX_SOURCE_BYTES or len(item.name) > 4096:
@@ -228,6 +229,7 @@ def repair_source(source: Path, data: dict) -> None:
         "Windows uses a native no-follow\n"
         "handle, validates it before truncation and transfers ownership to Python.\n"
         "POSIX retains O_NOFOLLOW. __version__.py and license packaging identify this build.\n"
+        "Modified 26 October 2026: annotate optional handle ownership without changing I/O behavior.\n"
         "No browser, URL, robots, request, extraction or dependency rules were changed.\n"
         "This is a downstream build, not a published Crawl4AI release.\n\n"
         "This product includes software developed by UncleCode (https://x.com/unclecode)\n"

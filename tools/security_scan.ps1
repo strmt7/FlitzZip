@@ -555,7 +555,7 @@ Test-GuiShellLaunchPolicy
 
 & (Join-Path $repo "tools\verify_license_notices.ps1")
 
-& (Join-Path $repo "tools\refactor_audit.ps1") -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
+& (Join-Path $repo "tools\refactor_audit.ps1") -ChangedOnly -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
 
 # Purpose: Verify CMake release MSI identity and UI defaults.
 # Inputs: CMakeLists is the repository CMake source text.

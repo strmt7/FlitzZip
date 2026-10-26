@@ -62,7 +62,7 @@ def windows_descriptor(path: str, flags: int) -> int:
     query = kernel.GetFileInformationByHandleEx
     query.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
     query.restype = wintypes.BOOL
-    handle = windows_handle(path, flags)
+    handle: int | None = windows_handle(path, flags)
     descriptor = None
     try:
         attributes = (wintypes.DWORD * 2)()

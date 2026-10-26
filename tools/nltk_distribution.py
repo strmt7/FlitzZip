@@ -190,11 +190,22 @@ def installed_runtime_sha256(root: Path) -> str:
 
 
 def verify_installed_runtime(expected_sha256: str) -> None:
-    """Purpose: Refuse cache drift before code import. Inputs: Admitted digest. Outputs: Success or source refusal."""
+    """Verify installed filesystem source before importing any NLTK code.
+
+    Archive-backed metadata providers cannot supply the no-follow filesystem
+    checks required by admission. Refuse them instead of interpreting their
+    display names as paths. Invalid identity, location or bytes raise ValueError.
+    """
     import importlib.metadata
 
     if not re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
         raise ValueError("Malformed NLTK runtime source identity")
-    root = Path(importlib.metadata.distribution("nltk").locate_file("nltk"))
+    location = importlib.metadata.distribution("nltk").locate_file("nltk")
+    if not isinstance(location, (str, os.PathLike)):
+        raise ValueError("NLTK runtime requires a filesystem installation")
+    path = os.fspath(location)
+    if not isinstance(path, str):
+        raise ValueError("NLTK runtime requires a text filesystem path")
+    root = Path(path)
     if installed_runtime_sha256(root) != expected_sha256:
         raise ValueError("NLTK installed runtime source changed; upstream dependency refused")

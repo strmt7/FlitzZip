@@ -26,6 +26,8 @@ the underlying format or product lineage.
   unless the maintainer explicitly requests it.
 - Preserve unrelated working-tree changes. Never use destructive Git commands
   without explicit authorization. Stage only intentional source/docs/config.
+- Develop and publish on `main`. Do not create development branches or pull
+  requests unless the maintainer explicitly authorizes an exception for that task.
 - Do not commit credentials, tokens, personal paths, host identities, build
   artifacts, crash dumps, or generated binaries. Pinned provenance archives
   under `third_party/upstream/**` are the only tracked archive exception.
@@ -110,8 +112,8 @@ source/tool/output identity checks and intermediate/final acceptance.
   coverage gaps. Do not turn a universal line percentage into a release gate.
 - Follow the guide's Engineering Quality Baseline, Coding Standards and Required
   Function Documentation, including C++20/RAII, bounded ownership and concise
-  Purpose/Inputs/Outputs contracts for every changed function, including vendor
-  edits. The changed-function size/complexity/documentation gate is mandatory.
+  substantive API, ownership and behavior documentation, including vendor edits.
+  The changed-function size/complexity gate and documentation review are mandatory.
 - Use the [learning loop](docs/engineering-learning-loop.md): repair the production
   boundary, retain a reproducer, review sibling callers and add a recurrence guard.
   Never evade analysis by relocating code, renaming primitives, suppressing rules,

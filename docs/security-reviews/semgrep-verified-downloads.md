@@ -23,6 +23,14 @@ that boundary, and both individual contexts include the resolver and its tests.
 The downloader sources, URL restrictions, digest checks and finding locations
 remain unchanged.
 
+The identified Crawl4AI build now records the download handle's optional
+ownership type and types the extracted tar-member list. The handle change is
+annotation-only; validation, transfer and cleanup operations are unchanged.
+The new downstream version and wheel digest identify those source bytes. The
+upstream HTTPS URL, archive digest, length budget and redirect behavior are
+unchanged. Both transport decisions were reviewed against the new context;
+the downloader regression suite still exercises malformed URLs and payloads.
+
 ## Individual findings
 
 ### Alert 8446

@@ -23,6 +23,62 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from tools import crawl4ai_research as research
 from tools import crawl4ai_tool as tool
+from tools.json_input import decode_json
+
+
+class JsonInputContracts(unittest.TestCase):
+    """Exercise strict decoding and its actual site-manifest consumer without network I/O."""
+
+    def test_unambiguous_finite_utf8_decoding(self):
+        """Reject duplicates, nonfinite values and invalid encoding; preserve valid nested data."""
+        invalid = (
+            b'{"schema":0,"schema":1}',
+            b'{"schema":1,"schema":0}',
+            b'{"nested":[{"value":1,"value":1}]}',
+            b'{"schema":0,"\\u0073chema":1}',
+            b'{"value":NaN}',
+            b'{"value":Infinity}',
+            b'{"value":-Infinity}',
+            b'{"value":1e999}',
+            b'{"value":-1e999}',
+            b'{"value":"\xff"}',
+            b"\xff\xfe{\x00}\x00",
+        )
+        for payload in invalid:
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                decode_json(payload)
+        valid = '{"label":"\u03bb","values":[1,-2,0.5,true,null],"text":"NaN"}'
+        expected = {"label": "\u03bb", "values": [1, -2, 0.5, True, None], "text": "NaN"}
+        self.assertEqual(decode_json(valid), expected)
+        self.assertEqual(decode_json(valid.encode("utf-8")), expected)
+
+    def test_site_manifest_rejects_duplicate_fields(self):
+        """Reject conflicting root or site fields before the crawler admits its target list."""
+        document = {
+            "schema": 1,
+            "purpose": "Offline admission contract",
+            "sites": [{"url": f"https://docs{index}.example.invalid/", "marker": "Expected"} for index in range(20)],
+        }
+        original = json.dumps(document, separators=(",", ":"))
+        mutations = (
+            ('"schema":1', '"schema":0,"schema":1'),
+            ('"schema":1', '"schema":1,"schema":0'),
+            ('"marker":"Expected"', '"marker":"Hidden","marker":"Expected"'),
+            (
+                '"url":"https://docs0.example.invalid/"',
+                '"url":"https://other.example.invalid/","url":"https://docs0.example.invalid/"',
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "sites.json"
+            path.write_text(original, encoding="utf-8")
+            self.assertEqual(research.read_sites(path), document["sites"])
+            for before, after in mutations:
+                with self.subTest(field=before):
+                    self.assertIn(before, original)
+                    path.write_text(original.replace(before, after, 1), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "unambiguous UTF-8 JSON"):
+                        research.read_sites(path)
 
 
 class CrawlerContracts(unittest.TestCase):

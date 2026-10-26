@@ -19,6 +19,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from tools.crawl4ai_tool import ATTRIBUTION, ROOT, VERSION, text_identity
+from tools.json_input import decode_json
 
 MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 MAX_CAPTURE_BYTES = 8 * 1024 * 1024
@@ -47,8 +48,8 @@ def read_sites(path: Path) -> list[dict[str, str]]:
     if not payload or len(payload) > MAX_SITES_BYTES:
         raise ValueError("Crawler site manifest must contain 1..65536 bytes")
     try:
-        document = json.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        document = decode_json(payload)
+    except (ValueError, RecursionError) as error:
         raise ValueError("Crawler site manifest must be unambiguous UTF-8 JSON") from error
     if (
         not isinstance(document, dict)

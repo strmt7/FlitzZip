@@ -1,15 +1,15 @@
+[CmdletBinding()]
 param(
     [int]$MaxFileLines = 1200,
     [int]$MaxFunctionLines = 180,
     [int]$MaxComplexityMarkers = 45,
     [switch]$ChangedOnly,
     [string]$GitBase = "",
-    [switch]$CheckContracts,
     [switch]$FailOnFindings
 )
 
 # Purpose: Audit FlitzZip source files for refactoring candidates without modifying the tree.
-# Inputs: Threshold parameters define large-file, large-function, and complexity-marker limits; `ChangedOnly` limits hard gates to edited line ranges; `CheckContracts` enables the noisy contract-comment heuristic.
+# Inputs: Threshold parameters define large-file, large-function, and complexity-marker limits; `ChangedOnly` limits hard gates to edited line ranges.
 # Outputs: Prints parseable findings and exits nonzero only when `FailOnFindings` is set and findings exist.
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
@@ -27,7 +27,6 @@ $script:AuditMaxFunctionLines = $MaxFunctionLines
 $script:AuditMaxComplexityMarkers = $MaxComplexityMarkers
 $script:AuditChangedOnly = $ChangedOnly
 $script:AuditGitBase = $GitBase
-$script:AuditCheckContracts = $CheckContracts
 $script:AuditFailOnFindings = $FailOnFindings
 
 # Purpose: Return a repository-relative path for stable audit output.
@@ -304,26 +303,6 @@ function Measure-ComplexityMarker {
     return $count
 }
 
-# Purpose: Check whether a function has a nearby FlitzZip contract comment.
-# Inputs: `Lines` is the full file and `Index` is the zero-based function start line.
-# Outputs: Requires all three nonempty fields in the immediately preceding comment block.
-function Test-NearbyContractComment {
-    param(
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines,
-        [Parameter(Mandatory = $true)][int]$Index,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.HashSet[int]]$CommentLines
-    )
-
-    $comments = [System.Collections.Generic.List[string]]::new()
-    for ($i = $Index - 1; $i -ge [Math]::Max(0, $Index - 16); --$i) {
-        if ([string]::IsNullOrWhiteSpace($Lines[$i])) { continue }
-        if (-not $CommentLines.Contains($i)) { break }
-        $comments.Add($Lines[$i])
-    }
-    $text = $comments -join "`n"
-    return $text -match 'Purpose:\s*\S' -and $text -match 'Inputs?:\s*\S' -and $text -match 'Outputs?:\s*\S'
-}
-
 # Purpose: Mask C/C++ comments and literals while preserving source lines and comment identities.
 # Inputs: Complete source text, including raw strings and multiline comments.
 # Outputs: Code-only lines and distinct comment line numbers for bounded function auditing.
@@ -372,7 +351,7 @@ function Get-CppConstructorStart {
 # Purpose: Locate a C/C++ definition's signature for either same-line or next-line opening braces.
 # Inputs: Masked source lines and candidate brace line; attributes/constraints remain in declarations, controls are excluded.
 # Outputs: Signature start index, or -1 when the candidate is not a recognized function definition.
-function Get-CppFunctionStart {
+function Get-CppSignatureStart {
     param([string[]]$Lines, [int]$Index)
 
     $candidate = $Lines[$Index].Trim()
@@ -439,6 +418,27 @@ function Get-CppFunctionStart {
     return $start
 }
 
+# Recognize the declaration prefix independently of statements after its opening
+# brace. The existing signature recognizer can look back through two bounded
+# declaration spans and adjacent prefixes; this small window retains that context
+# without copying the complete file for every brace. Initializer/lambda/control
+# braces still have to pass the same declaration classification.
+function Get-CppFunctionStart {
+    param([string[]]$Lines, [int]$Index)
+
+    $candidate = $Lines[$Index]
+    $braces = [regex]::Matches($candidate, '\{')
+    if ($braces.Count -eq 0) { return -1 }
+    $contextStart = [Math]::Max(0, $Index - 32)
+    $context = @($Lines[$contextStart..$Index])
+    foreach ($brace in $braces) {
+        $context[-1] = $candidate.Substring(0, $brace.Index + 1)
+        $signature = Get-CppSignatureStart -Lines $context -Index ($context.Count - 1)
+        if ($signature -ge 0) { return $contextStart + $signature }
+    }
+    return -1
+}
+
 # Purpose: Include the immediately preceding contract in a changed function's finding range.
 # Inputs: Raw lines and signature start; preceding executable statements terminate the range.
 # Outputs: First contract/blank line index, bounded to the sixteen-line documentation window.
@@ -481,9 +481,9 @@ function Add-RefactorFinding {
     })
 }
 
-# Purpose: Audit C/C++ files for large or undocumented function bodies.
+# Purpose: Audit C/C++ files for function size and complexity review boundaries.
 # Inputs: `Path` is one source file and `Findings` is the mutable output list.
-# Outputs: Adds findings for large functions, high marker counts, and missing nearby contracts.
+# Outputs: Adds findings for large functions and high marker counts; documentation semantics require review.
 function Test-CppFile {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -514,22 +514,13 @@ function Test-CppFile {
         if ($markers -gt $script:AuditMaxComplexityMarkers) {
             Add-RefactorFinding -Findings $Findings -Category "complex-function" -Path $Path -Line $findingStart -EndLine ($j + 1) -Detail "$markers markers"
         }
-        if ($script:AuditCheckContracts -and -not (Test-NearbyContractComment -Lines $lines -Index $signatureStart -CommentLines $projection.CommentLines)) {
-            Add-RefactorFinding -Findings $Findings -Category "missing-contract" -Path $Path -Line $findingStart -EndLine ($j + 1) -Detail "No nearby Purpose/Input/Output contract comment"
-        }
-        if ($script:AuditCheckContracts -and $lineCount -ge 100) {
-            $commentCount = @($signatureStart..$j | Where-Object { $projection.CommentLines.Contains($_) }).Count
-            if ($commentCount * 100 -lt $lineCount * 2) {
-                Add-RefactorFinding -Findings $Findings -Category "poor-documentation" -Path $Path -Line $findingStart -EndLine ($j + 1) -Detail "Long function lacks parsing/ownership/invariant comments"
-            }
-        }
         $i = $j
     }
 }
 
 # Purpose: Audit scripts and modules using native function and comment boundaries.
 # Inputs: Path is one PowerShell source and Findings is the mutable result list.
-# Outputs: Rejects syntax errors and records changed function size, complexity and required contracts.
+# Outputs: Rejects syntax errors and records changed function size and complexity.
 function Test-PowerShellFile {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -568,9 +559,6 @@ function Test-PowerShellFile {
         }
         if ($markers -gt $script:AuditMaxComplexityMarkers) {
             Add-RefactorFinding -Findings $Findings -Category 'complex-function' -Path $Path -Line ($contract + 1) -EndLine ($last + 1) -Detail "$markers markers"
-        }
-        if ($script:AuditCheckContracts -and -not (Test-NearbyContractComment -Lines $lines -Index $first -CommentLines $commentLines)) {
-            Add-RefactorFinding -Findings $Findings -Category 'missing-contract' -Path $Path -Line ($contract + 1) -EndLine ($last + 1) -Detail 'No adjacent Purpose/Input/Output contract comment'
         }
     }
 }

@@ -428,6 +428,10 @@ class DistributionTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(contents)
             root = source / "nltk"
+            for location in (root, str(root)):
+                distribution = SimpleNamespace(locate_file=lambda _name, value=location: value)
+                with patch("importlib.metadata.distribution", return_value=distribution):
+                    build.verify_installed_runtime(expected)
             distribution = SimpleNamespace(locate_file=lambda name: source / name)
             with patch("importlib.metadata.distribution", return_value=distribution):
                 build.verify_installed_runtime(expected)
@@ -480,6 +484,20 @@ class DistributionTests(unittest.TestCase):
                     build.verify_installed_runtime("unreviewed")
                 with patch.object(build, "MAX_SOURCE_BYTES", 1), self.assertRaisesRegex(ValueError, "byte budget"):
                     build.verify_installed_runtime(expected)
+
+    def test_installed_runtime_requires_a_filesystem_metadata_provider(self):
+        """Reject archive/display-only locations before any source traversal."""
+        with zipfile.ZipFile(self.wheel) as archive:
+            for location in (zipfile.Path(archive, "nltk/"), object(), b"nltk"):
+                distribution = SimpleNamespace(locate_file=lambda _name, value=location: value)
+                with (
+                    self.subTest(provider=type(location).__name__),
+                    patch("importlib.metadata.distribution", return_value=distribution),
+                    patch.object(build, "installed_runtime_sha256") as inspect_source,
+                    self.assertRaisesRegex(ValueError, "filesystem installation"),
+                ):
+                    build.verify_installed_runtime("a" * 64)
+                inspect_source.assert_not_called()
 
     def test_canonical_wheel_is_host_independent_and_record_valid(self):
         """Purpose: Preserve standard wheel integrity. Inputs: Equivalent platform ZIPs. Outputs: Equal valid wheels."""
