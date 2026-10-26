@@ -13,6 +13,7 @@ import time
 import unittest
 import venv
 from ctypes import wintypes
+from functools import partial
 from pathlib import Path
 from unittest import mock
 
@@ -40,7 +41,110 @@ class FailedReadPipe:
         return self.stream.closed
 
 
+class FailedClosePipe(FailedReadPipe):
+    def __init__(self, stream: io.BufferedReader, channel: str) -> None:
+        """Purpose: Retain a real close fault. Inputs: Owned stream and channel. Outputs: A readable cleanup proxy."""
+        super().__init__(stream)
+        self.channel = channel
+
+    def read(self, size: int) -> bytes:
+        """Purpose: Keep acquisition real. Inputs: Requested extent. Outputs: Original child bytes."""
+        return self.stream.read(size)
+
+    def close(self) -> None:
+        """Purpose: Fail after releasing the real handle. Inputs: None. Outputs: A channel-specific close error."""
+        self.stream.close()
+        raise OSError("controlled " + self.channel + " close failure")
+
+
 class ProtocolTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows owned-process pipe contract")
+    def test_missing_output_pipes_refuse_and_reap_owned_process(self) -> None:
+        """Purpose: Enforce pipe acquisition even when Python assertions are optimized away.
+        Inputs: Real contained children whose factory supplies one or both outputs through DEVNULL instead of PIPE.
+        Outputs: Explicit postcondition refusal, reaped child and closure of every acquired peer pipe.
+        """
+        real_popen = subprocess.Popen
+        python = str(Path(sys.base_prefix) / "python.exe")
+
+        def launch(*args, missing, owned, **kwargs):
+            """Purpose: Alter only output acquisition. Inputs: Native spawn arguments. Outputs: One real owned child."""
+            for channel in missing:
+                kwargs[channel] = subprocess.DEVNULL
+            process = real_popen(*args, **kwargs)
+            owned.append(process)
+            return process
+
+        for missing in (("stdout",), ("stderr",), ("stdout", "stderr")):
+            children = []
+            with (
+                self.subTest(missing=missing),
+                mock.patch.object(
+                    flitzzip_mcp.subprocess, "Popen", side_effect=partial(launch, missing=missing, owned=children)
+                ),
+                mock.patch.object(flitzzip_mcp, "resume_owned_child", wraps=flitzzip_mcp.resume_owned_child) as resume,
+                self.assertRaisesRegex(flitzzip_mcp.ProtocolError, "did not provide both requested output pipes"),
+            ):
+                flitzzip_mcp.run_bounded_command([python, "-c", "import time; time.sleep(20)"], timeout_seconds=5)
+            self.assertEqual(len(children), 1)
+            resume.assert_not_called()
+            self.assertIsNotNone(children[0].returncode)
+            for pipe in (children[0].stdout, children[0].stderr):
+                self.assertTrue(pipe is None or pipe.closed)
+
+    @unittest.skipUnless(os.name == "nt", "Windows owned-process pipe cleanup")
+    def test_output_close_fault_releases_peer_and_retains_first_error(self) -> None:
+        """Purpose: Prevent one failed close from leaking its peer or replacing the first close failure.
+        Inputs: Real child output streams with independently injected stdout, stderr and combined close faults.
+        Outputs: Every handle closes, the root is reaped and the first channel's error remains observable.
+        """
+        real_popen = subprocess.Popen
+        python = str(Path(sys.base_prefix) / "python.exe")
+
+        def launch(*args, failing, owned, **kwargs):
+            """Purpose: Preserve real transport. Inputs: Spawn arguments. Outputs: Owned close-fault proxies."""
+            process = real_popen(*args, **kwargs)
+            for channel in failing:
+                setattr(process, channel, FailedClosePipe(getattr(process, channel), channel))
+            owned.append(process)
+            return process
+
+        for failing in (("stdout",), ("stderr",), ("stdout", "stderr")):
+            children = []
+            with (
+                self.subTest(failing=failing),
+                mock.patch.object(
+                    flitzzip_mcp.subprocess, "Popen", side_effect=partial(launch, failing=failing, owned=children)
+                ),
+                self.assertRaisesRegex(OSError, "controlled " + failing[0] + " close failure"),
+            ):
+                flitzzip_mcp.run_bounded_command([python, "-c", "print('independent transport')"], timeout_seconds=5)
+            self.assertEqual(len(children), 1)
+            self.assertIsNotNone(children[0].returncode)
+            self.assertTrue(children[0].stdout.closed)
+            self.assertTrue(children[0].stderr.closed)
+
+    @unittest.skipUnless(os.name == "nt", "Windows optimized interpreter contract")
+    def test_pipe_postcondition_survives_optimized_interpreter(self) -> None:
+        """Purpose: Verify the production guard under actual optimized bytecode without recursive test dispatch.
+        Inputs: The same focused missing-pipe consumer in a fresh Python -O child. Outputs: Bounded successful result.
+        """
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-O",
+                "-m",
+                "unittest",
+                "test_flitzzip_mcp.ProtocolTests.test_missing_output_pipes_refuse_and_reap_owned_process",
+            ],
+            cwd=Path(__file__).parent,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     @unittest.skipUnless(os.name == "nt", "Windows owned-child identity contract")
     def test_bounded_result_identifies_root_child_on_success_and_nonzero_exit(self) -> None:
         """Purpose: Bind command results to the real owned root rather than its caller or descendant.

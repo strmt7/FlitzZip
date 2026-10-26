@@ -483,6 +483,23 @@ def _drain_stream(stream: BinaryIO, channel: str, output: BoundedOutput) -> None
         output.record_read_failure(channel, error)
 
 
+def _close_owned_output_pipes(process: subprocess.Popen[bytes]) -> None:
+    """Purpose: Release every acquired output pipe even if another close fails.
+    Inputs: One owned child process, including incomplete pipe acquisition.
+    Outputs: Attempts both closes and re-raises the first close failure after peer cleanup.
+    """
+    first_error: BaseException | None = None
+    for stream in (process.stdout, process.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except BaseException as error:
+                if first_error is None:
+                    first_error = error
+    if first_error is not None:
+        raise first_error
+
+
 def child_environment(command: Sequence[str]) -> dict[str, str]:
     """Purpose: Prevent indirect Windows PowerShell launches from inheriting incompatible PS7 modules.
     Inputs: command is fixed argv; the caller environment is copied, never changed.
@@ -539,8 +556,9 @@ def run_bounded_command(
     Inputs: Fixed argv, positive limits and checkout-contained directory; cancellation stops only this tree.
     Trusted local artifact consumers may request more retained characters; stdio tools retain the default response cap.
     Outputs: Returns the owned root PID, bounded outcome and admitted job-memory bytes;
-    output read failures raise after cleanup. The PID identifies this launch, not a later live process.
-    No child runs before verified containment.
+    Pipe acquisition, read and close failures raise after cleanup.
+    The PID identifies this launch, not a later live process.
+    No child runs before verified containment and output-pipe admission.
     """
     if (
         type(timeout_seconds) not in (int, float)
@@ -575,24 +593,24 @@ def run_bounded_command(
     containment = None
     try:
         containment = ChildContainment(process, admitted_bytes)
+        if process.stdout is None or process.stderr is None:
+            raise ProtocolError(-32603, "Command did not provide both requested output pipes")
         resume_owned_child(process)
     except BaseException:
         try:
             if containment is not None:
                 containment.close()
         finally:
-            if process.poll() is None:
-                process.kill()
-            process.wait(timeout=5)
-            if process.stdout is not None:
-                process.stdout.close()
-            if process.stderr is not None:
-                process.stderr.close()
+            try:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+            finally:
+                _close_owned_output_pipes(process)
         raise
     readers: list[threading.Thread] = []
     timed_out = False
     try:
-        assert process.stdout is not None and process.stderr is not None
         readers = [
             threading.Thread(target=_drain_stream, args=(process.stdout, "stdout", output), daemon=True),
             threading.Thread(target=_drain_stream, args=(process.stderr, "stderr", output), daemon=True),
@@ -627,8 +645,7 @@ def run_bounded_command(
                 for reader in readers:
                     if reader.ident is not None:
                         reader.join(timeout=5)
-                process.stdout.close()
-                process.stderr.close()
+                _close_owned_output_pipes(process)
 
     stdout, stdout_truncated = output.render("stdout")
     stderr, stderr_truncated = output.render("stderr")
