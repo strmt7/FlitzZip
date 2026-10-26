@@ -63,10 +63,28 @@ std::filesystem::path create_native_extraction_archive(const ControllerFixture& 
     return archive;
 }
 
+// Purpose: Locate the two visible overwrite actions without reading private modal state.
+// Inputs: Owned hidden HWND and its public DPI-scaled client/workspace geometry.
+// Outputs: Continue and Cancel hit rectangles in visual order.
+std::array<RECT, 2> native_overwrite_actions(HWND window) {
+    RECT client{};
+    REQUIRE_TRUE(GetClientRect(window, &client) != FALSE);
+    const auto content = native_content_rect(window);
+    const auto dpi = static_cast<int>(GetDpiForWindow(window));
+    const auto px = [dpi](int value) { return MulDiv(value, dpi, 96); };
+    const int modal_left = content.left + (client.right - content.left - px(620)) / 2;
+    const int modal_top = content.top + (content.bottom - content.top - px(258)) / 2;
+    const int modal_right = modal_left + px(620);
+    const int button_bottom = modal_top + px(258) - px(22);
+    const RECT cancel{modal_right - px(22) - px(110), button_bottom - px(36), modal_right - px(22), button_bottom};
+    const RECT allow{cancel.left - px(12) - px(142), cancel.top, cancel.left - px(12), cancel.bottom};
+    return {allow, cancel};
+}
+
 }  // namespace
 
 // Purpose: Preserve existing files on cancelled confirmation and keep overwrite approval local to one operation.
-// Inputs: Real ZIP, pre-existing destination bytes, keyboard cancel/approval and one gated native extraction.
+// Inputs: Real ZIP, pre-existing destination bytes, keyboard and mouse modal actions and a gated native extraction.
 // Outputs: No work before approval, exact decoded bytes afterward, unrelated files intact and retry asks again.
 TEST_CASE(main_window_extract_confirmation_cancel_retry_preserves_existing_files) {
     ControllerFixture fixture;
@@ -108,6 +126,20 @@ TEST_CASE(main_window_extract_confirmation_cancel_retry_preserves_existing_files
     click_native_control(window, layout.start);
     HiddenController::send(window, WM_KEYDOWN, VK_RETURN);
     REQUIRE_EQ(launcher.attempts.load(), 1U);
+    REQUIRE_EQ(read_native_fixture(flitzzip::app::settings_file_path()), settings);
+
+    const auto actions = native_overwrite_actions(window);
+    click_native_control(window, layout.start);
+    click_native_control(window, actions[1]);
+    REQUIRE_EQ(launcher.attempts.load(), 1U);
+    REQUIRE_EQ(read_native_fixture(target), "controller ownership fixture\n");
+    click_native_control(window, layout.start);
+    click_native_control(window, actions[0]);
+    require_native_observation([&] { return launcher.completed.load() == 2U; },
+                               "mouse-approved extraction did not finish");
+    HiddenController::send(window, WM_TIMER, flitzzip::app::kClockTimer);
+    REQUIRE_EQ(read_native_fixture(target), "controller ownership fixture\n");
+    REQUIRE_EQ(read_native_fixture(sentinel), "preserve unrelated file");
     REQUIRE_EQ(read_native_fixture(flitzzip::app::settings_file_path()), settings);
     HiddenController::send(window, WM_CLOSE);
     controller.require_closed();

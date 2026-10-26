@@ -89,9 +89,8 @@ class QueueSession final {
     }
 
     // Purpose: Read literal filenames from native glyphs instead of calling a Queue accessor.
-    // Inputs: Visible row, expected original index and row count. Outputs: Exact rendered filename match.
-    void require_name(int row, int original_index, int count) {
-        const auto name = L"row-" + std::to_wstring(original_index) + L".txt";
+    // Inputs: Visible row, expected filename and row count. Outputs: Exact rendered filename match.
+    void require_literal_name(int row, std::wstring_view name, int count) {
         require_native_observation(
             [&] {
                 ui.paint();
@@ -99,6 +98,12 @@ class QueueSession final {
                                                 flitzzip::app::kText);
             },
             "Queue filename differs from the independent row model");
+    }
+
+    // Purpose: Name an indexed Queue fixture without duplicating the native glyph oracle.
+    // Inputs: Visible row, expected original index and row count. Outputs: Exact rendered filename match.
+    void require_name(int row, int original_index, int count) {
+        require_literal_name(row, L"row-" + std::to_wstring(original_index) + L".txt", count);
     }
 
     // Purpose: Activate Remove Selected through normal keyboard focus without copying its adaptive button width.
@@ -112,12 +117,13 @@ class QueueSession final {
     }
 
     // Purpose: Verify Queue operations never modify or delete the admitted source files.
-    // Inputs: Literal payload model and live session. Outputs: Exact unchanged bytes and joined controller.
-    void finish() {
+    // Inputs: Literal payload model, live session and expected background-worker accounting.
+    // Outputs: Exact unchanged bytes and joined controller.
+    void finish(unsigned attempts = 0, unsigned completions = 0) {
         for (std::size_t index = 0; index < inputs.size(); ++index) {
             REQUIRE_EQ(read_native_fixture(inputs[index]), "Queue fixture " + std::to_string(index) + "\n");
         }
-        ui.finish();
+        ui.finish(attempts, completions);
     }
 };
 
@@ -317,6 +323,59 @@ TEST_CASE(main_window_queue_column_resize_minimum_and_capture_cancel) {
     HiddenController::send(s.ui.window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(s.table.right + s.ui.px(100), header_y));
     REQUIRE_TRUE(s.ui.pixels(header) == stable);
     s.finish();
+}
+
+// Purpose: Keep native picker commands and Clear bound to the Queue's actual visible rows.
+// Inputs: Two distinct file selections and one folder through scoped GUI picker values on an invisible window.
+// Outputs: Exact row order and names, restored empty pixels and unchanged source bytes after Clear.
+TEST_CASE(main_window_queue_picker_files_folder_and_clear_preserve_sources) {
+    flitzzip_test::ScopedEnvironment selected_files(L"FLITZZIP_GUI_SMOKE_FILE_SELECTION");
+    flitzzip_test::ScopedEnvironment selected_folder(L"FLITZZIP_GUI_SMOKE_FOLDER_SELECTION");
+    QueueSession s;
+    ReleaseOnExit release(s.ui.launcher.released);
+    const auto first = s.ui.fixture.root / "alpha.txt";
+    const auto second = s.ui.fixture.root / "beta.txt";
+    const auto folder = s.ui.fixture.root / "selected-folder";
+    std::filesystem::create_directory(folder);
+    const auto child = folder / "child.txt";
+    s.inputs = {first, second, child};
+    for (std::size_t index = 0; index < s.inputs.size(); ++index) {
+        std::ofstream output(s.inputs[index], std::ios::binary);
+        output << "Queue fixture " << index << '\n';
+        REQUIRE_TRUE(output.good());
+    }
+    const auto empty_name = s.ui.pixels(s.name_cell(0, 0));
+    const int header_top = s.table.top - s.ui.px(54);
+    const int header_bottom = header_top + s.ui.px(flitzzip::app::kPageHeaderHeight);
+    const RECT clear{s.table.right - s.ui.px(72), header_top, s.table.right, header_bottom};
+    const RECT add_folder{clear.left - s.ui.px(12) - s.ui.px(108), header_top, clear.left - s.ui.px(12), header_bottom};
+    const RECT add_files{add_folder.left - s.ui.px(12) - s.ui.px(96), header_top, add_folder.left - s.ui.px(12),
+                         header_bottom};
+
+    const auto chosen = first.wstring() + L";" + second.wstring();
+    selected_files.set(chosen.c_str());
+    click_native_control(s.ui.window, add_files);
+    s.require_literal_name(0, L"alpha.txt", 2);
+    s.require_literal_name(1, L"beta.txt", 2);
+
+    selected_folder.set(folder.c_str());
+    click_native_control(s.ui.window, add_folder);
+    s.require_literal_name(0, L"alpha.txt", 3);
+    s.require_literal_name(1, L"beta.txt", 3);
+    s.require_literal_name(2, L"selected-folder", 3);
+
+    auto folder_worker_entered = s.ui.launcher.entered.get_future();
+    require_native_observation(
+        [&] {
+            s.ui.paint();
+            return folder_worker_entered.wait_for(0s) == std::future_status::ready;
+        },
+        "Queue folder-size work was not scheduled after rendering the selected folder");
+    release.release();
+
+    click_native_control(s.ui.window, clear);
+    REQUIRE_TRUE(s.ui.pixels(s.name_cell(0, 0)) == empty_name);
+    s.finish(1, 1);
 }
 
 // Purpose: Map visible checkbox coordinates to scrolled rows and preserve the intended original file.
