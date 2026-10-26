@@ -1,4 +1,5 @@
-#include "native_window_test_environment.hpp"
+#include "native_window_visual_fixture.hpp"
+#include "cpio/cpio_adapter.hpp"
 #include "zip/zip_adapter.hpp"
 
 namespace {
@@ -145,6 +146,75 @@ TEST_CASE(main_window_extract_confirmation_cancel_retry_preserves_existing_files
     controller.require_closed();
     REQUIRE_TRUE(!launcher.release_timed_out.load());
     REQUIRE_EQ(read_native_fixture(fixture.input), "controller ownership fixture\n");
+}
+
+// Purpose: Bind visible Extract controls to the actual overwrite policy without persisting unapplied choices.
+// Inputs: One real ZIP, an existing target, keyboard dropdown choice and native toggle clicks on a hidden window.
+// Outputs: Exact field/switch states, disabled ZIP encoding override, no prompt and exact target replacement.
+TEST_CASE(main_window_extract_controls_drive_overwrite_without_prompt) {
+    VisualSession ui;
+    const auto archive = create_native_extraction_archive(ui.fixture);
+    const auto target = ui.fixture.output / L"source.txt";
+    std::ofstream(target, std::ios::binary) << "existing user data";
+    const auto layout = prepare_native_extraction(ui.window, {archive});
+    const auto settings = read_native_fixture(flitzzip::app::settings_file_path());
+    // Purpose: Name the public field whose exact native glyph observation failed.
+    // Inputs: Field, expected label and diagnostic name. Outputs: Exact match or attributed failure.
+    const auto require_field = [&](const RECT& field, std::wstring_view expected, const char* name,
+                                   bool enabled = true) {
+        try {
+            ui.require_field(field, expected, true, enabled);
+        } catch (const std::exception& error) {
+            throw std::runtime_error(std::string(name) + ": " + error.what());
+        }
+    };
+    require_field(layout.overwrite_policy, L"Ask before overwriting", "default overwrite policy");
+    ui.choose_option(layout.overwrite_policy, 1);
+    require_field(layout.overwrite_policy, L"Overwrite without asking", "selected overwrite policy");
+    require_field(layout.name_encoding, L"UTF-8", "ZIP member name encoding", false);
+    click_native_control(ui.window, layout.name_encoding);
+    require_field(layout.name_encoding, L"UTF-8", "disabled ZIP encoding override", false);
+
+    const std::array toggles{std::pair{layout.validate_before_publish, true},
+                             std::pair{layout.open_destination_after_extract, false}, std::pair{layout.sha, false},
+                             std::pair{layout.defender, false}};
+    for (const auto& [rect, initial] : toggles) {
+        require_native_toggle(ui.window, ui.frame.dc(), rect, initial);
+        click_native_control(ui.window, rect);
+        require_native_toggle(ui.window, ui.frame.dc(), rect, !initial);
+        click_native_control(ui.window, rect);
+        require_native_toggle(ui.window, ui.frame.dc(), rect, initial);
+    }
+
+    auto entered = ui.launcher.entered.get_future();
+    auto completed = ui.launcher.first_completed.get_future();
+    ReleaseOnExit release(ui.launcher.released);
+    click_native_control(ui.window, layout.start);
+    REQUIRE_TRUE(entered.wait_for(3s) == std::future_status::ready);
+    REQUIRE_EQ(ui.launcher.attempts.load(), 1U);
+    REQUIRE_EQ(read_native_fixture(target), "existing user data");
+    release.release();
+    REQUIRE_TRUE(completed.wait_for(5s) == std::future_status::ready);
+    HiddenController::send(ui.window, WM_TIMER, flitzzip::app::kClockTimer);
+    REQUIRE_EQ(read_native_fixture(target), "controller ownership fixture\n");
+    REQUIRE_EQ(read_native_fixture(flitzzip::app::settings_file_path()), settings);
+    ui.finish(1, 1);
+}
+
+// Purpose: Offer explicit member-name encoding only for an archive format that supports it.
+// Inputs: One real CPIO source through Queue admission and native Extract dropdown interaction.
+// Outputs: Both supported labels render exactly, and selection returns to UTF-8 without launching work.
+TEST_CASE(main_window_extract_name_encoding_enabled_for_cpio) {
+    VisualSession ui;
+    const auto archive = ui.fixture.root / L"input.cpio";
+    flitzzip::compress_cpio({ui.fixture.input}, archive);
+    const auto layout = prepare_native_extraction(ui.window, {archive});
+    ui.require_field(layout.name_encoding, L"UTF-8");
+    ui.choose_option(layout.name_encoding, 1);
+    ui.require_field(layout.name_encoding, L"Windows ANSI");
+    ui.choose_option(layout.name_encoding, 0);
+    ui.require_field(layout.name_encoding, L"UTF-8");
+    ui.finish();
 }
 
 // Purpose: Route two equally named archives to distinct output directories in the actual GUI worker.
