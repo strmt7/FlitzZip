@@ -845,4 +845,11 @@ Assert-Selector (Test-RequiredCommand -Plan $installerPlan -Id 'installer-author
 Assert-Selector (-not (Test-RequiredCommand -Plan $installerPlan -Id 'unit-tests')) 'separate installer fixture code must not select unrelated product tests'
 Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path 'tests/installer/lifecycle/fail_upgrade.c') 'hosted contracts must admit installer fixture changes'
 
+foreach ($path in @('tools/deepsource_inventory.py', 'tools/test_deepsource_inventory.py', 'tools/json_input.py')) {
+    $inventoryPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
+    Assert-Selector (Test-RequiredCommand -Plan $inventoryPlan -Id 'deepsource-inventory-contracts') 'DeepSource inventory inputs must execute pagination and evidence contracts'
+    Assert-Selector (-not (Test-RequiredCommand -Plan $inventoryPlan -Id 'release-build')) 'inventory contracts must not rebuild the product'
+    Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $path) 'hosted contracts must admit inventory inputs'
+}
+
 Write-Output "Verification selector self-test passed."

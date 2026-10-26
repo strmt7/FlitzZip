@@ -49,6 +49,11 @@ after a failed prerequisite. Preserve ownership through actual HIP completion.
 
 ## Hosted verification
 
+For the complete DeepSource backlog, use the
+[paginated inventory procedure](../../../docs/security-code-scanning.md#retrieve-every-active-occurrence).
+Require its complete, source-matched manifest; a green commit check or capped
+CLI issue export does not establish repository-wide disposition.
+
 Read canonical scanner configuration before changing analysis coverage or build
 commands. Review both complete CPU and HIP-host CodeQL analyses and the same-run
 Semgrep coverage diagnostics. HIP-host extraction is not device-kernel analysis.

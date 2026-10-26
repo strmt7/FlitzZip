@@ -44,19 +44,73 @@ including test and build-tool defects. A dashboard ignore alone cannot establish
 an exact-source false-positive disposition under the
 [source-remediation contract](security-source-remediation-redesign.md).
 
-The optional [official CLI](https://docs.deepsource.com/docs/developers/cli/usage)
-provides JSON for local triage. Scope `runs` to the full commit SHA to retain its
-native issue summary; query `issues --default-branch` for the active inventory.
-Successful change checks do not close older reports. Compare export counts with
-the native run before claiming completeness: the CLI's issue export can truncate
-results before applying path filters, even with `--limit 0`. Retain that limitation
-and use the dashboard's scoped finding views for missing source locations. Never
-interpret an empty filtered export as proof that no finding exists.
+Successful change checks do not close older reports. Before repository-wide
+triage or release review, retrieve the complete active default-branch inventory
+using the procedure below. Commit-status acceptance and backlog disposition are
+separate obligations; neither proves the other.
 
 DeepSource supplements the existing CodeQL, Semgrep, secret, dependency and native
 analysis lanes. Its source analysis does not establish device-kernel execution,
 complete dependency coverage or runtime correctness. Retain the existing scanners
 and direct behavioral regressions.
+
+### Retrieve every active occurrence
+
+Use `tools/deepsource_inventory.py`, which calls the documented
+[repository occurrence API](https://docs.deepsource.com/docs/developers/api/repository)
+directly. It needs Python 3.13 or newer and only the standard library. Use the
+host's Python executable; `py -3` below is the Windows launcher. Authenticate
+once with the [official CLI](https://docs.deepsource.com/docs/developers/cli/usage)
+using `deepsource auth login`, or supply `DEEPSOURCE_TOKEN` through the host's
+secret-management mechanism. Do not put tokens in commands, reports or Git.
+The default CLI configuration is resolved from the current user's home;
+`--config` accepts another installation's configuration file. An explicit
+environment token takes precedence. Private DeepSource server credentials are
+refused by this cloud client rather than forwarded to another host.
+
+```powershell
+py -3 tools/deepsource_inventory.py --repository OWNER/REPOSITORY --commit FULL_DEFAULT_BRANCH_SHA --output out/deepsource-review
+```
+
+Use a **new** output directory and the full published default-branch SHA. The
+tool identifies itself as `FlitzZip-DeepSource-Audit/1.0`, verifies HTTPS normally,
+refuses redirects and makes no automatic retries. This is an honest application
+identifier, not a browser identity or challenge bypass. If access is denied,
+retain the error and resolve service access; do not impersonate another client,
+disable TLS verification or scrape a personal browser session's credentials.
+
+The client traverses `issueOccurrences` with `first`/`after` until `hasNextPage`
+is false. It preserves native occurrence IDs, messages, rules, severity, paths
+and columns, including multiple reports at the same line. It rejects duplicate
+IDs, missing or repeated cursors, partial GraphQL errors, changed repository or
+commit identity, count drift, and traversal/response budget exhaustion. It
+reconciles the collected count with native `totalCount` and checks the commit
+and count once more at completion. A page is bounded to 4 MiB and 45 seconds;
+`--max-pages` can reduce the default 1,000-page budget. Hitting any budget means
+incomplete evidence, never a passing truncated inventory.
+
+Inspect `manifest.json` first: require `complete: true`, the intended repository
+and commit, and the expected count. `findings.json` is the normalized full list;
+the native pages and final observation remain alongside it with their digests.
+Failures retain available raw pages and an incomplete manifest. Keep these
+changing reports under ignored local evidence, not in skills or policy files.
+Review bounded groups by rule/category/path, then confirm each affected source.
+Do not rerun an unchanged export merely to rediscover its locations.
+
+The API does not promise an atomic snapshot or expose a pinned analyzer version.
+Stable commit/count checks cannot detect every equal-count concurrent change.
+Capture after the exact commit's analyses finish, retain their run identities,
+and repeat only if analysis, source or configuration changes invalidate the
+snapshot. This captures active source occurrences, not ignored findings or
+dependency vulnerabilities; their existing audit procedures still apply.
+
+The CLI's `issues --default-branch --limit 0` is not a complete export: the
+inspected CLI paginates issue groups but leaves their nested occurrence pages
+untraversed. Its commit-scoped issue query is also capped. Path filters cannot
+recover rows discarded before filtering. Use the repository tool for complete
+retrieval and the CLI/dashboard for individual run details. Its offline tests
+run through the existing component-contract lane; no additional scan workflow
+or credentials in CI are required.
 
 ## Installed Scanner Dependencies
 

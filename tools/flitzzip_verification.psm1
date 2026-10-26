@@ -300,6 +300,7 @@ function Get-FlitzZipVerificationScope {
         '^tools/(flitzzip_verification\.psm1|test_verification_selector\.ps1|test_verification_runner\.ps1|ci_tool_contracts\.ps1|test_ci_tool_contracts\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
         '^tools/(executable_path|test_executable_path)\.py$',
         '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
+        '^tools/(deepsource_inventory|test_deepsource_inventory)\.py$',
         '^tools/test_gitleaks_policy\.py$',
         '^tools/(scanner_preflight|test_scanner_preflight|scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review|semgrep_findings|test_semgrep_findings)\.py$',
         '^tools/scan_trufflehog\.sh$',
@@ -416,6 +417,8 @@ function Get-FlitzZipPersistenceContractDefinition {
 function Get-FlitzZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
     $definitions = @(Get-FlitzZipPersistenceContractDefinition) + @(
+        @{ Pattern = @('^tools/(deepsource_inventory|test_deepsource_inventory|json_input)\.py$')
+           Command = (Get-FlitzZipVerificationCommand -Id 'deepsource-inventory-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_deepsource_inventory') -Reason 'complete occurrence pagination, source identity, authentication boundaries and partial-failure evidence require offline contracts; no hosted credentials or scan is needed') }
         @{ Pattern = @('^tools/(executable_path|test_executable_path)\.py$')
            Command = (Get-FlitzZipVerificationCommand -Id 'executable-path-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_executable_path') -Reason 'native command lookup must ignore implicit current-directory shadows, reject relative paths and retain real Git consumers') }
         @{ Pattern = @('^tools/(release_metadata|test_release_metadata)\.py$', '^CMakeLists\.txt$', '^\.github/workflows/release\.yml$')
