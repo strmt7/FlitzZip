@@ -155,7 +155,7 @@ TEST_CASE(main_window_logging_successful_defaults_publishes_information_policy) 
     s.draft(1);
     s.defaults();
     s.ui.require_field(native_settings_layout(s.ui.window).log_level, L"Information");
-    REQUIRE_TRUE(s.saved().find("\"logLevelIndex\": 0") != std::string::npos);
+    REQUIRE_TRUE(s.saved().find("\"logLevel\": \"information\"") != std::string::npos);
     s.open_log();
     require_native_log_count(kOpened, 1);
     s.ui.finish();
@@ -172,7 +172,9 @@ TEST_CASE(main_window_logging_applied_transitions_follow_independent_event_truth
         s.apply();
         s.open_log();
         require_native_log_count(kOpened, count);
-        REQUIRE_TRUE(s.saved().find("\"logLevelIndex\": " + std::to_string(level)) != std::string::npos);
+        constexpr std::array<std::string_view, 3> identifiers{"information", "warning", "debug"};
+        REQUIRE_TRUE(s.saved().find("\"logLevel\": \"" + std::string(identifiers[static_cast<std::size_t>(level)]) +
+                                    '"') != std::string::npos);
     }
     s.ui.finish();
 }

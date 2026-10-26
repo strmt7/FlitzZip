@@ -56,6 +56,20 @@ The System graphs are current observations rather than a controlled benchmark.
 An unavailable counter is shown as unavailable. A GPU utilization percentage
 alone does not establish compression speed or output-size improvement.
 
+## Preferences could not be saved or loaded
+
+Close other FlitzZip windows and reopen the app before retrying a stale or busy
+settings save. FlitzZip preserves the last saved file when it cannot safely
+replace it. A malformed or unsupported profile is reported rather than reset.
+
+Preferences are in the current user's Local AppData `FlitzZip` directory, in a
+versioned `settings-v*.json` file. The corresponding `.bak` file contains the
+preceding validated saved document when one exists. To recover, close all
+instances, copy the current file somewhere safe, inspect the backup, and restore
+it to the matching generation's filename only if it is the intended profile.
+Keep the original until recovery is verified. Do not copy a newer generation
+over an older filename or edit a file while the app is running.
+
 ## Report a reproducible problem
 
 Open the log through **Settings > Open log file** when relevant. Include the

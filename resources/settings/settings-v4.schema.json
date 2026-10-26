@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/strmt7/FlitzZip/main/resources/settings/settings-v4.schema.json",
+  "title": "FlitzZip canonical settings generation 4",
+  "type": "object",
+  "required": [
+    "schema"
+  ],
+  "properties": {
+    "schema": {
+      "const": "flitzzip.settings.v4"
+    },
+    "compressionFormat": {
+      "type": "string",
+      "enum": [
+        ".flzip",
+        ".zip",
+        ".tar.gz",
+        ".tgz",
+        ".tar",
+        ".gz",
+        ".zst",
+        ".zstd",
+        ".tar.zst",
+        ".tzst",
+        ".tar.bz2",
+        ".tbz2",
+        ".tbz",
+        ".bz2",
+        ".cpio",
+        ".cpio.gz",
+        ".cpgz",
+        ".ar",
+        ".Z"
+      ],
+      "default": ".flzip"
+    },
+    "compressionLevel": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9,
+      "default": 5
+    },
+    "neutronStarMode": {
+      "type": "boolean",
+      "default": false
+    },
+    "compressionBlockBytes": {
+      "type": "integer",
+      "enum": [
+        262144,
+        524288,
+        1048576,
+        2097152,
+        4194304,
+        8388608,
+        16777216
+      ],
+      "default": 8388608
+    },
+    "logLevel": {
+      "type": "string",
+      "enum": [
+        "information",
+        "warning",
+        "debug"
+      ],
+      "default": "information"
+    },
+    "logRetentionDays": {
+      "type": "integer",
+      "enum": [
+        7,
+        14,
+        30
+      ],
+      "default": 7
+    },
+    "performanceUpdateSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "default": 3
+    },
+    "openDestinationAfterOperation": {
+      "type": "boolean",
+      "default": false
+    },
+    "showOperationSummary": {
+      "type": "boolean",
+      "default": true
+    },
+    "validateBeforePublish": {
+      "type": "boolean",
+      "default": true
+    },
+    "openDestinationAfterExtract": {
+      "type": "boolean",
+      "default": false
+    },
+    "gpuRequired": {
+      "type": "boolean",
+      "default": true
+    },
+    "overwrite": {
+      "type": "boolean",
+      "default": false
+    },
+    "integrityHashOptIn": {
+      "type": "boolean",
+      "default": false
+    },
+    "defenderScanOptIn": {
+      "type": "boolean",
+      "default": false
+    },
+    "verifyAfterWriteOptIn": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "additionalProperties": true,
+  "$comment": "Canonical app-authored values. The compatibility reader preserves unmodified unknown/defaulted values. Persisted identifiers never follow C++ member renames."
+}

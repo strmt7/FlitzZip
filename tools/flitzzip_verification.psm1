@@ -329,7 +329,7 @@ function Get-FlitzZipVerificationScope {
         '^mcp/',
         '^\.agents/skills/'
     )
-    $touchesCpp = Test-FlitzZipAnyPath -Path $paths -Pattern @('^(src|tests|fuzz)/.*\.(cpp|hpp|c|h|rc)$', '^CMakeLists\.txt$', '^cmake/', '^third_party/(?!upstream/)')
+    $touchesCpp = Test-FlitzZipAnyPath -Path $paths -Pattern @('^(src|fuzz)/.*\.(cpp|hpp|c|h|rc)$', '^tests/(?!installer/).*\.(cpp|hpp|c|h|rc)$', '^CMakeLists\.txt$', '^cmake/', '^third_party/(?!upstream/)')
     $touchesNativeBuildInputs = Test-FlitzZipAnyPath -Path $paths -Pattern @(
         '^LICENSE$', '^tests/', '^resources/licenses/',
         '^tools/(build|compile_hip_object|hip_architecture|rocm_toolchain|process_environment|cmake_toolchain|build_parallelism|local_resources|version|generate_brand_logo_header|generate_license_notices_header)\.ps1$',
@@ -360,7 +360,7 @@ function Get-FlitzZipVerificationScope {
     ))
     $touchesGui = Test-FlitzZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/FlitzZip\.GuiSmoke\.[^/]+\.psm1$')
     $touchesBrand = Test-FlitzZipAnyPath -Path $paths -Pattern @('^resources/brand/', '^resources/app/', '^tools/(generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^src/app/flitzzip_brand_logo')
-    $touchesPackaging = Test-FlitzZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version)\.(ps1|py)$')
+    $touchesPackaging = Test-FlitzZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version|test_installer_lifecycle)\.(ps1|py)$', '^tools/msi_(database|process)\.psm1$', '^tests/installer/')
     $touchesLintSurface = Test-FlitzZipAnyPath -Path $paths -Pattern $patterns.lint
     $touchesBenchmarkCliDiff = (Test-FlitzZipAnyPath -Path $paths -Pattern @('^src/cli/main\.cpp$')) -and (Test-FlitzZipDiffLine -Path @("src/cli/main.cpp") -Pattern @('benchmark', 'throughput', 'compression.?level', 'block.?size', 'workers', 'inflight', 'gpu'))
     $touchesPerformance = $touchesBenchmarkCliDiff -or (Test-FlitzZipAnyPath -Path $paths -Pattern @('^src/gpu/', '^src/core/(archive|archive_blocks|archive_block_types|resource_limits)\.', '^tools/(bench|gpu_|storage_smoke)'))
@@ -394,12 +394,27 @@ function Get-FlitzZipVerificationScope {
     }
 }
 
+# Purpose: Declare persistence and installer protocol contracts independently of product execution.
+# Inputs: None. Outputs: Canonical path rules and their non-installing command descriptors.
+function Get-FlitzZipPersistenceContractDefinition {
+    return @(
+        @{ Pattern = @('^tools/msi_(database|process)\.psm1$', '^tools/test_installer_lifecycle\.ps1$', '^tests/installer/', '^cmake/(flitzzip_desktop_shortcut\.wxs|flitzzip_wix_patch\.xml|FlitzZipMsiVersion\.cmake)$', '^CMakeLists\.txt$')
+           Command = (Get-FlitzZipVerificationCommand -Id 'installer-authoring-contracts' -Stage 'local' -Executable 'pwsh' -Arguments @('-NoProfile', '-File', 'tools/test_installer_lifecycle.ps1') -Reason 'compile only small installer protocol fixtures and inspect their MSI tables/mutation controls; never build or install the product') }
+        @{ Pattern = @('^tools/(settings_contract|test_settings_contract)\.py$', '^resources/settings/', '^tests/fixtures/settings/', '^src/app/settings_(json|profile|migration)\.', '^src/app/main_window_archive_support\.cpp$', '^\.github/requirements/requirements-contracts\.(in|txt)$')
+           Command = (Get-FlitzZipVerificationCommand -Id 'settings-evolution-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/run_locked_python_tests.ps1', '-Modules', 'tools.test_settings_contract') -Reason 'persisted identities, immutable historical fixtures and direct migration paths must remain compatible') }
+        @{ Pattern = @('^tools/(gui_settings_choices|test_gui_settings_choices|gui_smoke)\.ps1$')
+           Command = (Get-FlitzZipVerificationCommand -Id 'gui-settings-choice-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_gui_settings_choices.ps1') -Reason 'native GUI gestures must use semantic profile identifiers and reject unknown values') }
+        @{ Pattern = @('^tools/(version|test_msi_version|package)\.ps1$', '^cmake/FlitzZipMsiVersion\.cmake$', '^CMakeLists\.txt$')
+           Command = (Get-FlitzZipVerificationCommand -Id 'msi-version-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_msi_version.ps1') -Reason 'public package ordering must match Windows Installer numeric ordering without silent suffix removal or overflow') }
+    )
+}
+
 # Purpose: Route development-tool contracts to their changed mechanism and direct consumers.
 # Inputs: Classified scope and canonical changed paths; explicit broad coverage selects every contract.
 # Outputs: Returns command descriptors without launching builds, tools or measurements.
 function Get-FlitzZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
-    $definitions = @(
+    $definitions = @(Get-FlitzZipPersistenceContractDefinition) + @(
         @{ Pattern = @('^tools/(release_metadata|test_release_metadata)\.py$', '^CMakeLists\.txt$', '^\.github/workflows/release\.yml$')
            Command = (Get-FlitzZipVerificationCommand -Id 'release-metadata-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_release_metadata') -Reason 'release versions, tag collisions and Actions exports require independent boundary tests and the real metadata CLI without publishing a release') }
         @{ Pattern = @('^tools/(hip_coverage(_export|_registration|_toolchain|_product|_images|_measure)?|test_hip_coverage(_registration|_product|_measure)?)\.py$', '^tools/hip-coverage-toolchain\.json$', '^tools/hip_registration_native_checks\.py$', '^tools/hip_profile_registration/', '^tools/fixtures/hip_coverage_probe\.hip\.cpp$', '^tools/native_coverage\.py$', '^mcp/flitzzip_mcp\.py$')
@@ -412,7 +427,7 @@ function Get-FlitzZipToolVerificationCommand {
            Command = (Get-FlitzZipVerificationCommand -Id 'verification-selector-self-test' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_verification_selector.ps1') -Reason 'native sanitizer workflow changes must preserve affected-source coverage and offline-contract isolation') }
         @{ Pattern = @('^tools/(zstd_rewrite_policy|test_zstd_rewrite_policy|verify_change_hygiene|security_scan)\.ps1$', '^cmake/(PatchZstdLegacy\.cmake|Zstd.*\.(c|cmake))$', '^tests/(cpp/test_zstd.*\.cpp|zstd/|cmake/test_zstd)', '^CMakeLists\.txt$')
            Command = (Get-FlitzZipVerificationCommand -Id 'zstd-rewrite-policy-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_zstd_rewrite_policy.ps1') -Reason 'known extent, nullable-buffer, allocation and patch-dispatch defects require source recurrence mutation controls') }
-        @{ Pattern = @('^tools/(release_workflow_policy|test_release_workflow_policy|security_scan|verify_change_hygiene)\.ps1$', '^\.github/workflows/release\.yml$')
+        @{ Pattern = @('^tools/(release_workflow_policy|test_release_workflow_policy|security_scan|verify_change_hygiene)\.ps1$', '^tools/msi_process\.psm1$', '^\.github/workflows/release\.yml$')
            Command = (Get-FlitzZipVerificationCommand -Id 'release-workflow-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_release_workflow_policy.ps1') -Reason 'release action identity and replacement/title safeguards require their offline contracts without publishing artifacts') }
         @{ Pattern = @('^tools/(cpp_security_plan|test_cpp_security_plan)\.py$', '^tools/github_post_push_audit\.ps1$', '^\.github/workflows/security-code-scanning\.yml$')
            Command = (Get-FlitzZipVerificationCommand -Id 'cpp-security-plan-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_cpp_security_plan') -Reason 'C++ analysis routing must retain the whole native/query closure, complete Git ranges and unconditional scheduled/manual scans without rebuilding unchanged inputs') }
@@ -456,7 +471,7 @@ function Get-FlitzZipToolVerificationCommand {
            Command = (Get-FlitzZipVerificationCommand -Id "github-post-push-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_github_post_push_audit.ps1") -Reason "post-push audits must reject unavailable API evidence, including partial pagination") }
         @{ Pattern = @('^tools/(refactor_audit|test_refactor_audit)\.ps1$')
            Command = (Get-FlitzZipVerificationCommand -Id "refactor-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_refactor_audit.ps1") -Reason "source audits must include new and changed files without traversing ignored workspace copies") }
-        @{ Pattern = @('^tools/(security_scan|test_security_scan)\.ps1$')
+        @{ Pattern = @('^tools/(security_scan|test_security_scan)\.ps1$', '^tools/msi_process\.psm1$', '^\.github/workflows/release\.yml$')
            Command = (Get-FlitzZipVerificationCommand -Id 'security-scan-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_security_scan.ps1') -Reason 'source policy enumeration must stay within its intended roots while detecting nested and hidden source violations') }
         @{ Pattern = @('^tools/(bench|test_benchmark_reporting|benchmark_statistics|benchmark_corpus|test_memory_benchmark_plan)\.ps1$', '^tools/(benchmark_corpus|test_benchmark_corpus)\.py$', '^src/cli/(main|memory_benchmark).*\.(cpp|hpp)$')
            Command = (Get-FlitzZipVerificationCommand -Id "benchmark-reporting-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_benchmark_reporting.ps1") -Reason "benchmark reporting must preserve typed results and unavailable counter values without running a timed workload") }

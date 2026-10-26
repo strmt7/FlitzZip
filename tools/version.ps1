@@ -120,6 +120,25 @@ function Get-FlitzZipNumericPackageVersion {
     return "$($match.Groups[1].Value).$($match.Groups[2].Value).$($match.Groups[3].Value)"
 }
 
+# Purpose: Refuse versions whose installer ordering would differ from the public release ordering.
+# Inputs: PackageVersion is the requested release version. Outputs: Three bounded numeric fields or an error.
+function Assert-FlitzZipMsiPackageVersion {
+    param([Parameter(Mandatory = $true)][string]$PackageVersion)
+    $normalized = Assert-FlitzZipPackageVersion -Version $PackageVersion
+    if ($normalized.Contains('-')) {
+        throw 'MSI versions require three numeric fields. Select the beta release track without a version suffix.'
+    }
+    $parts = $normalized.Split('.')
+    $limits = @(255, 255, 65535)
+    for ($index = 0; $index -lt 3; ++$index) {
+        [uint32]$value = 0
+        if (-not [uint32]::TryParse($parts[$index], [ref]$value) -or $value -gt $limits[$index]) {
+            throw 'MSI versions must be within 255.255.65535; never truncate or wrap version fields.'
+        }
+    }
+    return $normalized
+}
+
 # Purpose: Build the package artifact basename from a validated product version.
 # Inputs: PackageVersion is a SemVer package version.
 # Outputs: Returns the artifact basename without extension.

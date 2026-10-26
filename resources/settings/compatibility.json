@@ -1,0 +1,59 @@
+{
+  "contractVersion": 1,
+  "currentGeneration": 4,
+  "currentSchema": "resources/settings/settings-v4.schema.json",
+  "currentProfile": "settings-v4.json",
+  "readableGenerations": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "migrationEdges": {
+    "1": 4,
+    "2": 4,
+    "3": 4
+  },
+  "retiredKeys": [
+    "compressionFormatIndex",
+    "compressionLevelIndex",
+    "compressionBlockSizeIndex",
+    "logLevelIndex",
+    "logRetentionIndex",
+    "verifyMetadataBeforeExtract",
+    "solidArchive",
+    "storeTimestamps",
+    "deleteAfterCompression",
+    "confirmBeforeDeleting",
+    "memoryPolicyIndex"
+  ],
+  "coupledFields": [
+    [
+      "compressionFormat",
+      "compressionLevel",
+      "neutronStarMode",
+      "gpuRequired"
+    ]
+  ],
+  "fixtures": [
+    {
+      "generation": 1,
+      "file": "legacy-v1.json"
+    },
+    {
+      "generation": 2,
+      "file": "legacy-v2.json"
+    },
+    {
+      "generation": 3,
+      "file": "legacy-v3.json"
+    },
+    {
+      "generation": 4,
+      "file": "current-v4.json"
+    }
+  ],
+  "frozenSchemas": {
+    "4": "tests/fixtures/settings/schema-v4-baseline.json"
+  }
+}

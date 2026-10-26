@@ -687,11 +687,32 @@ function Test-RocmProvisioningPolicy {
     }
 }
 
+# Purpose: Check the real shared MSI transport and its required release consumers.
+# Inputs: Workflow and module source. Outputs: Rejects missing deadlines, argument serialization or matrix wiring.
+function Test-InstallerProcessPolicy {
+    param([string]$ReleaseAction, [string]$MsiProcessSource)
+    if ($ReleaseAction -notmatch 'Import-Module\s+\./tools/msi_process\.psm1\s+-Force') {
+        throw 'Release MSI qualification must import its reviewed shared process module.'
+    }
+    foreach ($pattern in @('\[int\]\$TimeoutSeconds\s*=\s*300',
+            'WaitForExit\(\$TimeoutSeconds\s*\*\s*1000\)', '\.ArgumentList\.Add\(\$argument\)',
+            'installer or elevation prompt was left unanswered')) {
+        if ($MsiProcessSource -notmatch $pattern) { throw "Shared MSI transport lost required policy: $pattern" }
+    }
+    if ($ReleaseAction -notmatch 'tools/test_installer_lifecycle\.ps1\s+-Full\s+-DisposableMachine') {
+        throw 'Release qualification must run the disposable transactional installer matrix.'
+    }
+    if ($ReleaseAction -notmatch 'Assert-FlitzZipMsiPackageVersion\s+-PackageVersion') {
+        throw 'MSI version ordering must be validated before the release build.'
+    }
+}
+
 # Purpose: Verify release workflow MSI validation uses per-machine bounded paths.
-# Inputs: ReleaseAction is the composite release action YAML text.
+# Inputs: ReleaseAction is the workflow YAML; MsiProcessSource is its shared invocation module.
 # Outputs: Throws when hosted release validation can publish unchecked MSI output.
 function Test-InstallerReleaseActionPolicy {
-    param([Parameter(Mandatory = $true)][string]$ReleaseAction)
+    param([Parameter(Mandatory = $true)][string]$ReleaseAction,
+        [Parameter(Mandatory = $true)][string]$MsiProcessSource)
 
     if ($releaseAction -notmatch 'MsiInstallScope\s*=\s*"perMachine"') {
         throw "Release workflow must pass MsiInstallScope=perMachine for published MSI artifacts."
@@ -706,12 +727,7 @@ function Test-InstallerReleaseActionPolicy {
         throw "Release MSI smoke tests must use a bounded WaitForExit timeout, not unbounded Start-Process -Wait."
     }
     Test-RocmProvisioningPolicy -WorkflowText $ReleaseAction
-    if ($releaseAction -notmatch '\[int\]\$TimeoutSeconds\s*=\s*300') {
-        throw "Release MSI install/repair/uninstall smoke tests must default to a 300-second stale-wait timeout."
-    }
-    if ($releaseAction -notmatch 'installer or elevation prompt was left unanswered') {
-        throw "Release installer timeout messages must explain that unanswered elevation prompts are a possible cause."
-    }
+    Test-InstallerProcessPolicy -ReleaseAction $ReleaseAction -MsiProcessSource $MsiProcessSource
     if ($releaseAction -notmatch 'MSI repair' -or $releaseAction -notmatch 'flitzzip-msi-repair-dependency-check\.txt') {
         throw "Release MSI smoke tests must repair the just-installed MSI and run dependency-check after repair."
     }
@@ -739,7 +755,8 @@ function Test-InstallerScopePolicy {
         -VerificationSelector $verificationSelector
 
     $releaseAction = Get-Content -LiteralPath (Join-Path $repo '.github/workflows/release.yml') -Raw
-    Test-InstallerReleaseActionPolicy -ReleaseAction $releaseAction
+    $msiProcessSource = Get-Content -LiteralPath (Join-Path $repo 'tools/msi_process.psm1') -Raw
+    Test-InstallerReleaseActionPolicy -ReleaseAction $releaseAction -MsiProcessSource $msiProcessSource
 }
 
 # Purpose: Keep local sanitizer instrumentation, publication dependencies, and Docker failure propagation mandatory.

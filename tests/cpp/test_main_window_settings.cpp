@@ -27,6 +27,72 @@ void keyboard_toggle_summary(HWND window) {
 
 }  // namespace
 
+// Purpose: Keep a compatible profile byte-exact on startup even when this binary does not understand every field.
+// Inputs: Hidden controller and isolated current-schema profile containing precise extension data.
+// Outputs: Starting and closing the real window neither rewrites the document nor starts archive work.
+TEST_CASE(main_window_settings_startup_preserves_opaque_profile_bytes) {
+    ControllerFixture fixture;
+    GatedLauncher launcher;
+    const std::string original = R"( {"schema":"flitzzip.settings.v4","compressionFormat":".zip",
+        "gpuRequired":false,"extension":{"integer":9007199254740993,"nested":[true,null,{"x":1e20}]}} )";
+    {
+        std::ofstream file(flitzzip::app::settings_file_path(), std::ios::binary);
+        file << original;
+    }
+    HiddenController controller(launcher);
+    const auto window = controller.wait_window();
+    REQUIRE_EQ(current_settings_bytes(), original);
+    HiddenController::send(window, WM_CLOSE);
+    controller.require_closed();
+    REQUIRE_EQ(current_settings_bytes(), original);
+    REQUIRE_EQ(launcher.attempts.load(), 0U);
+}
+
+// Purpose: Prevent an older window from silently downgrading a future profile during startup or Apply.
+// Inputs: Isolated unsupported generation and ordinary Settings gestures. Outputs: Original bytes remain intact.
+TEST_CASE(main_window_settings_rejects_future_schema_without_overwrite) {
+    ControllerFixture fixture;
+    GatedLauncher launcher;
+    const std::string original = R"({"schema":"flitzzip.settings.v999","unknown":{"required":"keep"}})";
+    {
+        std::ofstream file(flitzzip::app::settings_file_path(), std::ios::binary);
+        file << original;
+    }
+    HiddenController controller(launcher);
+    const auto window = controller.wait_window();
+    REQUIRE_EQ(current_settings_bytes(), original);
+    click_native_navigation(window, 6);
+    const auto layout = native_settings_layout(window);
+    click_native_control(window, layout.show_operation_summary);
+    click_native_control(window, layout.apply);
+    REQUIRE_EQ(current_settings_bytes(), original);
+    HiddenController::send(window, WM_CLOSE);
+    controller.require_closed();
+    REQUIRE_EQ(current_settings_bytes(), original);
+    REQUIRE_EQ(launcher.attempts.load(), 0U);
+}
+
+// Purpose: Preserve another instance's successful save when an already-open Settings page applies a stale draft.
+// Inputs: Hidden window, externally committed revision and ordinary Apply. Outputs: Newer bytes survive unchanged.
+TEST_CASE(main_window_settings_rejects_stale_window_apply) {
+    ControllerFixture fixture;
+    GatedLauncher launcher;
+    HiddenController controller(launcher);
+    const auto window = controller.wait_window();
+    const auto path = flitzzip::app::settings_file_path();
+    auto other = flitzzip::app::read_settings_file(path);
+    other.overwrite = !other.overwrite;
+    const auto committed = flitzzip::app::write_settings_file(path, other, flitzzip::app::read_settings_document(path));
+    click_native_navigation(window, 6);
+    const auto layout = native_settings_layout(window);
+    click_native_control(window, layout.show_operation_summary);
+    click_native_control(window, layout.apply);
+    REQUIRE_EQ(current_settings_bytes(), committed);
+    HiddenController::send(window, WM_CLOSE);
+    controller.require_closed();
+    REQUIRE_EQ(launcher.attempts.load(), 0U);
+}
+
 // Purpose: Keep Settings drafts isolated until Apply and retain keyboard/dropdown decisions across real restarts.
 // Inputs: Hidden native controller, ordinary summary/retention controls and independent persisted-byte assertions.
 // Outputs: Abandoned drafts revert, Escape preserves the last selection, applied values reload, and no work starts.
@@ -62,7 +128,7 @@ TEST_CASE(main_window_settings_keyboard_draft_apply_and_restart_preserve_intent)
         click_native_control(window, layout.apply);
         const auto applied = current_settings_bytes();
         REQUIRE_TRUE(applied.find("\"showOperationSummary\": true") != std::string::npos);
-        REQUIRE_TRUE(applied.find("\"logRetentionIndex\": 2") != std::string::npos);
+        REQUIRE_TRUE(applied.find("\"logRetentionDays\": 30") != std::string::npos);
         HiddenController::send(window, WM_CLOSE);
         controller.require_closed();
     }
@@ -74,7 +140,7 @@ TEST_CASE(main_window_settings_keyboard_draft_apply_and_restart_preserve_intent)
         QueueCapture frame(client.right, client.bottom);
         click_native_navigation(window, 6);
         require_native_toggle(window, frame.dc(), native_settings_layout(window).show_operation_summary, true);
-        REQUIRE_TRUE(current_settings_bytes().find("\"logRetentionIndex\": 2") != std::string::npos);
+        REQUIRE_TRUE(current_settings_bytes().find("\"logRetentionDays\": 30") != std::string::npos);
         HiddenController::send(window, WM_CLOSE);
         controller.require_closed();
     }

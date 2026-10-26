@@ -9,6 +9,7 @@ on:
       - tests/zstd/**
       - tests/cmake/precompiled_headers/**
       - tests/cpp/**
+      - tests/installer/**
       - tests/cmake/test_zstd*.cmake
       - mcp/**
       - .agents/skills/**
@@ -20,6 +21,8 @@ on:
       - docs/benchmark-research.md
       - docs/comparative-benchmark-methodology.md
       - resources/benchmarks/**
+      - resources/settings/**
+      - tests/fixtures/settings/**
       - src/cli/**
       - .github/workflows/component-contracts.yml
       - .github/workflows/zstd-sanitizers.yml

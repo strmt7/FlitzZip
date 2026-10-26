@@ -50,6 +50,16 @@ Windows administrator approval. A desktop shortcut is optional.
 
 Run the same MSI again to access its maintenance actions. Use Windows
 **Settings > Apps** to uninstall the MSI installation.
+To upgrade, close FlitzZip and run the newer MSI directly; intermediate releases
+are not required. Keep the installation scope unchanged. Setup rejects an older
+version when a newer one is installed. Repair uses the matching installed
+version's MSI and restores package-owned files.
+
+Preferences and archives survive MSI repair, upgrade and uninstall. Preferences
+are shared with the portable application under the current user's Local AppData
+`FlitzZip` directory. A new profile generation preserves older profile files;
+the application migrates supported older settings when its new profile is
+absent. Removing a portable directory leaves those preferences intact.
 The portable ZIP and MSI contain the same HIP-enabled application binaries.
 For troubleshooting, retain the release version and any installer error before
 retrying.

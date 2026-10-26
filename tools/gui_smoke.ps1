@@ -11,6 +11,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot 'process_environment.ps1')
+. (Join-Path $PSScriptRoot 'gui_settings_choices.ps1')
 $repo = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $repo "build\$Configuration\FlitzZip.exe"
 if (-not (Test-Path $exe)) {
@@ -140,7 +141,7 @@ function Set-GuiSmokeLogLevel {
     for ($row = 0; $row -lt $Index; ++$row) { Invoke-ClientKey -Handle $Handle -VirtualKey 0x28 }
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666 -Synchronous
-    Assert-SettingsValue -Path $SettingsPath -Name 'logLevelIndex' -Expected $Index
+    Assert-SettingsValue -Path $SettingsPath -Name 'logLevel' -Expected @(Get-GuiSettingsChoiceValue -Kind LogLevel)[$Index]
 }
 
 # Purpose: Reject unusable, remote and misplaced native drops without changing queued inputs; enforce exact capacity.
@@ -149,7 +150,7 @@ function Set-GuiSmokeLogLevel {
 function Assert-QueueDropAdmission {
     param([IntPtr]$Handle, [int]$Dpi, [string]$InputPath, [string]$SettingsPath,
         [string]$BasePath, [string]$Extension)
-    $originalLevel = ([IO.File]::ReadAllText($SettingsPath) | ConvertFrom-Json).logLevelIndex
+    $originalLevel = Get-GuiSettingsChoiceIndex -Settings ([IO.File]::ReadAllText($SettingsPath) | ConvertFrom-Json) -Kind LogLevel
     $failure = $null
     try {
         # Successful drop admissions are Debug events; never inherit an unrelated scenario's logging state.
@@ -748,7 +749,7 @@ function Wait-GuiLogEvent {
 function Assert-UnicodeSecurityReview {
     param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$FixtureArchive,
         [string]$FixtureRoot, [string]$BasePath, [string]$Extension)
-    $originalLogLevel = (Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json).logLevelIndex
+    $originalLogLevel = Get-GuiSettingsChoiceIndex -Settings (Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json) -Kind LogLevel
     $original = $null
     $failure = $null
     $points = @()
@@ -989,19 +990,13 @@ function Assert-PublicationSettingsMigration {
             Invoke-ClientClick -Handle $handle -Dpi $dpi -DesignX 1110 -DesignY 666 -Synchronous
             Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
             Assert-SettingsValue -Path $SettingsPath -Name 'validateBeforePublish' -Expected $case.Expected
-            $saved = Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json
             $expectedEffort = if ($case.ContainsKey('Effort')) { $case.Effort } else { 5 }
             Assert-SettingsValue -Path $SettingsPath -Name 'compressionLevel' -Expected $expectedEffort
-            Assert-SettingsValue -Path $SettingsPath -Name 'schema' -Expected 'flitzzip.settings.v3'
-            if ($saved.PSObject.Properties.Name -contains 'compressionLevelIndex') {
-                throw 'Applied settings retained the obsolete effort row index.'
-            }
-            if ($saved.PSObject.Properties.Name -contains 'verifyMetadataBeforeExtract') {
-                throw 'Applied settings retained the obsolete extraction metadata key.'
-            }
-            foreach ($key in @('solidArchive', 'storeTimestamps', 'deleteAfterCompression', 'confirmBeforeDeleting', 'memoryPolicyIndex')) {
-                if ($saved.PSObject.Properties.Name -contains $key) {
-                    throw "Applied settings retained the unsupported no-op key: $key"
+            Assert-SettingsValue -Path $SettingsPath -Name 'schema' -Expected 'flitzzip.settings.v4'
+            # Retired/unknown values are retained as opaque data, never interpreted as current preferences.
+            foreach ($key in $case.Values.Keys) {
+                if ($key -in @('solidArchive', 'storeTimestamps', 'deleteAfterCompression', 'confirmBeforeDeleting', 'memoryPolicyIndex')) {
+                    Assert-SettingsValue -Path $SettingsPath -Name $key -Expected $case.Values[$key]
                 }
             }
         } finally {
@@ -1212,7 +1207,7 @@ function Assert-NeutronSelectionIsolation {
     Save-CompressionSmokeChoice -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath
     Assert-SettingsValue -Path $SettingsPath -Name 'neutronStarMode' -Expected $false
     Assert-SettingsValue -Path $SettingsPath -Name 'compressionLevel' -Expected 9
-    Select-CompressFormatIndex -Handle $Handle -Dpi $Dpi -Index $original.compressionFormatIndex
+    Select-CompressFormatIndex -Handle $Handle -Dpi $Dpi -Index (Get-GuiSettingsChoiceIndex -Settings $original -Kind Format)
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 500 -DesignY 294 -Synchronous
     Invoke-ClientKey -Handle $Handle -VirtualKey $(if ($original.gpuRequired) { 0x24 } else { 0x23 })
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
@@ -1913,7 +1908,7 @@ function Assert-CompactFormatMenu {
         $length = (Get-Item -LiteralPath $logPath).Length
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 875 -DesignY 508 -Synchronous
         Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied and saved'
-        Assert-SettingsValue -Path $SettingsPath -Name 'compressionFormatIndex' -Expected 18
+        Assert-SettingsValue -Path $SettingsPath -Name 'compressionFormat' -Expected '.Z'
     }
 }
 
@@ -1945,11 +1940,11 @@ function Assert-CompactFormLayout {
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 875 -DesignY 508 -Synchronous
         Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied and saved'
         Assert-SettingsValue -Path $SettingsPath -Name 'showOperationSummary' -Expected (-not $original.showOperationSummary)
-        Assert-SettingsValue -Path $SettingsPath -Name 'logRetentionIndex' -Expected 0
+        Assert-SettingsValue -Path $SettingsPath -Name 'logRetentionDays' -Expected 7
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 227 -Synchronous
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 650 -DesignY 440 -Synchronous
         Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
-        for ($row = 0; $row -lt $baseline.logRetentionIndex; ++$row) {
+        for ($row = 0; $row -lt (Get-GuiSettingsChoiceIndex -Settings $baseline -Kind Retention); ++$row) {
             Invoke-ClientKey -Handle $Handle -VirtualKey 0x28
         }
         Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
@@ -1959,7 +1954,7 @@ function Assert-CompactFormLayout {
         Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 300 -DesignY 218 -Synchronous
         Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
-        for ($row = 0; $row -lt $baseline.compressionFormatIndex; ++$row) {
+        for ($row = 0; $row -lt (Get-GuiSettingsChoiceIndex -Settings $baseline -Kind Format); ++$row) {
             Invoke-ClientKey -Handle $Handle -VirtualKey 0x28
         }
         Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
@@ -2499,8 +2494,8 @@ try {
     }
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1110 -DesignY 666
     Start-Sleep -Milliseconds 250
-    Assert-SettingsValue -Path $smokeSettingsFile -Name "logLevelIndex" -Expected 2
-    Assert-SettingsValue -Path $smokeSettingsFile -Name "logRetentionIndex" -Expected 2
+    Assert-SettingsValue -Path $smokeSettingsFile -Name "logLevel" -Expected 'debug'
+    Assert-SettingsValue -Path $smokeSettingsFile -Name "logRetentionDays" -Expected 30
 
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Settings-LogLevel-UnappliedWarning" -OpenX 700 -OpenY 384 -SelectX 700 -SelectY 456 -MenuLeft 622 -MenuTop 412 -MenuRight 887 -MenuBottom 510 -BasePath $basePath -Extension $extension
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 0
@@ -2509,7 +2504,7 @@ try {
     Start-Sleep -Milliseconds 250
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1110 -DesignY 666
     Start-Sleep -Milliseconds 250
-    Assert-SettingsValue -Path $smokeSettingsFile -Name "logLevelIndex" -Expected 2
+    Assert-SettingsValue -Path $smokeSettingsFile -Name "logLevel" -Expected 'debug'
 
     Assert-SettingsSaveFailureRollback -Handle $windowHandle -Dpi $windowDpi -Path $smokeSettingsFile -BasePath $basePath -Extension $extension -Captures ([ref]$captures)
 

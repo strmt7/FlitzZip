@@ -1098,7 +1098,9 @@ manufacture a clean scan. Individual authorizations belong in review records.
 - The Settings page uses a draft/apply model. Changing a Settings control
   affects the current draft only; leaving Settings without `Apply` must restore
   the last applied snapshot. `Apply` must atomically persist the validated
-  per-user configuration to `%LOCALAPPDATA%\FlitzZip\settings.json`; GUI smoke
+  per-user configuration to its versioned profile under `%LOCALAPPDATA%\FlitzZip`.
+  Follow [persistent-data compatibility](development/persistence-and-upgrades.md)
+  for schema changes, unknown-value preservation, concurrency and recovery. GUI smoke
   must redirect to the fixed temp smoke settings file with
   `FLITZZIP_GUI_SMOKE_SETTINGS_REDIRECT=1`, assert the persisted values, and
   verify that an unapplied draft is not persisted. Do not reintroduce

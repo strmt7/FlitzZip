@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -228,8 +229,17 @@ std::filesystem::path app_storage_directory();
 std::filesystem::path settings_file_path();
 std::filesystem::path log_file_path();
 void ensure_app_storage();
+// Purpose: Read a bounded profile revision without conflating absence with an empty/corrupt document.
+// Inputs: Trusted per-user path. Outputs: Exact bytes or nullopt only for absence; I/O failures throw.
+std::optional<std::string> read_settings_document(const std::filesystem::path& path);
 AppSettings read_settings_file(const std::filesystem::path& path);
-void write_settings_file(const std::filesystem::path& path, const AppSettings& settings);
+// Purpose: Merge and publish validated preferences with recovery and mandatory optimistic concurrency.
+// Inputs: Existing parent, snapshot, borrowed expected revision (nullopt means require absence),
+// and optional normalized UI baseline selecting only explicitly changed preferences.
+// Outputs: Published bytes; stale/newer/corrupt documents, backup failures and busy writers leave current data intact.
+std::string write_settings_file(const std::filesystem::path& path, const AppSettings& settings,
+                                const std::optional<std::string>& expected_document,
+                                const AppSettings* baseline = nullptr);
 void append_log_file_entry(const std::filesystem::path& path, LogSeverity severity, const std::string& message,
                            std::chrono::system_clock::time_point timestamp);
 std::wstring history_operation_filter_text(int index);

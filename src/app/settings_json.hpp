@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <istream>
 #include <map>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -13,7 +14,7 @@ inline constexpr std::size_t kMaxSettingsJsonBytes = 64U * 1024U;
 inline constexpr std::size_t kMaxSettingsJsonNesting = 64U;
 
 // A bounded settings document decoded by the Windows JSON implementation.
-// Only top-level scalar values are retained. No COM object escapes construction.
+// Typed scalars and original member bytes are retained. No COM object escapes construction.
 class SettingsJson final {
   public:
     // Purpose: Decode one complete UTF-8 JSON object using the platform parser.
@@ -38,9 +39,16 @@ class SettingsJson final {
     // fractions and values outside the int representation; invalid bounds throw.
     [[nodiscard]] int integer(std::wstring_view key, int fallback, int minimum, int maximum) const;
 
+    // Purpose: Overlay explicit fields while preserving unknown JSON values without numeric/string conversion.
+    // Inputs: Validated updates, optional normalized UI baseline and preference keys that must change together.
+    // Outputs: Bounded deterministic JSON; unchanged/unknown values survive without numeric conversion.
+    [[nodiscard]] std::string overlay(const SettingsJson& updates, const SettingsJson* baseline = nullptr,
+                                      std::span<const std::wstring_view> coupled_keys = {}) const;
+
   private:
     using Scalar = std::variant<std::monostate, bool, double, std::wstring>;
     std::map<std::wstring, Scalar, std::less<>> fields_;
+    std::map<std::wstring, std::string, std::less<>> raw_members_;
 };
 
 // Purpose: Read a settings stream without loading an unbounded or partially failed file.

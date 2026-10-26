@@ -6,6 +6,7 @@
 #include "app/log_retention.hpp"
 #include "app/settings_json.hpp"
 #include "app/settings_storage.hpp"
+#include "app/settings_migration.hpp"
 #include "ar/ar_adapter.hpp"
 #include "arc/arc_adapter.hpp"
 #include "arj/arj_adapter.hpp"
@@ -40,8 +41,10 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <climits>
 #include <fstream>
 #include <iomanip>
+#include <locale>
 #include <sstream>
 #include <system_error>
 
@@ -53,6 +56,12 @@ namespace {
 
 constexpr std::array<std::string_view, 13> kSettingsV1CompressionFormatExtensions{
     ".flzip", ".zip", ".tar", ".tar.gz", ".tar.bz2", ".tar.zst", ".gz", ".bz2", ".zst", ".Z", ".cpio", ".cpgz", ".ar",
+};
+
+// Historical on-disk ordinals are frozen. Current UI rows may evolve independently.
+constexpr std::array<std::string_view, 19> kSettingsV2V3CompressionFormatExtensions{
+    ".flzip",   ".zip",  ".tar.gz", ".tgz", ".tar",  ".gz",      ".zst",  ".zstd", ".tar.zst", ".tzst",
+    ".tar.bz2", ".tbz2", ".tbz",    ".bz2", ".cpio", ".cpio.gz", ".cpgz", ".ar",   ".Z",
 };
 
 // Purpose: Normalize a mutable compression-format index into the current extension selector.
@@ -105,7 +114,23 @@ int migrate_settings_v1_compression_format_index(int old_index) {
 // Inputs: `json` is the parsed settings object; only its top-level schema participates.
 // Outputs: Returns true for schema v1 or schema-less early settings.
 bool settings_uses_v1_format_rows(const SettingsJson& json) {
-    return !json.contains(L"schema") || json.string_equals(L"schema", L"flitzzip.settings.v1");
+    return !json.contains(L"schema") || json.string_equals(L"schema", L"flitzzip.settings.v1") ||
+           json.string_equals(L"schema", L"superzip.settings.v1");
+}
+
+// Purpose: Admit only explicitly supported profile grammars, independently of the application release version.
+// Inputs: A fully parsed object. Outputs: Its schema generation; unknown or incorrectly typed identities fail closed.
+int settings_schema_version(const SettingsJson& document) {
+    if (!document.contains(L"schema"))
+        return 1;
+    for (int version = 1; version <= 4; ++version) {
+        if (document.string_equals(L"schema", L"flitzzip.settings.v" + std::to_wstring(version)))
+            return version;
+        // Explicit read-only migration identities used by the predecessor product.
+        if (version <= 3 && document.string_equals(L"schema", L"superzip.settings.v" + std::to_wstring(version)))
+            return version;
+    }
+    throw ArchiveError("settings use an unsupported schema; the original file has been preserved");
 }
 
 }  // namespace
@@ -693,6 +718,7 @@ bool settings_equal(const AppSettings& left, const AppSettings& right) {
 // keys. Rejects malformed documents before applying any field.
 AppSettings parse_settings_json(std::string_view json) {
     const SettingsJson document(json);
+    const int schema = settings_schema_version(document);
     AppSettings settings;
     const bool migrate_format_rows = settings_uses_v1_format_rows(document);
     if (migrate_format_rows) {
@@ -700,12 +726,21 @@ AppSettings parse_settings_json(std::string_view json) {
                                               static_cast<int>(kSettingsV1CompressionFormatExtensions.size()) - 1);
         settings.compression_format_index = migrate_settings_v1_compression_format_index(v1_index);
     } else {
-        settings.compression_format_index = document.integer(
-            L"compressionFormatIndex", settings.compression_format_index, 0, kCompressionFormatMaxIndex);
+        const int index = document.integer(L"compressionFormatIndex", 0, 0,
+                                           static_cast<int>(kSettingsV2V3CompressionFormatExtensions.size()) - 1);
+        const auto extension = kSettingsV2V3CompressionFormatExtensions[static_cast<std::size_t>(index)];
+        const auto row =
+            std::find(kCompressionCreateFormatExtensions.begin(), kCompressionCreateFormatExtensions.end(), extension);
+        settings.compression_format_index =
+            row == kCompressionCreateFormatExtensions.end()
+                ? kDefaultCompressionFormatIndex
+                : static_cast<int>(std::distance(kCompressionCreateFormatExtensions.begin(), row));
     }
-    const int legacy_effort_index = document.integer(L"compressionLevelIndex", 2, 0, 4);
+    const int legacy_effort_index = schema < 4 ? document.integer(L"compressionLevelIndex", 2, 0, 4) : 0;
+    const int default_effort =
+        schema < 4 ? 2 * legacy_effort_index + 1 : compression_level_value(settings.compression_level_index);
     const int persisted_effort =
-        document.integer(L"compressionLevel", 2 * legacy_effort_index + 1, kMinCompressionLevel, kMaxCompressionLevel);
+        document.integer(L"compressionLevel", default_effort, kMinCompressionLevel, kMaxCompressionLevel);
     settings.compression_level_index = persisted_effort - kMinCompressionLevel;
     settings.compression_block_size_index = document.integer(
         L"compressionBlockSizeIndex", settings.compression_block_size_index, 0, kCompressionBlockSizeMaxIndex);
@@ -716,20 +751,40 @@ AppSettings parse_settings_json(std::string_view json) {
     settings.open_destination_after_operation =
         document.boolean(L"openDestinationAfterOperation", settings.open_destination_after_operation);
     settings.show_operation_summary = document.boolean(L"showOperationSummary", settings.show_operation_summary);
-    settings.validate_before_publish = document.boolean(
-        L"validateBeforePublish", document.boolean(L"verifyMetadataBeforeExtract", settings.validate_before_publish));
+    settings.validate_before_publish =
+        document.boolean(L"validateBeforePublish",
+                         schema < 4 ? document.boolean(L"verifyMetadataBeforeExtract", settings.validate_before_publish)
+                                    : settings.validate_before_publish);
     settings.open_destination_after_extract =
         document.boolean(L"openDestinationAfterExtract", settings.open_destination_after_extract);
     settings.gpu_required = document.boolean(L"gpuRequired", settings.gpu_required);
-    if (document.boolean(L"neutronStarMode", false) && persisted_effort == kMaxCompressionLevel &&
-        settings.gpu_required &&
-        compression_format_value(settings.compression_format_index) == ArchiveFormat::FlitzZip) {
-        settings.compression_level_index = kNeutronCompressionLevelIndex;
-    }
     settings.overwrite = document.boolean(L"overwrite", settings.overwrite);
     settings.integrity_hash_opt_in = document.boolean(L"integrityHashOptIn", settings.integrity_hash_opt_in);
     settings.defender_scan_opt_in = document.boolean(L"defenderScanOptIn", settings.defender_scan_opt_in);
     settings.verify_after_write_opt_in = document.boolean(L"verifyAfterWriteOptIn", settings.verify_after_write_opt_in);
+    if (schema == 4) {
+        settings.compression_format_index = kDefaultCompressionFormatIndex;
+        for (int index = 0; index <= kCompressionFormatMaxIndex; ++index) {
+            const auto extension = kCompressionCreateFormatExtensions[static_cast<std::size_t>(index)];
+            if (document.string_equals(L"compressionFormat", std::wstring(extension.begin(), extension.end())))
+                settings.compression_format_index = index;
+        }
+        settings.compression_block_size_index = kDefaultCompressionBlockSizeIndex;
+        const int block_bytes = document.integer(L"compressionBlockBytes", kDefaultArchiveBlockBytes, 0, INT_MAX);
+        for (int index = 0; index <= kCompressionBlockSizeMaxIndex; ++index) {
+            if (kCompressionBlockSizeOptions[static_cast<std::size_t>(index)] ==
+                static_cast<std::uint32_t>(block_bytes))
+                settings.compression_block_size_index = index;
+        }
+        settings.log_level_index = document.string_equals(L"logLevel", L"warning") ? 1
+                                   : document.string_equals(L"logLevel", L"debug") ? 2
+                                                                                   : 0;
+        const int days = document.integer(L"logRetentionDays", 7, 0, INT_MAX);
+        settings.log_retention_index = days == 14 ? 1 : days == 30 ? 2 : 0;
+    }
+    if (document.boolean(L"neutronStarMode", false) && persisted_effort == kMaxCompressionLevel &&
+        settings.gpu_required && compression_format_value(settings.compression_format_index) == ArchiveFormat::FlitzZip)
+        settings.compression_level_index = kNeutronCompressionLevelIndex;
     return settings;
 }
 
@@ -739,15 +794,24 @@ AppSettings parse_settings_json(std::string_view json) {
 std::string settings_to_json(const AppSettings& settings) {
     auto bool_text = [](bool value) { return value ? "true" : "false"; };
     std::ostringstream out;
+    out.imbue(std::locale::classic());
     out << "{\n"
-        << "  \"schema\": \"flitzzip.settings.v3\",\n"
-        << "  \"compressionFormatIndex\": " << settings.compression_format_index << ",\n"
+        << "  \"schema\": \"flitzzip.settings.v" << kSettingsProfileGeneration << "\",\n"
+        << "  \"compressionFormat\": \""
+        << kCompressionCreateFormatExtensions[static_cast<std::size_t>(
+               normalize_compression_format_index(settings.compression_format_index))]
+        << "\",\n"
         << "  \"compressionLevel\": " << compression_level_value(settings.compression_level_index) << ",\n"
         << "  \"neutronStarMode\": " << bool_text(settings.compression_level_index == kNeutronCompressionLevelIndex)
         << ",\n"
-        << "  \"compressionBlockSizeIndex\": " << settings.compression_block_size_index << ",\n"
-        << "  \"logLevelIndex\": " << settings.log_level_index << ",\n"
-        << "  \"logRetentionIndex\": " << settings.log_retention_index << ",\n"
+        << "  \"compressionBlockBytes\": " << compression_block_size_bytes(settings.compression_block_size_index)
+        << ",\n"
+        << "  \"logLevel\": \""
+        << (settings.log_level_index == 1   ? "warning"
+            : settings.log_level_index == 2 ? "debug"
+                                            : "information")
+        << "\",\n"
+        << "  \"logRetentionDays\": " << log_retention_days(settings.log_retention_index) << ",\n"
         << "  \"performanceUpdateSeconds\": " << settings.performance_update_seconds << ",\n"
         << "  \"openDestinationAfterOperation\": " << bool_text(settings.open_destination_after_operation) << ",\n"
         << "  \"showOperationSummary\": " << bool_text(settings.show_operation_summary) << ",\n"
@@ -794,7 +858,7 @@ std::filesystem::path settings_file_path() {
     if (smoke_redirect_length == 1 && smoke_redirect[0] == L'1') {
         return storage / L"gui-smoke-settings.json";
     }
-    return storage / L"settings.json";
+    return storage / current_settings_filename();
 }
 
 // Purpose: Resolve the per-user FlitzZip log file path.
@@ -861,17 +925,18 @@ void append_log_file_entry(const std::filesystem::path& path, LogSeverity severi
     }
 }
 
-// Purpose: Read the per-user settings file when it exists.
+// Purpose: Read the exact per-user settings revision when it exists.
 // Inputs: `path` is the settings file location.
-// Outputs: Returns bounded, completely parsed settings or defaults only when the file is absent; read errors throw.
-AppSettings read_settings_file(const std::filesystem::path& path) {
+// Outputs: Returns bounded bytes or nullopt only when absent; read errors throw.
+std::optional<std::string> read_settings_document(const std::filesystem::path& path) {
+    const auto native_path = std::filesystem::path(windows_api_path(path));
     std::error_code ec;
-    const bool exists = std::filesystem::exists(path, ec);
+    const bool exists = std::filesystem::exists(native_path, ec);
     if (ec) {
         throw ArchiveError("could not inspect settings file");
     }
     if (!exists) {
-        const auto parent = path.parent_path();
+        const auto parent = native_path.parent_path();
         if (!parent.empty()) {
             const auto parent_status = std::filesystem::status(parent, ec);
             if (ec && ec != std::errc::no_such_file_or_directory) {
@@ -881,20 +946,51 @@ AppSettings read_settings_file(const std::filesystem::path& path) {
                 throw ArchiveError("could not inspect settings file");
             }
         }
-        return {};
+        return std::nullopt;
     }
-    std::ifstream input(path, std::ios::binary);
+    std::ifstream input(native_path, std::ios::binary);
     if (!input) {
         throw ArchiveError("could not open settings file for reading");
     }
-    return parse_settings_json(read_settings_json_text(input));
+    return read_settings_json_text(input);
+}
+
+// Purpose: Decode a complete supported profile; absent files alone select defaults.
+// Inputs: Trusted settings path. Outputs: Typed settings or an I/O/schema error with no file changes.
+AppSettings read_settings_file(const std::filesystem::path& path) {
+    const auto document = read_settings_document(path);
+    return document ? parse_settings_json(*document) : AppSettings{};
 }
 
 // Purpose: Publish the per-user settings file through a private, verified file transaction.
-// Inputs: `path` is the target file and `settings` is the validated snapshot.
-// Outputs: Replaces the target with completely written JSON; failed saves preserve the preceding file.
-void write_settings_file(const std::filesystem::path& path, const AppSettings& settings) {
-    publish_settings_json(path, settings_to_json(settings));
+// Inputs: Trusted existing parent, snapshot and required expected revision (nullopt means absent), borrowed for this
+// call. Outputs: Complete published JSON; busy/stale/invalid saves preserve current data and the prior recovery copy.
+std::string write_settings_file(const std::filesystem::path& path, const AppSettings& settings,
+                                const std::optional<std::string>& expected_document, const AppSettings* baseline) {
+    const SettingsWriterLock lock(path);
+    const auto current = read_settings_document(path);
+    if (expected_document != current)
+        throw ArchiveError("settings changed in another window; reopen FlitzZip before applying changes");
+    const auto original = current ? current : read_settings_document(settings_read_path(path));
+    std::string json = settings_to_json(settings);
+    if (original) {
+        static_cast<void>(parse_settings_json(*original));
+        const SettingsJson original_document(*original);
+        if (baseline && original_document.string_equals(L"schema", current_settings_schema())) {
+            const SettingsJson baseline_document(settings_to_json(*baseline));
+            constexpr std::array<std::wstring_view, 4> compression_group{L"compressionFormat", L"compressionLevel",
+                                                                         L"neutronStarMode", L"gpuRequired"};
+            json = original_document.overlay(SettingsJson(json), &baseline_document, compression_group);
+        } else {
+            json = original_document.overlay(SettingsJson(json));
+        }
+    }
+    if (current && *current == json)
+        return json;
+    if (current)
+        publish_settings_json(path.wstring() + L".bak", *current);
+    publish_settings_json(path, json);
+    return json;
 }
 
 // Purpose: Return the visible history operation filter label.

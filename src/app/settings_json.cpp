@@ -84,6 +84,98 @@ class RuntimeApartment final {
     HRESULT result_;
 };
 
+// Purpose: Skip only JSON whitespace in a document whose complete grammar the OS has already validated.
+// Inputs: Bounded source and cursor. Outputs: Advances the cursor without crossing the source extent.
+void skip_json_space(std::string_view text, std::size_t& position) {
+    while (position < text.size() &&
+           (text[position] == ' ' || text[position] == '\t' || text[position] == '\r' || text[position] == '\n')) {
+        ++position;
+    }
+}
+
+// Purpose: Locate one raw value without decoding or rounding its contents; this is not a grammar validator.
+// Inputs: OS-validated object bytes and the start of a member value. Outputs: Its closing delimiter offset.
+std::size_t raw_json_value_end(std::string_view text, std::size_t begin) {
+    std::size_t depth = 0;
+    bool quoted = false;
+    bool escaped = false;
+    for (std::size_t position = begin; position < text.size(); ++position) {
+        const char ch = text[position];
+        if (quoted) {
+            if (escaped)
+                escaped = false;
+            else if (ch == '\\')
+                escaped = true;
+            else if (ch == '"')
+                quoted = false;
+        } else if (ch == '"')
+            quoted = true;
+        else if (ch == '[' || ch == '{')
+            ++depth;
+        else if (ch == '}' || ch == ']') {
+            if (depth == 0)
+                return position;
+            --depth;
+        } else if (ch == ',' && depth == 0)
+            return position;
+    }
+    throw ArchiveError("settings object has no complete member boundary");
+}
+
+// Purpose: Retain exact member bytes after OS grammar validation, including unknown large integers and subtrees.
+// Inputs: Complete bounded object and apartment-owned platform factory. Outputs: Decoded keys and raw members;
+// duplicate keys retain the last member, matching the platform's typed view. No COM object escapes this call.
+std::map<std::wstring, std::string, std::less<>>
+capture_raw_members(std::string_view text, const winrt::Windows::Data::Json::IJsonObjectStatics& factory) {
+    std::map<std::wstring, std::string, std::less<>> members;
+    std::size_t position = 0;
+    skip_json_space(text, position);
+    if (position == text.size() || text[position++] != '{')
+        throw ArchiveError("settings must be an object");
+    for (;;) {
+        skip_json_space(text, position);
+        if (position == text.size())
+            throw ArchiveError("settings object is incomplete");
+        if (text[position] == '}')
+            break;
+        const auto begin = position;
+        if (text[position++] != '"')
+            throw ArchiveError("settings member has no quoted key");
+        bool escaped = false;
+        while (position < text.size()) {
+            const char ch = text[position++];
+            if (escaped)
+                escaped = false;
+            else if (ch == '\\')
+                escaped = true;
+            else if (ch == '"')
+                break;
+        }
+        const auto key_end = position;
+        skip_json_space(text, position);
+        if (position == text.size() || text[position++] != ':')
+            throw ArchiveError("settings member has no value");
+        winrt::Windows::Data::Json::JsonObject key_object{nullptr};
+        const std::string key_document = "{" + std::string(text.substr(begin, key_end - begin)) + ":null}";
+        if (!factory.TryParse(decode_settings_utf8(key_document), key_object))
+            throw ArchiveError("could not decode the settings member name");
+        const std::wstring key(key_object.First().Current().Key());
+        const auto end = raw_json_value_end(text, position);
+        auto member_end = end;
+        while (member_end > begin && (text[member_end - 1] == ' ' || text[member_end - 1] == '\t' ||
+                                      text[member_end - 1] == '\r' || text[member_end - 1] == '\n'))
+            --member_end;
+        members.insert_or_assign(key, std::string(text.substr(begin, member_end - begin)));
+        position = end;
+        if (position == text.size() || (text[position] != ',' && text[position] != '}'))
+            throw ArchiveError("settings member boundary is invalid");
+        if (text[position] == '}')
+            break;
+        ++position;
+    }
+    return members;
+}
+
 }  // namespace
 
 // Purpose: Parse complete bounded settings with the OS JSON grammar and copy independent scalar values.
@@ -129,6 +221,7 @@ SettingsJson::SettingsJson(std::string_view json) try {
         }
         fields_.emplace(std::wstring(name), std::move(scalar));
     }
+    raw_members_ = capture_raw_members(json, factory);
 } catch (const winrt::hresult_error&) {
     throw ArchiveError("Windows could not decode the settings JSON");
 }
@@ -136,6 +229,46 @@ SettingsJson::SettingsJson(std::string_view json) try {
 // Purpose: Detect a top-level member. Inputs: Exact decoded key. Outputs: Presence independent of type.
 bool SettingsJson::contains(std::wstring_view key) const {
     return fields_.contains(key);
+}
+
+// Purpose: Preserve unowned fields exactly while replacing explicitly supplied member values.
+// Inputs: Validated updates, optional baseline and coupled keys; documents own all borrowed bytes during this call.
+// Outputs: Complete bounded JSON or an error, preserving unchanged fields despite runtime normalization.
+std::string SettingsJson::overlay(const SettingsJson& updates, const SettingsJson* baseline,
+                                  std::span<const std::wstring_view> coupled_keys) const {
+    auto merged = raw_members_;
+    bool coupled_changed = baseline == nullptr;
+    for (const auto name : coupled_keys) {
+        if (!updates.raw_members_.contains(name) || (baseline && !baseline->raw_members_.contains(name)))
+            throw ArchiveError("coupled settings update is incomplete");
+    }
+    if (baseline) {
+        for (const auto name : coupled_keys) {
+            const auto before = baseline->raw_members_.find(name);
+            const auto after = updates.raw_members_.find(name);
+            if (before == baseline->raw_members_.end() || after == updates.raw_members_.end() ||
+                before->second != after->second)
+                coupled_changed = true;
+        }
+    }
+    for (const auto& [name, value] : updates.raw_members_) {
+        const auto before = baseline ? baseline->raw_members_.find(name) : updates.raw_members_.end();
+        if (!baseline || before == baseline->raw_members_.end() || before->second != value ||
+            (coupled_changed && std::find(coupled_keys.begin(), coupled_keys.end(), name) != coupled_keys.end()))
+            merged.insert_or_assign(name, value);
+    }
+    std::string output = "{\n";
+    bool first = true;
+    for (const auto& [name, value] : merged) {
+        if (!first)
+            output += ",\n";
+        first = false;
+        output += "  " + value;
+        if (output.size() > kMaxSettingsJsonBytes - 3)
+            throw ArchiveError("merged settings exceed the size limit");
+    }
+    output += "\n}\n";
+    return output;
 }
 
 // Purpose: Compare a string setting by type and complete value. Inputs: Key and value. Outputs: Exact match.
@@ -160,11 +293,15 @@ int SettingsJson::integer(std::wstring_view key, int fallback, int minimum, int 
     }
     const auto found = fields_.find(key);
     const auto* value = found == fields_.end() ? nullptr : std::get_if<double>(&found->second);
-    if (value == nullptr || !std::isfinite(*value) || std::trunc(*value) != *value ||
-        *value < std::numeric_limits<int>::min() || *value > std::numeric_limits<int>::max()) {
+    if (value == nullptr || !std::isfinite(*value) || *value < std::numeric_limits<int>::min() ||
+        *value > std::numeric_limits<int>::max()) {
         return fallback;
     }
-    return std::clamp(static_cast<int>(*value), minimum, maximum);
+    double integral = 0.0;
+    if (std::modf(*value, &integral) != 0.0) {
+        return fallback;
+    }
+    return std::clamp(static_cast<int>(integral), minimum, maximum);
 }
 
 // Purpose: Consume at most one byte beyond the settings budget to distinguish an exact-size document.

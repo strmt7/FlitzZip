@@ -1,6 +1,13 @@
 # Settings Numeric Validation Review
 
-## Individual Decision
+The current implementation decomposes the number with `std::modf` and rejects
+an exactly nonzero fractional part after finiteness and range checks. The former
+source-location admissions have been retired from the current ledger. Fresh
+analysis remains required; any new report is blocking until resolved.
+
+The review below retains the earlier source decision and its rationale.
+
+## Historical Individual Decision
 
 ### Alert 8386
 

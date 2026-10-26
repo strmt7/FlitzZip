@@ -1,0 +1,19 @@
+{
+  "schema": "flitzzip.settings.v4",
+  "compressionFormat": ".flzip",
+  "compressionLevel": 5,
+  "neutronStarMode": false,
+  "compressionBlockBytes": 8388608,
+  "logLevel": "information",
+  "logRetentionDays": 7,
+  "performanceUpdateSeconds": 3,
+  "openDestinationAfterOperation": false,
+  "showOperationSummary": true,
+  "validateBeforePublish": true,
+  "openDestinationAfterExtract": false,
+  "gpuRequired": true,
+  "overwrite": false,
+  "integrityHashOptIn": false,
+  "defenderScanOptIn": false,
+  "verifyAfterWriteOptIn": false
+}

@@ -6,6 +6,37 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot 'security_scan.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'Policy scanner contains PowerShell syntax errors.' }
+$processPolicy = $ast.Find({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-InstallerProcessPolicy'
+}, $false)
+if (-not $processPolicy) { throw 'Shared MSI transport policy is missing.' }
+. ([ScriptBlock]::Create($processPolicy.Extent.Text))
+$sourceRoot = Split-Path -Parent $PSScriptRoot
+$workflowSource = [IO.File]::ReadAllText((Join-Path $sourceRoot '.github/workflows/release.yml'))
+$processSource = [IO.File]::ReadAllText((Join-Path $sourceRoot 'tools/msi_process.psm1'))
+Test-InstallerProcessPolicy -ReleaseAction $workflowSource -MsiProcessSource $processSource
+foreach ($mutation in @(
+        @('module', '[int]$TimeoutSeconds = 300', '[int]$TimeoutSeconds = 0'),
+        @('module', 'WaitForExit($TimeoutSeconds * 1000)', 'WaitForExit()'),
+        @('module', '.ArgumentList.Add($argument)', '.Arguments = $argument'),
+        @('workflow', 'Import-Module ./tools/msi_process.psm1 -Force', '# removed import'),
+        @('workflow', 'tools/test_installer_lifecycle.ps1 -Full -DisposableMachine', '# removed matrix'),
+        @('workflow', 'Assert-FlitzZipMsiPackageVersion -PackageVersion', 'UnreviewedVersion -PackageVersion')
+    )) {
+    $changedWorkflow = $workflowSource
+    $changedProcess = $processSource
+    if ($mutation[0] -eq 'module') {
+        if (-not $processSource.Contains($mutation[1])) { throw 'MSI transport control did not find its source.' }
+        $changedProcess = $processSource.Replace($mutation[1], $mutation[2])
+    } else {
+        if (-not $workflowSource.Contains($mutation[1])) { throw 'MSI workflow control did not find its source.' }
+        $changedWorkflow = $workflowSource.Replace($mutation[1], $mutation[2])
+    }
+    $rejected = $false
+    try { Test-InstallerProcessPolicy -ReleaseAction $changedWorkflow -MsiProcessSource $changedProcess }
+    catch { $rejected = $true }
+    if (-not $rejected) { throw 'MSI policy accepted a missing native transport or qualification guard.' }
+}
 $function = $ast.Find({ param($node)
     $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
         $node.Name -eq 'Test-ExternalComparisonNamePolicy'

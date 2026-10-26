@@ -134,7 +134,7 @@ TEST_CASE(main_window_compression_block_choices_survive_format_switch_and_apply)
     const auto settings =
         flitzzip::app::make_settings_layout(native_content_rect(ui.window), GetDpiForWindow(ui.window));
     click_native_control(ui.window, settings.apply);
-    REQUIRE_TRUE(read_native_fixture(flitzzip::app::settings_file_path()).find("\"compressionBlockSizeIndex\": 6") !=
+    REQUIRE_TRUE(read_native_fixture(flitzzip::app::settings_file_path()).find("\"compressionBlockBytes\": 16777216") !=
                  std::string::npos);
     click_native_navigation(ui.window, 1);
     ui.require_field(form.block_size, L"16 MiB");

@@ -819,4 +819,17 @@ foreach ($inputPath in @('tools/FlitzZip.GuiSmoke.Ui.psm1', 'tools/FlitzZip.GuiS
     Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $inputPath) 'hosted tool contracts must admit both the actual GUI helper and its transport fixture'
 }
 
+foreach ($path in @('resources/settings/settings-v4.schema.json', 'tests/fixtures/settings/current-v4.json',
+        'tools/settings_contract.py')) {
+    $profilePlan = Get-FlitzZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
+    Assert-Selector (Test-RequiredCommand -Plan $profilePlan -Id 'settings-evolution-contracts') 'profile contract inputs must execute compatibility tests'
+    Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $path) 'hosted compatibility contracts must include schema and history fixtures'
+}
+$versionPlan = Get-FlitzZipVerificationPlan -ChangedPath @('cmake/FlitzZipMsiVersion.cmake') -Checkpoint intermediate
+Assert-Selector (Test-RequiredCommand -Plan $versionPlan -Id 'msi-version-contracts') 'native MSI ordering policy requires its independent boundary controls'
+$installerPlan = Get-FlitzZipVerificationPlan -ChangedPath @('tests/installer/lifecycle/fail_upgrade.c') -Checkpoint intermediate
+Assert-Selector (Test-RequiredCommand -Plan $installerPlan -Id 'installer-authoring-contracts') 'installer fixture code requires actual compiled protocol controls'
+Assert-Selector (-not (Test-RequiredCommand -Plan $installerPlan -Id 'unit-tests')) 'separate installer fixture code must not select unrelated product tests'
+Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path 'tests/installer/lifecycle/fail_upgrade.c') 'hosted contracts must admit installer fixture changes'
+
 Write-Output "Verification selector self-test passed."

@@ -183,7 +183,12 @@ jobs:
               $metadataArgs += "--allow-existing"
           }
           python @metadataArgs
+          if ($LASTEXITCODE -ne 0) { throw 'Release metadata validation failed.' }
           $metadata = Get-Content -LiteralPath out\release-metadata.json -Raw | ConvertFrom-Json
+          if ($env:CREATE_MSI -eq 'true') {
+              . ./tools/version.ps1
+              $null = Assert-FlitzZipMsiPackageVersion -PackageVersion ([string]$metadata.package_version)
+          }
           $releaseTag = [string]$metadata.release_tag
 
           $existingRelease = $false
@@ -356,62 +361,7 @@ jobs:
               $PSNativeCommandUseErrorActionPreference = $false
           }
 
-          # Purpose: Print the end of a verbose Windows Installer log for actionable CI failures.
-          # Inputs: Path is the log file to read; Label identifies the install phase in output.
-          # Outputs: Writes a bounded log tail to stdout and returns no value.
-          function Write-MsiLogTail {
-              param(
-                  [Parameter(Mandatory = $true)]
-                  [string]$Path,
-                  [Parameter(Mandatory = $true)]
-                  [string]$Label
-              )
-              if (Test-Path -LiteralPath $Path) {
-                  Write-Host "----- $Label log tail -----"
-                  Get-Content -LiteralPath $Path -Tail 160
-                  Write-Host "----- end $Label log tail -----"
-              } else {
-                  Write-Host "$Label log was not produced at $Path"
-              }
-          }
-
-          # Purpose: Run msiexec with a short bounded wait and fail with the matching verbose log tail.
-          # Inputs: Phase names the operation, Arguments are passed to msiexec.exe, LogPath is the verbose log location,
-          # and TimeoutSeconds bounds stale installer/elevation waits.
-          # Outputs: Returns no value when msiexec exits 0; throws with diagnostics on timeout or non-zero exit code.
-          function Invoke-CheckedMsiExec {
-              param(
-                  [Parameter(Mandatory = $true)]
-                  [string]$Phase,
-                  [Parameter(Mandatory = $true)]
-                  [string[]]$Arguments,
-                  [Parameter(Mandatory = $true)]
-                  [string]$LogPath,
-                  [ValidateRange(1, 1800)]
-                  [int]$TimeoutSeconds = 300
-              )
-              $info = [Diagnostics.ProcessStartInfo]::new()
-              $info.FileName = Join-Path ([Environment]::SystemDirectory) 'msiexec.exe'
-              $info.UseShellExecute = $false
-              $info.CreateNoWindow = $true
-              $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
-              # Let .NET serialize native arguments; quoting switches changes MSI parsing.
-              foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
-              $process = [Diagnostics.Process]::Start($info)
-              try {
-                  if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-                      if (-not $process.HasExited) { $process.Kill() }
-                      [void]$process.WaitForExit(5000)
-                      Write-MsiLogTail -Path $LogPath -Label $Phase
-                      throw ("$Phase timed out after $TimeoutSeconds seconds. " +
-                          "Check whether an installer or elevation prompt was left unanswered.")
-                  }
-                  if ($process.ExitCode -ne 0) {
-                      Write-MsiLogTail -Path $LogPath -Label $Phase
-                      throw "$Phase failed with exit code $($process.ExitCode)."
-                  }
-              } finally { $process.Dispose() }
-          }
+          Import-Module ./tools/msi_process.psm1 -Force
 
           $msi = Join-Path $PWD "out\$env:PACKAGE_BASE.msi"
           $installLog = Join-Path $env:RUNNER_TEMP "flitzzip-msi-install.log"
@@ -480,6 +430,23 @@ jobs:
                   $global:LASTEXITCODE = 0
               }
           }
+
+      - name: Transactional installer upgrade matrix
+        if: env.CREATE_MSI == 'true'
+        shell: pwsh
+        run: tools/test_installer_lifecycle.ps1 -Full -DisposableMachine
+
+      - name: Retain installer qualification evidence
+        if: always() && env.CREATE_MSI == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-qualification-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            out/installer-lifecycle-*/**/*.log
+            out/installer-lifecycle-*/result.json
+            ${{ runner.temp }}/flitzzip-msi-*.log
 
       - name: Package corresponding source
         shell: pwsh

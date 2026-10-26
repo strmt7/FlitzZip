@@ -1526,6 +1526,8 @@ class MainWindow {
     std::wstring disk_counter_instance_;
     // Window-thread reads are serialized by native dispatch; worker reads and all writes require mutex_.
     AppSettings applied_settings_{};
+    // Exact persisted revision last admitted by this window; used to reject stale concurrent Apply operations.
+    std::optional<std::string> settings_revision_;
 };
 
 }  // namespace flitzzip::app

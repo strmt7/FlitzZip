@@ -1,0 +1,8 @@
+{
+  "schema": "flitzzip.settings.v3",
+  "compressionFormatIndex": 0,
+  "compressionLevel": 9,
+  "neutronStarMode": true,
+  "gpuRequired": true,
+  "verifyMetadataBeforeExtract": false
+}

@@ -3,6 +3,8 @@
 #include "app/settings_json.hpp"
 #include "core/file_publish.hpp"
 #include "core/result.hpp"
+#include "core/path_text.hpp"
+#include "core/windows_handle.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -10,6 +12,27 @@
 #include <string_view>
 
 namespace flitzzip::app {
+
+// Serializes cooperating writers across processes. The empty lock file remains
+// in the profile so releasing a lock cannot race a second writer's file open.
+class SettingsWriterLock final {
+  public:
+    // Purpose: Acquire one profile's nonblocking writer lock without following a redirected lock file.
+    // Inputs: Trusted settings path with an existing parent. Outputs: Exclusive handle or a reported busy/I/O error.
+    explicit SettingsWriterLock(const std::filesystem::path& path)
+        : handle_(CreateFileW(windows_api_path(path.wstring() + L".lock").c_str(), GENERIC_READ | GENERIC_WRITE, 0,
+                              nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr)) {
+        if (handle_.get() == INVALID_HANDLE_VALUE)
+            throw ArchiveError("settings are busy or cannot be locked");
+        FILE_ATTRIBUTE_TAG_INFO attributes{};
+        if (!GetFileInformationByHandleEx(handle_.get(), FileAttributeTagInfo, &attributes, sizeof(attributes)) ||
+            (attributes.FileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) != 0)
+            throw ArchiveError("settings lock is not a regular file");
+    }
+
+  private:
+    windows_detail::HandleOwner handle_;
+};
 
 // Purpose: Finish a bounded serialized settings write before the caller may publish its file.
 // Inputs: The output stream and complete JSON produced by the settings serializer.

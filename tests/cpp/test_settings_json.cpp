@@ -62,6 +62,78 @@ void check_settings_apartment(int mode) {
 
 }  // namespace
 
+// Purpose: Prevent a compatibility save from rounding unknown numbers, dropping subtrees or accumulating whitespace.
+// Inputs: Independently authored future values, escaped keys and a known-field update.
+// Outputs: Unknown value spellings survive, changed fields apply, and a repeated merge is byte-idempotent.
+TEST_CASE(settings_json_overlay_preserves_unknown_values_exactly) {
+    const std::string original = R"({"enabled":false,"future":{"large":9007199254740993,
+        "scientific":1.00000000000000000001e-120,"nested":[null,{"text":"a,}\\\"b"}]},
+        "negativeZero":-0e+00,"\u0061lias":[1,2,{"unicode":"\u2605"}]})";
+    const flitzzip::app::SettingsJson update(R"({"enabled":true})");
+    const auto merged = flitzzip::app::SettingsJson(original).overlay(update);
+    REQUIRE_TRUE(merged.find("9007199254740993") != std::string::npos);
+    REQUIRE_TRUE(merged.find("1.00000000000000000001e-120") != std::string::npos);
+    REQUIRE_TRUE(merged.find("-0e+00") != std::string::npos);
+    REQUIRE_TRUE(merged.find(R"("\u0061lias":[1,2,{"unicode":"\u2605"}])") != std::string::npos);
+    REQUIRE_TRUE(flitzzip::app::SettingsJson(merged).boolean(L"enabled", false));
+    REQUIRE_EQ(flitzzip::app::SettingsJson(merged).overlay(update), merged);
+}
+
+// Purpose: Preserve settings this reader cannot interpret unless their coupled preference group is explicitly changed.
+// Inputs: A persisted GPU preference, normalized runtime baseline and independent UI modifications.
+// Outputs: Unrelated changes preserve intent; a coupled change publishes the complete consistent group.
+TEST_CASE(settings_json_overlay_changes_only_explicit_preferences) {
+    const flitzzip::app::SettingsJson persisted(R"({"mode":"future-mode","enabled":true,"summary":false})");
+    const flitzzip::app::SettingsJson baseline(R"({"mode":"normal","enabled":false,"summary":false})");
+    const flitzzip::app::SettingsJson unrelated(R"({"mode":"normal","enabled":false,"summary":true})");
+    constexpr std::array<std::wstring_view, 2> group{L"mode", L"enabled"};
+    const flitzzip::app::SettingsJson unchanged(persisted.overlay(unrelated, &baseline, group));
+    REQUIRE_TRUE(unchanged.string_equals(L"mode", L"future-mode"));
+    REQUIRE_TRUE(unchanged.boolean(L"enabled", false));
+    REQUIRE_TRUE(unchanged.boolean(L"summary", false));
+    const flitzzip::app::SettingsJson coupled(R"({"mode":"other","enabled":false,"summary":false})");
+    const flitzzip::app::SettingsJson changed(persisted.overlay(coupled, &baseline, group));
+    REQUIRE_TRUE(changed.string_equals(L"mode", L"other"));
+    REQUIRE_TRUE(!changed.boolean(L"enabled", true));
+}
+
+// Purpose: Prevent a partial coupled update from retaining incompatible old intent.
+// Inputs: Missing group fields in either the update or baseline. Outputs: Both incomplete updates are rejected.
+TEST_CASE(settings_json_overlay_requires_complete_coupled_groups) {
+    const flitzzip::app::SettingsJson original(R"({"mode":"gpu","enabled":true})");
+    const flitzzip::app::SettingsJson partial(R"({"mode":"cpu"})");
+    constexpr std::array<std::wstring_view, 2> group{L"mode", L"enabled"};
+    for (const auto* baseline : {&original, &partial}) {
+        bool rejected = false;
+        try {
+            static_cast<void>(original.overlay(baseline == &original ? partial : original, baseline, group));
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
+
+// Purpose: Keep decoded duplicate-key semantics aligned between the typed parser and lossless member retention.
+// Inputs: Equivalent escaped/plain keys followed by an update and an over-budget merged document.
+// Outputs: Only the effective last value survives; growth beyond the limit is rejected.
+TEST_CASE(settings_json_overlay_handles_duplicates_and_bounds) {
+    const flitzzip::app::SettingsJson original(R"({"value":1,"\u0076alue":2})");
+    const auto merged = original.overlay(flitzzip::app::SettingsJson(R"({"value":3})"));
+    REQUIRE_EQ(flitzzip::app::SettingsJson(merged).integer(L"value", 0, 0, 9), 3);
+    REQUIRE_TRUE(merged.find("\\u0076alue") == std::string::npos);
+    const auto large =
+        std::string(R"({"future":")") + std::string(flitzzip::app::kMaxSettingsJsonBytes - 16, 'x') + R"("})";
+    bool rejected = false;
+    try {
+        static_cast<void>(flitzzip::app::SettingsJson(large).overlay(
+            flitzzip::app::SettingsJson(R"({"additionalFeature":"nonempty"})")));
+    } catch (const flitzzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+}
+
 // Purpose: Prevent key-looking string values and nested members from changing top-level settings.
 // Inputs: Independent reproductions of the former substring lookup defects. Outputs: Only root members apply.
 TEST_CASE(settings_json_uses_only_typed_top_level_members) {

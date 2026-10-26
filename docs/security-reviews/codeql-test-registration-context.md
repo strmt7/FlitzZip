@@ -1,7 +1,7 @@
 # CodeQL review of native test registration and LHA context ownership
 
 The maintainer's standing authorization, “Fix defects; allow exact proven
-false-positive dispositions,” applies individually to the four decisions below.
+false-positive dispositions,” applies individually to the active decisions below.
 The original category rows matched their complete normalized source and
 bound HEAD context before review. Reported source, rule, scanner version and
 location remain unchanged; the LHA callback consumer changes as described below.
@@ -27,31 +27,39 @@ bounded resident buffers and independent output oracles. They add no product
 exports, allocation configuration or scanner settings. Their execution remains
 a separate qualification from these unchanged reported-source invariants.
 
-The current required-HIP Release build passed all six exact direct consumers
+The earlier required-HIP Release build passed all six exact direct consumers
 listed under the individual decisions below. Its build receipt is
 `b746e93ebedd694ba2e2f8dddef394563b2c016fdcbfd4e7f1f5661dfd1dd6da`;
 the test executable's SHA-256 is
 `98a2c566d6d412a26427d925f63915a4d442fdc96997bb8527353d3b4b42caf4`.
-These focused results qualify the stated consumers, not the entire release.
+These historical focused results qualify their recorded source and consumers,
+not the current build or the entire release. Current qualification must match
+the candidate's own source, tool and output identities.
+
+## Packaging-only context review
+
+The current CMake edit adds only `CPACK_FLITZZIP_PACKAGE_VERSION` and
+`CPACK_PROJECT_CONFIG_FILE` immediately before `include(CPack)`. The referenced
+`cmake/FlitzZipMsiVersion.cmake` checks numeric version ordering only when CPack
+selects WIX. It adds no native source, target, compile definition, compiler flag,
+link dependency, allocator setting or scanner exclusion. Its complete bytes are
+now bound with the full CMake file. The three decisions below were individually
+rechecked in live source: LHA reader/stream destruction still precedes borrowed
+context destruction; the registered TAR case still calls its helper for all
+eight inputs; the GDI induction variable still increments once across eight
+bounded iterations. The settings implementation changes do not enter those
+source/caller closures. This static review does not replace current native
+consumer execution or fresh hosted analysis.
 
 ## Individual decisions
 
 ### Alert 8386
 
-[Settings numeric validation](settings-numeric-validation.md#alert-8386) remains valid for CodeQL 2.27.3
-`cpp/equality-on-floats` at `src/app/settings_json.cpp`,
-163:55–163:83.
-
-SettingsJson::integer checks type, finiteness, exact integrality and int range
-before narrowing. Exact truncation comparison intentionally rejects fractional
-scalar values; epsilon comparison would weaken admission. The typed-scalar and
-whole-number regressions cover near-integer fractions, out-of-range values,
-endpoints, exponent notation, negative zero and clamping.
-
-Current exact Release consumer(s):
-
-- `=settings_json_requires_exact_scalar_types`
-- `=settings_json_clamps_representable_whole_numbers`
+This previous source decision is retired. The settings implementation now uses
+fraction decomposition, and neither scanner category has an active admission
+for the old report. The [numeric review](settings-numeric-validation.md#alert-8386)
+retains its history. Current analysis and scalar-boundary tests must qualify
+the changed implementation independently.
 
 ### Alert 632
 

@@ -1310,4 +1310,7 @@ include(cmake/FlitzZipPrecompiledHeaders.cmake)
 flitzzip_enable_precompiled_headers()
 
 set(CPACK_GENERATOR "ZIP")
+set(CPACK_FLITZZIP_PACKAGE_VERSION "${FLITZZIP_PACKAGE_VERSION}")
+set(CPACK_PROJECT_CONFIG_FILE
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FlitzZipMsiVersion.cmake")
 include(CPack)

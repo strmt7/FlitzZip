@@ -1,5 +1,6 @@
 #include "app/main_window_impl.hpp"
 #include "app/settings_migration.hpp"
+#include "app/settings_json.hpp"
 
 #include "core/path_text.hpp"
 
@@ -27,7 +28,13 @@ namespace flitzzip::app {
 void MainWindow::initialize_settings() {
     try {
         ensure_app_storage();
-        const auto loaded = read_settings_file(settings_read_path(settings_file_path()));
+        const auto path = settings_file_path();
+        settings_revision_ = read_settings_document(path);
+        const auto loaded = settings_revision_ ? parse_settings_json(*settings_revision_)
+                                               : read_settings_file(settings_read_path(path));
+        if (!settings_revision_ ||
+            !SettingsJson(*settings_revision_).string_equals(L"schema", current_settings_schema()))
+            settings_revision_ = write_settings_file(path, loaded, settings_revision_);
         {
             std::lock_guard lock(mutex_);
             publish_applied_settings_locked(loaded);
@@ -37,7 +44,6 @@ void MainWindow::initialize_settings() {
             applied_settings_ = settings_from_state(state_);
         }
         reset_performance_timer(applied_settings_.performance_update_seconds);
-        write_settings_file(settings_file_path(), applied_settings_);
     } catch (const std::exception& error) {
         {
             std::lock_guard lock(mutex_);
@@ -67,7 +73,7 @@ void MainWindow::apply_settings() {
         std::lock_guard lock(mutex_);
         draft = settings_from_state(state_);
     }
-    write_settings_file(settings_file_path(), draft);
+    settings_revision_ = write_settings_file(settings_file_path(), draft, settings_revision_, &applied_settings_);
     {
         std::lock_guard lock(mutex_);
         publish_applied_settings_locked(draft);
@@ -104,7 +110,7 @@ void MainWindow::revert_settings_draft() {
 // Outputs: Saves defaults before changing UI or applied state; a save failure leaves both unchanged.
 void MainWindow::reset_settings_to_defaults() {
     const AppSettings defaults;
-    write_settings_file(settings_file_path(), defaults);
+    settings_revision_ = write_settings_file(settings_file_path(), defaults, settings_revision_);
     {
         std::lock_guard lock(mutex_);
         publish_applied_settings_locked(defaults);

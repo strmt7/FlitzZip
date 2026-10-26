@@ -54,10 +54,7 @@ function Write-SourceOfferingFixture {
 function Assert-ReleaseMsiInvocation {
     param([string]$RepoRoot, [string]$FixtureRoot)
 
-    $workflowText = Get-Content -LiteralPath (Join-Path $RepoRoot '.github/workflows/release.yml') -Raw
-    $step = [regex]::Match($workflowText, '(?ms)^      - name: MSI install smoke\r?\n.*?        run: \|\r?\n(?<script>.*?)(?=^      - name:|\z)')
-    if (-not $step.Success) { throw 'MSI smoke workflow script was not found.' }
-    $scriptText = [regex]::Replace($step.Groups['script'].Value, '(?m)^          ', '')
+    $scriptText = Get-Content -LiteralPath (Join-Path $RepoRoot 'tools/msi_process.psm1') -Raw
     $parseErrors = $null
     $ast = [Management.Automation.Language.Parser]::ParseInput($scriptText, [ref]$null, [ref]$parseErrors)
     if ($parseErrors.Count -gt 0) { throw 'MSI smoke workflow script does not parse.' }
@@ -96,7 +93,7 @@ if (-not (Test-Path -LiteralPath $LogPath) -or (Get-Item -LiteralPath $LogPath).
 }
 
 try {
-    foreach ($relative in @('.github/workflows/release.yml')) {
+    foreach ($relative in @('.github/workflows/release.yml', 'tools/msi_process.psm1')) {
         $destination = Join-Path $fixtureRoot $relative
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $repoRoot $relative) -Destination $destination

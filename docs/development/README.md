@@ -14,6 +14,7 @@ affected component. End-user documentation is indexed [one level up](../README.m
 | Measure performance | [Benchmark index](../benchmarks/README.md), [comparison methodology](../comparative-benchmark-methodology.md) |
 | Review source and dependencies | [Security scanning](../security-code-scanning.md), [source remediation](../security-source-remediation-redesign.md) |
 | Qualify a release | [Release process](../release.md), [candidate scope](../beta-readiness.md), [implementation plan](../../IMPLEMENTATION_PLAN.md) |
+| Change saved preferences or upgrade behavior | [Persistence and upgrade compatibility](persistence-and-upgrades.md) |
 | Use development research tools | [Crawl4AI](../crawl4ai.md), [context and code search](../development-context.md), [MCP](../../mcp/README.md) |
 | Check provenance and obligations | [Third-party software](../third-party.md), [benchmark permissions](../benchmark-permissions.md) |
 

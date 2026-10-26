@@ -295,7 +295,8 @@ class ControllerFixture final {
         settings.show_operation_summary = false;
         settings.log_level_index = 2;
         flitzzip::app::ensure_app_storage();
-        flitzzip::app::write_settings_file(flitzzip::app::settings_file_path(), settings);
+        flitzzip::app::write_settings_file(flitzzip::app::settings_file_path(), settings,
+                                           flitzzip::app::read_settings_document(flitzzip::app::settings_file_path()));
     }
 
     // Purpose: Drive normal native input into the hidden product controller.

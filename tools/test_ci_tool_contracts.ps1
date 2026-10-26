@@ -22,6 +22,12 @@ function Assert-CiContractPlan {
 }
 
 Assert-CiContractPlan -Path 'tools/cocoindex_agent_search.py' -Required @('agent-context-contracts')
+Assert-CiContractPlan -Path 'resources/settings/settings-v4.schema.json' -Required @('settings-evolution-contracts')
+Assert-CiContractPlan -Path 'tests/fixtures/settings/current-v4.json' -Required @('settings-evolution-contracts')
+Assert-CiContractPlan -Path 'tools/gui_settings_choices.ps1' -Required @('gui-settings-choice-contracts')
+Assert-CiContractPlan -Path 'tools/msi_process.psm1' -Required @('release-workflow-contracts')
+Assert-CiContractPlan -Path 'tools/msi_database.psm1' -Required @('installer-authoring-contracts')
+Assert-CiContractPlan -Path 'tests/installer/lifecycle/CMakeLists.txt' -Required @('installer-authoring-contracts')
 Assert-CiContractPlan -Path 'mcp/flitzzip_mcp.py' -Required @('mcp-python-compile', 'mcp-bounded-child-tests')
 Assert-CiContractPlan -Path 'tools/test_native_build_receipt.py' -Required @('native-build-receipt-tests')
 Assert-CiContractPlan -Path 'tools/build.ps1' -Required @('native-build-receipt-tests', 'rocm-toolchain-tests')

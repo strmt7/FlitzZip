@@ -13,8 +13,10 @@ $stage = Join-Path $repo "out\install-$Configuration"
 . (Join-Path $PSScriptRoot "version.ps1")
 . (Join-Path $PSScriptRoot "cmake_toolchain.ps1")
 . (Join-Path $PSScriptRoot "package_runtime.ps1")
+Import-Module (Join-Path $PSScriptRoot 'msi_database.psm1') -Force
 
 $PackageVersion = Resolve-FlitzZipPackageVersion -RepoRoot $repo -RequestedVersion $PackageVersion
+if ($CreateMsi) { $null = Assert-FlitzZipMsiPackageVersion -PackageVersion $PackageVersion }
 $packageBase = Get-FlitzZipPackageBase -PackageVersion $PackageVersion
 $package = Join-Path $repo "out\$packageBase-portable.zip"
 $wixUiExtension = "WixToolset.UI.wixext/7.0.0"
@@ -67,22 +69,9 @@ function Read-MsiProperty {
         [string]$MsiPath,
         [string]$Name
     )
-    $installer = New-Object -ComObject WindowsInstaller.Installer
-    $database = $installer.GetType().InvokeMember("OpenDatabase", "InvokeMethod", $null, $installer, @($MsiPath, 0))
-    $query = "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='$Name'"
-    $view = $database.GetType().InvokeMember("OpenView", "InvokeMethod", $null, $database, @($query))
-    try {
-        $view.GetType().InvokeMember("Execute", "InvokeMethod", $null, $view, $null) | Out-Null
-        $record = $view.GetType().InvokeMember("Fetch", "InvokeMethod", $null, $view, $null)
-        if (-not $record) {
-            throw "MSI property '$Name' was not found in $MsiPath."
-        }
-        return $record.GetType().InvokeMember("StringData", "GetProperty", $null, $record, @(1))
-    } finally {
-        if ($view) {
-            $view.GetType().InvokeMember("Close", "InvokeMethod", $null, $view, $null) | Out-Null
-        }
-    }
+    $rows = @(Get-MsiTable -Path $MsiPath -Table Property | Where-Object { $_.Property -ceq $Name })
+    if ($rows.Count -ne 1) { throw "MSI property '$Name' is missing or ambiguous in $MsiPath." }
+    return $rows[0].Value
 }
 
 # Purpose: Normalize MSI and CPack GUID strings before comparing installer identity.
@@ -177,6 +166,8 @@ if ($CreateMsi) {
     if (-not (Test-Path $msi)) {
         throw "Expected MSI was not produced: $msi"
     }
+    $expectedScope = Read-FlitzZipCMakeCacheValue -BuildRoot $build -Name 'FLITZZIP_MSI_INSTALL_SCOPE'
+    $null = Assert-MsiUpgradeContract -Path $msi -ExpectedScope $expectedScope
     $expectedProductVersion = Read-FlitzZipCPackValue -BuildRoot $build -Name "CPACK_PACKAGE_VERSION"
     $expectedProductCode = Format-MsiGuid -GuidText (Read-FlitzZipCPackValue -BuildRoot $build -Name "CPACK_WIX_PRODUCT_GUID")
     $expectedUpgradeCode = Format-MsiGuid -GuidText (Read-FlitzZipCPackValue -BuildRoot $build -Name "CPACK_WIX_UPGRADE_GUID")

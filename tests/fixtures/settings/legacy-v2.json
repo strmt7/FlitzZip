@@ -1,0 +1,7 @@
+{
+  "schema": "flitzzip.settings.v2",
+  "compressionFormatIndex": 8,
+  "compressionLevel": 7,
+  "logLevelIndex": 2,
+  "logRetentionIndex": 1
+}

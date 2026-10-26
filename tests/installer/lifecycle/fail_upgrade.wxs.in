@@ -1,0 +1,12 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <Binary Id="FixtureFailureDll" SourceFile="$<TARGET_FILE:fixture_failure>"/>
+    <CustomAction Id="FixtureRejectUpgrade" BinaryRef="FixtureFailureDll"
+                  DllEntry="RejectFixtureUpgrade" Execute="deferred"
+                  Impersonate="no" Return="check"/>
+    <InstallExecuteSequence>
+      <Custom Action="FixtureRejectUpgrade" After="InstallFiles"
+              Condition="NOT Installed"/>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>

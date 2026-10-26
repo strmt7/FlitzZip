@@ -78,12 +78,12 @@ means its rules do not apply.
 | --- | --- |
 | Any source change | Non-Negotiable Boundaries; Engineering Quality Baseline; Coding Standards; Required Function Documentation |
 | Locating modules or dependencies | Project Map; Mission for exact adapter and vendored-version boundaries |
-| GUI, state, input, drawing, settings | GUI Rules; `docs/debugging-strategy.md`; `docs/design.md` |
+| GUI, state, input, drawing, settings | GUI Rules; `docs/debugging-strategy.md`; `docs/design.md`; persisted preferences also require `docs/development/persistence-and-upgrades.md` |
 | Archive formats, parsing, create/extract, overwrite | Mission; Security Rules; `docs/archive-format-support.md`; `docs/native-flzip-format.md` when native format/detection changes |
 | CPU/GPU performance, compression policy, benchmarks | Non-Negotiable Boundaries; Build And Test Commands; `docs/performance-block-size-validation.md`; `docs/compression-level-and-benchmark-suite.md`; `docs/gpu-accelerated-ui-and-codec-research.md` |
 | Alternative GPU building blocks | Performance row plus `docs/compression-backend-evaluation.md` |
 | Tools, workflows, MCP, skills, agent routing | Non-Negotiable Boundaries; Security Rules; Git Workflow; `docs/engineering-learning-loop.md` |
-| Installer, packaging, release, versioning | Non-Negotiable Boundaries; Security Rules; Git Workflow; `docs/release.md` |
+| Installer, packaging, release, versioning | Non-Negotiable Boundaries; Security Rules; Git Workflow; `docs/release.md`; `docs/development/persistence-and-upgrades.md` |
 | Refactoring | `docs/refactoring-governance.md`; run `tools/refactor_audit.ps1` before broad cleanup |
 | Bug investigation, intermittent failures, coverage gaps | `.agents/skills/flitzzip-test-investigation/SKILL.md`; `docs/debugging-strategy.md#investigation-contract`; `docs/code-coverage.md#meaningful-tests` |
 | New archive-product behavior | `docs/product-behavior-audit.md` and the affected domain rows; do not copy reference code/UI |

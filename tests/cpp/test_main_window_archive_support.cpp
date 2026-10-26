@@ -10,10 +10,40 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <locale>
 #include <string_view>
 #include <utility>
 
 namespace {
+
+class GroupedSettingsNumbers final : public std::numpunct<char> {
+    // Purpose: Model a host locale that would make ordinary JSON integer streaming invalid.
+    // Inputs: Locale facet dispatch. Outputs: Groups decimal digits with commas.
+    std::string do_grouping() const override {
+        return "\3";
+    }
+    // Purpose: Choose the independent grouping delimiter. Inputs: Locale dispatch. Outputs: A comma.
+    char do_thousands_sep() const override {
+        return ',';
+    }
+};
+
+class SettingsLocaleScope final {
+  public:
+    // Purpose: Apply a controlled process locale during one serial serializer test.
+    // Inputs: None. Outputs: A grouping facet active until this scope ends.
+    SettingsLocaleScope() : previous_(std::locale()) {
+        std::locale::global(std::locale(previous_, new GroupedSettingsNumbers));
+    }
+    // Purpose: Restore stream locale after this test.
+    // Inputs: Saved locale. Outputs: Original global locale.
+    ~SettingsLocaleScope() {
+        std::locale::global(previous_);
+    }
+
+  private:
+    std::locale previous_;
+};
 
 // Purpose: Require one production boundary to reject input with an exact stable diagnostic.
 // Inputs: Callable `operation` and expected ArchiveError text.
@@ -56,6 +86,28 @@ bool contains_file_with_contents(const std::filesystem::path& root, std::string_
 }
 
 }  // namespace
+
+// Purpose: Keep persisted choices independent of dropdown order and the machine's numeric locale.
+// Inputs: Independent semantic format identifiers and a deliberately grouping locale.
+// Outputs: Complete JSON numbers and exact semantic identifiers survive production decoding and serialization.
+TEST_CASE(main_window_settings_semantic_identifiers_and_locale_are_stable) {
+    const SettingsLocaleScope locale;
+    for (const auto extension :
+         {".flzip", ".zip", ".tar.gz", ".tgz", ".tar", ".gz", ".zst", ".zstd", ".tar.zst", ".tzst", ".tar.bz2", ".tbz2",
+          ".tbz", ".bz2", ".cpio", ".cpio.gz", ".cpgz", ".ar", ".Z"}) {
+        const std::string json = std::string(R"({"schema":"flitzzip.settings.v4","compressionFormat":")") + extension +
+                                 R"(","compressionBlockBytes":1048576,"logRetentionDays":30,"logLevel":"debug"})";
+        const auto settings = flitzzip::app::parse_settings_json(json);
+        REQUIRE_EQ(flitzzip::app::compression_format_extension(settings.compression_format_index),
+                   std::wstring(extension, extension + std::char_traits<char>::length(extension)));
+        const auto serialized = flitzzip::app::settings_to_json(settings);
+        REQUIRE_TRUE(serialized.find("\"compressionBlockBytes\": 1048576") != std::string::npos);
+        REQUIRE_TRUE(serialized.find(std::string("\"compressionFormat\": \"") + extension + '"') != std::string::npos);
+        REQUIRE_EQ(settings.log_level_index, 2);
+        REQUIRE_EQ(settings.log_retention_index, 2);
+        REQUIRE_TRUE(flitzzip::app::settings_equal(flitzzip::app::parse_settings_json(serialized), settings));
+    }
+}
 
 // Purpose: Keep shared GUI text conversion strict and byte-unit output stable.
 // Inputs: Empty, ASCII, multibyte UTF-8, exact binary thresholds, and invalid telemetry.
@@ -435,7 +487,7 @@ TEST_CASE(gui_storage_escapes_log_controls_and_round_trips_settings) {
     settings.compression_format_index = 4;
     settings.compression_level_index = 7;
     settings.overwrite = true;
-    flitzzip::app::write_settings_file(settings_path, settings);
+    flitzzip::app::write_settings_file(settings_path, settings, flitzzip::app::read_settings_document(settings_path));
     REQUIRE_TRUE(flitzzip::app::settings_equal(flitzzip::app::read_settings_file(settings_path), settings));
 
     const auto log_path = root / "flitzzip.log";
@@ -485,7 +537,7 @@ TEST_CASE(gui_storage_escapes_log_controls_and_round_trips_settings) {
     redirect.set(nullptr);
     const auto storage = flitzzip::app::app_storage_directory();
     REQUIRE_TRUE(!storage.empty());
-    REQUIRE_EQ(flitzzip::app::settings_file_path(), storage / L"settings.json");
+    REQUIRE_EQ(flitzzip::app::settings_file_path(), storage / L"settings-v4.json");
     REQUIRE_EQ(flitzzip::app::log_file_path(), storage / L"flitzzip.log");
     std::filesystem::remove_all(root);
 }

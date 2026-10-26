@@ -53,6 +53,13 @@ or the traced builds required by static analysis.
 
 ## Specialized consumers
 
+For installer or persistent-settings changes, follow the
+[compatibility contract](../../../docs/development/persistence-and-upgrades.md).
+Run schema/ordering contracts and native failure/recovery consumers. Qualify
+actual upgrade/rollback behavior only on a disposable Windows machine; the
+existing release workflow owns that test. Keep historical profile fixtures
+append-only and never infer future-version compatibility from a local round trip.
+
 | Changed behavior | Canonical qualification |
 | --- | --- |
 | Standard-format writing | Independent interoperability smoke selected by the verifier |

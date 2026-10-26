@@ -18,6 +18,14 @@ and expected error logging. It runs the actual workflow functions in PowerShell 
 
 ## Release Artifacts
 
+Every candidate must pass the exact-package install/repair/uninstall smoke and
+the disposable-machine upgrade matrix, including skipped releases, downgrade
+rejection, feature migration and failed-upgrade rollback. Follow the
+[persistence and upgrade contract](development/persistence-and-upgrades.md) for
+stable installer identities, numeric MSI version limits, historical settings
+fixtures and future schema changes. Installing protocol fixtures on a
+development or customer host is prohibited.
+
 Every product release must be Windows x64 and HIP-enabled. The portable ZIP and
 MSI contain the same application binaries and the same documentation. The
 portable package is installation-free, not feature-reduced.

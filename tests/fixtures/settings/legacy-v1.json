@@ -1,0 +1,9 @@
+{
+  "schema": "flitzzip.settings.v1",
+  "compressionFormatIndex": 3,
+  "compressionLevelIndex": 4,
+  "verifyMetadataBeforeExtract": false,
+  "x-future": {
+    "integer": 9007199254740993
+  }
+}
