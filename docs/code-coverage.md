@@ -10,12 +10,12 @@ The maintainer has reactivated coverage-gap closure. Preserve the existing
 collectors, tests and CI uploads, and work through coherent groups of missing
 behavior with independent correctness, failure and recovery assertions.
 
-Local GUI/HIP-host measurement is retained under `out/coverage-hip-host-gui`.
-Review its `summary.json`, uncovered-line inventory and raw report before choosing
-additional tests. Its recorded source, binary, collector and scenario identities
-determine whether it measures the current checkout; the directory name alone
-does not establish freshness. Reuse individual evidence only after checking
-those identities. The hosted
+Successful local GUI/HIP-host measurement writes `summary.json` and the raw report
+under `out/coverage-hip-host-gui`. Before a new collection, the collector moves
+the prior reports into `previous-measurement-*`; if that collection fails, no
+current summary exists at the output root. Archived reports may guide test design
+after checking their source, binary, collector and scenario identities, but they
+do not qualify the current checkout. The hosted
 CPU report, GUI/HIP-host report, tooling and device instructions have distinct
 scopes; none establishes whole-repository coverage.
 
