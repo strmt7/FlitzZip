@@ -5,7 +5,7 @@ executable once; `&` invokes the path stored in `$FlitzZip`, including paths
 containing spaces:
 
 ```powershell
-$FlitzZip = (Resolve-Path ".\flitzzip_cli.exe").Path
+$FlitzZip = (Resolve-Path ".\bin\flitzzip_cli.exe").Path
 & $FlitzZip --help
 ```
 

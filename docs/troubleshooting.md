@@ -10,8 +10,8 @@ Check the status on **System**. From a portable directory, PowerShell diagnostic
 are also available:
 
 ```powershell
-.\flitzzip_cli.exe dependency-check
-.\flitzzip_cli.exe gpu-info
+.\bin\flitzzip_cli.exe dependency-check
+.\bin\flitzzip_cli.exe gpu-info
 ```
 
 Confirm that the AMD device, Windows version and driver are supported by the

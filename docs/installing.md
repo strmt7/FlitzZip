@@ -26,16 +26,18 @@ already-built package. Runtime installation details are in
 ## Portable ZIP
 
 1. Download the portable ZIP and its SHA-256 sidecar from the chosen release.
-2. Calculate the downloaded file's hash in PowerShell:
+2. Calculate the downloaded file's hash in PowerShell, replacing `<version>`
+   with the version you downloaded:
 
    ```powershell
-   Get-FileHash -Algorithm SHA256 -LiteralPath ".\FlitzZip-<version>-win64.zip"
+   Get-FileHash -Algorithm SHA256 -LiteralPath ".\FlitzZip-<version>-win64-portable.zip"
    ```
 
 3. Compare the result with the release's sidecar, then extract the complete ZIP
    into a writable folder.
-4. Start `FlitzZip.exe`. Keep its accompanying libraries and runtime manifest
-   together. `flitzzip_cli.exe` provides the command-line interface.
+4. Start `bin\FlitzZip.exe`. Keep the complete extracted directory structure,
+   including the accompanying libraries and runtime manifest.
+   `bin\flitzzip_cli.exe` provides the command-line interface.
 
 A matching checksum detects changed download bytes. Publisher authenticity also
 depends on obtaining the package and checksum from the intended release source.

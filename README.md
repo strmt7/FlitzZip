@@ -64,7 +64,7 @@ Published packages are available from [GitHub Releases](https://github.com/strmt
 The release process produces a portable ZIP and an MSI containing the same
 HIP-enabled binaries, SHA-256 checksums and corresponding source.
 
-- **Portable:** extract the ZIP and run `FlitzZip.exe`.
+- **Portable:** extract the ZIP and run `bin\FlitzZip.exe`.
 - **Installer:** use the MSI for a standard Windows installation under
   `Program Files`; administrator approval may be required.
 
@@ -87,18 +87,18 @@ admission checks before GPU support is advertised.
 From the extracted portable directory, run these examples in PowerShell:
 
 ```powershell
-.\flitzzip_cli.exe compress --format zip --output "archive.zip" "path\to\folder"
-.\flitzzip_cli.exe verify "archive.zip"
-.\flitzzip_cli.exe extract --output "restored" "archive.zip"
+.\bin\flitzzip_cli.exe compress --format zip --output "archive.zip" "path\to\folder"
+.\bin\flitzzip_cli.exe verify "archive.zip"
+.\bin\flitzzip_cli.exe extract --output "restored" "archive.zip"
 ```
 
 For native GPU compression:
 
 ```powershell
-.\flitzzip_cli.exe compress --format flzip --require-gpu --verify-after-write --output "archive.flzip" "path\to\folder"
+.\bin\flitzzip_cli.exe compress --format flzip --require-gpu --verify-after-write --output "archive.flzip" "path\to\folder"
 ```
 
-Use `.\flitzzip_cli.exe --help` for command syntax. The
+Use `.\bin\flitzzip_cli.exe --help` for command syntax. The
 [CLI guide](docs/cli.md) covers format selection, Neutron, verification,
 filename encoding and exit codes.
 
