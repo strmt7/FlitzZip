@@ -54,6 +54,9 @@ function New-LifecyclePackage {
         "-DFIXTURE_OBSOLETE=$($Obsolete.IsPresent)", "-DFIXTURE_FAILURE=$($Failure.IsPresent)")
     & $cmake @arguments *> (Join-Path $root "$Name-configure.log")
     if ($LASTEXITCODE -ne 0) { throw "Fixture configure failed; see $root/$Name-configure.log" }
+    if ($Obsolete -and [IO.File]::ReadAllText((Join-Path $build 'obsolete-owned.txt')) -cne "old package owned this file`n") {
+        throw 'Configured obsolete fixture bytes differ from the independent lifecycle oracle.'
+    }
     if ($Failure) {
         & $cmake --build $build --config Release *> (Join-Path $root "$Name-build.log")
         if ($LASTEXITCODE -ne 0) { throw 'Rollback-control DLL build failed.' }
@@ -216,6 +219,19 @@ function Test-LifecycleStateOracle {
         try { Assert-LifecycleState -Current $fixture -Packages $packages -Layout $layout }
         catch { $rejected = $_.Exception.Message -ceq 'A lifecycle phase left an unexpected related product registration.' }
         if (-not $rejected) { throw 'Lifecycle state oracle accepted invalid registration or failed at an unrelated boundary.' }
+    }
+    $registration = @($fixture.product)
+    $old = [pscustomobject]@{ name = 'old'; product = $fixture.product; payload = $reference }
+    $obsolete = Join-Path $install 'bin/obsolete-owned.txt'
+    [IO.File]::WriteAllText($obsolete, "old package owned this file`n")
+    Assert-LifecycleState -Current $old -Packages $packages -Layout $layout
+    foreach ($invalidContent in @("old package owned this file`r`n", 'different package content', $null)) {
+        if ($null -eq $invalidContent) { Remove-Item -LiteralPath $obsolete }
+        else { [IO.File]::WriteAllText($obsolete, $invalidContent) }
+        $rejected = $false
+        try { Assert-LifecycleState -Current $old -Packages $packages -Layout $layout }
+        catch { $rejected = $_.Exception.Message -ceq 'Old-version fixture did not install the independently expected obsolete payload.' }
+        if (-not $rejected) { throw 'Lifecycle state oracle accepted invalid obsolete payload or failed at an unrelated boundary.' }
     }
     $registration = @()
     Remove-Item -LiteralPath $payload, $menuShortcut

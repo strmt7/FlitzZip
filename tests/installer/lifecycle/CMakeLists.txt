@@ -7,12 +7,18 @@ project(
 # This package is installation-protocol evidence, never an executable product.
 # Reuse production authoring and identity lineage rather than duplicating its
 # MajorUpgrade template, feature identifiers or shortcut components.
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/FlitzZip.exe"
-     "protocol fixture ${FIXTURE_ID}\n")
+file(
+  GENERATE
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/FlitzZip.exe"
+  CONTENT "protocol fixture ${FIXTURE_ID}\n"
+  NEWLINE_STYLE UNIX)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/FlitzZip.exe" DESTINATION bin)
 if(FIXTURE_OBSOLETE)
-  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/obsolete-owned.txt"
-       "old package owned this file\n")
+  file(
+    GENERATE
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/obsolete-owned.txt"
+    CONTENT "old package owned this file\n"
+    NEWLINE_STYLE UNIX)
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/obsolete-owned.txt"
           DESTINATION bin)
 endif()
