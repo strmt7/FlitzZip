@@ -249,6 +249,68 @@ TEST_CASE(flzip_write_verification_cancellation_preserves_destination) {
     }
 }
 
+// Purpose: Let callers cancel native extraction between decode windows without exposing partial output.
+// Inputs: A multi-window CPU archive and absent/existing extraction targets with overwrite enabled.
+// Outputs: Requires an intermediate progress snapshot, unchanged destination, no staging residue, and exact recovery.
+TEST_CASE(flzip_extraction_progress_cancels_before_publication_and_recovers) {
+    const auto root = test_temp_dir("flzip-extraction-window-cancel");
+    const auto source = root / "source.txt";
+    const auto archive = root / "output.flzip";
+    const std::string payload(3U * flitzzip::kMinArchiveBlockBytes + 1U, 'E');
+    std::ofstream(source, std::ios::binary) << payload;
+    auto compression = verification_compress_options();
+    compression.verify_after_write = false;
+    static_cast<void>(flitzzip::compress_flzip({source}, archive, compression));
+    const auto archive_bytes = read_verification_fixture(archive);
+
+    flitzzip::ExtractOptions extraction;
+    extraction.gpu_required = false;
+    extraction.force_cpu = true;
+    extraction.overwrite = true;
+    extraction.chunk_size = flitzzip::kMinArchiveBlockBytes;
+    extraction.block_size = flitzzip::kMinArchiveBlockBytes;
+    extraction.worker_count = 2;
+    extraction.max_inflight_chunks = 1;
+    for (const bool existing : {false, true}) {
+        const auto destination = root / (existing ? "existing" : "new");
+        const auto target = destination / source.filename();
+        std::filesystem::create_directory(destination);
+        if (existing) {
+            std::ofstream(target, std::ios::binary) << "original output";
+        }
+        bool cancelled = false;
+        try {
+            static_cast<void>(flitzzip::extract_flzip(
+                archive, destination, extraction, [&](const flitzzip::ProgressSnapshot& snapshot) {
+                    if (snapshot.processed_bytes == 0 || snapshot.processed_bytes == snapshot.total_bytes) {
+                        return;
+                    }
+                    REQUIRE_EQ(snapshot.current_entry, "source.txt");
+                    REQUIRE_EQ(std::filesystem::exists(target), existing);
+                    if (existing) {
+                        REQUIRE_EQ(read_verification_fixture(target), "original output");
+                    }
+                    throw flitzzip::ArchiveError("test extraction cancelled within file");
+                }));
+        } catch (const flitzzip::ArchiveError& error) {
+            REQUIRE_EQ(std::string(error.what()), "test extraction cancelled within file");
+            cancelled = true;
+        }
+        REQUIRE_TRUE(cancelled);
+        REQUIRE_EQ(std::filesystem::exists(target), existing);
+        REQUIRE_EQ(
+            std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),
+            existing ? 1 : 0);
+        if (existing) {
+            REQUIRE_EQ(read_verification_fixture(target), "original output");
+        }
+        REQUIRE_EQ(read_verification_fixture(archive), archive_bytes);
+        REQUIRE_EQ(flitzzip::extract_flzip(archive, destination, extraction).output_bytes, payload.size());
+        REQUIRE_EQ(read_verification_fixture(target), payload);
+    }
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Expose bounded decode progress so a large entry does not defer cancellation until its final byte.
 // Inputs: A four-window CPU archive verified without extracting files.
 // Outputs: Requires monotonic counters, complete terminal progress, and an observable intermediate window.
