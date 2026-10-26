@@ -18,6 +18,7 @@ from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from tools import neutron_corpus_benchmark as corpus_transport
 from tools import run_archive_comparison as comparison
 
 
@@ -76,20 +77,22 @@ class ComparisonRunnerTests(unittest.TestCase):
                 "param([string]$Link,[string]$Target)\n"
                 "New-Item -ItemType Junction -Path $Link -Target $Target -ErrorAction Stop | Out-Null\n"
             )
+            command = [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+                str(link),
+                str(target),
+            ]
             subprocess.run(
-                [
-                    "powershell.exe",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    str(script),
-                    str(link),
-                    str(target),
-                ],
+                command,
                 check=True,
                 capture_output=True,
                 timeout=10,
+                env=corpus_transport.process_owner().child_environment(command),
             )
             try:
                 with (

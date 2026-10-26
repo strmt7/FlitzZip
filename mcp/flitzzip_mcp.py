@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from ctypes import wintypes
 from pathlib import Path, PureWindowsPath
 from typing import BinaryIO
@@ -584,12 +584,12 @@ def _release_owned_child(
             _close_owned_output_pipes(process)
 
 
-def child_environment(command: Sequence[str]) -> dict[str, str]:
+def child_environment(command: Sequence[str], inherited: Mapping[str, str] | None = None) -> dict[str, str]:
     """Purpose: Prevent indirect Windows PowerShell launches from inheriting incompatible PS7 modules.
-    Inputs: command is fixed argv; the caller environment is copied, never changed.
+    Inputs: Fixed argv and an optional environment; None inherits the caller, while an explicit empty map stays empty.
     Outputs: Returns child-only environment; honors WinPSModulePath or lets Windows PowerShell construct defaults.
     """
-    environment = dict(os.environ)
+    environment = dict(os.environ if inherited is None else inherited)
     if (
         os.name != "nt"
         or not command

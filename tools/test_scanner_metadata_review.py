@@ -627,10 +627,11 @@ class CurrentHostedMetadataTests(unittest.TestCase):
         for advertised in (b"not-a-size", str(review.MAX_POLICY_BYTES + 1).encode(), b"1"):
             # Purpose: Inject one Git transport inconsistency after the actual policy snapshot is read.
             # Inputs: Fixed production Git command and options. Outputs: Original policy or controlled source response.
-            def git(arguments, selected=advertised, **kwargs):
+            def git(arguments, *, selected=advertised, check, **kwargs):
+                self.assertIs(check, True)
                 if arguments[:3] == ["git", "cat-file", "-s"] and arguments[-1] == f"{self.commit}:{self.name}":
                     return SimpleNamespace(stdout=selected)
-                return real_run(arguments, **kwargs)
+                return real_run(arguments, check=check, **kwargs)
 
             with (
                 self.subTest(advertised=advertised),

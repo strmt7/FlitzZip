@@ -426,6 +426,13 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(child["PATH"], "unchanged")
             self.assertEqual(dict(os.environ), caller)
             self.assertEqual(flitzzip_mcp.child_environment(["pwsh"]), caller)
+            supplied = {"PSMODULEPATH": "explicit-core", "WinPSModulePath": "explicit-desktop", "WORKER": "selected"}
+            self.assertEqual(
+                flitzzip_mcp.child_environment(["powershell.exe"], supplied),
+                {"PSModulePath": "explicit-desktop", "WinPSModulePath": "explicit-desktop", "WORKER": "selected"},
+            )
+            self.assertEqual(supplied["PSMODULEPATH"], "explicit-core")
+            self.assertEqual(flitzzip_mcp.child_environment(["python.exe"], {}), {})
         with (
             mock.patch.dict(os.environ, {"PSModulePath": "core-modules"}, clear=True),
             mock.patch.object(flitzzip_mcp.os, "name", "nt"),

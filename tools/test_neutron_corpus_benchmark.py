@@ -482,6 +482,38 @@ class CorpusContracts(unittest.TestCase):
         self.assertIn("stdout=worker-root-cause", str(failure.exception))
         self.assertIn("stderr=orchestrator-failed", str(failure.exception))
 
+    def test_owned_timeout_preserves_completed_diagnostic_bytes(self) -> None:
+        """Purpose: Retain the actual failure breadcrumbs when an owned process exceeds its deadline.
+        Inputs: A real child flushing distinct binary streams before blocking. Outputs: Both bounded streams on timeout.
+        """
+        code = (
+            "import sys,time; sys.stdout.buffer.write(b'owned-output\\n'); sys.stdout.buffer.flush(); "
+            "sys.stderr.buffer.write(b'owned-diagnostic\\n'); sys.stderr.buffer.flush(); time.sleep(30)"
+        )
+        with self.assertRaises(subprocess.TimeoutExpired) as failure:
+            corpus.run_process([sys.executable, "-B", "-c", code], None, 10)
+        self.assertEqual(failure.exception.output, b"owned-output\n")
+        self.assertEqual(failure.exception.stderr, b"owned-diagnostic\n")
+        notes = "\n".join(failure.exception.__notes__)
+        self.assertIn("owned-output", notes)
+        self.assertIn("owned-diagnostic", notes)
+
+    def test_owned_powershell_uses_the_explicit_desktop_module_environment(self) -> None:
+        """Purpose: Preserve explicit worker settings while removing incompatible inherited PS7 module paths.
+        Inputs: A real Windows PowerShell child with a polluted module path.
+        Outputs: Desktop commands and caller isolation.
+        """
+        environment = {**os.environ, "PSMODULEPATH": "invalid-core-modules-only"}
+        environment["WINPSMODULEPATH"] = str(Path(os.environ["SYSTEMROOT"]) / "System32/WindowsPowerShell/v1.0/Modules")
+        before = dict(environment)
+        command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Get-Command Get-FileHash | Out-Null"]
+        real_popen = subprocess.Popen
+        with mock.patch.object(corpus.subprocess, "Popen", wraps=real_popen) as spawn:
+            self.assertEqual(corpus.run_process(command, None, 20, env=environment), b"")
+        supplied = spawn.call_args.kwargs["env"]
+        self.assertEqual(supplied["PSModulePath"], environment["WINPSMODULEPATH"])
+        self.assertEqual(environment, before)
+
     # Purpose: Distinguish successful tool diagnostics from the strict native telemetry protocol.
     # Inputs: Real owned children with arbitrary binary stderr, zero/nonzero exit and excessive diagnostics.
     # Outputs: Explicit byte retention permits success; strict callers, failures and output overflow still reject.

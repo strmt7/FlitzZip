@@ -311,9 +311,21 @@ def write_input(stream, data: bytes) -> None:
         stream.close()
 
 
+def process_timeout(arguments: list[str], timeout: int, output: bytes, errors: bytes) -> subprocess.TimeoutExpired:
+    """Purpose: Retain complete bounded timeout output and useful excerpts in ordinary exception tracebacks.
+    Inputs: Fixed argv, expired deadline and already bounded streams.
+    Outputs: Standard timeout with an escaped 4 KiB excerpt per stream.
+    """
+    failure = subprocess.TimeoutExpired(arguments, timeout, output=output, stderr=errors)
+    for label, payload in (("stdout", output), ("stderr", errors)):
+        excerpt = repr(payload[:4096])
+        failure.add_note(f"Captured {label}: {len(payload)} bytes; showing at most 4096 bytes: {excerpt}")
+    return failure
+
+
 # Purpose: Run an existing executable with bounded binary I/O and an owned lifetime.
 # Inputs: Structured arguments, RAM input/environment, deadline and optional successful-diagnostic byte sink.
-# Outputs: Bounded stdout; stderr requires explicit retention, nonzero exits always fail, and owned children finish.
+# Outputs: Bounded stdout; failures retain diagnostics, environments stay caller-owned and every child finishes.
 def run_process(
     arguments: list[str],
     data: bytes | None,
@@ -328,7 +340,7 @@ def run_process(
         process = subprocess.Popen(
             arguments,
             cwd=ROOT,
-            env=env,
+            env=owner.child_environment(arguments, env),
             stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -346,16 +358,21 @@ def run_process(
             stderr = pool.submit(read_bounded, process.stderr)
             writer = pool.submit(write_input, process.stdin, data) if data is not None else None
             deadline = time.monotonic() + timeout
+            timed_out = False
             while process.poll() is None:
                 for future in (stdout, stderr, writer):
                     if future is not None and future.done():
                         future.result()
                 if time.monotonic() >= deadline:
-                    raise subprocess.TimeoutExpired(arguments, timeout)
+                    timed_out = True
+                    break
                 time.sleep(0.01)
             # Descendants cannot keep inherited pipe handles alive after their root exits.
             containment.close()
+            process.wait(timeout=5)
             output, errors = stdout.result(timeout=5), stderr.result(timeout=5)
+            if timed_out:
+                raise process_timeout(arguments, timeout, output, errors)
             if writer:
                 writer.result(timeout=5)
             if process.returncode or (errors and successful_stderr is None):
