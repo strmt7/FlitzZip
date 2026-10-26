@@ -34,6 +34,13 @@ class QueueSession final {
         return state.hwndCapture;
     }
 
+    // Purpose: Locate the public Queue scrollbar body without reading the controller's scroll offset.
+    // Inputs: This session's DPI-scaled table. Outputs: The visible native track bounds.
+    RECT scrollbar_track() const {
+        return RECT{table.right - ui.px(12) - ui.px(6), table.top + ui.px(36) + ui.px(8), table.right - ui.px(6),
+                    table.bottom - ui.px(8)};
+    }
+
     // Purpose: Supply distinguishable real inputs through the existing native HDROP consumer.
     // Inputs: Bounded count below 64. Outputs: Ordered queue rows and source files with independent indexed payloads.
     void add(int count) {
@@ -231,8 +238,7 @@ TEST_CASE(main_window_queue_scrollbar_drag_clamps_and_releases_capture) {
     QueueSession s;
     const int count = s.visible() + 6;
     s.add(count);
-    const RECT track{s.table.right - s.ui.px(18), s.table.top + s.ui.px(44), s.table.right - s.ui.px(6),
-                     s.table.bottom - s.ui.px(8)};
+    const RECT track = s.scrollbar_track();
     const int x = (track.left + track.right) / 2;
     const auto top = MAKELPARAM(x, track.top + s.ui.px(15));
     HiddenController::send(s.ui.window, WM_LBUTTONDOWN, MK_LBUTTON, top);
@@ -265,8 +271,7 @@ TEST_CASE(main_window_queue_scrollbar_cancel_restores_page_clicks) {
     QueueSession s;
     const int count = s.visible() + 6;
     s.add(count);
-    const RECT track{s.table.right - s.ui.px(18), s.table.top + s.ui.px(44), s.table.right - s.ui.px(6),
-                     s.table.bottom - s.ui.px(8)};
+    const RECT track = s.scrollbar_track();
     const int x = (track.left + track.right) / 2;
     HiddenController::send(s.ui.window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, track.top + s.ui.px(15)));
     REQUIRE_EQ(s.capture(), s.ui.window);
@@ -276,6 +281,41 @@ TEST_CASE(main_window_queue_scrollbar_cancel_restores_page_clicks) {
     s.require_name(0, 0, count);
     click_native_point(s.ui.window, POINT{x, track.bottom - s.ui.px(2)});
     s.require_name(0, std::min(s.visible(), 6), count);
+    s.finish();
+}
+
+// Purpose: Clamp Queue column resizing to a readable width and discard a cancelled second drag.
+// Inputs: Real header grip, out-of-bounds pointer motion, native cancellation and one rendered file row.
+// Outputs: Requires exact minimum separator, intact filename text, released capture and stable post-cancel pixels.
+TEST_CASE(main_window_queue_column_resize_minimum_and_capture_cancel) {
+    QueueSession s;
+    s.add(2);
+    const auto name = s.name_cell(0, 2);
+    const int header_y = s.table.top + s.ui.px(18);
+    const int initial_separator = name.right + s.ui.px(8);
+    HiddenController::send(s.ui.window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(initial_separator, header_y));
+    REQUIRE_EQ(s.capture(), s.ui.window);
+    const auto left = MAKELPARAM(s.table.left - s.ui.px(1000), header_y);
+    HiddenController::send(s.ui.window, WM_MOUSEMOVE, MK_LBUTTON, left);
+    HiddenController::send(s.ui.window, WM_LBUTTONUP, 0, left);
+    REQUIRE_TRUE(s.capture() != s.ui.window);
+
+    const int minimum_separator = s.table.left + s.ui.px(44) + s.ui.px(90);
+    s.ui.paint();
+    REQUIRE_EQ(GetPixel(s.ui.frame.dc(), minimum_separator, s.table.top + s.ui.px(10)), flitzzip::app::kBorder);
+    const RECT minimum_name{s.table.left + s.ui.px(44) + s.ui.px(8), s.table.top + s.ui.px(36),
+                            minimum_separator - s.ui.px(8), s.table.top + s.ui.px(36) + s.ui.px(34)};
+    REQUIRE_TRUE(native_cell_text_matches(s.ui.frame.dc(), minimum_name, GetDpiForWindow(s.ui.window), L"row-0.txt",
+                                          flitzzip::app::kText));
+
+    HiddenController::send(s.ui.window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(minimum_separator, header_y));
+    REQUIRE_EQ(s.capture(), s.ui.window);
+    HiddenController::send(s.ui.window, WM_CANCELMODE);
+    REQUIRE_TRUE(s.capture() != s.ui.window);
+    const RECT header{s.table.left, s.table.top, s.table.right, s.table.top + s.ui.px(36)};
+    const auto stable = s.ui.pixels(header);
+    HiddenController::send(s.ui.window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(s.table.right + s.ui.px(100), header_y));
+    REQUIRE_TRUE(s.ui.pixels(header) == stable);
     s.finish();
 }
 
