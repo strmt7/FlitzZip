@@ -35,6 +35,7 @@ class CoverageTests(unittest.TestCase):
                     capture_output=True,
                     text=True,
                     timeout=30,
+                    check=False,
                 )
                 self.assertEqual(result.returncode, expected, result.stderr)
                 metadata = json.loads(result.stdout)

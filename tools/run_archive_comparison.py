@@ -202,7 +202,7 @@ def verify_manifest(path: Path, directory: Path) -> tuple[list[dict], tuple, dic
 # Outputs: Returns elapsed seconds; raises on timeout or nonzero exit.
 def run(args: list[str], cwd: Path, timed: bool = True) -> float:
     started = time.perf_counter()
-    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, errors="replace", timeout=120)
+    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, errors="replace", timeout=120, check=False)
     elapsed = time.perf_counter() - started
     if result.returncode:
         details = (result.stderr + result.stdout)[-4000:]
@@ -303,6 +303,7 @@ def host_snapshot() -> dict:
         text=True,
         errors="replace",
         timeout=30,
+        check=False,
     )
     if completed.returncode:
         raise RuntimeError(f"host resource sampling failed: {completed.stderr[-1000:]}")
@@ -582,7 +583,9 @@ def tool_preflight(binaries: dict[str, Path], subjects: tuple[str, ...] = ("Sile
             permission = require_permission(name, "execute", version=latest)
             require_binary_identity(name, path)
         version_args = [str(path), "--version"] if name != "7-Zip" else [str(path), "i"]
-        version_output = subprocess.run(version_args, capture_output=True, text=True, errors="replace", timeout=20)
+        version_output = subprocess.run(
+            version_args, capture_output=True, text=True, errors="replace", timeout=20, check=False
+        )
         if version_output.returncode:
             raise RuntimeError(f"could not read version of {name}")
         banner = version_output.stdout + version_output.stderr

@@ -788,6 +788,7 @@ class ScannerReviewCommandTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
         self.assertEqual(process.returncode, 1)
         self.assertIn("ledger differs from the audited commit", process.stderr)
@@ -817,6 +818,7 @@ class ScannerReviewCommandTests(unittest.TestCase):
                     capture_output=True,
                     text=True,
                     timeout=30,
+                    check=False,
                 )
                 self.assertEqual(process.returncode, 0, process.stderr)
                 self.assertEqual(json.loads(process.stdout), expected)

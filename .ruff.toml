@@ -2,7 +2,7 @@ line-length = 120
 target-version = "py313"
 
 [lint]
-select = ["E", "F", "I", "B", "UP", "SIM"]
+select = ["E", "F", "I", "B", "UP", "SIM", "PLW1510"]
 
 [format]
 line-ending = "lf"

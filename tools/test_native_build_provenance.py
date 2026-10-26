@@ -235,6 +235,7 @@ class NativeBuildInputsTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=15,
+            check=False,
         )
         self.assertEqual(process.returncode, 0, process.stderr)
         self.assertEqual(process.stdout.encode(), canonical(capture_inputs(self.root)) + b"\n")

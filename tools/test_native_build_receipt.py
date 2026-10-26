@@ -763,6 +763,7 @@ class NativeBuildReceiptTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 timeout=15,
+                check=False,
             )
             self.assertEqual(process.returncode, expected, process.stderr)
             return process

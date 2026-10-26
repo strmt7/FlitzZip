@@ -5,6 +5,17 @@ exact source, scanner, location, callers, provenance and tests are bound in the
 current review ledger. Raw reports remain available. Changed identities require
 a new review; these decisions do not admit any other URL finding.
 
+## Checked source context
+
+The Git-backed review reader verifies bounded regular blobs and complete source
+hashes. Its blob queries pass `check=True` directly; a failing query cannot supply
+plausible bytes for admission. The context comparison explicitly permits Git
+diff's ordinary exit codes zero and one, rejects other failures and accepts only
+zero. Making these call arguments explicit preserves the preceding checked-query
+and unequal-context behavior. The downloaders, URL admission, integrity checks,
+reported locations and scanner recipe remain unchanged. Both individual decisions
+below retain their complete context lists and the refreshed evidence binding.
+
 ## Individual findings
 
 ### Alert 8446

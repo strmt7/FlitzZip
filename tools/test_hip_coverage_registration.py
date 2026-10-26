@@ -249,6 +249,7 @@ class HipRegistrationTests(unittest.TestCase):
             capture_output=True,
             timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            check=False,
         )
         self.assertEqual(created.returncode, 0, "Owned junction fixture creation failed")
         self.addCleanup(junction.rmdir)

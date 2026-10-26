@@ -49,7 +49,9 @@ class GraphPublicationCommandTests(unittest.TestCase):
                     arguments.extend(("--input", str(source)))
                 command = [sys.executable, "-m", module, *arguments, "--output", str(output)]
                 with self.subTest(module=module):
-                    completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+                    completed = subprocess.run(
+                        command, cwd=root, capture_output=True, text=True, timeout=30, check=False
+                    )
                     self.assertEqual(completed.returncode, 0, completed.stderr)
                     original = output.read_bytes()
                     self.assertEqual(parse_bounded_document(original).attrib["role"], "img")
@@ -64,7 +66,9 @@ class GraphPublicationCommandTests(unittest.TestCase):
                     )
                     for malformed in invalid:
                         first.write_text(malformed, encoding="utf-8")
-                        completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+                        completed = subprocess.run(
+                            command, cwd=root, capture_output=True, text=True, timeout=30, check=False
+                        )
                         self.assertEqual(completed.returncode, 1, completed.stderr)
                         self.assertIn("graph", completed.stderr)
                         self.assertNotIn("Traceback", completed.stderr)
@@ -92,14 +96,16 @@ class GraphPublicationCommandTests(unittest.TestCase):
                 if sentinel is not None:
                     output.write_bytes(sentinel)
                 checked = subprocess.run(
-                    [*command, "--check"], cwd=directory, env=environment, capture_output=True, timeout=30
+                    [*command, "--check"], cwd=directory, env=environment, capture_output=True, timeout=30, check=False
                 )
                 self.assertEqual(checked.returncode, 1)
                 self.assertEqual(output.read_bytes() if output.exists() else None, sentinel)
-            generated = subprocess.run(command, cwd=directory, env=environment, capture_output=True, timeout=30)
+            generated = subprocess.run(
+                command, cwd=directory, env=environment, capture_output=True, timeout=30, check=False
+            )
             self.assertEqual(generated.returncode, 0, generated.stderr)
             checked = subprocess.run(
-                [*command, "--check"], cwd=directory, env=environment, capture_output=True, timeout=30
+                [*command, "--check"], cwd=directory, env=environment, capture_output=True, timeout=30, check=False
             )
             self.assertEqual(checked.returncode, 0, checked.stderr)
 

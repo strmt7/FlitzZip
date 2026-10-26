@@ -104,8 +104,8 @@ def committed_review_blob(root: Path, commit: str, name: str) -> bytes:
     review_path(name)
     if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
         raise ValueError("False-positive review requires a full commit")
-    options = {"cwd": root, "check": True, "capture_output": True, "timeout": 15}
-    entry = subprocess.run(["git", "ls-tree", "-l", "-z", commit, "--", name], **options).stdout
+    options = {"cwd": root, "capture_output": True, "timeout": 15}
+    entry = subprocess.run(["git", "ls-tree", "-l", "-z", commit, "--", name], check=True, **options).stdout
     metadata, separator, filename = entry.partition(b"\t")
     fields = metadata.split()
     if (
@@ -118,7 +118,7 @@ def committed_review_blob(root: Path, commit: str, name: str) -> bytes:
         or int(fields[3]) > 2 * 1024**2
     ):
         raise ValueError("False-positive review requires a bounded regular committed file")
-    payload = subprocess.run(["git", "cat-file", "blob", fields[2].decode("ascii")], **options).stdout
+    payload = subprocess.run(["git", "cat-file", "blob", fields[2].decode("ascii")], check=True, **options).stdout
     if len(payload) != int(fields[3]):
         raise ValueError("False-positive review blob size changed")
     return payload
@@ -436,6 +436,7 @@ def committed_context_matches(root: Path, commit: str) -> bool:
         ],
         cwd=root,
         timeout=30,
+        check=False,
     )
     if result.returncode not in (0, 1):
         raise ValueError("Published hosted-review context cannot be verified")

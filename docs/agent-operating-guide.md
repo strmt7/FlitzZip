@@ -657,6 +657,11 @@ tools\package.ps1 -Configuration Release
   Restrict test-probe imports to required declarations; importing private codec
   headers can create unused-definition findings that a build does not detect.
 - Prefer deterministic behavior over hidden global state. Options must be explicit and safe by default.
+- Give `subprocess.run` an explicit `check` argument. Use `check=True` when a
+  command failure must raise; use `check=False` only when the caller inspects
+  the exit status, including tests of expected failures. Keep that intent visible
+  at the call rather than hiding it in an expanded options dictionary. The pinned
+  Python lint lane enforces explicit exit handling.
 - Empty codec jobs must still validate metadata before returning. GPU-use flags
   must describe dispatched nonempty work, not merely a selected backend; retain
   regressions for borrowed/owned input, empty output, and malformed empty layouts.

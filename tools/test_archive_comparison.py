@@ -543,7 +543,7 @@ class ComparisonRunnerTests(unittest.TestCase):
     def test_cli_reports_input_failure_without_publication(self) -> None:
         output = comparison.ROOT / "out/benchmarks" / f"unit-cli-{uuid.uuid4().hex}.json"
         command = [sys.executable, "-m", "tools.run_archive_comparison"]
-        helped = subprocess.run([*command, "--help"], capture_output=True, text=True, timeout=15)
+        helped = subprocess.run([*command, "--help"], capture_output=True, text=True, timeout=15, check=False)
         self.assertEqual(helped.returncode, 0, helped.stderr)
         self.assertIn("--round-pause-ms", helped.stdout)
         with tempfile.TemporaryDirectory() as temporary:
@@ -563,6 +563,7 @@ class ComparisonRunnerTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 timeout=15,
+                check=False,
             )
         self.assertEqual(failed.returncode, 1)
         self.assertIn("comparison failed:", failed.stderr)

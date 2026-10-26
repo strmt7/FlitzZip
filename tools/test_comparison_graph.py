@@ -142,11 +142,11 @@ class ComparisonGraphTests(unittest.TestCase):
                     command.extend(("--input", str(path)))
                 output = directory / "owned chart.svg"
                 command.extend(("--output", str(output)))
-                accepted = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+                accepted = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30, check=False)
                 self.assertEqual((accepted.returncode, accepted.stdout, accepted.stderr), (0, "", ""))
                 self.assertEqual(output.read_bytes(), expected)
                 sources[0].write_text('{"schema":1,"schema":2}', encoding="utf-8")
-                rejected = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+                rejected = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30, check=False)
                 self.assertEqual(rejected.returncode, 1)
                 self.assertEqual(rejected.stdout, "")
                 self.assertIn("duplicate", rejected.stderr)
@@ -174,7 +174,7 @@ class ComparisonGraphTests(unittest.TestCase):
             for sentinel in (None, b"existing unrelated bytes"):
                 if sentinel is not None:
                     output.write_bytes(sentinel)
-                checked = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+                checked = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30, check=False)
                 self.assertEqual(checked.returncode, 1)
                 self.assertIn("does not match", checked.stderr)
                 self.assertNotIn("Traceback", checked.stderr)

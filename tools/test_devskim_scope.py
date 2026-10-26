@@ -29,6 +29,7 @@ class DevSkimScopeTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(json.loads(output.read_text()), {"Globs": scope.ignore_globs(root)})

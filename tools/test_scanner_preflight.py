@@ -461,6 +461,7 @@ class ScannerPreflightTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
         self.assertEqual(completed.returncode, 1)
         self.assertIn("Scanner preflight failed:", completed.stderr)

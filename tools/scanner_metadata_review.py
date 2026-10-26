@@ -134,11 +134,11 @@ def reviewed_source_finding(root: Path, finding: dict, rows: list[dict[str, str]
 # Inputs: Root, full commit SHA and a validated exact review record. Outputs: True only for the bounded Git blob hash.
 def committed_source_matches(root: Path, commit: str, row: dict[str, str]) -> bool:
     target = f"{commit}:{row['path']}"
-    options = {"cwd": root, "check": True, "capture_output": True, "timeout": 15}
-    size = subprocess.run(["git", "cat-file", "-s", target], **options).stdout.strip()
+    options = {"cwd": root, "capture_output": True, "timeout": 15}
+    size = subprocess.run(["git", "cat-file", "-s", target], check=True, **options).stdout.strip()
     if not size.isdigit() or int(size) > MAX_POLICY_BYTES:
         raise ValueError("Published reviewed source exceeds its byte budget")
-    payload = subprocess.run(["git", "show", target], **options).stdout
+    payload = subprocess.run(["git", "show", target], check=True, **options).stdout
     return (
         len(payload) == int(size) and hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() == row["input_sha256"]
     )
@@ -176,11 +176,11 @@ def match_current_metadata_alerts(root: Path, alerts: list[dict], commit: str, p
         if not candidates:
             continue
         if name not in sources:
-            options = {"cwd": root, "check": True, "capture_output": True, "timeout": 15}
-            size = subprocess.run(["git", "cat-file", "-s", f"{commit}:{name}"], **options).stdout.strip()
+            options = {"cwd": root, "capture_output": True, "timeout": 15}
+            size = subprocess.run(["git", "cat-file", "-s", f"{commit}:{name}"], check=True, **options).stdout.strip()
             if not size.isdigit() or int(size) > MAX_POLICY_BYTES:
                 raise ValueError("Current metadata source exceeds its byte budget")
-            payload = subprocess.run(["git", "show", f"{commit}:{name}"], **options).stdout
+            payload = subprocess.run(["git", "show", f"{commit}:{name}"], check=True, **options).stdout
             if len(payload) != int(size):
                 raise ValueError("Current metadata source has an inconsistent size")
             sources[name] = payload

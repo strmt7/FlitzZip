@@ -644,6 +644,7 @@ class PublicFixtureReviewTests(unittest.TestCase):
                 env=environment,
                 capture_output=True,
                 timeout=20,
+                check=False,
             )
             self.assertEqual(result.returncode, expected, "Incorrect public fixture pipeline verdict")
             self.assertNotIn(self.value.encode(), result.stdout + result.stderr)

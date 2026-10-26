@@ -752,6 +752,7 @@ class RamExchangeContracts(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         self.assertNotEqual(process.returncode, 0)
         self.assertEqual(process.stdout, "")

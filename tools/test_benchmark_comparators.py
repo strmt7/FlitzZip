@@ -95,6 +95,7 @@ class ComparatorPreflightTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         self.assertEqual(process.returncode, 1)
         self.assertEqual(process.stdout, "")

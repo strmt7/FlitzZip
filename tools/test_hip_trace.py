@@ -34,7 +34,7 @@ class HipTraceTests(unittest.TestCase):
             source = Path(temporary) / "private trace with spaces.log"
             source.write_text(payload, encoding="utf-8")
             command = [sys.executable, "-m", "tools.analyze_hip_trace", str(source)]
-            result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30, check=False)
             self.assertEqual((result.returncode, result.stderr), (0, ""))
             record = json.loads(result.stdout)
             self.assertEqual(record["complete_calls"], 1)
@@ -42,7 +42,7 @@ class HipTraceTests(unittest.TestCase):
             self.assertEqual(record["transfer_bytes"], {"hipMemcpyDeviceToHost": 16})
             self.assertNotIn("private", result.stdout)
             source.write_bytes(b"private-decoder-input\xff")
-            rejected = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+            rejected = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30, check=False)
             self.assertEqual((rejected.returncode, rejected.stdout), (1, ""))
             self.assertEqual(rejected.stderr, "HIP trace analysis failed: unreadable trace\n")
 

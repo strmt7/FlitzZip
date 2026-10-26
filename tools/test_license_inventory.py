@@ -65,7 +65,12 @@ class LicenseInventoryTests(unittest.TestCase):
     def test_real_cli_retains_qualification_limits(self):
         root = Path(__file__).resolve().parents[1]
         result = subprocess.run(
-            [sys.executable, "-m", "tools.license_inventory"], cwd=root, capture_output=True, text=True, timeout=30
+            [sys.executable, "-m", "tools.license_inventory"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         record = json.loads(result.stdout)
