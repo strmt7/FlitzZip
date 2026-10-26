@@ -214,6 +214,14 @@ class _MemoryStatus(ctypes.Structure):
 
 
 class _ThreadEntry(ctypes.Structure):
+    size: int
+    usage: int
+    thread_id: int
+    process_id: int
+    base_priority: int
+    delta_priority: int
+    flags: int
+
     _fields_ = [
         ("size", wintypes.DWORD),
         ("usage", wintypes.DWORD),
@@ -500,6 +508,82 @@ def _close_owned_output_pipes(process: subprocess.Popen[bytes]) -> None:
         raise first_error
 
 
+def _admit_owned_child(process: subprocess.Popen[bytes], memory_limit_bytes: int) -> ChildContainment:
+    """Purpose: Contain and validate a suspended child before allowing its first instruction.
+    Inputs: One newly owned suspended process and the admitted job-memory bound.
+    Outputs: A live containment owner, or an error after reaping the child and closing its acquired pipes.
+    """
+    containment = None
+    try:
+        containment = ChildContainment(process, memory_limit_bytes)
+        if process.stdout is None or process.stderr is None:
+            raise ProtocolError(-32603, "Command did not provide both requested output pipes")
+        resume_owned_child(process)
+        return containment
+    except BaseException:
+        try:
+            if containment is not None:
+                containment.close()
+        finally:
+            try:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+            finally:
+                _close_owned_output_pipes(process)
+        raise
+
+
+def _wait_owned_child(
+    process: subprocess.Popen[bytes],
+    containment: ChildContainment,
+    output: BoundedOutput,
+    timeout_seconds: float,
+    cancellation: threading.Event | None,
+) -> bool:
+    """Purpose: Observe bounded execution and stop the owned tree on cancellation or transport failure.
+    Inputs: An admitted live child, its output accounting and the positive deadline.
+    Outputs: Reaps the root and returns whether its deadline expired; termination and wait errors propagate.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    timed_out = False
+    while process.poll() is None:
+        cancelled = cancellation is not None and cancellation.is_set()
+        if cancelled or output.limit_exceeded.is_set() or output.read_failure.is_set():
+            containment.terminate(process)
+            break
+        if time.monotonic() >= deadline:
+            timed_out = True
+            containment.terminate(process)
+            break
+        time.sleep(0.02)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        containment.terminate(process)
+        process.wait(timeout=5)
+    return timed_out
+
+
+def _release_owned_child(
+    process: subprocess.Popen[bytes], containment: ChildContainment, readers: Sequence[threading.Thread]
+) -> None:
+    """Purpose: Drain descendants before releasing the root's streaming-output handles.
+    Inputs: The owned child, its job and every reader that may have started.
+    Outputs: Closes containment, reaps the root and joins started readers; pipe cleanup runs after wait failures.
+    """
+    try:
+        containment.close()
+    finally:
+        try:
+            process.wait(timeout=5)
+        finally:
+            for reader in readers:
+                if reader.ident is not None:
+                    reader.join(timeout=5)
+            _close_owned_output_pipes(process)
+
+
 def child_environment(command: Sequence[str]) -> dict[str, str]:
     """Purpose: Prevent indirect Windows PowerShell launches from inheriting incompatible PS7 modules.
     Inputs: command is fixed argv; the caller environment is copied, never changed.
@@ -590,26 +674,8 @@ def run_bounded_command(
         env=child_environment(command),
         **creation_options,
     )
-    containment = None
-    try:
-        containment = ChildContainment(process, admitted_bytes)
-        if process.stdout is None or process.stderr is None:
-            raise ProtocolError(-32603, "Command did not provide both requested output pipes")
-        resume_owned_child(process)
-    except BaseException:
-        try:
-            if containment is not None:
-                containment.close()
-        finally:
-            try:
-                if process.poll() is None:
-                    process.kill()
-                process.wait(timeout=5)
-            finally:
-                _close_owned_output_pipes(process)
-        raise
+    containment = _admit_owned_child(process, admitted_bytes)
     readers: list[threading.Thread] = []
-    timed_out = False
     try:
         readers = [
             threading.Thread(target=_drain_stream, args=(process.stdout, "stdout", output), daemon=True),
@@ -617,35 +683,9 @@ def run_bounded_command(
         ]
         for reader in readers:
             reader.start()
-        deadline = time.monotonic() + timeout_seconds
-        while process.poll() is None:
-            if cancellation is not None and cancellation.is_set():
-                containment.terminate(process)
-                break
-            if output.limit_exceeded.is_set() or output.read_failure.is_set():
-                containment.terminate(process)
-                break
-            if time.monotonic() >= deadline:
-                timed_out = True
-                containment.terminate(process)
-                break
-            time.sleep(0.02)
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            containment.terminate(process)
-            process.wait(timeout=5)
+        timed_out = _wait_owned_child(process, containment, output, timeout_seconds, cancellation)
     finally:
-        try:
-            containment.close()
-        finally:
-            try:
-                process.wait(timeout=5)
-            finally:
-                for reader in readers:
-                    if reader.ident is not None:
-                        reader.join(timeout=5)
-                _close_owned_output_pipes(process)
+        _release_owned_child(process, containment, readers)
 
     stdout, stdout_truncated = output.render("stdout")
     stderr, stderr_truncated = output.render("stderr")
@@ -713,7 +753,8 @@ class ProtocolServer:
         self.cancellation = threading.Event()
         self.lock = threading.Lock()
 
-    def reply(self, message_id: str | int, result: dict, modern: bool) -> None:
+    @staticmethod
+    def reply(message_id: str | int, result: dict, modern: bool) -> None:
         """Purpose: Emit version-correct results; inputs: request ID, body and era; output: one response."""
         if modern:
             result = {**result, "resultType": "complete", "_meta": {META_PREFIX + "serverInfo": SERVER_INFO}}
@@ -827,6 +868,34 @@ class ProtocolServer:
                 self.active_id = None
                 raise ProtocolError(-32603, "could not start command worker") from exc
 
+    def dispatch_request(self, message_id: str | int, method: str, params: object) -> None:
+        """Purpose: Route an admitted request using its own protocol metadata.
+        Inputs: A validated request ID and method, plus the untrusted parameters value.
+        Outputs: Emits a result or starts bounded work; raises a protocol error for invalid parameters or methods.
+        """
+        if not isinstance(params, dict):
+            raise ProtocolError(-32602, "params must be an object")
+        if method == "initialize":
+            self.initialize(message_id, params)
+            return
+        modern = self.request_era(params)
+        if method == "server/discover" and modern:
+            self.reply(
+                message_id,
+                {"supportedVersions": [PROTOCOL_VERSION, *LEGACY_VERSIONS], "capabilities": CAPABILITIES},
+                modern,
+            )
+        elif method == "ping":
+            self.reply(message_id, {}, modern)
+        elif method == "tools/list":
+            if params.get("cursor") is not None:
+                raise ProtocolError(-32602, "invalid cursor: tool list is not paginated")
+            self.reply(message_id, {"tools": tool_definitions()}, modern)
+        elif method == "tools/call":
+            self.call_tool(message_id, params, modern)
+        else:
+            raise ProtocolError(-32601, "method not found")
+
     def handle(self, request: object) -> None:
         """Purpose: Dispatch one MCP message with strict JSON-RPC envelope handling.
         Inputs: request is parsed JSON, not necessarily an object.
@@ -849,29 +918,7 @@ class ProtocolServer:
             respond(None, error={"code": -32600, "message": "request ID must be a string or integer"})
             return
         try:
-            if not isinstance(params, dict):
-                raise ProtocolError(-32602, "params must be an object")
-            method = request["method"]
-            if method == "initialize":
-                self.initialize(message_id, params)
-                return
-            modern = self.request_era(params)
-            if method == "server/discover" and modern:
-                self.reply(
-                    message_id,
-                    {"supportedVersions": [PROTOCOL_VERSION, *LEGACY_VERSIONS], "capabilities": CAPABILITIES},
-                    modern,
-                )
-            elif method == "ping":
-                self.reply(message_id, {}, modern)
-            elif method == "tools/list":
-                if params.get("cursor") is not None:
-                    raise ProtocolError(-32602, "invalid cursor: tool list is not paginated")
-                self.reply(message_id, {"tools": tool_definitions()}, modern)
-            elif method == "tools/call":
-                self.call_tool(message_id, params, modern)
-            else:
-                raise ProtocolError(-32601, "method not found")
+            self.dispatch_request(message_id, request["method"], params)
         except ProtocolError as exc:
             respond(message_id, error=exc.payload)
 

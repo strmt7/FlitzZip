@@ -19,7 +19,8 @@ Python's supported `3.x.x` setting. PowerShell is also selected in the dashboard
 verify that its run actually executes before claiming DeepSource coverage for it.
 An unavailable or skipped analyzer remains an explicit limitation; the existing
 native PowerShell lint lane remains required. Enable secrets detection separately.
-Classify `tests/**`, `tools/test_*.py` and `tools/test_*.ps1` as tests. These patterns
+Classify `tests/**`, `fuzz/**`, `mcp/test_*.py`, `tools/test_*.py` and
+`tools/test_*.ps1` as tests. These patterns
 provide analysis context and do not exclude files. Keep the exclusion list empty.
 Automatic code formatters remain off: the repository's pinned formatting tools
 own that behavior.
