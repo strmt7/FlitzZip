@@ -92,7 +92,7 @@ Current exact Release consumer(s):
 
 The registered tar_writer_preserves_ustar_and_pax_filename_boundaries case at
 line887 directly calls require_tar_writer_path_boundary at line899 for eight
-fixtures. The unchanged TEST_CASE registrar and runner execute it. Independent
+fixtures. The constructor-based TEST_CASE registration and runner execute it. Independent
 USTAR/PAX header, padding, footer, payload, statistics and extracted-byte
 checks remain intact. CodeQL's internal reachability-inference cause remains
 unknown; no relocation or suppression is proposed.
@@ -118,6 +118,22 @@ remains unexplained.
 Current exact Release consumer(s):
 
 - `=gdi_back_buffer_releases_cached_surface_after_native_destination_failure`
+
+## Immutable registration context
+
+The shared `TestRegistration` constructor now registers each case into the same
+registry, with the same copied name and static function pointer. `TEST_CASE`
+creates a const registration object instead of defining a separate mutable
+registrar type for every case. Registration objects hold no state; the runner,
+test bodies and registry ownership are unchanged.
+
+For alert 8422, static construction still registers the TAR case whose body
+calls its helper for all eight inputs. For alert 8431, registration changes no
+local induction, paint callback or recovery assertion. Alert 632's reported C
+source and callback ownership closure are byte-identical; this shared review
+document changes, but its lifetime rationale does not. These are individual
+context reviews, not new admissions. The required native consumers and current
+CodeQL results must qualify the changed test header before acceptance.
 
 ## Acceptance limits
 

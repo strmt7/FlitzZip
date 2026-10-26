@@ -16,14 +16,18 @@
 using TestFunction = void (*)();
 void register_test(std::string name, TestFunction fn);
 
+// Construction registers one case before main. The registry owns the copied
+// name and borrows the static function; registration objects retain no mutable state.
+struct TestRegistration final {
+    TestRegistration(const char* name, TestFunction fn) {
+        register_test(name, fn);
+    }
+};
+
 #define TEST_CASE(name)                                                                                                \
     static void name();                                                                                                \
     namespace {                                                                                                        \
-    struct name##_registrar {                                                                                          \
-        name##_registrar() {                                                                                           \
-            register_test(#name, name);                                                                                \
-        }                                                                                                              \
-    } name##_registrar_instance;                                                                                       \
+    const TestRegistration name##_registrar_instance{#name, name};                                                     \
     }                                                                                                                  \
     static void name()
 

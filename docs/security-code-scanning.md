@@ -15,10 +15,10 @@ The service manages its analyzer versions; retain the actual run and commit
 identity with a finding rather than claiming a locally pinned analyzer version.
 
 Keep C/C++, Python, Shell and Docker analysis enabled, with C++20 selected and
-Python's supported `3.x.x` setting. PowerShell is also selected in the dashboard;
-verify that its run actually executes before claiming DeepSource coverage for it.
-An unavailable or skipped analyzer remains an explicit limitation; the existing
-native PowerShell lint lane remains required. Enable secrets detection separately.
+Python's supported `3.x.x` setting. Do not claim DeepSource PowerShell coverage
+without a supported analyzer and a completed run. An unavailable or skipped
+analyzer remains an explicit limitation; the existing native PowerShell lint
+lane remains required. Enable secrets detection separately.
 Classify `tests/**`, `fuzz/**`, `mcp/test_*.py`, `tools/test_*.py` and
 `tools/test_*.ps1` as tests. These patterns
 provide analysis context and do not exclude files. Keep the exclusion list empty.
@@ -82,20 +82,27 @@ disable TLS verification or scrape a personal browser session's credentials.
 The client traverses `issueOccurrences` with `first`/`after` until `hasNextPage`
 is false. It preserves native occurrence IDs, messages, rules, severity, paths
 and columns, including multiple reports at the same line. It rejects duplicate
-IDs, missing or repeated cursors, partial GraphQL errors, changed repository or
-commit identity, count drift, and traversal/response budget exhaustion. It
-reconciles the collected count with native `totalCount` and checks the commit
+IDs, missing or repeated cursors, partial GraphQL errors, changed repository,
+commit, completed analysis run or analyzer configuration, count drift, and
+traversal/response budget exhaustion. It refuses unfinished, cancelled, timed-out
+or skipped analyses; a finished analysis that reports findings can be retrieved
+without treating its quality result as passing. It reconciles the collected
+count with native `totalCount` and checks the commit
 and count once more at completion. A page is bounded to 4 MiB and 45 seconds;
 `--max-pages` can reduce the default 1,000-page budget. Hitting any budget means
 incomplete evidence, never a passing truncated inventory.
 
 Inspect `manifest.json` first: require `complete: true`, the intended repository
-and commit, and the expected count. `findings.json` is the normalized full list;
-the native pages and final observation remain alongside it with their digests.
+and commit, the expected analyzer configuration, and the expected count.
+`findings.json` is the normalized full list; the native pages and final
+observation remain alongside it with their digests.
 Failures retain available raw pages and an incomplete manifest. Keep these
 changing reports under ignored local evidence, not in skills or policy files.
 Review bounded groups by rule/category/path, then confirm each affected source.
 Do not rerun an unchanged export merely to rediscover its locations.
+An unexpected analyzer-wide disappearance requires investigation of that
+analyzer's execution and scope; retain the previous reports until reconciled.
+Disappearance from an export alone does not prove a source defect was fixed.
 
 The API does not promise an atomic snapshot or expose a pinned analyzer version.
 Stable commit/count checks cannot detect every equal-count concurrent change.

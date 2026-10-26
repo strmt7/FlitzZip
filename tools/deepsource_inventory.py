@@ -31,9 +31,10 @@ else:
 ENDPOINT = "https://api.deepsource.com/graphql/"
 USER_AGENT = "FlitzZip-DeepSource-Audit/1.0"
 MAX_PAGE_BYTES = 4 * 1024 * 1024
-QUERY = """query Inventory($owner: String!, $name: String!, $after: String, $first: Int!) {
+QUERY = """query Inventory($owner: String!, $name: String!, $commit: String!, $after: String, $first: Int!) {
+  run(commitOid: $commit) { id commitOid status finishedAt }
   repository(login: $owner, name: $name, vcsProvider: GITHUB) {
-    id name vcsUrl vcsProvider defaultBranch latestCommitOid
+    id name vcsUrl vcsProvider defaultBranch latestCommitOid configJson
     issueOccurrences(first: $first, after: $after) {
       totalCount pageInfo { hasNextPage endCursor }
       edges { node {
@@ -147,6 +148,13 @@ def parse_page(raw: bytes, repository: str, commit: str) -> tuple[dict[str, obje
     if envelope.get("errors"):
         raise InventoryError("DeepSource returned GraphQL errors; inspect the retained response")
     data = object_value(envelope.get("data"), "GraphQL data")
+    analysis = object_value(data.get("run"), "analysis run")
+    if analysis.get("commitOid") != commit or analysis.get("status") not in ("SUCCESS", "FAILURE"):
+        raise InventoryError(
+            "DeepSource analysis is unfinished or unavailable; retain the response and wait for completion"
+        )
+    text_value(analysis.get("id"), "analysis identity")
+    text_value(analysis.get("finishedAt"), "analysis completion time")
     repo = object_value(data.get("repository"), "repository")
     if (
         repo.get("vcsUrl") != f"https://github.com/{repository}"
@@ -157,6 +165,8 @@ def parse_page(raw: bytes, repository: str, commit: str) -> tuple[dict[str, obje
         raise InventoryError("DeepSource repository or default-branch commit does not match the requested source")
     text_value(repo.get("id"), "repository identity")
     text_value(repo.get("defaultBranch"), "default branch")
+    object_value(repo.get("configJson"), "analyzer configuration")
+    repo["analysis"] = analysis
     connection = object_value(repo.pop("issueOccurrences", None), "occurrence connection")
     return repo, connection
 
@@ -216,7 +226,9 @@ def collect_pages(
     ids: set[str] = set()
     findings: list[dict[str, object]] = []
     pages = []
-    variables: dict[str, object] = dict(zip(("owner", "name"), repository.split("/"), strict=True), first=100)
+    variables: dict[str, object] = dict(
+        zip(("owner", "name"), repository.split("/"), strict=True), first=100, commit=commit
+    )
     for number in range(1, max_pages + 1):
         variables["after"] = after
         path = output / f"page-{number:04d}.json"

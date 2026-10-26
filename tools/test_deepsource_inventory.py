@@ -39,6 +39,7 @@ def page(ids: range, total: int, more: bool = False, cursor: str | None = None) 
     ]
     return {
         "data": {
+            "run": {"id": "analysis-identity", "commitOid": COMMIT, "status": "FAILURE", "finishedAt": "completed"},
             "repository": {
                 "id": "repository-identity",
                 "name": "project",
@@ -46,12 +47,13 @@ def page(ids: range, total: int, more: bool = False, cursor: str | None = None) 
                 "vcsProvider": "GITHUB",
                 "defaultBranch": "main",
                 "latestCommitOid": COMMIT,
+                "configJson": {"version": 1, "analyzers": [{"name": "cxx", "enabled": True}]},
                 "issueOccurrences": {
                     "totalCount": total,
                     "edges": nodes,
                     "pageInfo": {"hasNextPage": more, "endCursor": cursor},
                 },
-            }
+            },
         }
     }
 
@@ -73,7 +75,11 @@ class InventoryTests(unittest.TestCase):
         def fetch(variables, destination):
             """Persist each native test response before the collector interprets it."""
             self.requests.append(dict(variables))
-            raw = json.dumps(next(responses)).encode()
+            try:
+                response = next(responses)
+            except StopIteration:
+                self.fail("Collector requested an unexpected additional response page")
+            raw = json.dumps(response).encode()
             destination.write_bytes(raw)
             return raw
 
@@ -139,6 +145,7 @@ class InventoryTests(unittest.TestCase):
             ("vcsUrl", "https://github.com/fixture/another"),
             ("defaultBranch", "changed"),
             ("id", "changed-identity"),
+            ("configJson", {"version": 1, "analyzers": []}),
         ]
         for index, (field, value) in enumerate(mutations):
             with self.subTest(field=field):
@@ -161,6 +168,22 @@ class InventoryTests(unittest.TestCase):
             with self.assertRaisesRegex(inventory.InventoryError, "changed"):
                 self.capture(pages)
             self.assert_incomplete()
+
+    def test_unfinished_analysis_is_not_a_complete_inventory(self):
+        """Reject temporarily empty issue lists while analysis is pending or unavailable."""
+        for status in ("PENDING", "READY", "CANCEL", "TIMEOUT", "SKIPPED", None):
+            response = page(range(0), 0)
+            response["data"]["run"]["status"] = status
+            with self.subTest(status=status), self.assertRaisesRegex(inventory.InventoryError, "unfinished"):
+                inventory.parse_page(json.dumps(response).encode(), REPOSITORY, COMMIT)
+
+    def test_reanalysis_identity_must_remain_stable(self):
+        """An equal finding count cannot conceal replacement of the analyzed run."""
+        final = page(range(1), 1)
+        final["data"]["run"]["id"] = "another-analysis"
+        with self.assertRaisesRegex(inventory.InventoryError, "changed at final"):
+            self.capture([page(range(1), 1), final])
+        self.assert_incomplete()
 
     def test_malformed_and_partial_graphql_responses_are_not_clean(self):
         """Reject malformed pagination and partial GraphQL success without losing evidence."""
