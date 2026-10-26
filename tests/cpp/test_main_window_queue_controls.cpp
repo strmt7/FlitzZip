@@ -378,6 +378,45 @@ TEST_CASE(main_window_queue_picker_files_folder_and_clear_preserve_sources) {
     s.finish(1, 1);
 }
 
+// Purpose: Reject an entire invalid shell drop and preserve normal admission after each rejection.
+// Inputs: Real source files, native outside/empty/mixed drops, another page and a final valid Queue drop.
+// Outputs: No rejected item appears; both valid files appear once in order with unchanged bytes.
+TEST_CASE(main_window_queue_drop_rejections_are_atomic_and_recoverable) {
+    QueueSession s;
+    const auto valid = s.ui.fixture.root / L"drop.txt";
+    const auto second = s.ui.fixture.root / L"drop-2.txt";
+    s.inputs = {valid, second};
+    for (std::size_t index = 0; index < s.inputs.size(); ++index) {
+        std::ofstream output(s.inputs[index], std::ios::binary);
+        output << "Queue fixture " << index << '\n';
+        REQUIRE_TRUE(output.good());
+    }
+    const auto native_valid = flitzzip::windows_regular_path(valid).native();
+    const auto native_second = flitzzip::windows_regular_path(second).native();
+    const POINT inside{s.ui.px(180), s.ui.px(220)};
+    const POINT outside{inside.x, s.table.top - s.ui.px(10)};
+    const auto empty_row = s.ui.pixels(s.name_cell(0, 0));
+    const auto require_empty = [&] { REQUIRE_TRUE(s.ui.pixels(s.name_cell(0, 0)) == empty_row); };
+
+    ControllerFixture::drop_paths(s.ui.window, {native_valid}, outside);
+    require_empty();
+    ControllerFixture::drop_paths(s.ui.window, {native_valid, L"relative.txt"}, inside);
+    require_empty();
+    ControllerFixture::drop_paths(s.ui.window, {}, inside);
+    require_empty();
+    ControllerFixture::show_compression(s.ui.window);
+    ControllerFixture::drop_paths(s.ui.window, {native_valid}, inside);
+    ControllerFixture::show_queue(s.ui.window);
+    require_empty();
+
+    ControllerFixture::drop_paths(s.ui.window, {native_valid, native_second}, inside);
+    s.require_literal_name(0, L"drop.txt", 2);
+    s.require_tick(0, true);
+    s.require_literal_name(1, L"drop-2.txt", 2);
+    s.require_tick(1, true);
+    s.finish();
+}
+
 // Purpose: Map visible checkbox coordinates to scrolled rows and preserve the intended original file.
 // Inputs: Overflowing queue, one detent, first visible checkbox and Remove Selected. Outputs: Only original row three
 // remains.
