@@ -355,6 +355,47 @@ function Get-CurrentSourceAnalysis {
     return $latest
 }
 
+# Purpose: Require the enabled DeepSource analyzers on the exact audited commit, including later reanalysis results.
+# Inputs: Resolved repository and full commit SHA. Outputs: Five verified successes; missing or invalid evidence fails closed.
+function Assert-DeepSourceCommitAnalysis {
+    param([string]$Repository, [string]$Commit)
+    $required = [ordered]@{ 'DeepSource: C & C++' = 'cxx'; 'DeepSource: Python' = 'python'
+        'DeepSource: Shell' = 'shell'; 'DeepSource: Docker' = 'docker'; 'DeepSource: Secrets' = 'secrets' }
+    $latest = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    $seen = [Collections.Generic.HashSet[long]]::new()
+    $page = 1
+    do {
+        if ($page -gt 100) { throw 'DeepSource commit status history exceeds its bounded page budget.' }
+        $json = gh api "repos/$Repository/commits/$Commit/statuses?per_page=100&page=$page"
+        if ($LASTEXITCODE -ne 0) { throw "GitHub DeepSource status API failed on page $page; analysis is unavailable." }
+        $statuses = ConvertFrom-GitHubArray -Text ($json -join "`n") -Label 'DeepSource commit statuses'
+        if ($statuses.Count -gt 100) { throw 'GitHub DeepSource status page exceeds the requested size.' }
+        foreach ($status in $statuses) {
+            if (($status.id -isnot [int] -and $status.id -isnot [long]) -or $status.id -le 0 -or
+                $status.context -isnot [string] -or -not $seen.Add([long]$status.id)) {
+                throw 'GitHub returned malformed or duplicated commit status evidence.'
+            }
+            if (-not ($required.Keys -ccontains $status.context)) { continue }
+            if ($status.state -cnotin @('success', 'pending', 'failure', 'error') -or
+                $status.creator.login -cne 'deepsource-io[bot]' -or $status.creator.type -cne 'Bot') {
+                throw 'DeepSource commit status has an invalid state or producer identity.'
+            }
+            $runPath = '^https://app\.deepsource\.com/gh/' + [regex]::Escape($Repository) +
+                '/run/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/' + $required[$status.context] + '/?$'
+            if ($status.target_url -isnot [string] -or $status.target_url -cnotmatch $runPath) {
+                throw 'DeepSource status does not link to the expected repository and analyzer run.'
+            }
+            if (-not $latest.ContainsKey($status.context) -or $status.id -gt $latest[$status.context].id) {
+                $latest[$status.context] = $status
+            }
+        }
+        $page++
+    } while ($statuses.Count -eq 100)
+    $blocking = @($required.Keys | Where-Object { -not $latest.ContainsKey($_) -or $latest[$_].state -cne 'success' })
+    if ($blocking.Count) { throw "DeepSource analysis is missing or not successful for ${Commit}: $($blocking -join ', ')." }
+    Write-Output 'DeepSource exact-commit analysis passed: C/C++, Python, Shell, Docker and Secrets.'
+}
+
 if ($HistoryReportPath -and -not $IncludeHistory) {
     throw 'HistoryReportPath requires IncludeHistory; an open-only snapshot is not a complete incident review.'
 }
@@ -391,4 +432,5 @@ $blockingOpen = @($alerts | Where-Object { $_.number -notin $governance -and $_.
 $unresolved = @($current | Where-Object { $_.number -notin $reviewed -and $_.number -notin $governance })
 Write-Output "Accepted governance baseline: $($governance.Count). Raw open alerts retained: $($alerts.Count)."
 Assert-CodeScanningClosure -Alerts $blockingOpen -CurrentDismissed $unresolved
+Assert-DeepSourceCommitAnalysis -Repository $repo -Commit $Commit
 Write-Output "GitHub post-push audit passed for $repo. Deployments: 0. Unresolved open/current dismissed findings: 0. Exact authorized reviews: $($reviewed.Count). Commit: $Commit."

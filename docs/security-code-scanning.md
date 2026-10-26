@@ -35,11 +35,23 @@ Before final acceptance, inspect the **exact pushed commit's** DeepSource result
 in GitHub's commit statuses and the linked analysis run. C/C++, Python, Shell,
 Docker and Secrets must finish successfully; review PowerShell's execution status
 as well. A missing, pending, errored or skipped scan is not a successful scan.
+The post-push audit verifies these five statuses from the official DeepSource bot,
+including paginated reanalysis history, and requires each analyzer's latest result
+to pass. This uses the existing final audit rather than another Actions workflow.
 The dashboard's aggregate issue count or a successful unrelated workflow cannot
 establish acceptance. Preserve original findings and fix their shared causes,
 including test and build-tool defects. A dashboard ignore alone cannot establish
 an exact-source false-positive disposition under the
 [source-remediation contract](security-source-remediation-redesign.md).
+
+The optional [official CLI](https://docs.deepsource.com/docs/developers/cli/usage)
+provides JSON for local triage. Scope `runs` to the full commit SHA to retain its
+native issue summary; query `issues --default-branch` for the active inventory.
+Successful change checks do not close older reports. Compare export counts with
+the native run before claiming completeness: the CLI's issue export can truncate
+results before applying path filters, even with `--limit 0`. Retain that limitation
+and use the dashboard's scoped finding views for missing source locations. Never
+interpret an empty filtered export as proof that no finding exists.
 
 DeepSource supplements the existing CodeQL, Semgrep, secret, dependency and native
 analysis lanes. Its source analysis does not establish device-kernel execution,

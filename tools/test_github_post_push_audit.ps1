@@ -13,6 +13,20 @@ $auditSourceAnalysis = ConvertTo-Json -InputObject @(
     @{ tool = 'devskim'; category = 'devskim'; commit_sha = ('a' * 40); error = ''; warning = '' }
 ) -Compress
 $auditDefaultSourceAnalysis = $auditSourceAnalysis
+$auditDeepSourceExitCode = 0
+$auditDeepSourcePages = @{}
+$auditDeepSourceRepository = 'fixture/repository'
+$auditDeepSourceStatuses = @(
+    @{ id = 1; context = 'DeepSource: C & C++'; analyzer = 'cxx' },
+    @{ id = 2; context = 'DeepSource: Python'; analyzer = 'python' },
+    @{ id = 3; context = 'DeepSource: Shell'; analyzer = 'shell' },
+    @{ id = 4; context = 'DeepSource: Docker'; analyzer = 'docker' },
+    @{ id = 5; context = 'DeepSource: Secrets'; analyzer = 'secrets' }
+) | ForEach-Object {
+    @{ id = $_.id; context = $_.context; state = 'success'; creator = @{ login = 'deepsource-io[bot]'; type = 'Bot' }
+        target_url = "https://app.deepsource.com/gh/fixture/repository/run/11111111-1111-4111-8111-111111111111/$($_.analyzer)/" }
+}
+$auditDefaultDeepSourceJson = ConvertTo-Json -InputObject @($auditDeepSourceStatuses) -Depth 4 -Compress
 
 # Purpose: Exercise repository resolution without reading or altering real Git configuration.
 # Inputs: Only the production remote.origin.url query is accepted; scoped fixture values supply its result.
@@ -44,6 +58,12 @@ Set-Alias -Name git -Value Invoke-TestGitRemote -Scope Script
 # Inputs: The implicit command arguments must request the next fixture endpoint.
 # Outputs: Emits the fixture response and sets the same process-status variable used by a native CLI.
 function Invoke-TestGitHub {
+    $statusEndpoint = '^repos/' + [regex]::Escape($auditDeepSourceRepository) + '/commits/a{40}/statuses\?per_page=100&page=(\d+)$'
+    if ($args.Count -eq 2 -and $args[0] -eq 'api' -and $args[1] -cmatch $statusEndpoint) {
+        $global:LASTEXITCODE = $auditDeepSourceExitCode
+        if ($auditDeepSourcePages.ContainsKey([int]$matches[1])) { return $auditDeepSourcePages[[int]$matches[1]] }
+        return $auditDefaultDeepSourceJson.Replace('fixture/repository', $auditDeepSourceRepository)
+    }
     if ($args.Count -ge 2 -and $args[0] -eq 'api' -and
         $args[1] -in @('repos/fixture/repository', 'repos/strmt7/FlitzZip')) {
         $global:LASTEXITCODE = $auditBranchExitCode
@@ -85,12 +105,14 @@ function Test-AuditCase {
         [string]$Name, [object[]]$Responses, [string]$Failure = '',
         [switch]$IncludeHistory, [string]$HistoryReportPath = '',
         [AllowEmptyString()][string]$Repository = 'fixture/repository', [string]$Commit = '',
-        [object[]]$DismissedResponses = @(), [switch]$SourceAnalysisFailure
+        [object[]]$DismissedResponses = @(), [switch]$SourceAnalysisFailure, [switch]$DeepSourceFailure
     )
+    $script:auditDeepSourceRepository = if ($Repository) { $Repository } else { 'fixture/repository' }
     $auditReplies.Clear()
     foreach ($response in $Responses) { $auditReplies.Enqueue($response) }
     if (-not $IncludeHistory -and ($Failure -eq '' -or $Failure.Contains('Unresolved code-scanning') -or
-            $Failure.Contains('First 12 examples') -or $DismissedResponses.Count -gt 0 -or $SourceAnalysisFailure)) {
+            $Failure.Contains('First 12 examples') -or $DismissedResponses.Count -gt 0 -or $SourceAnalysisFailure -or
+            $DeepSourceFailure)) {
         if ($DismissedResponses.Count -gt 0) {
             foreach ($response in $DismissedResponses) { $auditReplies.Enqueue($response) }
         } else {
@@ -493,6 +515,48 @@ try {
         throw 'History fixture cleanup escaped its temporary parent.'
     }
     if (Test-Path -LiteralPath $resolvedRoot) { Remove-Item -LiteralPath $resolvedRoot -Recurse -Force }
+}
+try {
+    foreach ($state in @('pending', 'failure', 'error')) {
+        $changed = @($auditDeepSourceStatuses) + @(@{ id = 99; context = 'DeepSource: Python'; state = $state
+            creator = @{ login = 'deepsource-io[bot]'; type = 'Bot' }
+            target_url = 'https://app.deepsource.com/gh/fixture/repository/run/11111111-1111-4111-8111-111111111111/python/' })
+        $auditDeepSourcePages[1] = ConvertTo-Json -InputObject $changed -Depth 4 -Compress
+        Test-AuditCase "latest DeepSource $state defeats old success" @($emptyDeployments, $emptyAlerts) 'DeepSource analysis is missing or not successful' -DeepSourceFailure
+    }
+    $auditDeepSourcePages[1] = ConvertTo-Json -InputObject @($auditDeepSourceStatuses[0..3]) -Depth 4 -Compress
+    Test-AuditCase 'missing DeepSource analyzer' @($emptyDeployments, $emptyAlerts) 'DeepSource analysis is missing or not successful' -DeepSourceFailure
+    foreach ($mutation in @('producer', 'state', 'url', 'duplicate', 'id')) {
+        # Windows PowerShell decorates parsed array roots; enumerate members before mutating and reserializing.
+        $changed = @(foreach ($entry in ($auditDefaultDeepSourceJson | ConvertFrom-Json)) { $entry })
+        switch ($mutation) {
+            'producer' { $changed[0].creator.login = 'unrelated-producer' }
+            'state' { $changed[0].state = 'skipped' }
+            'url' { $changed[0].target_url = $changed[0].target_url.Replace('fixture/repository', 'foreign/repository') }
+            'duplicate' { $changed += $changed[0] }
+            'id' { $changed[0].id = $true }
+        }
+        $auditDeepSourcePages[1] = ConvertTo-Json -InputObject $changed -Depth 4 -Compress
+        $expected = switch ($mutation) {
+            { $_ -in @('producer', 'state') } { 'invalid state or producer' }
+            'url' { 'expected repository and analyzer run' }
+            default { 'malformed or duplicated' }
+        }
+        Test-AuditCase "DeepSource rejects $mutation evidence" @($emptyDeployments, $emptyAlerts) $expected -DeepSourceFailure
+    }
+    $auditDeepSourcePages[1] = '{}'
+    Test-AuditCase 'DeepSource non-array response' @($emptyDeployments, $emptyAlerts) 'non-array DeepSource commit statuses' -DeepSourceFailure
+    $auditDeepSourceExitCode = 1
+    Test-AuditCase 'DeepSource API failure' @($emptyDeployments, $emptyAlerts) 'GitHub DeepSource status API failed' -DeepSourceFailure
+    $auditDeepSourceExitCode = 0
+    $auditDeepSourcePages.Clear()
+    $padding = @(for ($statusId = 10; $statusId -lt 110; $statusId++) { @{ id = $statusId; context = 'unrelated CI' } })
+    $auditDeepSourcePages[1] = ConvertTo-Json -InputObject $padding -Compress
+    $auditDeepSourcePages[2] = $auditDefaultDeepSourceJson
+    Test-AuditCase 'DeepSource statuses beyond first page' @($emptyDeployments, $emptyAlerts)
+} finally {
+    $auditDeepSourcePages.Clear()
+    $auditDeepSourceExitCode = 0
 }
 $global:LASTEXITCODE = 0
 Write-Output "Post-push audit offline regression tests passed ($auditScenarioCount scenarios)."
