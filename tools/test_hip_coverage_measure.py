@@ -326,7 +326,7 @@ class ImageReportTests(unittest.TestCase):
 
             # Purpose: Replace section extraction only. Inputs: Actual argv. Outputs: Controlled linked section bytes.
             def extract(command, timeout, log, *, section=section):
-                selected = next(arg.split("=", 2)[2] for arg in command if arg.startswith("--dump-section="))
+                (selected,) = [arg.split("=", 2)[2] for arg in command if arg.startswith("--dump-section=")]
                 Path(selected).write_bytes(section)
 
             # Purpose: Replace object extraction. Inputs: Object/output. Outputs: Controlled ELF/bundle pair.

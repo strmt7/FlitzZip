@@ -116,9 +116,10 @@ def manifest_case(row: dict, files: dict[str, dict]) -> tuple:
     name, fmt = row["name"], row["format"]
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
         raise ValueError("corpus case name is invalid")
-    if not isinstance(fmt, str) or fmt not in CASE_TOOLS:
-        raise ValueError("corpus case format is unsupported")
     names, tools = row["files"], row["tools"]
+    if not isinstance(tools, list):
+        raise ValueError("corpus case requires FlitzZip and its independent supported comparator")
+    pair = case_tool_pair(fmt, tools)
     if (
         not isinstance(names, list)
         or not names
@@ -127,17 +128,27 @@ def manifest_case(row: dict, files: dict[str, dict]) -> tuple:
         or (fmt == "zst" and len(names) != 1)
     ):
         raise ValueError("corpus case inputs are missing, repeated or incompatible with its format")
+    if sum(files[value]["bytes"] for value in names) > MAX_FILESYSTEM_BYTES:
+        raise ValueError("filesystem case exceeds 64 MiB")
+    return name, fmt, tuple(names), pair
+
+
+def case_tool_pair(fmt: object, tools: object) -> tuple[str, str]:
+    """Purpose: Require the same independent application pair at every measurement entry point.
+    Inputs: Format and tool sequence from a manifest or programmatic case. Outputs: Valid pair or ValueError.
+    """
+    if not isinstance(fmt, str) or fmt not in CASE_TOOLS:
+        raise ValueError("corpus case format is unsupported")
     if (
-        not isinstance(tools, list)
+        not isinstance(tools, (list, tuple))
         or len(tools) != 2
-        or any(not isinstance(value, str) or value not in CASE_TOOLS[fmt] for value in tools)
+        or any(not isinstance(value, str) for value in tools)
         or set(tools) != CASE_TOOLS[fmt]
         or tools[0] != "FlitzZip"
     ):
         raise ValueError("corpus case requires FlitzZip and its independent supported comparator")
-    if sum(files[value]["bytes"] for value in names) > MAX_FILESYSTEM_BYTES:
-        raise ValueError("filesystem case exceeds 64 MiB")
-    return name, fmt, tuple(names), tuple(tools)
+    first, second = tools
+    return first, second
 
 
 # Purpose: Verify licensed replacement inputs without downloading data or relying on historical corpus pins.
@@ -411,6 +422,8 @@ def measure_case(
     round_pause_ms: int = 250,
 ) -> dict:
     name, fmt, files, tools = case
+    first_tool, second_tool = case_tool_pair(fmt, tools)
+    independent_tool = {first_tool: second_tool, second_tool: first_tool}
     input_bytes = sum(manifest[file]["bytes"] for file in files)
     if input_bytes > MAX_FILESYSTEM_BYTES:
         raise ValueError("filesystem case exceeds 64 MiB")
@@ -442,7 +455,7 @@ def measure_case(
                 elapsed = run(create, corpus, timed=iteration >= 0)
                 if not archive.is_file() or archive.stat().st_size <= 0:
                     raise RuntimeError(f"missing archive: {name}/{tool}")
-                other = next(candidate for candidate in tools if candidate != tool)
+                other = independent_tool[tool]
                 independent_dir = round_dir / "independent"
                 independent_dir.mkdir()
                 _, independent_extract = commands(other, fmt, files, archive, independent_dir, binaries, level)

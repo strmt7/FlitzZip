@@ -547,7 +547,7 @@ class CoverageTests(unittest.TestCase):
             patch.object(collector, "run_cli_capability_contracts", return_value=[]),
         ):
             collector.run_cli_admission(self.root / "cli.exe", self.root)
-        directory = next(self.root.glob("cli-admission-*"))
+        (directory,) = self.root.glob("cli-admission-*")
         with zipfile.ZipFile(io.BytesIO((directory / "independent.zip").read_bytes())) as archive:
             self.assertIsNone(archive.testzip())
             self.assertEqual(archive.namelist(), ["item.txt"])

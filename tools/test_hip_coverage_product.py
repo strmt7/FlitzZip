@@ -157,7 +157,7 @@ class ProductCoverageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inventory is incomplete"):
             product.admit(manifest, self.sdk, "gfx1201")
         extra.unlink()
-        obj = Path(next(iter(record["objects"].values())))
+        obj = Path(record["objects"][product.SOURCES[0]])
         obj.unlink()
         with self.assertRaises(ValueError):
             product.admit(manifest, self.sdk, "gfx1201")
@@ -166,6 +166,7 @@ class ProductCoverageTests(unittest.TestCase):
     # Inputs: Independent single-field manifest corruptions. Outputs: Refusal for each and successful original reuse.
     def test_manifest_corruptions_are_not_admitted(self):
         manifest, original = self.built_fixture()
+        (hip_import,) = [name for name in original["inputs"] if name.endswith("amdhip64.lib")]
         source = product.SOURCES[0]
         corruptions = [
             lambda r: r.update(schema_version=True),
@@ -181,7 +182,7 @@ class ProductCoverageTests(unittest.TestCase):
             lambda r: r.update(host_runtime="foreign"),
             lambda r: r.update(host_runtime=True),
             lambda r: r.update(host_runtime=[]),
-            lambda r: r.update(host_runtime=next(name for name in r["inputs"] if name.endswith("amdhip64.lib"))),
+            lambda r: r.update(host_runtime=hip_import),
             lambda r: r.update(qualification="foreign"),
             lambda r: r["inputs"].pop(str(self.header)),
             lambda r: r.update(extra="unknown schema field"),
@@ -208,7 +209,7 @@ class ProductCoverageTests(unittest.TestCase):
             product.unique_input([], "compiler")
         with self.assertRaisesRegex(ValueError, "one qualified"):
             product.unique_input([Path("a/compiler"), Path("b/compiler")], "compiler")
-        Path(next(iter(inputs))).write_bytes(b"changed qualified source")
+        self.probe.write_bytes(b"changed qualified source")
         with self.assertRaisesRegex(ValueError, "changed"):
             product.require_identities(inputs)
 

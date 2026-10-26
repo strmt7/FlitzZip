@@ -323,13 +323,13 @@ class ComparisonGraphTests(unittest.TestCase):
         for slash in ("/", "\\"):
             record = fixture()
             extract = record["cases"][1]["results"][1]["extract_argv"]
-            output_index = next(index for index, arg in enumerate(extract) if "{output}" in arg)
+            (output_index,) = [index for index, arg in enumerate(extract) if "{output}" in arg]
             extract[output_index] = f"{{output}}{slash}mozilla"
             with self.subTest(slash=slash):
                 graph.summarize(record)
         record = fixture()
         extract = record["cases"][1]["results"][1]["extract_argv"]
-        output_index = next(index for index, arg in enumerate(extract) if "{output}" in arg)
+        (output_index,) = [index for index, arg in enumerate(extract) if "{output}" in arg]
         extract[output_index] = "{output}/wrong-file"
         with self.assertRaisesRegex(ValueError, "recorded command"):
             graph.summarize(record)

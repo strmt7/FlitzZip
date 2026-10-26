@@ -294,19 +294,19 @@ class CrawlerContracts(unittest.TestCase):
             ):
                 tool.provision(directory, directory, python, "fixture-identity")
             commands = [call.args[0] for call in run.call_args_list]
-            install = next(command for command in commands if "install" in command and "pip" in command)
+            (install,) = [command for command in commands if "install" in command and "pip" in command]
             self.assertIn("--require-hashes", install)
             self.assertIn("--only-binary=:all:", install)
             self.assertIn(str(wheel.parent), install)
             self.assertNotIn("--no-deps", install)
-            check_index = next(i for i, command in enumerate(commands) if command[-2:] == ["pip", "check"])
-            model_index = next(
+            (check_index,) = [i for i, command in enumerate(commands) if command[-2:] == ["pip", "check"]]
+            (model_index,) = [
                 i for i, command in enumerate(commands) if command[-1] == "tools.test_nltk_model_security"
-            )
-            download_index = next(
+            ]
+            (download_index,) = [
                 i for i, command in enumerate(commands) if command[-1] == "tools.test_crawl4ai_downloads"
-            )
-            browser_index = next(i for i, command in enumerate(commands) if "playwright" in command)
+            ]
+            (browser_index,) = [i for i, command in enumerate(commands) if "playwright" in command]
             self.assertLess(check_index, model_index)
             self.assertLess(model_index, download_index)
             self.assertLess(download_index, browser_index)

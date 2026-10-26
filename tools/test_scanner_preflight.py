@@ -33,7 +33,9 @@ class ScannerPreflightTests(unittest.TestCase):
     def reviewed_fixture(tool="devskim"):
         path = Path(__file__).resolve().parents[1] / ".github/scanner-false-positive-reviews.csv"
         with path.open(encoding="utf-8", newline="") as source:
-            row = next(row for row in csv.DictReader(source) if row["tool"] == tool)
+            row = next((row for row in csv.DictReader(source) if row["tool"] == tool), None)
+        if row is None:
+            raise AssertionError(f"No current review fixture for scanner {tool}")
         blobs = {name: b"independent source context\n" for name in row["context_paths"].split("|")}
         blobs[row["evidence"].split("#")[0]] = f"### Alert {row['alert']}\n".encode()
         hashes = {name: hashlib.sha256(payload).hexdigest() for name, payload in blobs.items()}

@@ -394,6 +394,36 @@ class ComparisonRunnerTests(unittest.TestCase):
             )
         command.assert_not_called()
 
+    def test_measure_case_requires_independent_tools_before_work(self) -> None:
+        """Purpose: Reject invalid application pairs before reserving output or launching a command.
+        Inputs: Unsupported formats, duplicate/reversed/malformed pairs. Outputs: Typed failure and no work.
+        """
+        cases = (
+            ("zip", ()),
+            ("zip", ("FlitzZip", "FlitzZip")),
+            ("zip", ("7-Zip", "FlitzZip")),
+            ("zip", ("FlitzZip", "Zstd")),
+            ("zip", ("FlitzZip", "7-Zip", "Zstd")),
+            ("zst", ("FlitzZip", "7-Zip")),
+            ("zip", ("FlitzZip", {})),
+            ("zip", "FlitzZip"),
+            ("unknown", ("FlitzZip", "7-Zip")),
+            ([], ("FlitzZip", "7-Zip")),
+        )
+        for fmt, tools in cases:
+            case = ("invalid-pair", fmt, ("sample",), tools)
+            with (
+                self.subTest(format=fmt, tools=tools),
+                patch.object(comparison, "run") as command,
+                patch.object(
+                    comparison.tempfile, "TemporaryDirectory", side_effect=AssertionError("premature output")
+                ) as reserve,
+                self.assertRaisesRegex(ValueError, "independent supported comparator|format is unsupported"),
+            ):
+                comparison.measure_case(case, {}, Path("unused"), 5, {"sample": {"bytes": 1}}, Path("unused"))
+            command.assert_not_called()
+            reserve.assert_not_called()
+
     # Purpose: Require the declared Release/HIP/x64 configuration rather than any nearby executable or cache.
     # Inputs: Canonical owned path fixtures, an explicitly noncanonical alias and malformed CMake settings.
     # Outputs: Valid identity hashes the exact cache; wrong binary, absent cache, CPU-only and wrong arch fail closed.

@@ -336,6 +336,12 @@ the implementation into assertions, remove untested code from reports, or add
 tests whose only purpose is increasing a percentage. A coverage increase without
 new behavioral evidence is not an engineering improvement.
 
+Assert the actual cardinality of pipeline phases and artifacts. When a contract
+requires exactly one command, profile or output, a missing or duplicate match
+must fail the test; selecting the first match cannot establish uniqueness.
+For deliberately ordered selections that allow multiple matches, check absence
+explicitly and retain the intended selection order.
+
 ### Oracle Selection
 
 Choose the weakest plausible implementation that the test must reject. If that

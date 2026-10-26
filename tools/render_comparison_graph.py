@@ -112,7 +112,8 @@ def validate_identity(record: dict) -> None:
             or not tool["source_url"].startswith("https://")
         ):
             raise ValueError("tool version or provenance is missing")
-    if next(tool["binary_sha256"] for tool in tools if tool["name"] == "FlitzZip") != record["flitzzip_binary_sha256"]:
+    tool_hashes = {tool["name"]: tool["binary_sha256"] for tool in tools}
+    if tool_hashes["FlitzZip"] != record["flitzzip_binary_sha256"]:
         raise ValueError("FlitzZip binary identity differs")
 
 

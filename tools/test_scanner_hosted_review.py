@@ -79,7 +79,9 @@ class HostedReviewTests(unittest.TestCase):
         self.write_policy([row])
         with self.assertRaisesRegex(ValueError, "exact source and caller-context digests"):
             review.read_hosted_policy(self.root)
-        row = dict(next(item for item in self.rows if item["tool"] == "devskim"))
+        selected = next((item for item in self.rows if item["tool"] == "devskim"), None)
+        self.assertIsNotNone(selected, "The approved policy must contain a DevSkim review fixture")
+        row = dict(selected)
         row["path"] = self.rows[0]["path"]
         self.write_policy([row])
         with self.assertRaisesRegex(ValueError, "approved serial fixture"):
