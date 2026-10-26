@@ -27,11 +27,12 @@ class ScannerPreflightTests(unittest.TestCase):
         self.root = Path(self.directory.name)
 
     # Purpose: Exercise exact current review admission with independent immutable source/configuration bytes.
-    # Inputs: A real schema row with synthetic context and SARIF identities. Outputs: One isolated fixture tuple.
-    def reviewed_fixture(self):
+    # Inputs: Scanner name and a real schema row with synthetic context and SARIF identities.
+    # Outputs: One isolated fixture tuple.
+    def reviewed_fixture(self, tool="devskim"):
         path = Path(__file__).resolve().parents[1] / ".github/scanner-false-positive-reviews.csv"
         with path.open(encoding="utf-8", newline="") as source:
-            row = next(csv.DictReader(source))
+            row = next(row for row in csv.DictReader(source) if row["tool"] == tool)
         blobs = {name: b"independent source context\n" for name in row["context_paths"].split("|")}
         blobs[row["evidence"].split("#")[0]] = f"### Alert {row['alert']}\n".encode()
         hashes = {name: hashlib.sha256(payload).hexdigest() for name, payload in blobs.items()}
@@ -88,9 +89,10 @@ class ScannerPreflightTests(unittest.TestCase):
         self.assertEqual(match_snapshot_false_positives([row], altered, row["repository"], blobs.__getitem__), [])
 
     # Purpose: Preserve an independent approved source while changing only its build context.
-    # Inputs: Small source, caller and SARIF fixtures. Outputs: A valid unchanged ledger plus its source bytes.
-    def write_context_fixture(self):
-        row, blobs, report = self.reviewed_fixture()
+    # Inputs: Scanner name and small source, caller and SARIF fixtures.
+    # Outputs: A valid unchanged ledger plus its source bytes.
+    def write_context_fixture(self, tool="devskim"):
+        row, blobs, report = self.reviewed_fixture(tool)
         report["version"] = "2.1.0"
         blobs["CMakeLists.txt"] = b"add_library(fixture source.cpp)\n"
         row["context_paths"] = "|".join(sorted(blobs))
@@ -177,6 +179,25 @@ class ScannerPreflightTests(unittest.TestCase):
         with patch.object(preflight, "MAX_FILES", 1), self.assertRaisesRegex(ValueError, "snapshot budget"):
             snapshot_inputs(self.root, [row["path"], "CMakeLists.txt"], self.root / "oversized")
         self.assertFalse((self.root / "oversized").exists())
+
+    # Purpose: Catch hosted-review expiry locally without pretending to execute its detector or renewing approval.
+    # Inputs: A reviewed Semgrep source, unchanged acquisition code and a changed dependency context.
+    # Outputs: Unrelated edits stay bounded, valid context passes, and changed context fails with the ledger intact.
+    def test_hosted_review_context_expires_before_scanning(self):
+        row, blobs, _report = self.write_context_fixture("Semgrep OSS")
+        policy = self.root / preflight.CURRENT_POLICY
+        original = policy.read_bytes()
+        selected, hashes = preflight.freeze_current_reviews(self.root, ["unrelated.md"], self.root / "unrelated")
+        self.assertEqual(selected, [])
+        self.assertEqual(set(hashes), {preflight.CURRENT_POLICY})
+        selected, hashes = preflight.freeze_current_reviews(self.root, ["CMakeLists.txt"], self.root / "valid")
+        self.assertEqual(selected, [])
+        self.assertEqual(hashes[row["path"]], hashlib.sha256(blobs[row["path"]]).hexdigest())
+        (self.root / "CMakeLists.txt").write_bytes(b"changed dependency context\n")
+        with self.assertRaisesRegex(ValueError, f"stale source or scanner context: {row['alert']}"):
+            preflight.freeze_current_reviews(self.root, ["CMakeLists.txt"], self.root / "stale")
+        self.assertEqual(policy.read_bytes(), original)
+        self.assertEqual((self.root / row["path"]).read_bytes(), blobs[row["path"]])
 
     # Purpose: Enforce repository, inventory-count and regular-file boundaries before any detector starts.
     # Inputs: Credential-bearing origin, over-count Git metadata and a directory presented as a changed file.

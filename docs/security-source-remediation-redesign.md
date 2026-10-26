@@ -37,7 +37,10 @@ detectors before expensive qualification. It also rescans reviewed DevSkim sourc
 when its bound callers, build configuration, scanner configuration or review
 ledger change. The receipt distinguishes changed paths from these affected
 sources. Expired evidence stays blocking; the tool never renews review hashes.
-Unrelated edits do not trigger this additional scope.
+Unrelated edits do not trigger this additional scope. Affected reviews from
+hosted-only scanners also undergo local context validation, so expired evidence
+fails before expensive qualification. This check does not claim that their
+detectors ran locally or replace their complete hosted finding gates.
 `review_findings` keeps exact source
 review matches informational and unresolved. Public checksum metadata has its
 separate exact identity contract; source code cannot use that metadata path.

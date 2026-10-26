@@ -18,6 +18,7 @@ from tools.devskim_scope import validate_report_directory, write_options
 from tools.scanner_hosted_review import (
     CURRENT_POLICY,
     MAX_CURRENT_CACHE_BYTES,
+    current_context_matches,
     match_snapshot_false_positives,
     read_current_reviews,
 )
@@ -43,16 +44,15 @@ def review_repository(root: Path) -> str:
 
 
 # Purpose: Freeze reviews affected by source, caller, build, scanner or approval changes before selecting scans.
-# Inputs: Checkout, changed names and new owned snapshot directory. Outputs: Affected rows and complete hashes.
+# Inputs: Checkout, changed names and new owned snapshot directory.
+# Outputs: Affected DevSkim rows and complete context hashes; expired hosted reviews fail admission.
 def freeze_current_reviews(root: Path, paths: list[str], destination: Path) -> tuple[list[dict], dict[str, str]]:
     policy_hashes = snapshot_inputs(root, [CURRENT_POLICY], destination)
     rows = read_current_reviews((destination / CURRENT_POLICY).read_bytes())
     changed = set(paths)
     affected = []
     for row in rows:
-        if row["tool"] != "devskim" or not (
-            CURRENT_POLICY in changed or changed.intersection(row["context_paths"].split("|"))
-        ):
+        if not (CURRENT_POLICY in changed or changed.intersection(row["context_paths"].split("|"))):
             continue
         try:
             (root / row["path"]).lstat()
@@ -67,7 +67,15 @@ def freeze_current_reviews(root: Path, paths: list[str], destination: Path) -> t
     if any(size > 2 * 1024**2 for size in sizes) or sum(sizes) > MAX_CURRENT_CACHE_BYTES:
         raise ValueError("Current review exceeds its evidence byte budget")
     hashes = snapshot_inputs(root, names, destination)
-    return rows, {**policy_hashes, **hashes}
+
+    # Only DevSkim is executed locally; other scanners retain their hosted
+    # finding gates, but expired context can already be rejected without a scan.
+    for row in rows:
+        if row["tool"] != "devskim" and not current_context_matches(
+            row, lambda name: (destination / name).read_bytes()
+        ):
+            raise ValueError(f"Affected review has stale source or scanner context: {row['alert']}")
+    return [row for row in rows if row["tool"] == "devskim"], {**policy_hashes, **hashes}
 
 
 # Purpose: Combine metadata and exact current-source decisions without double counting or report mutation.
