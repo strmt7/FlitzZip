@@ -620,6 +620,45 @@ class CrawlerContracts(unittest.TestCase):
                 ):
                     pass
 
+    def test_install_lock_shares_deadline_and_closes_failed_acquisition(self):
+        """Opening and locking share one budget; a failed lock leaves a reusable cache."""
+        native_open = open
+        opened = []
+        attempts = 0
+
+        def contend_once(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError(errno.EACCES, "open contention")
+            stream = native_open(*args, **kwargs)
+            opened.append(stream)
+            return stream
+
+        locker = Mock(side_effect=OSError(errno.EAGAIN, "advisory contention"))
+        fcntl = SimpleNamespace(LOCK_EX=1, LOCK_NB=2, LOCK_UN=4, flock=locker)
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary)
+            with (
+                patch.object(tool, "os", SimpleNamespace(name="posix")),
+                patch.dict(sys.modules, {"fcntl": fcntl}),
+                patch("builtins.open", side_effect=contend_once),
+                patch("tools.crawl4ai_download_opener.open_download", side_effect=os.open),
+                patch.object(tool.time, "monotonic", side_effect=(0.0, 0.6, 1.1)),
+                patch.object(tool.time, "sleep") as delay,
+                self.assertRaises(TimeoutError) as failure,
+                tool.installation_lock(cache, timeout=1),
+            ):
+                self.fail("The second acquisition phase received a fresh deadline")
+            self.assertEqual(failure.exception.__cause__.errno, errno.EAGAIN)
+            self.assertEqual(attempts, 2)
+            self.assertEqual(locker.call_count, 1, "An unacquired lock must not be released")
+            delay.assert_called_once_with(0.05)
+            self.assertEqual(len(opened), 1)
+            self.assertTrue(opened[0].closed)
+            with tool.installation_lock(cache, timeout=0.1):
+                self.assertTrue((cache / ".install.lock").is_file())
+
     def test_receipt_publication_is_exclusive_atomic_and_cleans_failures(self):
         """Purpose: Prevent predictable receipt staging from following aliases.
         Inputs: An occupied legacy name and injected replacement failure. Outputs: Preserved sentinel and no debris.
@@ -688,7 +727,8 @@ class CrawlerContracts(unittest.TestCase):
             return child
 
         class UnstartableThread(tool.threading.Thread):
-            def start(self):
+            @staticmethod
+            def start():
                 raise RuntimeError("owned reader start failure")
 
         thread_api = SimpleNamespace(Event=tool.threading.Event, Thread=UnstartableThread)

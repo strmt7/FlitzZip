@@ -22,7 +22,9 @@ import tempfile
 import threading
 import time
 import venv
+from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
 
 ROOT = Path(__file__).resolve().parent.parent
 # Purpose: Support script use. Inputs: This file's package context. Outputs: Exact checkout imports.
@@ -101,6 +103,43 @@ def retain_setup_output(stream, tail: bytearray, overflow: threading.Event) -> N
             overflow.set()
 
 
+def _process_owner() -> ModuleType | None:
+    """Load the checkout's Windows containment implementation before child acquisition."""
+    if os.name != "nt":
+        return None
+    spec = importlib.util.spec_from_file_location("flitzzip_owned_child", ROOT / "mcp/flitzzip_mcp.py")
+    if spec is None or spec.loader is None:
+        raise ValueError("Repository process ownership contract is unavailable")
+    owner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(owner)
+    return owner
+
+
+def _wait_owned_child(child, command, timeout: float, overflow: threading.Event, quiet: bool) -> int:
+    """Observe completion or the quiet-output budget; the caller retains cleanup ownership."""
+    if quiet:
+        deadline = time.monotonic() + timeout
+        while child.poll() is None:
+            if overflow.is_set():
+                raise ValueError("Crawler setup exceeded its 4 MiB output budget")
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(command, timeout)
+            time.sleep(0.05)
+    code = child.wait(timeout=timeout)
+    if overflow.is_set():
+        raise ValueError("Crawler setup exceeded its 4 MiB output budget")
+    return code
+
+
+def _finish_setup_output(stream, tail: bytearray, overflow: threading.Event, failed: bool) -> None:
+    """After the child exits and its reader joins, close the pipe and check the complete output."""
+    stream.close()
+    if (failed or overflow.is_set()) and tail:
+        print(tail.decode("utf-8", errors="replace"), file=sys.stderr)
+    if overflow.is_set() and not failed:
+        raise ValueError("Crawler setup exceeded its 4 MiB output budget")
+
+
 def run_owned(command: list[str], env: dict[str, str], timeout: float = 900, *, quiet: bool = False) -> int:
     """Run a hidden child within an owned process tree and a bounded deadline.
 
@@ -109,16 +148,10 @@ def run_owned(command: list[str], env: dict[str, str], timeout: float = 900, *, 
     Quiet setup output retains at most 8 KiB and stops after a 4 MiB budget.
     """
     containment = None
+    owner = _process_owner()
     options = {"start_new_session": True}
-    if os.name == "nt":
-        # Load the repository's tested process contract, never an installed MCP SDK with the same package name.
-        spec = importlib.util.spec_from_file_location("flitzzip_owned_child", ROOT / "mcp/flitzzip_mcp.py")
-        if spec is None or spec.loader is None:
-            raise ValueError("Repository process ownership contract is unavailable")
-        owner = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(owner)
+    if owner is not None:
         admitted_bytes = owner.admit_child_memory_bytes()
-
         options = {
             "creationflags": subprocess.CREATE_NO_WINDOW
             | subprocess.BELOW_NORMAL_PRIORITY_CLASS
@@ -138,7 +171,7 @@ def run_owned(command: list[str], env: dict[str, str], timeout: float = 900, *, 
         **options,
     )
     try:
-        if os.name == "nt":
+        if owner is not None:
             containment = owner.ChildContainment(child, admitted_bytes)
             owner.resume_owned_child(child)
         if quiet:
@@ -147,16 +180,7 @@ def run_owned(command: list[str], env: dict[str, str], timeout: float = 900, *, 
             )
             pending_reader.start()
             reader = pending_reader
-            deadline = time.monotonic() + timeout
-            while child.poll() is None:
-                if overflow.is_set():
-                    raise ValueError("Crawler setup exceeded its 4 MiB output budget")
-                if time.monotonic() >= deadline:
-                    raise subprocess.TimeoutExpired(command, timeout)
-                time.sleep(0.05)
-        code = child.wait(timeout=timeout)
-        if overflow.is_set():
-            raise ValueError("Crawler setup exceeded its 4 MiB output budget")
+        code = _wait_owned_child(child, command, timeout, overflow, quiet)
         failed = code != 0
         return code
     finally:
@@ -173,11 +197,7 @@ def run_owned(command: list[str], env: dict[str, str], timeout: float = 900, *, 
             if reader is not None:
                 reader.join(timeout=5)
             if quiet and child.stdout is not None:
-                child.stdout.close()
-                if (failed or overflow.is_set()) and tail:
-                    print(tail.decode("utf-8", errors="replace"), file=sys.stderr)
-                if overflow.is_set() and not failed:
-                    raise ValueError("Crawler setup exceeded its 4 MiB output budget")
+                _finish_setup_output(child.stdout, tail, overflow, failed)
 
 
 def run_source_python(command: list[str], env: dict[str, str], timeout: float = 900, *, quiet: bool = False) -> int:
@@ -242,6 +262,19 @@ def lock_contended(error: OSError) -> bool:
     return error.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK)
 
 
+def _retry_cache_lock[T](operation: Callable[[], T], deadline: float) -> T:
+    """Retry only ownership conflicts against one deadline shared by both acquisition phases."""
+    while True:
+        try:
+            return operation()
+        except OSError as error:
+            if not lock_contended(error):
+                raise
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Another crawler installation still owns this cache") from error
+            time.sleep(0.05)
+
+
 @contextlib.contextmanager
 def installation_lock(directory: Path, timeout: float = 900):
     """Purpose: Serialize shared-cache setup without following redirects.
@@ -254,17 +287,7 @@ def installation_lock(directory: Path, timeout: float = 900):
     from tools.crawl4ai_download_opener import open_download
 
     deadline = time.monotonic() + timeout
-    with contextlib.ExitStack() as opened:
-        while True:
-            try:
-                lock = opened.enter_context(open(directory / ".install.lock", "a+b", opener=open_download))
-                break
-            except OSError as error:
-                if not lock_contended(error):
-                    raise
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("Another crawler installation still owns this cache") from error
-                time.sleep(0.05)
+    with _retry_cache_lock(lambda: open(directory / ".install.lock", "a+b", opener=open_download), deadline) as lock:
         if lock.tell() == 0:
             lock.write(b"0")
             lock.flush()
@@ -272,20 +295,15 @@ def installation_lock(directory: Path, timeout: float = 900):
             import msvcrt
         else:
             import fcntl
-        while True:
+
+        def acquire():
             lock.seek(0)
-            try:
-                if os.name == "nt":
-                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError as error:
-                if not lock_contended(error):
-                    raise
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("Another crawler installation still owns this cache") from error
-                time.sleep(0.05)
+            if os.name == "nt":
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        _retry_cache_lock(acquire, deadline)
         try:
             yield
         finally:
@@ -459,9 +477,14 @@ def main() -> int:
     return run_source_python(command, env, timeout=1800)
 
 
-if __name__ == "__main__":
+def _entrypoint() -> None:
+    """Translate expected CLI failures into one diagnostic and an unsuccessful exit."""
     try:
         raise SystemExit(main())
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         print(f"crawl4ai: {error}", file=sys.stderr)
         raise SystemExit(1) from error
+
+
+if __name__ == "__main__":
+    _entrypoint()
