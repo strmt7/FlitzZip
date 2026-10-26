@@ -666,6 +666,56 @@ class CrawlerContracts(unittest.TestCase):
                 )
             self.assertLessEqual(error_path.stat().st_size, 8200)
 
+    def test_setup_prepares_output_state_before_acquiring_a_child(self):
+        """Allocation failure must occur before a process needs ownership cleanup."""
+        thread_api = SimpleNamespace(Event=Mock(side_effect=MemoryError("output state allocation")))
+        with (
+            patch.object(tool, "threading", thread_api),
+            patch.object(tool.subprocess, "Popen") as spawn,
+            self.assertRaisesRegex(MemoryError, "output state allocation"),
+        ):
+            tool.run_owned([sys.executable, "-c", "pass"], {}, quiet=True)
+        self.assertEqual(spawn.call_count, 0, "Setup must prepare ownership state before acquiring a child")
+
+    def test_setup_reader_start_failure_reaps_child_and_closes_pipe(self):
+        """A failed drain-thread start must preserve its error and release real resources."""
+        children = []
+        native_spawn = subprocess.Popen
+
+        def capture_child(*args, **kwargs):
+            child = native_spawn(*args, **kwargs)
+            children.append(child)
+            return child
+
+        class UnstartableThread(tool.threading.Thread):
+            def start(self):
+                raise RuntimeError("owned reader start failure")
+
+        thread_api = SimpleNamespace(Event=tool.threading.Event, Thread=UnstartableThread)
+        try:
+            with (
+                patch.object(tool, "threading", thread_api),
+                patch.object(tool.subprocess, "Popen", side_effect=capture_child),
+                self.assertRaisesRegex(RuntimeError, "owned reader start failure"),
+            ):
+                tool.run_owned(
+                    [sys.executable, "-c", "import time; time.sleep(30)"],
+                    dict(os.environ),
+                    2,
+                    quiet=True,
+                )
+            self.assertEqual(len(children), 1)
+            self.assertIsNotNone(children[0].poll(), "The acquired child must be reaped")
+            self.assertTrue(children[0].stdout.closed, "Failed setup must close its pipe")
+        finally:
+            # Negative controls run the original implementation; clean only children
+            # this test created even when its resource-release assertions fail.
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=5)
+                child.stdout.close()
+
     def test_setup_early_overflow_quiet_timeout_and_missing_owner_contract(self):
         """Purpose: Exercise bounded child failures before a setup process exits.
         Inputs: Immediate overflow, quiet timeout and missing Windows owner loader. Outputs: Prompt cleanup/refusal.

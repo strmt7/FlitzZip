@@ -102,7 +102,12 @@ def retain_setup_output(stream, tail: bytearray, overflow: threading.Event) -> N
 
 
 def run_owned(command: list[str], env: dict[str, str], timeout: float = 900, *, quiet: bool = False) -> int:
-    """Purpose: Run hidden, owned children. Inputs: Command/environment/deadline. Outputs: Exit status or timeout."""
+    """Run a hidden child within an owned process tree and a bounded deadline.
+
+    Prepare diagnostic state before acquiring the process. Every subsequent
+    failure reaps the child and closes its pipe; only started readers are joined.
+    Quiet setup output retains at most 8 KiB and stops after a 4 MiB budget.
+    """
     containment = None
     options = {"start_new_session": True}
     if os.name == "nt":
@@ -119,6 +124,10 @@ def run_owned(command: list[str], env: dict[str, str], timeout: float = 900, *, 
             | subprocess.BELOW_NORMAL_PRIORITY_CLASS
             | owner.CREATE_SUSPENDED
         }
+    tail = bytearray()
+    overflow = threading.Event()
+    reader = None
+    failed = True
     child = subprocess.Popen(
         command,
         env=env,
@@ -128,17 +137,16 @@ def run_owned(command: list[str], env: dict[str, str], timeout: float = 900, *, 
         stderr=sys.stderr,
         **options,
     )
-    tail = bytearray()
-    overflow = threading.Event()
-    reader = None
-    failed = True
     try:
         if os.name == "nt":
             containment = owner.ChildContainment(child, admitted_bytes)
             owner.resume_owned_child(child)
         if quiet:
-            reader = threading.Thread(target=retain_setup_output, args=(child.stdout, tail, overflow), daemon=True)
-            reader.start()
+            pending_reader = threading.Thread(
+                target=retain_setup_output, args=(child.stdout, tail, overflow), daemon=True
+            )
+            pending_reader.start()
+            reader = pending_reader
             deadline = time.monotonic() + timeout
             while child.poll() is None:
                 if overflow.is_set():
