@@ -2,14 +2,16 @@
 # Inputs: Existing package and an allowlisted table. Outputs: String-valued row dictionaries; releases all COM owners.
 function Get-MsiTable {
     param([Parameter(Mandatory = $true)][string]$Path,
-        [ValidateSet('Property', 'Upgrade', 'InstallExecuteSequence', 'Registry', 'LaunchCondition')][string]$Table)
-    $columns = switch ($Table) {
+        [ValidateSet('Property', 'Upgrade', 'InstallExecuteSequence', 'Registry', 'LaunchCondition', 'CustomAction', 'Binary')][string]$Table)
+    $columns = @(switch ($Table) {
         'Property' { @('Property', 'Value') }
         'Upgrade' { @('UpgradeCode', 'VersionMin', 'VersionMax', 'Language', 'Attributes', 'Remove', 'ActionProperty') }
         'InstallExecuteSequence' { @('Action', 'Condition', 'Sequence') }
         'Registry' { @('Registry', 'Root', 'Key', 'Name', 'Value', 'Component_') }
         'LaunchCondition' { @('Condition', 'Description') }
-    }
+        'CustomAction' { @('Action', 'Type', 'Source', 'Target') }
+        'Binary' { @('Name') }
+    })
     $installer = $database = $view = $record = $null
     try {
         $installer = New-Object -ComObject WindowsInstaller.Installer

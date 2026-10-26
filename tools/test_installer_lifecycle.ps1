@@ -65,6 +65,7 @@ function New-LifecyclePackage {
     if ($LASTEXITCODE -ne 0) { throw "Fixture authoring failed; see $root/$Name-author.log" }
     $path = Join-Path $build "fixture-$Name.msi"
     $metadata = Assert-MsiUpgradeContract -Path $path -ExpectedScope $Scope
+    if ($Failure) { Assert-MsiRollbackFixture -Path $path }
     if ($metadata.ProductVersion -ne $Version -or $metadata.ProductCode -ine "{$productCode}") {
         throw 'Compiled fixture version/ProductCode differs from its authoring inputs.'
     }
@@ -72,12 +73,40 @@ function New-LifecyclePackage {
         payload = (Join-Path $build 'FlitzZip.exe') }
 }
 
+# Purpose: Require the actual linked rollback failure action before any disposable-machine installation.
+# Inputs: One compiled failure fixture. Outputs: Verifies its binary, checked deferred action and transaction ordering.
+function Assert-MsiRollbackFixture {
+    param([string]$Path)
+    $action = @(Get-MsiTable -Path $Path -Table CustomAction | Where-Object Action -ceq FixtureRejectUpgrade)
+    if ($action.Count -ne 1 -or [int]$action[0].Type -ne 3073 -or
+        $action[0].Source -cne 'FixtureFailureDll' -or $action[0].Target -cne 'RejectFixtureUpgrade') {
+        throw 'Rollback fixture is missing its checked, non-impersonating deferred failure action.'
+    }
+    $binary = @(Get-MsiTable -Path $Path -Table Binary | Where-Object Name -ceq FixtureFailureDll)
+    $sequence = @{}
+    foreach ($row in @(Get-MsiTable -Path $Path -Table InstallExecuteSequence)) { $sequence[$row.Action] = $row }
+    if ($binary.Count -ne 1 -or -not $sequence.ContainsKey('FixtureRejectUpgrade') -or
+        -not $sequence.ContainsKey('InstallFiles') -or -not $sequence.ContainsKey('InstallFinalize') -or
+        $sequence.FixtureRejectUpgrade.Condition -cne 'NOT Installed' -or
+        [int]$sequence.FixtureRejectUpgrade.Sequence -le [int]$sequence.InstallFiles.Sequence -or
+        [int]$sequence.FixtureRejectUpgrade.Sequence -ge [int]$sequence.InstallFinalize.Sequence) {
+        throw 'Rollback fixture failure must execute after files are installed and before transaction commit.'
+    }
+}
+
 # Purpose: Prove compiled policy checks reject real database drift, not just malformed authoring text.
-# Inputs: One known-good MSI; only new copies inside this invocation's owned root are edited.
-# Outputs: Every independent scope/range/rollback/shortcut mutation is rejected for its intended invariant.
+# Inputs: One known-good MSI and its upgrade or rollback-control role; edits stay in this invocation's owned root.
+# Outputs: Every independent compiled mutation is rejected for its intended invariant.
 function Test-CompiledMsiMutation {
-    param([string]$Source)
-    $mutations = @(
+    param([string]$Source, [switch]$RollbackControl)
+    $mutations = if ($RollbackControl) { @(
+        @{ Sql = @("DELETE FROM ``CustomAction`` WHERE ``Action``='FixtureRejectUpgrade'"); Reason = 'deferred failure action' },
+        @{ Sql = @("UPDATE ``CustomAction`` SET ``Type``=3137 WHERE ``Action``='FixtureRejectUpgrade'"); Reason = 'deferred failure action' },
+        @{ Sql = @("DELETE FROM ``Binary`` WHERE ``Name``='FixtureFailureDll'"); Reason = 'before transaction commit' },
+        @{ Sql = @("DELETE FROM ``InstallExecuteSequence`` WHERE ``Action``='FixtureRejectUpgrade'"); Reason = 'before transaction commit' },
+        @{ Sql = @("UPDATE ``InstallExecuteSequence`` SET ``Condition``='Installed' WHERE ``Action``='FixtureRejectUpgrade'"); Reason = 'before transaction commit' },
+        @{ Sql = @("UPDATE ``InstallExecuteSequence`` SET ``Sequence``=1 WHERE ``Action``='FixtureRejectUpgrade'"); Reason = 'before transaction commit' }
+    ) } else { @(
         @{ Sql = @("UPDATE ``Property`` SET ``Value``='2' WHERE ``Property``='ALLUSERS'"); Reason = 'lineage or published' },
         @{ Sql = @("DELETE FROM ``Upgrade`` WHERE ``ActionProperty``='WIX_UPGRADE_DETECTED'",
             "INSERT INTO ``Upgrade`` (``UpgradeCode``,``VersionMin``,``VersionMax``,``Language``,``Attributes``,``ActionProperty``) VALUES ('{8E0D80F6-859D-4FE9-B082-F0D8048A8B57}','0.0.1','0.1.0','1033',513,'WIX_UPGRADE_DETECTED')"); Reason = 'upgrade ranges' },
@@ -87,10 +116,10 @@ function Test-CompiledMsiMutation {
         @{ Sql = @("DELETE FROM ``InstallExecuteSequence`` WHERE ``Action``='MigrateFeatureStates'"); Reason = 'migrate features' },
         @{ Sql = @("DELETE FROM ``LaunchCondition``"); Reason = 'launch condition' },
         @{ Sql = @("UPDATE ``Registry`` SET ``Root``=1 WHERE ``Name``='desktop_shortcut'"); Reason = 'HKMU' }
-    )
+    ) }
     for ($index = 0; $index -lt $mutations.Count; ++$index) {
         # Reflection requires a native BSTR, not the extended string returned by pipeline commands.
-        [string]$path = Join-Path $root "mutation-$index.msi"
+        [string]$path = Join-Path $root "mutation-$RollbackControl-$index.msi"
         Copy-Item -LiteralPath $Source -Destination $path
         $installer = $database = $view = $null
         try {
@@ -111,7 +140,10 @@ function Test-CompiledMsiMutation {
             }
         }
         $rejected = $false
-        try { $null = Assert-MsiUpgradeContract -Path $path }
+        try {
+            if ($RollbackControl) { Assert-MsiRollbackFixture -Path $path }
+            else { $null = Assert-MsiUpgradeContract -Path $path }
+        }
         catch { $rejected = $_.Exception.Message.Contains($mutations[$index].Reason) }
         if (-not $rejected) { throw "Compiled MSI mutation $index did not fail its intended contract." }
     }
@@ -310,6 +342,7 @@ try {
         (New-LifecyclePackage -Version 31.4.129 -Name failed -Failure)
     )
     Test-CompiledMsiMutation -Source $packages[0].path
+    Test-CompiledMsiMutation -Source $packages[4].path -RollbackControl
     $perUser = New-LifecyclePackage -Version 0.1.0 -Name internal-per-user -Scope perUser
     $rejectedScope = $false
     try { $null = Assert-MsiUpgradeContract -Path $perUser.path -ExpectedScope perMachine }
