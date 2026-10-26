@@ -712,7 +712,8 @@ class HipRegistrationTests(unittest.TestCase):
 
     # Purpose: Frame a minimal ELF64 section table independently of LLVM and the production fixture mutator.
     # Inputs: None. Outputs: Mutable bytes with null, text and string-table sections; no executable device code.
-    def section_table_fixture(self):
+    @staticmethod
+    def section_table_fixture():
         names = b"\0.text\0.shstrtab\0"
         data = bytearray(256) + names
         data[:6] = b"\x7fELF\x02\x01"

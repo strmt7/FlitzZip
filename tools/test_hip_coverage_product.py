@@ -58,7 +58,8 @@ class ProductCoverageTests(unittest.TestCase):
         return path
 
     # Purpose: Replace external compilation only. Inputs: Selected source/output. Outputs: Labelled bytes.
-    def unit_fixture(self, tools, source, output):
+    @staticmethod
+    def unit_fixture(tools, source, output):
         output.mkdir()
         obj = output / "completed.obj"
         obj.write_bytes(b"nonexecutable object fixture: " + source.name.encode())

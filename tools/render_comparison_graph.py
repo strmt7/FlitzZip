@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import re
 import statistics
@@ -446,6 +445,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"comparison graph failed: {error}", file=sys.stderr)
         sys.exit(1)

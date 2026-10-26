@@ -139,6 +139,38 @@ class ComparisonRunnerTests(unittest.TestCase):
             comparison.host_snapshot()
         run.assert_not_called()
 
+    def test_host_sampler_rejects_unsupported_volume_paths_before_launch(self) -> None:
+        """Purpose: Reject unavailable volume identities.
+        Inputs: UNC/relative/POSIX roots. Outputs: No process launch.
+        """
+        for root in (PureWindowsPath("//server/share/project"), PureWindowsPath("D:relative"), Path("/project")):
+            with (
+                self.subTest(root=root),
+                patch.object(comparison, "ROOT", root),
+                patch.object(comparison, "executable_path", return_value=sys.executable),
+                patch.object(comparison.subprocess, "run") as run,
+                self.assertRaisesRegex(RuntimeError, "requires a local Windows drive"),
+            ):
+                comparison.host_snapshot()
+            run.assert_not_called()
+
+    def test_host_sampler_preserves_local_drive_and_extended_path_selection(self) -> None:
+        """Purpose: Preserve portable local volumes.
+        Inputs: Two drive spellings. Outputs: Exact partition selection.
+        """
+        for root, drive in ((PureWindowsPath("D:/project"), "D"), (PureWindowsPath(r"\\?\Z:\project"), "Z")):
+            with (
+                self.subTest(root=root),
+                patch.object(comparison, "ROOT", root),
+                patch.object(comparison, "executable_path", return_value=sys.executable),
+                patch.object(
+                    comparison.subprocess, "run", return_value=SimpleNamespace(returncode=3, stderr="fixture")
+                ) as run,
+                self.assertRaisesRegex(RuntimeError, "sampling failed: fixture"),
+            ):
+                comparison.host_snapshot()
+            self.assertIn(f"Get-Partition -DriveLetter '{drive}'", run.call_args.args[0][-1])
+
     # Purpose: Preserve complete Git filename records and fail closed on malformed rename/copy transport.
     # Inputs: NUL-delimited paths with whitespace/Unicode and truncated or invalid status records.
     # Outputs: Exact path identities survive decoding; malformed or non-UTF-8 input never appears clean.

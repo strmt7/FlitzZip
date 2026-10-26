@@ -49,7 +49,8 @@ class FuzzBuildTests(unittest.TestCase):
     # Purpose: Execute the unchanged production script with a noncompiling compiler fixture.
     # Inputs: Temporary output root, sanitizer, optional failing source and whitespace-separated extra flags.
     # Outputs: Process result and complete compiler argv, without compiling or executing product code.
-    def run_plan(self, directory: Path, sanitizer: str, fail_source: str = "", extra_flags: str = "") -> tuple:
+    @staticmethod
+    def run_plan(directory: Path, sanitizer: str, fail_source: str = "", extra_flags: str = "") -> tuple:
         compiler = directory / "compiler"
         compiler.write_text(COMPILER, encoding="utf-8")
         compiler.chmod(0o700)

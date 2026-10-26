@@ -442,7 +442,7 @@ class PublicFixtureReviewTests(unittest.TestCase):
             with self.subTest(nested='"shadow"' in payload), self.assertRaisesRegex(ValueError, "duplicate fields"):
                 PublicFixtureReview(self.root, self.review["scanner_image"])
 
-    """Use the actual upstream archive and actual Git blobs, without publishing its match."""
+    # Use the actual upstream archive and Git blobs without publishing their matched fixture.
 
     # Purpose: Prepare immutable Git evidence once. Inputs: Canonical review/archive. Outputs: Owned local Git fixture.
     @classmethod

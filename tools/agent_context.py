@@ -190,9 +190,13 @@ def read_window(root: Path, args: argparse.Namespace) -> dict:
         emitted.append(value)
         used += len(value)
     complete = len(emitted) == len(selected)
-    result = {**record, "status": "complete" if complete else "partial", "content": "".join(emitted)}
-    result["unread"] = None if complete else {"start": start + len(emitted), "end": end}
-    result["content_chars"] = used
+    result = {
+        **record,
+        "status": "complete" if complete else "partial",
+        "content": "".join(emitted),
+        "unread": None if complete else {"start": start + len(emitted), "end": end},
+        "content_chars": used,
+    }
     if cache_name and complete:
         reads = state.setdefault("reads", [])
         if record not in reads:
@@ -428,7 +432,7 @@ def recall(root: Path, key: str) -> dict:
             _, current = read_source(root, source["path"])
             if current != source["sha256"]:
                 reasons.append({"path": source["path"], "reason": "source_changed"})
-        except (OSError, ValueError, UnicodeError):
+        except (OSError, ValueError):
             reasons.append({"path": source["path"], "reason": "source_unavailable"})
     expiry = datetime.fromisoformat(note["expires_at"])
     if expiry.tzinfo is None:

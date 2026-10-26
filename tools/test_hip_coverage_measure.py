@@ -164,7 +164,8 @@ class MeasurementTests(unittest.TestCase):
 
     # Purpose: Replace process transport only while retaining actual profile counting and native result parsing.
     # Inputs: Controlled result/count. Outputs: Labelled raw-profile fixtures and metadata.
-    def execution_fixture(self, command, timeout, log, *, count=5, result=None):
+    @staticmethod
+    def execution_fixture(command, timeout, log, *, count=5, result=None):
         for index in range(count):
             (log.parent / f"gfx1201.{index}.fixture.profraw").write_bytes(b"nonexecutable native profile fixture")
         return result or {"stdout": "1 tests, 0 failed\n", "stderr": "", "output_truncated": False}
@@ -266,7 +267,8 @@ class ImageReportTests(unittest.TestCase):
         return {"filename": str(self.root / name), "summary": {"lines": {"count": count, "covered": covered}}}
 
     # Purpose: Wrap native-shaped files. Inputs: File rows. Outputs: Complete combined-export fixture.
-    def report(self, files):
+    @staticmethod
+    def report(files):
         return {"type": "llvm.coverage.json.export", "version": "3.1.0", "data": [{"files": files}]}
 
     # Purpose: Keep cached SDK headers and lookalike paths out of product totals while retaining raw native data.

@@ -131,7 +131,8 @@ class SvgDocumentTests(unittest.TestCase):
     # Purpose: Supply the actual six renderer attributes in their stable serialization order.
     # Inputs: None.
     # Outputs: Returns a new valid viewport/accessibility mapping.
-    def attributes(self) -> dict[str, str]:
+    @staticmethod
+    def attributes() -> dict[str, str]:
         return {
             "width": "1200",
             "height": "300",

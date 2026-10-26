@@ -367,10 +367,6 @@ class RocmBootstrapTests(unittest.TestCase):
     # Inputs: One owned header in a real TAR.GZ, then deletion of that admitted archive before extraction.
     # Outputs: Exact extraction succeeds; the missing-source failure cannot be reported as successful extraction.
     def test_actual_contained_extraction_and_missing_source_failure(self):
-        import os
-
-        from tools import bootstrap_rocm_sdk as bootstrap
-
         if os.name != "nt":
             self.skipTest("Native Windows provisioning consumer")
         with tempfile.TemporaryDirectory() as temporary:
@@ -452,8 +448,6 @@ class RocmBootstrapTests(unittest.TestCase):
     # Inputs: Four inert bytes, an offline response and a clock that advances only when EOF is observed.
     # Outputs: A late response never publishes an archive or leaves multi-gigabyte partial debris.
     def test_download_deadline_includes_terminal_read(self):
-        from tools import bootstrap_rocm_sdk as bootstrap
-
         with tempfile.TemporaryDirectory() as temporary:
             destination = Path(temporary) / "sdk.tar.gz"
             payload = b"data"

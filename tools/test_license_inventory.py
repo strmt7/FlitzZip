@@ -78,7 +78,8 @@ class LicenseInventoryTests(unittest.TestCase):
         self.assertFalse(record["legal_clearance_claimed"])
         self.assertFalse(record["release_source_and_rebuild_verified"])
 
-    def copy_sources(self, root: Path):
+    @staticmethod
+    def copy_sources(root: Path):
         """Purpose: Build a minimal fixture from real manifests. Inputs: Temp root. Outputs: Copied notice sources."""
         for manifest in (inventory.NATIVE, inventory.DEVELOPMENT):
             path = root / manifest

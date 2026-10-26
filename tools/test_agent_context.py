@@ -27,7 +27,8 @@ class AgentContextTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def read_args(self, **changes):
+    @staticmethod
+    def read_args(**changes):
         """Purpose: Select test extent. Inputs: option overrides. Outputs: ordinary CLI-equivalent namespace."""
         values = dict(path="guide.md", section="Selected", start=1, end=None, max_chars=8000, session=None, force=False)
         return argparse.Namespace(**(values | changes))

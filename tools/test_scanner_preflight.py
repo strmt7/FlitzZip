@@ -29,7 +29,8 @@ class ScannerPreflightTests(unittest.TestCase):
     # Purpose: Exercise exact current review admission with independent immutable source/configuration bytes.
     # Inputs: Scanner name and a real schema row with synthetic context and SARIF identities.
     # Outputs: One isolated fixture tuple.
-    def reviewed_fixture(self, tool="devskim"):
+    @staticmethod
+    def reviewed_fixture(tool="devskim"):
         path = Path(__file__).resolve().parents[1] / ".github/scanner-false-positive-reviews.csv"
         with path.open(encoding="utf-8", newline="") as source:
             row = next(row for row in csv.DictReader(source) if row["tool"] == tool)

@@ -266,9 +266,13 @@ def command_templates(tool: str, fmt: str, files: tuple[str, ...], level: int = 
 
 
 # Purpose: Sample host and competing load outside every timed product command.
-# Inputs: None; Windows CIM and GPU performance counters are queried read-only.
-# Outputs: Returns hardware identity and a coarse CPU/GPU/RAM/disk activity snapshot.
+# Inputs: None; read-only Windows CIM/GPU counters and the checkout's local volume.
+# Outputs: Hardware/activity snapshot; unavailable executables or unsupported volume paths fail before launch.
 def host_snapshot() -> dict:
+    powershell = executable_path("powershell.exe")
+    drive = ROOT.drive.removeprefix("\\\\?\\")
+    if not ROOT.is_absolute() or re.fullmatch(r"[A-Za-z]:", drive) is None:
+        raise RuntimeError("host resource sampling requires a local Windows drive")
     script = (
         "$cpu=Get-CimInstance Win32_Processor | Select-Object -First 1; "
         "$gpu=Get-CimInstance Win32_VideoController | Select-Object -First 1; "
@@ -280,7 +284,7 @@ def host_snapshot() -> dict:
         "$paging=Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory | Select-Object -First 1; "
         "$disk=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk | "
         "Where-Object Name -EQ '_Total' | Select-Object -First 1; "
-        f"$volumeDisk=Get-Partition -DriveLetter '{ROOT.drive[0]}' | Get-Disk | Select-Object -First 1; "
+        f"$volumeDisk=Get-Partition -DriveLetter '{drive[0]}' | Get-Disk | Select-Object -First 1; "
         "$engines=Get-Counter '\\GPU Engine(*)\\Utilization Percentage' -MaxSamples 1 "
         "-ErrorAction SilentlyContinue; "
         "$gpuMax=if($engines){($engines.CounterSamples | Measure-Object CookedValue -Maximum).Maximum}else{$null}; "
@@ -300,7 +304,7 @@ def host_snapshot() -> dict:
         " | ConvertTo-Json -Compress"
     )
     completed = subprocess.run(
-        [executable_path("powershell.exe"), "-NoProfile", "-Command", script],
+        [powershell, "-NoProfile", "-Command", script],
         capture_output=True,
         text=True,
         errors="replace",

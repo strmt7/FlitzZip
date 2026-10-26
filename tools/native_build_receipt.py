@@ -643,7 +643,7 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (ValueError, OSError, KeyError, TimeoutError) as error:
+    except (ValueError, OSError, KeyError) as error:
         cause = type(error).__name__ if isinstance(error, OSError) else str(error)
         print(f"native_build_receipt failed: {cause}", file=sys.stderr)
         raise SystemExit(1) from None

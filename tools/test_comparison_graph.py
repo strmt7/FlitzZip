@@ -311,7 +311,10 @@ class ComparisonGraphTests(unittest.TestCase):
     def test_reviewed_corpus_matches_sha256_pins(self) -> None:
         path = Path(__file__).resolve().parents[1] / "docs/benchmarks/data/fixtures/comparison-v1.json"
         record = json.loads(path.read_text(encoding="utf-8"))
-        graph.summarize(record)
+        commit, rows = graph.summarize(record)
+        self.assertEqual(commit, record["source_commit"])
+        self.assertEqual([row["name"] for row in rows], ["mixed-files", "mozilla", "nci"])
+        self.assertEqual([row["input_bytes"] for row in rows], [51_770_558, 51_220_480, 33_553_445])
 
     # Purpose: Validate Windows and POSIX renderers against one recorded command contract.
     # Inputs: The Zstd output placeholder expressed with either path separator.

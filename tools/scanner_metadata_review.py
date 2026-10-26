@@ -376,12 +376,12 @@ def public_value_matches(row: dict, payload: bytes, region: dict) -> bool:
             source = parse_toolchain(payload)
             value = source["revision"] if row["value_kind"] == "git_commit" else source["zlib"]["sha256"]
             return value == row["public_value"]
-        except (ValueError, UnicodeDecodeError):
+        except ValueError:
             return False
     if row["value_kind"] == "git_commit":
         try:
             source = json.loads(payload)
-        except (ValueError, UnicodeDecodeError):
+        except ValueError:
             return False
         value = row["public_value"]
         if row["path"] in CORPUS_COMMIT_PATHS:

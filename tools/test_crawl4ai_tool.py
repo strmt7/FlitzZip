@@ -664,11 +664,11 @@ class CrawlerContracts(unittest.TestCase):
 
             @staticmethod
             def join(timeout=None):
-                pass
+                """Purpose: Model a completed drain. Inputs: Ignored timeout. Outputs: No additional work."""
 
         class LateThread(ImmediateThread):
             def start(self):
-                pass
+                """Purpose: Delay the drain until join. Inputs: None. Outputs: Target remains pending."""
 
             def join(self, timeout=None):
                 self.target(*self.args)
