@@ -24,6 +24,7 @@ on:
       - .github/workflows/component-contracts.yml
       - .github/workflows/zstd-sanitizers.yml
       - .github/workflows/windows-ci.yml
+      - .github/codecov.yml
       - .github/workflows/rocm-qualification.yml
       - .github/workflows/release.yml
       - .github/workflows/security-code-scanning.yml

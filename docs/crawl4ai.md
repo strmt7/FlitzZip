@@ -2,8 +2,8 @@
 
 FlitzZip uses [Crawl4AI](https://github.com/unclecode/crawl4ai) as a local
 development tool for reading and crawling web pages. It is separate from the
-archive application and requires no cloud account, API key, paid service or
-public server. The [stable release reviewed on 25 October 2026](https://github.com/unclecode/crawl4ai/releases/tag/v0.9.5)
+archive application and requires no cloud account, API key, external extraction
+service or public server. The [reviewed stable release](https://github.com/unclecode/crawl4ai/releases/tag/v0.9.5)
 is 0.9.5. Its source URL, complete byte length and SHA-256 are pinned in
 [the source recipe](../third_party/upstream/crawl4ai/0.9.5/build.json) and its
 digest sidecar. The repaired wheel and dependency wheels have separate SHA-256
@@ -196,6 +196,24 @@ The receipt binds every capture by SHA-256. Partial captures survive an interrup
 run; use a new destination when retrying. Captures are bounded and remain local.
 The provider's `model_dump(mode="json", include=...)` includes its private Markdown field;
 its inherited `model_dump_json()` does not in the pinned version.
+
+## Dependency Maintenance
+
+[The input file](../tools/requirements/crawl4ai.in) declares the admitted crawler,
+official NLTK distribution and advisory floors. Its adjacent `.txt` file locks
+the complete dependency graph. Refresh with the reviewed uv version described
+in [tooling lock maintenance](../.github/requirements/README.md#refresh), passing
+`--find-links` for the exact wheel directory returned by
+`tools.crawl4ai_source_build.ensure_wheel`. Keep that directory outside the
+checkout and do not emit its host path into the lock.
+
+Resolve within normal parent requirements, retain hashes and binary-only
+installation, and check the resulting lock for CPython 3.13 and 3.14 on Windows,
+Linux and macOS. Platform resolution verifies dependency compatibility, rather
+than execution on that platform. Install the changed graph, run its dependency,
+download and browser consumers, and repeat the website qualification before
+claiming runtime acceptance. Never patch a working installed environment in place
+or relax upstream requirements simply to select a newer version.
 
 ## Access Failures And Alternatives
 

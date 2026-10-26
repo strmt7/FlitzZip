@@ -56,6 +56,9 @@ explain which current techniques fit the existing native/Python/HIP toolchain.
 6. Apply the [learning loop](../../../docs/engineering-learning-loop.md) and run
    the planner-selected direct consumers. Collect coverage after a coherent batch;
    final qualification still covers the accumulated changes.
+   Use [coverage acceptance](../../../docs/code-coverage.md#release-acceptance)
+   to prioritize remaining behavior gaps and decide when the candidate's
+   testing obligations are satisfied.
 
 ## Choose the next step
 

@@ -223,6 +223,23 @@ and [oracle selection](code-coverage.md#oracle-selection) govern failure analysi
 and meaningful tests. External guidance informs these rules; it does not prove
 product conformance, eliminate required verification or override maintainer intent.
 
+Apply [coverage acceptance](code-coverage.md#release-acceptance) and
+[release criteria](release.md#acceptance-criteria) before declaring a candidate
+ready. Require effective tests for critical and changed behavior, source-bound
+qualification and explicit residual-risk review. Universal 100% line coverage
+is not a release gate; raw gaps and required correctness checks remain visible.
+
+Keep [README](../README.md) and the [documentation index](README.md) oriented
+toward end users: purpose, supported capabilities, installation, common tasks
+and troubleshooting. Link development setup and maintainer procedures through
+the [developer guide](development/README.md). Use concise, task-oriented titles
+and normal public prose. A procedure should state its prerequisites, action,
+observable result and relevant failure path. Keep one canonical home for each
+command contract or rule; entry points link to that home rather than copying it.
+Remove obsolete or conflicting guidance after checking its consumers and
+preserving a recoverable copy. Research and benchmark claims retain their actual
+scope and provenance; skills contain reusable procedures rather than run counts.
+
 - Keep changes small, reviewable, and behavior-preserving unless the task
   explicitly asks for a behavior change.
 - Keep code, tools and verification independent of the development machine and

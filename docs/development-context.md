@@ -5,6 +5,10 @@ This is a navigation and tooling guide, not another operating policy. Start with
 [operating guide](agent-operating-guide.md) remains normative. Keep public
 documentation, source contracts and commands in normal, precise language.
 
+The [user documentation](README.md) and [developer guide](development/README.md)
+provide audience-specific entry points. This page is the agent/tool navigation
+contract, not the application's user manual.
+
 ## Small Index, Exact Sources
 
 | Question | Open next |

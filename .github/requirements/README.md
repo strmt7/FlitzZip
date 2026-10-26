@@ -111,3 +111,9 @@ parent requirements and pass its affected runtime consumers. Group related
 dependency changes when they need coordinated validation. A local resolver or
 unit-test pass is not evidence of GitHub alert closure; verify the pushed
 revision's workflows and dependency inventory before claiming remediation.
+
+Prefer the newest compatible, qualified release. A newer tool version is not an
+acceptable update if it restores a vulnerable dependency or discards an admitted
+packaging repair. Review the upstream requirement graph first, then qualify a
+repair rebase separately when needed. Keep the existing reviewed distribution
+until that replacement passes; an upstream version number alone is insufficient.

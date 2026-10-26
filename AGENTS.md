@@ -104,6 +104,10 @@ source/tool/output identity checks and intermediate/final acceptance.
   not justify unrelated native work. Use `-Full` only for established broad
   impact; never replace required tests with narrower passing checks. Deferrals
   remain deferred, never passed.
+- Apply the [coverage acceptance policy](docs/code-coverage.md#release-acceptance)
+  and [release criteria](docs/release.md#acceptance-criteria). Prioritize effective
+  tests for critical and changed behavior, review residual risk and preserve raw
+  coverage gaps. Do not turn a universal line percentage into a release gate.
 - Follow the guide's Engineering Quality Baseline, Coding Standards and Required
   Function Documentation, including C++20/RAII, bounded ownership and concise
   Purpose/Inputs/Outputs contracts for every changed function, including vendor

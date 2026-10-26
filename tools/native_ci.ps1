@@ -3,7 +3,7 @@
 function Test-FlitzZipNativeCoverageInput {
     param([string[]]$Paths)
     return Test-FlitzZipAnyPath -Path $Paths -Pattern @(
-        '^\.github/workflows/windows-ci\.yml$', '^mcp/flitzzip_mcp\.py$',
+        '^\.github/workflows/windows-ci\.yml$', '^\.github/codecov\.yml$', '^mcp/flitzzip_mcp\.py$',
         '^tools/native_coverage(_report)?\.py$', '^tools/native-coverage-toolchain\.json$',
         '^tools/test_memory_benchmark_(plan|corpus)\.ps1$',
         '^tools/(bench|benchmark_statistics|benchmark_corpus|format_matrix_smoke)\.ps1$')

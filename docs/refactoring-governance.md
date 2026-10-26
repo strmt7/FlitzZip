@@ -14,10 +14,12 @@ and verified without changing product behavior accidentally.
 | [SLSA build track](https://slsa.dev/spec/v1.2/build-track-basics) and [artifact verification](https://docs.github.com/en/actions/concepts/security/artifact-attestations) | Verify artifact identity and provenance; attestation generation alone does not prove trust or product correctness |
 | [Reproducible-build definition](https://reproducible-builds.org/docs/definition/) | Claim reproducibility only after comparing the specified outputs under the recorded source, environment and recipe |
 | [SPDX license information](https://spdx.dev/learn/handling-license-info/) and [OpenChain compliance](https://openchainproject.org/license-compliance) | Preserve notices, exact license choices and distribution obligations when moving or replacing components |
+| [Google README guidance](https://google.github.io/styleguide/docguide/READMEs.html), [documentation best practices](https://google.github.io/styleguide/docguide/best_practices.html) and [Diataxis](https://diataxis.fr/) | Keep the product entry point short, maintain task-focused guides and reference material, and give each fact one canonical home |
+| [Zstandard contributing](https://github.com/facebook/zstd/blob/dev/CONTRIBUTING.md), [libarchive contributing](https://github.com/libarchive/libarchive/blob/master/CONTRIBUTING.md) and [LLVM policy](https://llvm.org/docs/DeveloperPolicy.html) | Keep changes coherent, retain small reproducers, require behavior regressions and distinguish development checks from release qualification |
+| [PowerToys documentation](https://github.com/microsoft/PowerToys) and [CI](https://github.com/microsoft/PowerToys/blob/main/.pipelines/v2/ci.yml) | Separate user and developer entry points; select affected UI checks while preserving release packaging obligations. Adopt relevant design principles without importing another project's contribution or service policy |
 
 Consult the [NIST publication status](https://csrc.nist.gov/projects/ssdf/publications)
-before treating a revision as final. SSDF v1.1 is final; the reviewed v1.2 is a
-draft. These references inform engineering decisions, not a claim of certification
+before treating a revision as final. These references inform engineering decisions, not a claim of certification
 or complete conformance. Recheck changed external contracts when adopting them;
 do not recrawl unchanged background documents during each implementation batch.
 

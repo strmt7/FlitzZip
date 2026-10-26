@@ -17,400 +17,113 @@
 
 # FlitzZip
 
-FlitzZip is a Windows archive app with a native `.flzip` format accelerated by
-AMD HIP. It also creates and extracts common archive formats, offers archive
-verification and guarded extraction, and provides both a graphical app and a CLI.
+A native Windows archive manager with AMD GPU acceleration, a graphical
+interface and a command-line tool.
 
-**Beta:** FlitzZip is prerelease software. Keep original files and verify
-archives before relying on them for long-term storage.
+FlitzZip uses its versioned `.flzip` format for GPU compression and supports
+common archive formats through in-process CPU adapters. Archive creation,
+extraction and verification share explicit format capabilities and guarded
+file publication.
 
-There are currently no published release packages. The previous release was
-withdrawn during the FlitzZip rename; a replacement requires separate maintainer
-approval. Qualified releases will provide a portable ZIP and an MSI installer.
-Both packages contain the same HIP-enabled binaries;
-the portable edition is not a reduced CPU-only build. Check the requirements
-below before installing.
+**Prerelease software.** Keep original files and verify archives before relying
+on them for long-term storage. See [release readiness](docs/beta-readiness.md)
+for qualification scope and known limitations.
 
-| Task | Formats |
-| --- | --- |
-| Native GPU-accelerated archiving | `.flzip` |
-| Common archive creation and extraction | ZIP, TAR and supported compressed TAR variants, CPIO, AR, Gzip, Bzip2, Zstandard, and other documented formats |
-| Extraction of additional formats | Supported ZIPX methods, 7z, CAB, ISO, RPM, WIM, and other documented subsets |
+## What it does
 
-The [format support matrix](docs/archive-format-support.md) gives exact
-create/extract capabilities and method limits. `.flzip` is a distinct versioned
-format, not a renamed ZIP file; its [format specification](docs/native-flzip-format.md)
-documents compatibility and verification. Unsupported methods fail explicitly.
+- Create, extract and verify native FLZIP and supported ZIP archives.
+- Work with TAR variants, CPIO, AR, Gzip, Bzip2 and Zstandard; extract additional
+  formats including supported 7z, CAB, ISO, RPM and WIM subsets.
+- Run native compression on a compatible AMD HIP GPU with explicit backend
+  selection, progress, cancellation and operation history.
+- Reject malformed metadata, unsafe paths and accidental overwrites, with
+  optional SHA-256 hashing and Microsoft Defender scanning.
 
-The rename preserves existing native archive bytes and supported format versions.
-Existing `.suzip` files remain readable through structural detection; new archives
-use `.flzip`. Saved preferences migrate once into the FlitzZip application folder.
+The [format support matrix](docs/archive-format-support.md) lists exact
+create, extract and verification capabilities. Unsupported methods fail with
+an error. GPU acceleration applies to native FLZIP operations.
 
-Native FLZIP also has a separate experimental [Neutron star mode](docs/neutron-star-mode-research.md)
-below the nine numeric efforts. It requires a compatible AMD HIP GPU and the
-required-GPU setting; the CLI selects it with `--neutron-star`. Its
-[public-corpus results](docs/neutron-public-corpus-benchmark.md) describe measured
-improvements and their limits. [Beta readiness](docs/beta-readiness.md) records
-current acceptance boundaries.
+## Neutron star mode
+
+Neutron is a separate experimental FLZIP mode that prioritizes archive size.
+It searches additional GPU candidates and selects the smallest complete
+representation found, including its decoding metadata.
+
+The mode appears below efforts 1–9 when compatible HIP hardware is available
+and the required-GPU setting is enabled. It always requires real GPU execution.
+The numeric efforts keep their own behavior.
+
+See the [mode description](docs/neutron-star-mode-research.md) and
+[public-corpus results](docs/neutron-public-corpus-benchmark.md). Results depend
+on the workload; current evidence does not establish universal size superiority
+or a comparative GPU speedup.
+
+## Get FlitzZip
+
+Published packages are available from [GitHub Releases](https://github.com/strmt7/FlitzZip/releases).
+The release process produces a portable ZIP and an MSI containing the same
+HIP-enabled binaries, SHA-256 checksums and corresponding source.
+
+- **Portable:** extract the ZIP and run `FlitzZip.exe`.
+- **Installer:** use the MSI for a standard Windows installation under
+  `Program Files`; administrator approval may be required.
+
+Candidate validation and permission to publish are separate steps. The current
+release procedure and acceptance criteria are in the [release guide](docs/release.md).
 
 ## Requirements
 
-Runtime systems need:
+FlitzZip targets **Windows 11 x64**. GPU operations additionally require a
+compatible AMD GPU and a driver providing the HIP runtime expected by the
+package. Check the [supported build targets](docs/release.md#gpu-targets) and
+[runtime prerequisites](docs/portability.md#runtime-prerequisites).
 
-- Windows 11 x64.
-- A [supported](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html)
-  AMD GPU. Choose Windows in AMD's compatibility selector and check the
-  [GPU targets included in the FlitzZip build](docs/release.md#gpu-targets).
-- An AMD GPU driver that provides the HIP runtime required by the build.
+Missing GPU prerequisites leave capability reporting and CPU functions usable.
+Neutron remains unavailable. Runtime and kernel payloads undergo explicit
+admission checks before GPU support is advertised.
 
-AMD documents the HIP runtime as part of the AMD GPU driver, not something an
-application should redistribute. FlitzZip therefore delay-loads the HIP runtime,
-reports missing prerequisites clearly, and records the expected runtime DLL in
-`flitzzip-runtime-dependencies.json` inside each HIP-enabled package.
-The loader checks Windows System32 first, then numeric-version installations
-under the Windows Program Files `AMD\ROCm\<version>\bin` directory. Candidates
-must match the required DLL name and pass the file-chain, Windows signature,
-restricted-load and loaded-path checks. The app does not search the current
-directory or arbitrary `PATH` entries for the HIP runtime.
-Device-kernel registration also loads explicitly after trusted runtime/device
-admission. Missing AMD components leave capability reporting and CPU functions
-usable; Neutron remains unavailable. The packaged kernel DLL must match the
-build's embedded SHA-256 identity before any of its code is loaded.
+## Quick start
 
-Development systems additionally need:
-
-- Visual Studio C++ build tools.
-- CPython 3.13 or 3.14 for the shared development and provisioning tools.
-- CMake 4.4.4, provisioned and checksum-verified by the build tools.
-- The complete ROCm Core SDK 10.1.0 Windows distribution, provisioned using the
-  [shared local/hosted toolchain](docs/rocm-toolchain.md). `-HipPath` supports a
-  custom installation directory; compiler settings are process-scoped.
-
-## Build
-
-On a fresh build directory, the tools discover installed Visual Studio C++
-toolchains and prefer VS 2026, falling back to VS 2022. An existing build keeps
-its configured generator; an unavailable installation or requested generator
-change fails explicitly. Use `-Generator` to select an installed supported
-toolchain when needed. Do not change generators inside an existing CMake tree.
-The hosted CPU-only workflow defines test lanes for Windows Server 2022 with VS 2022 and Windows Server
-2025 with VS 2026. These checks do not establish AMD GPU runtime support on
-Windows Server or hardware that was not exercised. The release runtime target
-remains Windows 11 x64 with the build's supported AMD HIP configuration.
-
-References: [CMake VS 2026 generator](https://cmake.org/cmake/help/latest/generator/Visual%20Studio%2018%202026.html)
-and [GitHub runner images](https://github.com/actions/runner-images).
-
-The normal local build is HIP-enabled:
+From the extracted portable directory, run these examples in PowerShell:
 
 ```powershell
-py -3 tools/bootstrap_rocm_sdk.py
-tools/build.ps1 -Configuration Release -HipArch gfx1201
-tools/test.ps1 -Configuration Release
+.\flitzzip_cli.exe compress --format zip --output "archive.zip" "path\to\folder"
+.\flitzzip_cli.exe verify "archive.zip"
+.\flitzzip_cli.exe extract --output "restored" "archive.zip"
 ```
 
-Single-target development builds remain supported. For the multi-target
-release configuration, use `-HipArch release`; a custom subset can be passed
-as a quoted list such as `-HipArch "gfx1100,gfx1201"`. The release preset
-contains `gfx1100`, `gfx1101`, `gfx1102`, `gfx1151`, `gfx1200`, and `gfx1201`.
-The compiler emits a device image for each target into the same Windows x64
-binary. Compilation coverage is not runtime validation on every GPU; see
-[release validation](docs/release.md#gpu-targets).
-
-The build script defaults to HIP. Use `-CpuOnlyValidation` only for hosted CI or
-static-analysis jobs that cannot install the AMD HIP SDK:
+For native GPU compression:
 
 ```powershell
-tools/build.ps1 -Configuration Release -CpuOnlyValidation
-tools/test.ps1 -Configuration Release
+.\flitzzip_cli.exe compress --format flzip --require-gpu --verify-after-write --output "archive.flzip" "path\to\folder"
 ```
 
-CPU-only validation artifacts must not be published as FlitzZip product
-releases.
+Use `.\flitzzip_cli.exe --help` for command syntax. The
+[CLI guide](docs/cli.md) covers format selection, Neutron, verification,
+filename encoding and exit codes.
 
-When building HIP objects on Windows, `tools/build.ps1` leaves
-`-VcvarsVersion` empty by default. The HIP compile helper then discovers the
-Visual Studio C++ toolsets installed on the host and prefers a compatible MSVC
-toolset for HIP before falling back to Visual Studio's default environment.
-Pass `-VcvarsVersion <major.minor>` only when validating a specific toolset.
+## Documentation
 
-## Package
+Start with the [documentation index](docs/README.md).
 
-Package the current HIP build:
-
-```powershell
-tools/package.ps1 -Configuration Release
-```
-
-The package script refuses to package a CPU-only build unless
-`-AllowCpuValidationPackage` is passed explicitly for internal validation. For
-MSI packaging, install the pinned repo-local WiX tool and set
-`FLITZZIP_ACCEPT_WIX_OSMF_EULA=wix7` only after accepting the WiX v7 OSMF EULA:
-
-```powershell
-tools/install_wix.ps1
-$env:FLITZZIP_ACCEPT_WIX_OSMF_EULA = "wix7"
-tools/package.ps1 -Configuration Release -CreateMsi
-```
-
-The MSI build defaults to the release deployment scope: per-machine install
-under `C:\Program Files\FlitzZip`. Like normal Windows desktop software, that
-installer requires elevation when installed by a non-admin user.
-Windows owns the UAC consent prompt, so the MSI cannot shorten an unanswered
-admin-rights prompt from inside the package. FlitzZip-owned installer launch and
-release validation paths use bounded waits instead: MSI install and uninstall
-smoke phases time out after 300 seconds instead of waiting indefinitely.
-The installer offers `Create Desktop shortcut` as an optional MSI feature rather
-than silently creating a desktop shortcut.
-
-For local coding and non-admin installer tests only, build an explicit per-user
-MSI:
-
-```powershell
-tools/build.ps1 -Configuration Release -MsiInstallScope perUser
-tools/package.ps1 -Configuration Release -CreateMsi
-```
-
-Do not publish a per-user MSI as a product release.
-
-## CLI
-
-Examples use PowerShell. From the extracted portable package, select the
-executable once; `&` invokes the path stored in `$FlitzZip`, including paths
-containing spaces:
-
-```powershell
-$FlitzZip = (Resolve-Path ".\flitzzip_cli.exe").Path
-& $FlitzZip --help
-```
-
-For a source build, use `.\build\Release\flitzzip_cli.exe` in the assignment
-instead. Input and output paths below are examples; quote paths containing
-spaces. Commands return `0` on success, `1` on operation or option-validation
-failure and `2` when a missing or unknown command prints usage.
-
-Archive commands reject unknown options before writing output. For a filename
-beginning with `--`, put `--` after all options and before the input paths, for
-example `& $FlitzZip verify --sha256 -- "--archive.zip"`. Extraction and
-verification each accept exactly one archive, including after this separator.
-
-### Check readiness and inspect archives
-
-```powershell
-& $FlitzZip dependency-check
-& $FlitzZip gpu-info
-& $FlitzZip formats
-& $FlitzZip identify "archive.tar"
-```
-
-`dependency-check` checks runtime prerequisites; `gpu-info` reports the HIP
-backend. `formats` lists the build's create/extract capabilities, while
-`identify` detects an archive's format without extracting it.
-
-### Create and restore a native GPU archive
-
-```powershell
-& $FlitzZip compress --format flzip --require-gpu --verify-after-write --output "archive.flzip" "path\to\folder"
-& $FlitzZip verify --require-gpu --sha256 "archive.flzip"
-& $FlitzZip extract --require-gpu --output "restored" "archive.flzip"
-```
-
-`--require-gpu` makes an unavailable HIP backend or a CPU-only native block
-method fail explicitly. `--verify-after-write` adds an archive read-back pass;
-`verify` checks an existing archive. `--sha256` additionally hashes the selected
-path; a hash alone does not establish authenticity. Extraction detects the
-format automatically and refuses accidental overwrite by default.
-
-### Work with compatibility formats
-
-```powershell
-& $FlitzZip compress --format zip --compression-level 5 --output "archive.zip" "path\to\folder"
-& $FlitzZip compress --format tar.zst --compression-level 5 --output "archive.tar.zst" "path\to\folder"
-& $FlitzZip compress --format zst --compression-level 5 --output "file.txt.zst" "file.txt"
-& $FlitzZip extract --output "restored" "archive.7z"
-```
-
-Choose `--format` when creating an archive. Folder/container formats such as
-ZIP and TAR variants differ from single-file streams such as Gzip, Bzip2 and
-Zstandard. Extraction normally needs no format flag; use an explicit format
-when necessary, for example `--format macbinary`. The
-[format support matrix](docs/archive-format-support.md) documents every format,
-alias and method limit, including extraction-only formats. Compatibility
-adapters run on the CPU and do not use native FLZIP GPU tuning options.
-
-### Commands and options
-
-| Command | Purpose |
+| Task | Guide |
 | --- | --- |
-| `--help`, `--version` | Show syntax or build version. |
-| `dependency-check`, `gpu-info` | Check prerequisites and HIP availability. |
-| `formats`, `identify <archive>` | Inspect supported capabilities or detect a file's format. |
-| `compress`, `extract` | Create an archive or restore its contents. |
-| `verify <archive>` | Validate FLZIP, ZIP or supported ZIPX contents. |
-| `gpu-diagnostic` | Run a bounded HIP diagnostic workload. |
-| `memory-benchmark`, `benchmark-suite` | Measure native RAM-only workloads; see [Benchmarking](#benchmarking). |
+| Use the CLI or check a format | [CLI](docs/cli.md), [format support](docs/archive-format-support.md) |
+| Install and use the application | [Installation](docs/installing.md), [graphical workflow](docs/using-flitzzip.md) |
+| Resolve an error | [Troubleshooting](docs/troubleshooting.md) |
+| Understand safety and report a vulnerability | [Security design](docs/security.md), [reporting policy](SECURITY.md) |
+| Assess performance claims | [Benchmark evidence](docs/benchmarks/README.md) |
 
-| Option | Scope and behavior |
-| --- | --- |
-| `--output <path>` | Required destination for compression or extraction. |
-| `--format <name>` | Select creation format or override extraction auto-detection. |
-| `--compression-level <1-9>` | Native FLZIP and CPU ZIP, Gzip, Bzip2, Zstandard, TAR.GZ, TAR.BZ2, TAR.ZST and CPIO.GZ writers. Uncompressed TAR, CPIO, AR and fixed-policy Unix Compress reject it. |
-| `--require-gpu`, `--force-cpu` | Native FLZIP only; mutually exclusive. Use forced CPU for diagnostics or comparisons. |
-| `--workers`, `--inflight`, `--block-size-kib` | Native operation controls; consult `--help` for each command's accepted options and ranges. |
-| `--verify-after-write` | FLZIP or ZIP creation; adds post-write archive validation. |
-| `--overwrite` | Extraction only; explicitly allow replacement of existing files. |
-| `--validate-before-publish` | Extraction; validate through the guarded publication path before finalizing output. |
-| `--sha256`, `--defender-scan` | Optional integrity hashing or bounded Microsoft Defender checks; additional passes are explicit. |
-| `--name-encoding utf8\|system` | Compatibility extraction filename decoding; format-specific restrictions apply. |
+## Development and contributing
 
-Recognized but unsupported formats or methods fail explicitly. Full command
-syntax comes from `& $FlitzZip --help`; native format semantics and CPU/GPU
-limits are documented in the [FLZIP specification](docs/native-flzip-format.md).
+Bug reports are most useful with a version, exact command or user action,
+expected result, observed result and a small reproducible input. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for contributions, the
+[developer guide](docs/development/README.md) for building and testing, and
+[AGENTS.md](AGENTS.md) for AI-agent instructions.
 
-## GUI
+## License
 
-The Win32 GUI includes Queue, Compress, Extract, Security Review, History, AMD
-GPU, Preferences, and About pages. It is PerMonitorV2 DPI-aware, double
-buffered, and uses native DPI fonts so it remains crisp on high-refresh and
-high-resolution displays.
-
-## Security
-
-FlitzZip treats archive contents as untrusted input. It rejects unsafe
-extraction paths, malformed metadata, CRC mismatches, and accidental overwrites
-by default. Microsoft Defender scanning and SHA-256 integrity hashing are
-available as opt-in checks. Defender scans are hidden subprocesses with a
-bounded timeout, and a timeout is reported as a failed scan rather than as a
-clean result.
-Requested SHA-256 and Defender checks must finish before compression or
-verification reports completion. Read-only verification pins its source across
-format validation, hashing and scanning so those checks inspect the same file.
-
-GitHub Actions run build/test validation, CodeQL, Trivy, Semgrep, DevSkim, OSV,
-Dependency Review, default-branch OSSF Scorecard, workflow linting, secret
-scanning, SBOM generation, ClusterFuzzLite parser fuzzing, and a
-Greenbone/OpenVAS integration audit. The live OpenVAS/Vulnetix scan is
-scheduled/manual and requires
-an OIDC-backed scanner configuration broker so private scanner credentials are
-never bound directly in workflow YAML.
-
-The lint workflow is language-specific for this repository: `clang-format` for
-owned C/C++ source, PSScriptAnalyzer for PowerShell, Ruff for Python helper
-scripts, yamllint for GitHub YAML, pymarkdownlnt for Markdown, and cmakelang
-for CMake. Workflow security is checked separately with actionlint, zizmor, and
-CodeQL Actions so GitHub-context injection issues are treated as security
-findings rather than style nits.
-
-## Fuzzing
-
-Security-sensitive parsers are fuzzed with ClusterFuzzLite. The integration
-builds libFuzzer targets for FlitzZip archive-index metadata, archive-entry
-path canonicalization, ISO metadata, CAB metadata, RPM header metadata, 7z
-decode/metadata handling, LZMA and lzip stream handling, ARJ metadata/stored-payload
-handling, SEA ARC/ARK metadata/unpacked-payload handling, CPIO metadata/path
-handling, LHA/LZH
-decode/metadata handling, and XAR
-TOC/payload metadata handling with address
-and undefined-behavior sanitizers:
-
-```powershell
-tools/fuzz.ps1 -Runs 512
-```
-
-The GitHub workflow runs automatically on pull requests, pushes to `main`, a
-weekly schedule, and manual dispatch.
-
-## Benchmarking
-
-The [benchmark index](docs/benchmarks/README.md) identifies current evidence,
-measurement limits and reproducible commands. Neutron star mode is measured
-separately from numeric compression levels and always requires HIP.
-
-The latest RAM-only Neutron studies cover the eleven original Canterbury files
-and one complete Pythia14M checkpoint, with three byte-exact HIP repetitions
-each. Complete modeled archive sizes were **723,429 bytes** from **2,810,784
-bytes** for Canterbury and **24,162,233 bytes** from **28,143,920 bytes** for
-Pythia14M. These workload-specific results do not establish universal size
-superiority or a GPU speed advantage. The
-[public-corpus report](docs/neutron-public-corpus-benchmark.md) provides source
-identities, per-file observations and independent standard-format references.
-
-For exact-file CPU/HIP comparisons at numeric levels, the scientific controller
-accepts `-CorpusManifest`, `-CorpusRoot` and `-CorpusFile` together. It preserves
-natural byte counts, source identity and every pilot/confirmation observation;
-short or noisy studies remain inconclusive. See the
-[native suite](docs/compression-level-and-benchmark-suite.md#native-suite),
-[comparison methodology](docs/comparative-benchmark-methodology.md) and
-[action-specific permissions](docs/benchmark-permissions.md).
-
-For a direct correctness proof that `--require-gpu` is not falling back to CPU,
-run:
-
-```powershell
-tools/gpu_proof.ps1 -Configuration Release
-```
-
-This proof generates a tiny temporary filesystem workload, runs compress, compress with
-`--verify-after-write`, verify, and extract with `--require-gpu`, then fails
-unless backend HIP telemetry reports kernel launches, HIP event time, transfer
-bytes, device allocations, and matching restored file hashes.
-
-For a HIP-runtime-only stress test that isolates the AMD device from archive
-format and codec policy, run:
-
-```powershell
-tools/gpu_diagnostic.ps1 -Configuration Release -Seconds 8 -BufferMiB 256 -InnerIterations 2048 -SampleIntervalMs 50
-```
-
-Use this diagnostic to distinguish a broken HIP/runtime path from an archive
-codec optimization issue. A valid archive benchmark still has to use
-`--require-gpu` or `tools/bench.ps1`; the diagnostic is not a compression
-throughput result.
-
-`tools/storage_smoke.ps1` is the only normal filesystem smoke for the archive
-write/read path. It defaults to an 8 MiB bounded workload and deletes the
-temporary data after SHA-256 comparison:
-
-```powershell
-tools/storage_smoke.ps1 -Configuration Release
-```
-
-`tools/bench.ps1` is memory-only by default. It generates deterministic chunks
-inside `flitzzip_cli.exe`, stores the encoded archive representation in process
-RAM, verifies/extracts from RAM, and reports `memory_only=true` plus
-`disk_write_bytes=0` from both the forced-CPU and required-GPU benchmark lanes:
-
-```powershell
-tools/bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
-```
-
-Use `-Profile Mixed`, `-Profile Compressible`, and `-Profile Incompressible`
-when characterizing a release candidate. The script refuses workloads smaller
-than 10 GiB in memory mode and sweeps the production block-size choices:
-256 KiB, 512 KiB, 1 MiB, 2 MiB, 4 MiB, 8 MiB, and 16 MiB. It reports production-aligned worker
-allocation (`Workers`, `InflightChunks`, and `CodecWorkers`) plus backend HIP
-event counters, kernel time, transfer bytes, and allocation bytes emitted by the
-FlitzZip GPU backend itself. Benchmark records include compression ratio so CPU
-and GPU lanes are compared at the same compression level, with level 5 as the
-standard balanced baseline. Do not treat a GPU-only timing as a product
-benchmark; if required HIP is slower than forced CPU, record it as an
-optimization finding. Multi-GB filesystem benchmarks are intentionally blocked
-during development to avoid SSD wear. Filesystem mode is limited to a bounded
-smoke payload of at most 64 MiB; use `tools/storage_smoke.ps1` for the normal
-archive write/read path.
-
-The built-in CLI benchmark suite gives a numerical system score and can tune
-the production block size while staying RAM-only. Use the executable selected
-in the [CLI setup](#cli):
-
-```powershell
-& $FlitzZip benchmark-suite --profile Mixed --compression-level 5 --tune
-```
-
-See `docs/security.md`, `docs/portability.md`, `docs/design.md`,
-`docs/compression-backend-evaluation.md`,
-`docs/performance-block-size-validation.md`,
-`docs/compression-level-and-benchmark-suite.md`,
-`docs/refactoring-governance.md`,
-`docs/third-party.md`, `docs/release.md`, and
-`docs/security-code-scanning.md`.
+FlitzZip is licensed under [AGPL-3.0](LICENSE). Bundled components retain their
+own licenses and notices; see [third-party software](docs/third-party.md).
+Release packages include the required notices and corresponding source.

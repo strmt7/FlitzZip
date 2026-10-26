@@ -7,10 +7,11 @@ and exact ZIP/MSI qualification. Publication requires the maintainer's green lig
 See [beta readiness](docs/beta-readiness.md) and [release qualification](docs/release.md).
 
 Use the [investigation skill](.agents/skills/flitzzip-test-investigation/SKILL.md)
-and its research-backed oracle selection for the immediate development phase:
-[meaningful coverage closure](docs/code-coverage.md#meaningful-tests). Accumulated
-final qualification follows coherent development batches; this ordering does not
-waive any release blocker or deferred improvement below.
+and its independent oracles for coherent development batches. Apply the
+[release criteria](docs/release.md#acceptance-criteria) and
+[coverage acceptance policy](docs/code-coverage.md#release-acceptance) to the
+final candidate. Preserve critical behavior tests and reviewed residual risks;
+universal 100% line coverage is not a release requirement.
 
 ## Engineering Priorities
 
@@ -43,9 +44,10 @@ Completed checkpoint narratives remain in Git history and local review artifacts
 
 ## Release Blockers
 
-The work below remains required before release approval. Completed source-bound
-checks may be reused only while their inputs remain unchanged. The existing
-candidate is not approved for publication.
+The following gates define what blocks a candidate. Determine their current
+status from source-bound local evidence, the pushed revision and its hosted
+checks. Completed checks may be reused only while relevant identities match.
+Qualification and authorization to publish remain separate decisions.
 
 The product and format migration uses FlitzZip and `.flzip` throughout active
 interfaces, build targets, packages and tooling. Wire signatures and the MSI
@@ -68,25 +70,22 @@ request; this does not authorize publication of a replacement.
    as nonblocking after focused qualification; neither a driver cause nor a
    production repair has been established. Keep the distinct-input and start-schedule
    regressions active. Any new byte mismatch or hang reopens the affected release gate.
-3. **Finish source and release qualification.** Complete the remaining parser,
-   extraction, codec, driver and kernel review, plus the required current
-   source and dependency scanner audit. Qualify the final pushed SHA's
+3. **Complete source and release qualification.** Review changed behavior and
+   critical parser, extraction, codec, driver and kernel contracts; resolve
+   identified defects and perform the required source and dependency audit.
+   Qualify the final pushed SHA's
    workflows, audit, HIP-enabled ZIP/MSI, checksums and installer lifecycle before
    requesting release approval. Earlier successful artifacts cover their own
    source identities, not every later commit.
 
-4. **Complete meaningful coverage.** The maintainer has reactivated coverage-gap
-   closure. Add independent behavior, malformed-input, lifetime and recovery tests,
-   repairing demonstrated production defects at their actual boundaries.
-   Do not expand tests merely to increase the percentage.
-   Coverage remains unfinished, not waived or passed.
-   Use the native coverage artifact's uncovered-line
-   and unmeasured-source inventories; the Debug measurement is the current baseline.
-   Close gaps with independent behavior and failure-path tests, and qualify separate
-   measurement for executable-only, tooling and device code. Do not equate a native
-   CPU percentage with whole-repository coverage or declare the requested complete
-   coverage achieved while those gaps remain. The [coverage handoff](docs/code-coverage.md#coverage-follow-up)
-   identifies the existing measurements and their reuse limits.
+4. **Apply risk-based testing and coverage acceptance.** Require meaningful
+   success, malformed-input, lifetime and recovery assertions for critical and
+   changed behavior. Resolve demonstrated defects at their actual boundaries.
+   Review the uncovered-line and unmeasured-source inventories under the
+   [coverage policy](docs/code-coverage.md#release-acceptance), investigate
+   regressions and retain residual risks. Missing critical behavior tests,
+   failed required collection and unexplained regressions block release.
+   CPU, GUI, tooling, HIP host and device measurements retain separate scopes.
 
 ## Deferred Improvement Work
 
@@ -108,8 +107,8 @@ request; this does not authorize publication of a replacement.
   can order trials; it cannot justify dropping a competitive candidate in a
   minimum-size mode without a proven lower bound. Track native CPU, ZIP/Deflate,
   Gzip, Bzip2, Zstandard and LZMA-family results separately, including losses.
-- **Repository review:** finish the unreviewed source and document ranges;
-  inventory coverage is not a line-by-line review. Refactor only demonstrated
+- **Repository review:** continue risk-prioritized source and document review;
+  an inventory is not proof of complete line-by-line review. Refactor demonstrated
   ownership, duplication, complexity or performance problems and retain direct
   consumers. Recheck frontend Neutron admission and interaction when their code
   changes. Preserve the existing AGPL-3.0 license, third-party notices and

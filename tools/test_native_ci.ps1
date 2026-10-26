@@ -170,7 +170,7 @@ $orphanRejected = & (Get-Module flitzzip_verification) {
     }
 }
 Assert-NativeCi $orphanRejected 'an invalid future consumer-only plan must fail before any workload runs'
-foreach ($path in (@('.github/workflows/windows-ci.yml') + $collectorInputs)) {
+foreach ($path in (@('.github/workflows/windows-ci.yml', '.github/codecov.yml') + $collectorInputs)) {
     $collector = Get-FlitzZipHostedNativePlan -Paths @($path) -Configuration Debug
     Assert-NativeCi ($collector.build -and $collector.coverage -and $collector.testMode -eq 'none' -and
         -not $collector.formatMatrix) "collector or integration changes require one real hosted measurement: $path"

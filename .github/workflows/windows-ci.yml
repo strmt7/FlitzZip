@@ -4,6 +4,7 @@ on:
   push:
     paths: &native-inputs
       - .github/workflows/windows-ci.yml
+      - .github/codecov.yml
       - CMakeLists.txt
       - LICENSE
       - cmake/**

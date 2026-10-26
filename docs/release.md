@@ -187,6 +187,38 @@ download paths to the repository.
   release.
 - `create_msi`: builds and smoke-tests the MSI in addition to the portable ZIP.
 
+## Acceptance Criteria
+
+Qualify a concrete candidate for its documented Windows x64, archive-format and
+AMD HIP capabilities. Release readiness is a decision supported by the checks
+below, their source/artifact identities and reviewed residual risks. It does not
+promise universal hardware support, absence of every bug or an unmeasured
+compression advantage. Publication still requires the maintainer's green light.
+
+| Contract | Required evidence and blocking condition |
+| --- | --- |
+| Archive correctness | Applicable native registry and CTest suites, independent format-matrix readback and malformed-input, resource-bound and publication regressions pass. Any known byte mismatch, unsafe overwrite or incomplete rejection blocks. |
+| CPU and GPU execution | Changed codec paths preserve independent decode results and resource ownership. Required-HIP tests exercise the real supported device; unavailable or incompatible HIP rejects Neutron explicitly. A host-only build or percentage cannot qualify device execution. |
+| User journeys | The all-page GUI smoke and capture review pass for affected GUI behavior and the candidate qualification. Queue admission, create/extract/verify, cancellation, settings persistence and Neutron admission remain covered. An unrelated desktop obstruction is a failed environment qualification until resolved. |
+| Coverage and review | Apply [coverage acceptance](code-coverage.md#release-acceptance): effective tests for critical and changed behavior, valid measurements, investigated regressions and reviewed residual gaps. A universal line percentage is not required. |
+| Source and dependencies | Required workflows and the exact-commit post-push audit pass. Actionable open or reproduced source findings and applicable dependency vulnerabilities block unless their specific acceptance is already authorized under the existing security policy. |
+| Distribution and licensing | Exact HIP-enabled portable ZIP/MSI, checksums, dependency admission and install/repair/uninstall smoke pass. Complete corresponding source, notices and action-specific redistribution rights accompany the candidate. |
+| Claims and operations | Supported capabilities, installation, troubleshooting and known limitations are current. Changed performance claims have representative, bounded measurements with complete sizes and actual backend evidence. Unsupported superiority claims cannot enter release notes. |
+
+Keep the candidate review, complete logs, scope-specific coverage and remaining
+improvement work in retained artifacts. Reuse prior qualification only when its
+relevant source, tools, configuration and outputs still match. A documentation
+or policy change requires its own consumers and final exact-source offering;
+it does not automatically invalidate unchanged codec behavior measurements.
+After all applicable checks pass, continue optional improvements in the
+implementation plan rather than reopening unrelated qualification indefinitely.
+
+This approach follows the outcome and root-cause focus of
+[NIST SSDF](https://csrc.nist.gov/projects/ssdf) and the behavior, integration and
+critical-journey focus of [Google's testing guidance](https://testing.googleblog.com/2021/06/how-much-testing-is-enough.html).
+These references guide engineering decisions; this repository does not claim
+external certification or conformance assessment.
+
 ## Validation
 
 Before publishing binaries, verify the exact release source offering. It must

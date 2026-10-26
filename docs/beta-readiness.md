@@ -3,9 +3,11 @@
 The configured candidate is FlitzZip 0.8.0 for Windows 11 x64, built with HIP.
 A candidate build and its validation are separate from permission to publish.
 
-**Not ready for release approval:** remaining acceptance work is tracked in the
-[implementation plan](../IMPLEMENTATION_PLAN.md#release-blockers).
-A successful candidate build or workflow summary does not close those blockers.
+Evaluate the concrete candidate against the
+[release criteria](release.md#acceptance-criteria) and the
+[implementation plan](../IMPLEMENTATION_PLAN.md#release-blockers). Readiness
+requires current evidence for every applicable gate and review of residual risk.
+Permission to publish remains a separate maintainer decision.
 
 ## Product Evidence
 
@@ -65,13 +67,13 @@ workflow results must be checked on the candidate's pushed revision.
   through the exact-source contract; unmatched findings remain blocking.
 - Exact candidate ZIP/MSI, checksums and installer install/repair/uninstall
   qualification must pass on the candidate's pushed SHA before release approval.
-- The requested complete meaningful coverage remains unfinished and is active
-  release-preparation work. Other prerequisites require their own current
-  qualification; coverage progress does not establish their acceptance. The
-  [coverage report](code-coverage.md) distinguishes the hosted CPU measurement
-  from the qualified local GUI/HIP-host measurement. Uncovered host lines,
-  tooling and device instructions still require further work. Passing tests or
-  a percentage from one scope cannot establish whole-repository coverage.
+- The [coverage acceptance policy](code-coverage.md#release-acceptance) requires
+  effective tests for critical and changed behavior, valid measurements and
+  review of residual gaps. Hosted CPU, local GUI/HIP host, tooling and device
+  reports have distinct scopes. Unmeasured hardware, compiler mappings and
+  remaining lower-priority test work stay explicit; universal 100% line coverage
+  is not a release gate. An identified defect or missing critical behavior test
+  remains blocking regardless of the measured percentage.
 - The complete version-eleven Govdocs1 size/readback study is retained, but
   controlled paired timings remain outside the completed evidence.
 

@@ -629,7 +629,7 @@ foreach ($crawlerPath in @('tools/crawl4ai_tool.py', 'tools/crawl4ai_research.py
         'tools/crawl4ai_download_opener.py', 'tools/test_crawl4ai_downloads.py', 'third_party/upstream/crawl4ai/0.9.5/build.json',
         'tools/nltk_distribution.py', 'tools/python_wheel.py', 'tools/test_nltk_distribution.py', 'tools/test_nltk_model_security.py',
         'third_party/upstream/nltk/README.md', 'tools/requirements/python-build.txt',
-        'tools/crawl4ai_sites.json', 'tools/requirements/crawl4ai.txt', 'docs/crawl4ai.md')) {
+        'tools/crawl4ai_sites.json', 'tools/requirements/crawl4ai.in', 'tools/requirements/crawl4ai.txt', 'docs/crawl4ai.md')) {
     $crawlerPlan = Get-FlitzZipVerificationPlan -ChangedPath @($crawlerPath)
     Assert-Selector (Test-RequiredCommand -Plan $crawlerPlan -Id 'crawl4ai-contracts') "crawler inputs require offline contracts: $crawlerPath"
     Assert-Selector (-not $crawlerPlan.scope.fullEscalationRequired) "crawler integration does not imply native product changes: $crawlerPath"

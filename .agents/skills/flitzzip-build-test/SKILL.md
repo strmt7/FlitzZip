@@ -36,6 +36,9 @@ admission, tool provisioning, checkpoint intent and post-push acceptance.
 5. Review the final diff and commit intentional source, documentation and
    configuration. Follow the operating guide's exact-commit workflow procedure;
    final acceptance covers the accumulated change range and required audit.
+   Apply the [release criteria](../../../docs/release.md#acceptance-criteria)
+   and [coverage policy](../../../docs/code-coverage.md#release-acceptance)
+   before declaring readiness; retain the candidate's residual-risk review.
 
 For a failing check, distinguish configure, compile, link, execution, collection
 and upload failures before changing code or rebuilding. Preserve the first
