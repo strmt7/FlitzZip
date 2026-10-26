@@ -108,7 +108,7 @@ def verify_corpus(directory: Path, downloads: Path) -> list[dict]:
 
 
 # Purpose: Admit an explicit application case without accepting injected switches or unsupported tool labels.
-# Inputs: A manifest case object and lookup of reviewed, hash-checked source files.
+# Inputs: `row` is an untrusted case object; `files` indexes reviewed, hash-checked source metadata.
 # Outputs: Normalized case tuple; duplicate inputs, incompatible tools or excessive size raise ValueError.
 def manifest_case(row: dict, files: dict[str, dict]) -> tuple:
     if not isinstance(row, dict) or set(row) != {"name", "format", "files", "tools"}:
@@ -120,6 +120,15 @@ def manifest_case(row: dict, files: dict[str, dict]) -> tuple:
     if not isinstance(tools, list):
         raise ValueError("corpus case requires FlitzZip and its independent supported comparator")
     pair = case_tool_pair(fmt, tools)
+    names = case_file_names(fmt, names, files)
+    return name, fmt, names, pair
+
+
+def case_file_names(fmt: str, names: object, files: dict) -> tuple[str, ...]:
+    """Purpose: Admit a case inventory before reserving output or measuring work.
+    Inputs: fmt is admitted; names is an untrusted JSON list; files indexes verified metadata.
+    Outputs: Frozen unique names or ValueError.
+    """
     if (
         not isinstance(names, list)
         or not names
@@ -130,7 +139,7 @@ def manifest_case(row: dict, files: dict[str, dict]) -> tuple:
         raise ValueError("corpus case inputs are missing, repeated or incompatible with its format")
     if sum(files[value]["bytes"] for value in names) > MAX_FILESYSTEM_BYTES:
         raise ValueError("filesystem case exceeds 64 MiB")
-    return name, fmt, tuple(names), pair
+    return tuple(names)
 
 
 def case_tool_pair(fmt: object, tools: object) -> tuple[str, str]:
@@ -152,10 +161,26 @@ def case_tool_pair(fmt: object, tools: object) -> tuple[str, str]:
 
 
 # Purpose: Verify licensed replacement inputs without downloading data or relying on historical corpus pins.
-# Inputs: A bounded provenance manifest and directory containing its exact flat regular-file inputs.
+# Inputs: `path` identifies bounded provenance JSON; `directory` contains its exact flat regular-file inputs.
 # Outputs: Verified files/cases/public corpus metadata; permission, link, hash or schema failures stop execution.
 def verify_manifest(path: Path, directory: Path) -> tuple[list[dict], tuple, dict]:
     spec = read_json(path)
+    validate_manifest_header(spec, directory)
+    verified = {}
+    for entry in spec["files"]:
+        name, admitted = verify_manifest_file(entry, directory, verified)
+        verified[name] = admitted
+    cases = manifest_cases(spec["cases"], verified)
+    files = list(verified.values())
+    metadata = {"name": spec["name"], "manifest_sha256": digest(path), "files": files}
+    return files, cases, metadata
+
+
+def validate_manifest_header(spec: object, directory: Path) -> None:
+    """Purpose: Admit the manifest schema and owned source ancestry before reading members.
+    Inputs: spec is untrusted JSON; directory is the corpus root.
+    Outputs: ValueError for malformed metadata or redirects.
+    """
     if not isinstance(spec, dict) or set(spec) != {"schema_version", "name", "files", "cases"}:
         raise ValueError("corpus manifest fields are missing or unknown")
     if type(spec["schema_version"]) is not int or spec["schema_version"] != 1:
@@ -166,38 +191,64 @@ def verify_manifest(path: Path, directory: Path) -> tuple[list[dict], tuple, dic
         raise ValueError("corpus manifest requires 1-128 reviewed files")
     if any(value.is_symlink() or value.is_junction() for value in (directory, *directory.parents)):
         raise ValueError("corpus directory must not traverse links or junctions")
-    verified = {}
-    for entry in spec["files"]:
-        keys = {"name", "bytes", "sha256", "subject", "source_url", "transformation"}
-        if not isinstance(entry, dict) or set(entry) != keys:
-            raise ValueError("corpus file fields are missing or unknown")
-        name = entry["name"]
-        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}", name):
-            raise ValueError("corpus file must have a safe flat filename")
-        if (
-            name.endswith(".")
-            or name.split(".", 1)[0].upper() in RESERVED_FILENAMES
-            or name.casefold() in {value.casefold() for value in verified}
-        ):
-            raise ValueError("corpus file names must be unique on Windows and have no trailing dot")
-        if type(entry["bytes"]) is not int or not 1 <= entry["bytes"] <= MAX_FILESYSTEM_BYTES:
-            raise ValueError("corpus file byte count is outside the filesystem cap")
-        if not isinstance(entry["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
-            raise ValueError("corpus file SHA-256 is invalid")
-        if not isinstance(entry["subject"], str) or not entry["subject"].strip():
-            raise ValueError("corpus file has no reviewed permission subject")
-        permission = require_permission(entry["subject"], "execute")
-        if not isinstance(entry["source_url"], str) or entry["source_url"] not in permission["evidence"]:
-            raise ValueError("corpus source URL must be a reviewed catalog evidence URL")
-        if not isinstance(entry["transformation"], str) or not entry["transformation"].strip():
-            raise ValueError("corpus file must disclose its transformation or state that it is unmodified")
-        raw = directory / name
-        if raw.is_symlink() or not raw.is_file() or raw.stat().st_size != entry["bytes"]:
-            raise ValueError("corpus file is missing, linked or has the wrong byte count")
-        if digest(raw) != entry["sha256"]:
-            raise ValueError("corpus file SHA-256 differs from its reviewed manifest")
-        verified[name] = dict(entry)
-    rows = spec["cases"]
+
+
+def manifest_file_name(entry: object, verified: dict) -> str:
+    """Purpose: Require one safe, unique Windows-compatible corpus member name.
+    Inputs: entry is untrusted; verified indexes previously admitted members.
+    Outputs: Name or ValueError before file access.
+    """
+    keys = {"name", "bytes", "sha256", "subject", "source_url", "transformation"}
+    if not isinstance(entry, dict) or set(entry) != keys:
+        raise ValueError("corpus file fields are missing or unknown")
+    name = entry["name"]
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}", name):
+        raise ValueError("corpus file must have a safe flat filename")
+    if (
+        name.endswith(".")
+        or name.split(".", 1)[0].upper() in RESERVED_FILENAMES
+        or name.casefold() in {value.casefold() for value in verified}
+    ):
+        raise ValueError("corpus file names must be unique on Windows and have no trailing dot")
+    return name
+
+
+def validate_manifest_integrity(entry: dict) -> None:
+    """Purpose: Admit explicit byte bounds and the complete public integrity digest.
+    Inputs: entry has validated keys. Outputs: ValueError for invalid extent or digest.
+    """
+    if type(entry["bytes"]) is not int or not 1 <= entry["bytes"] <= MAX_FILESYSTEM_BYTES:
+        raise ValueError("corpus file byte count is outside the filesystem cap")
+    if not isinstance(entry["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
+        raise ValueError("corpus file SHA-256 is invalid")
+
+
+def verify_manifest_file(entry: object, directory: Path, verified: dict) -> tuple[str, dict]:
+    """Purpose: Verify one licensed corpus payload after metadata and path admission.
+    Inputs: entry is untrusted; directory is the corpus root; verified indexes prior names.
+    Outputs: Captured name/copied metadata or failure.
+    """
+    name = manifest_file_name(entry, verified)
+    validate_manifest_integrity(entry)
+    if not isinstance(entry["subject"], str) or not entry["subject"].strip():
+        raise ValueError("corpus file has no reviewed permission subject")
+    permission = require_permission(entry["subject"], "execute")
+    if not isinstance(entry["source_url"], str) or entry["source_url"] not in permission["evidence"]:
+        raise ValueError("corpus source URL must be a reviewed catalog evidence URL")
+    if not isinstance(entry["transformation"], str) or not entry["transformation"].strip():
+        raise ValueError("corpus file must disclose its transformation or state that it is unmodified")
+    raw = directory / name
+    if raw.is_symlink() or not raw.is_file() or raw.stat().st_size != entry["bytes"]:
+        raise ValueError("corpus file is missing, linked or has the wrong byte count")
+    if digest(raw) != entry["sha256"]:
+        raise ValueError("corpus file SHA-256 differs from its reviewed manifest")
+    return name, dict(entry)
+
+
+def manifest_cases(rows: object, verified: dict) -> tuple:
+    """Purpose: Require complete, uniquely named cases consuming the exact admitted inventory.
+    Inputs: rows contains untrusted cases; verified indexes validated members. Outputs: Frozen cases or ValueError.
+    """
     if not isinstance(rows, list) or not 1 <= len(rows) <= 32:
         raise ValueError("corpus manifest requires 1-32 cases")
     cases = tuple(manifest_case(row, verified) for row in rows)
@@ -205,9 +256,7 @@ def verify_manifest(path: Path, directory: Path) -> tuple[list[dict], tuple, dic
         raise ValueError("corpus case names are repeated")
     if {name for case in cases for name in case[2]} != set(verified):
         raise ValueError("corpus manifest contains unused source files")
-    files = list(verified.values())
-    metadata = {"name": spec["name"], "manifest_sha256": digest(path), "files": files}
-    return files, cases, metadata
+    return cases
 
 
 # Purpose: Run one product command with bounded output and a monotonic wall timer.
@@ -409,7 +458,9 @@ def discard(path: Path, owned_root: Path) -> None:
 
 
 # Purpose: Time one alternating, independently decoded application case.
-# Inputs: Case contract, binaries, source directory, run count, hashes, effort, and inter-round pause.
+# Inputs: `case` is the case contract; `binaries` pins executables; `corpus` contains sources;
+# `runs` counts samples; `manifest` binds member hashes; `work_root` owns scratch paths;
+# `level` selects effort and `round_pause_ms` gives the pause in milliseconds.
 # Outputs: Returns all size, timing, and round-trip evidence for one case.
 def measure_case(
     case: tuple,
@@ -423,7 +474,7 @@ def measure_case(
 ) -> dict:
     name, fmt, files, tools = case
     first_tool, second_tool = case_tool_pair(fmt, tools)
-    independent_tool = {first_tool: second_tool, second_tool: first_tool}
+    tools = (first_tool, second_tool)
     input_bytes = sum(manifest[file]["bytes"] for file in files)
     if input_bytes > MAX_FILESYSTEM_BYTES:
         raise ValueError("filesystem case exceeds 64 MiB")
@@ -444,35 +495,9 @@ def measure_case(
         results[tool]["extract_argv"] = extract
     with tempfile.TemporaryDirectory(prefix=f"comparison-{name}-", dir=work_root) as temporary:
         owned = Path(temporary).resolve()
-        exemplars = {}
-        for iteration in range(-1, runs):
-            order = tools if iteration % 2 == 0 else tuple(reversed(tools))
-            for tool in order:
-                round_dir = owned / f"create-{iteration}-{tool}"
-                round_dir.mkdir()
-                archive = round_dir / ("case.zip" if fmt == "zip" else f"{files[0]}.zst")
-                create, _ = commands(tool, fmt, files, archive, round_dir / "unused", binaries, level)
-                elapsed = run(create, corpus, timed=iteration >= 0)
-                if not archive.is_file() or archive.stat().st_size <= 0:
-                    raise RuntimeError(f"missing archive: {name}/{tool}")
-                other = independent_tool[tool]
-                independent_dir = round_dir / "independent"
-                independent_dir.mkdir()
-                _, independent_extract = commands(other, fmt, files, archive, independent_dir, binaries, level)
-                run(independent_extract, corpus, timed=False)
-                verify_tree(independent_dir, files, manifest)
-                discard(independent_dir, owned)
-                if iteration >= 0:
-                    results[tool]["compress_seconds"].append(elapsed)
-                    results[tool]["archive_bytes"].append(archive.stat().st_size)
-                    results[tool]["archive_sha256"].append(digest(archive))
-                    results[tool]["independent_verified"] = True
-                if iteration == runs - 1:
-                    exemplars[tool] = archive
-                else:
-                    discard(round_dir, owned)
-            if iteration < runs - 1:
-                time.sleep(round_pause_ms / 1000)
+        exemplars = measure_compression_rounds(
+            (name, fmt, files, tools), binaries, corpus, runs, manifest, owned, level, round_pause_ms, results
+        )
         reference_tool = tools[1]
         reference_archive = exemplars[reference_tool]
         reference_sha = digest(reference_archive)
@@ -502,6 +527,57 @@ def measure_case(
         "extract_reference_sha256": reference_sha,
         "results": [results[tool] for tool in tools],
     }
+
+
+def measure_compression_rounds(
+    case: tuple,
+    binaries: dict,
+    corpus: Path,
+    runs: int,
+    manifest: dict,
+    owned: Path,
+    level: int,
+    round_pause_ms: int,
+    results: dict,
+) -> dict:
+    """Purpose: Run warmup and alternating creation rounds with independent decoding before recording results.
+    Inputs: case is validated; binaries pins executables; corpus contains inputs; runs counts samples;
+    manifest binds member hashes; owned is the caller's temporary root; level selects effort;
+    round_pause_ms gives the pause in milliseconds; results borrows the mutable result lists.
+    Outputs: Final archive paths owned by that root; mutates metrics and propagates I/O or verification failures.
+    """
+    name, fmt, files, tools = case
+    independent_tool = {tools[0]: tools[1], tools[1]: tools[0]}
+    exemplars = {}
+    for iteration in range(-1, runs):
+        order = tools if iteration % 2 == 0 else tuple(reversed(tools))
+        for tool in order:
+            round_dir = owned / f"create-{iteration}-{tool}"
+            round_dir.mkdir()
+            archive = round_dir / ("case.zip" if fmt == "zip" else f"{files[0]}.zst")
+            create, _ = commands(tool, fmt, files, archive, round_dir / "unused", binaries, level)
+            elapsed = run(create, corpus, timed=iteration >= 0)
+            if not archive.is_file() or archive.stat().st_size <= 0:
+                raise RuntimeError(f"missing archive: {name}/{tool}")
+            other = independent_tool[tool]
+            independent_dir = round_dir / "independent"
+            independent_dir.mkdir()
+            _, independent_extract = commands(other, fmt, files, archive, independent_dir, binaries, level)
+            run(independent_extract, corpus, timed=False)
+            verify_tree(independent_dir, files, manifest)
+            discard(independent_dir, owned)
+            if iteration >= 0:
+                results[tool]["compress_seconds"].append(elapsed)
+                results[tool]["archive_bytes"].append(archive.stat().st_size)
+                results[tool]["archive_sha256"].append(digest(archive))
+                results[tool]["independent_verified"] = True
+            if iteration == runs - 1:
+                exemplars[tool] = archive
+            else:
+                discard(round_dir, owned)
+        if iteration < runs - 1:
+            time.sleep(round_pause_ms / 1000)
+    return exemplars
 
 
 # Purpose: Decode Git's unquoted NUL records without losing rename endpoints or splitting filenames.

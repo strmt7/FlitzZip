@@ -1163,6 +1163,10 @@ manufacture a clean scan. Individual authorizations belong in review records.
   outputs into a fresh CodeQL build. Cancel superseded stateless checks, but
   preserve stateful live scans and release transactions. See
   [the workflow performance review](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/development/workflow-performance-review.md).
+  When an in-flight C++ analysis still covers the current native/query inputs,
+  batch subsequent non-native edits while it finishes when practical. Repeated
+  follow-up pushes can cancel that applicable work and require it to start again.
+  Reuse still requires successful jobs and their successful owning workflow.
 - After pushing, verify the remote URL does not contain credentials.
 - After pushing, choose checkpoint intent from actual remaining work, not file
   type. When another development step is planned, use planner/verifier

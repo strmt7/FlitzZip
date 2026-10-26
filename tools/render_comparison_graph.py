@@ -19,16 +19,16 @@ HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 
 
 # Purpose: Require a finite, positive, five-run timing distribution.
-# Inputs: Raw sample list and its field name for a precise failure.
+# Inputs: `samples` is the raw timing list; `field_name` identifies the failing field.
 # Outputs: Returns median/min/max seconds or raises ValueError.
-def timing(samples: object, label: str) -> tuple[float, float, float]:
+def timing(samples: object, field_name: str) -> tuple[float, float, float]:
     if not isinstance(samples, list) or len(samples) < 5 or len(samples) > 10:
-        raise ValueError(f"{label} requires 5-10 individual runs")
+        raise ValueError(f"{field_name} requires 5-10 individual runs")
     if any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0 for value in samples):
-        raise ValueError(f"{label} contains a nonpositive or nonfinite time")
+        raise ValueError(f"{field_name} contains a nonpositive or nonfinite time")
     result = statistics.median(samples), min(samples), max(samples)
     if not all(math.isfinite(value) for value in result):
-        raise ValueError(f"{label} has a nonfinite derived statistic")
+        raise ValueError(f"{field_name} has a nonfinite derived statistic")
     return result
 
 
@@ -50,7 +50,7 @@ def matching_command(recorded: object, expected: list[str]) -> bool:
 
 
 # Purpose: Bind each comparison to exactly one clean source, build, host and supported tool inventory.
-# Inputs: Untrusted comparison object with explicit schema and provenance fields.
+# Inputs: `record` is an untrusted comparison object with schema and provenance fields.
 # Outputs: Raises ValueError on missing, mistyped, duplicate or inconsistent identities.
 def validate_identity(record: dict) -> None:
     if (
@@ -70,7 +70,17 @@ def validate_identity(record: dict) -> None:
         record["flitzzip_binary_sha256"]
     ):
         raise ValueError("missing tested FlitzZip binary SHA-256")
-    build = record.get("build")
+    validate_build_identity(record.get("build"))
+    if record.get("methodology") != "docs/comparative-benchmark-methodology.md":
+        raise ValueError("comparison methodology path differs")
+    validate_host_identity(record.get("host"))
+    validate_tool_inventory(record.get("tools"), record["flitzzip_binary_sha256"])
+
+
+def validate_build_identity(build: object) -> None:
+    """Purpose: Admit the tested Release/HIP build before accepting comparison evidence.
+    Inputs: build contains untrusted fields. Outputs: ValueError for incomplete configuration or provenance.
+    """
     if (
         not isinstance(build, dict)
         or build.get("configuration") != "Release"
@@ -81,9 +91,12 @@ def validate_identity(record: dict) -> None:
         or not HEX64.fullmatch(build["cmake_cache_sha256"])
     ):
         raise ValueError("tested Release/HIP build identity is incomplete")
-    if record.get("methodology") != "docs/comparative-benchmark-methodology.md":
-        raise ValueError("comparison methodology path differs")
-    host = record.get("host")
+
+
+def validate_host_identity(host: object) -> None:
+    """Purpose: Admit complete host identity independently of workload observations.
+    Inputs: host is an untrusted mapping. Outputs: ValueError for missing text or invalid numeric specifications.
+    """
     text_fields = ("os", "os_name", "os_build", "cpu", "gpu", "gpu_driver", "storage_model", "storage_bus_type")
     if not isinstance(host, dict) or any(
         not isinstance(host.get(key), str) or not host[key].strip() for key in text_fields
@@ -94,7 +107,28 @@ def validate_identity(record: dict) -> None:
         for field in ("ram_bytes", "cpu_cores", "cpu_threads", "ram_modules", "ram_configured_mts")
     ):
         raise ValueError("invalid host numeric specification")
-    tools = record.get("tools")
+
+
+def validate_tool_descriptor(tool: dict) -> None:
+    """Purpose: Admit one named comparator executable and its provenance.
+    Inputs: tool comes from the validated inventory. Outputs: ValueError for missing hashes, versions or URLs.
+    """
+    if not isinstance(tool.get("binary_sha256"), str) or not HEX64.fullmatch(tool["binary_sha256"]):
+        raise ValueError("tool executable has no SHA-256")
+    if (
+        not isinstance(tool.get("version"), str)
+        or not tool["version"].strip()
+        or not isinstance(tool.get("source_url"), str)
+        or not tool["source_url"].startswith("https://")
+    ):
+        raise ValueError("tool version or provenance is missing")
+
+
+def validate_tool_inventory(tools: object, expected_sha: str) -> None:
+    """Purpose: Require the complete unique tool set and the measured FlitzZip binary.
+    Inputs: tools is untrusted; expected_sha is the admitted binary digest.
+    Outputs: ValueError for missing, duplicate or stale tools.
+    """
     if (
         not isinstance(tools, list)
         or len(tools) != 3
@@ -103,17 +137,9 @@ def validate_identity(record: dict) -> None:
     ):
         raise ValueError("required comparison tools are missing or duplicated")
     for tool in tools:
-        if not isinstance(tool.get("binary_sha256"), str) or not HEX64.fullmatch(tool["binary_sha256"]):
-            raise ValueError("tool executable has no SHA-256")
-        if (
-            not isinstance(tool.get("version"), str)
-            or not tool["version"].strip()
-            or not isinstance(tool.get("source_url"), str)
-            or not tool["source_url"].startswith("https://")
-        ):
-            raise ValueError("tool version or provenance is missing")
+        validate_tool_descriptor(tool)
     tool_hashes = {tool["name"]: tool["binary_sha256"] for tool in tools}
-    if tool_hashes["FlitzZip"] != record["flitzzip_binary_sha256"]:
+    if tool_hashes["FlitzZip"] != expected_sha:
         raise ValueError("FlitzZip binary identity differs")
 
 
@@ -201,10 +227,10 @@ def validate_resources(case: dict, host: dict) -> None:
 
 
 # Purpose: Admit one exact workload pairing and compute descriptive statistics from all retained observations.
-# Inputs: Untrusted case, canonical case identity, pinned corpus, validated settings and host.
+# Inputs: `actual` is untrusted; `expected` is canonical; `by_name` is pinned corpus metadata;
+# `settings` and `host` are already validated.
 # Outputs: Returns exact archive sizes and observed timing ranges, or raises ValueError on incomplete evidence.
 def summarize_case(actual: dict, expected: tuple, by_name: dict, settings: dict, host: dict) -> dict:
-    expected_level = settings["level"]
     name, fmt, file_names, tool_names = expected
     if not isinstance(actual, dict) or (actual.get("name"), actual.get("format"), actual.get("files")) != (
         name,
@@ -223,6 +249,19 @@ def summarize_case(actual: dict, expected: tuple, by_name: dict, settings: dict,
         or [item.get("tool") for item in results] != list(tool_names)
     ):
         raise ValueError(f"tool pairing differs: {name}")
+    reference_sha, reference_bytes = validate_extraction_reference(actual, tool_names, name)
+    metrics = [summarize_result(item, fmt, file_names, settings, reference_sha) for item in results]
+    comparator = results[1]
+    if comparator["archive_bytes"][-1] != reference_bytes or comparator["archive_sha256"][-1] != reference_sha:
+        raise ValueError("extraction reference differs from the comparator's measured archive")
+    return {"name": name, "format": fmt, "input_bytes": size, "metrics": metrics}
+
+
+def validate_extraction_reference(actual: dict, tool_names: tuple, name: str) -> tuple[str, int]:
+    """Purpose: Admit the common comparator-created archive used by both extraction measurements.
+    Inputs: actual is an admitted case; tool_names fixes tool order; name identifies failures.
+    Outputs: Exact digest/size or ValueError.
+    """
     reference_sha = actual.get("extract_reference_sha256")
     reference_bytes = actual.get("extract_reference_bytes")
     if (
@@ -233,50 +272,58 @@ def summarize_case(actual: dict, expected: tuple, by_name: dict, settings: dict,
         or reference_bytes <= 0
     ):
         raise ValueError(f"extraction reference is missing or differs: {name}")
-    metrics = []
-    for item in results:
-        tool = item["tool"]
-        create, extract = command_templates(tool, fmt, file_names, expected_level)
-        if not matching_command(item.get("create_argv"), create) or not matching_command(
-            item.get("extract_argv"), extract
-        ):
-            raise ValueError("recorded command does not match the reviewed flags")
-        if item.get("independent_verified") is not True:
-            raise ValueError("independent archive decoding did not pass")
-        if item.get("extract_reference_sha256") != reference_sha:
-            raise ValueError("extraction did not use the common reference archive")
-        compressed = timing(item.get("compress_seconds"), "compression")
-        extracted = timing(item.get("extract_seconds"), "extraction")
-        if len(item["compress_seconds"]) != settings["runs"] or len(item["extract_seconds"]) != settings["runs"]:
-            raise ValueError("case run count differs from declared settings")
-        archives = item.get("archive_bytes")
-        hashes = item.get("archive_sha256")
-        if (
-            not isinstance(archives, list)
-            or len(archives) != len(item["compress_seconds"])
-            or any(type(value) is not int or value <= 0 for value in archives)
-            or len(set(archives)) != 1
-        ):
-            raise ValueError("archive size is missing or varies between identical runs")
-        if (
-            not isinstance(hashes, list)
-            or len(hashes) != len(archives)
-            or any(not isinstance(value, str) or not HEX64.fullmatch(value) for value in hashes)
-        ):
-            raise ValueError("archive SHA-256 evidence is incomplete")
-        metrics.append(
-            {
-                "tool": tool,
-                "bytes": archives[0],
-                "compression": compressed,
-                "extraction": extracted,
-                "runs": len(archives),
-            }
-        )
-    comparator = results[1]
-    if comparator["archive_bytes"][-1] != reference_bytes or comparator["archive_sha256"][-1] != reference_sha:
-        raise ValueError("extraction reference differs from the comparator's measured archive")
-    return {"name": name, "format": fmt, "input_bytes": size, "metrics": metrics}
+    return reference_sha, reference_bytes
+
+
+def validate_archive_observations(item: dict, expected_runs: int) -> tuple[int, int]:
+    """Purpose: Require complete, stable size and digest observations for every measured creation.
+    Inputs: item is an admitted result; expected_runs is the exact run count.
+    Outputs: Archive size/count or ValueError.
+    """
+    archives = item.get("archive_bytes")
+    hashes = item.get("archive_sha256")
+    if (
+        not isinstance(archives, list)
+        or len(archives) != expected_runs
+        or any(type(value) is not int or value <= 0 for value in archives)
+        or len(set(archives)) != 1
+    ):
+        raise ValueError("archive size is missing or varies between identical runs")
+    if (
+        not isinstance(hashes, list)
+        or len(hashes) != len(archives)
+        or any(not isinstance(value, str) or not HEX64.fullmatch(value) for value in hashes)
+    ):
+        raise ValueError("archive SHA-256 evidence is incomplete")
+    return archives[0], len(archives)
+
+
+def summarize_result(item: dict, fmt: str, file_names: tuple, settings: dict, reference_sha: str) -> dict:
+    """Purpose: Summarize one independently verified result without weakening its command or sample contract.
+    Inputs: item is admitted; fmt/file_names/settings fix the command; reference_sha binds the extraction archive.
+    Outputs: Exact metrics or ValueError.
+    """
+    expected_level = settings["level"]
+    tool = item["tool"]
+    create, extract = command_templates(tool, fmt, file_names, expected_level)
+    if not matching_command(item.get("create_argv"), create) or not matching_command(item.get("extract_argv"), extract):
+        raise ValueError("recorded command does not match the reviewed flags")
+    if item.get("independent_verified") is not True:
+        raise ValueError("independent archive decoding did not pass")
+    if item.get("extract_reference_sha256") != reference_sha:
+        raise ValueError("extraction did not use the common reference archive")
+    compressed = timing(item.get("compress_seconds"), "compression")
+    extracted = timing(item.get("extract_seconds"), "extraction")
+    if len(item["compress_seconds"]) != settings["runs"] or len(item["extract_seconds"]) != settings["runs"]:
+        raise ValueError("case run count differs from declared settings")
+    archive_bytes, archive_count = validate_archive_observations(item, settings["runs"])
+    return {
+        "tool": tool,
+        "bytes": archive_bytes,
+        "compression": compressed,
+        "extraction": extracted,
+        "runs": archive_count,
+    }
 
 
 # Purpose: Reject unreviewed, incomplete or scientifically incomparable records before chart rendering.
