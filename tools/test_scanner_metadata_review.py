@@ -73,7 +73,7 @@ class ScannerMetadataReviewTests(unittest.TestCase):
         Inputs: Empty fields, invalid hashes and a correctly located commit string inside invalid JSON.
         Outputs: Explicit policy refusal or no exact match; no broader source admission.
         """
-        row = next(csv.DictReader(io.StringIO(self.policy.decode())))
+        (row,) = csv.DictReader(io.StringIO(self.policy.decode()))
         for field, value, message in (("public_sha256", "", "malformed"), ("input_sha256", "g" * 64, "invalid digest")):
             output = io.StringIO()
             writer = csv.DictWriter(output, fieldnames=review.FIELDS)
@@ -213,7 +213,6 @@ class ScannerMetadataReviewTests(unittest.TestCase):
     # Purpose: Refuse redirected policy files and detect accidental drift in registered metadata snapshots.
     # Inputs: Real reviewed files plus a mocked junction. Outputs: Current hashes match and redirects fail.
     def test_policy_files_and_registered_snapshots(self):
-        from unittest.mock import patch
 
         root = Path(__file__).resolve().parents[1]
         for row in review.read_reviews(review.read_policy(root)):
@@ -442,7 +441,6 @@ class ScannerSourceReviewTests(unittest.TestCase):
     # Purpose: Keep Git newline normalization portable while refusing redirected review files or sources.
     # Inputs: Identical LF/CRLF source and simulated junctions. Outputs: Normalized identity passes; redirects raise.
     def test_newlines_and_redirects(self):
-        from unittest.mock import patch
 
         payload = self.source.read_bytes().replace(b"\r\n", b"\n")
         for content in (payload, payload.replace(b"\n", b"\r\n")):
@@ -495,7 +493,6 @@ class ScannerSourceReviewTests(unittest.TestCase):
     # Purpose: Preserve hosted state and require committed source identity in addition to the local digest.
     # Inputs: Exact and nonmatching published blobs. Outputs: Admission passes only the exact published source.
     def test_hosted_committed_identity(self):
-        from unittest.mock import patch
 
         alert = self.hosted_fixture()
         before = copy.deepcopy(alert)
@@ -509,7 +506,6 @@ class ScannerSourceReviewTests(unittest.TestCase):
     # Purpose: Reject stale analyses, changed producer/category/rule/region and malformed identities independently.
     # Inputs: Independent GitHub record mutations. Outputs: Every unmatched record remains blocking.
     def test_hosted_freshness_boundaries(self):
-        from unittest.mock import patch
 
         mutations = [
             ("tool", "version", "1.0.101"),

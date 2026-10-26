@@ -27,7 +27,8 @@ class FailedReadPipe:
         """
         self.stream = stream
 
-    def read(self, _size: int) -> bytes:
+    @staticmethod
+    def read(_size: int) -> bytes:
         """Purpose: Model failed output acquisition. Inputs: Requested extent. Outputs: Controlled I/O error."""
         raise OSError("controlled pipe read failure")
 
@@ -55,6 +56,54 @@ class FailedClosePipe(FailedReadPipe):
         """Purpose: Fail after releasing the real handle. Inputs: None. Outputs: A channel-specific close error."""
         self.stream.close()
         raise OSError("controlled " + self.channel + " close failure")
+
+
+def primary_thread_fixture(stage: str):
+    """Purpose: Construct one independent suspended-thread API scenario without calling native thread functions.
+    Inputs: A named failure phase or valid control. Outputs: Native-shaped API, process and live last-error state.
+    """
+    library = mock.Mock()
+    process = mock.Mock(pid=1001)
+    process.poll.return_value = 0 if stage == "exited" else None
+    library.CreateToolhelp32Snapshot.return_value = ctypes.c_void_p(-1).value if stage == "snapshot" else 17
+    entries = [] if stage == "empty" else [(1002 if stage == "foreign" else 1001, 271)]
+    if stage == "multiple":
+        entries.append((1001, 272))
+    records = iter(entries)
+
+    def enumerate_thread(_snapshot, pointer):
+        """Purpose: Supply independently framed read-only thread records.
+        Inputs: Native entry buffer and frozen records. Outputs: One record or end of enumeration.
+        """
+        try:
+            owner, thread = next(records)
+        except StopIteration:
+            return False
+        entry = ctypes.cast(pointer, ctypes.POINTER(flitzzip_mcp._ThreadEntry)).contents
+        entry.process_id, entry.thread_id = owner, thread
+        return True
+
+    library.Thread32First.side_effect = enumerate_thread
+    library.Thread32Next.side_effect = enumerate_thread
+    last_error = {"value": 5 if stage in ("snapshot", "enumeration") else 18}
+
+    def open_thread(_access, _inherit, _thread):
+        """Purpose: Model stable thread-local error state rather than a consumable error sequence.
+        Inputs: Native open arguments and frozen failure stage. Outputs: Owned handle or access denial.
+        """
+        if stage == "open":
+            last_error["value"] = 5
+            return 0
+        return 19
+
+    library.OpenThread.side_effect = open_thread
+    library.GetProcessIdOfThread.return_value = 1002 if stage == "owner" else 1001
+    library.ResumeThread.return_value = {
+        "resume-zero": 0,
+        "resume-two": 2,
+        "resume-error": 0xFFFFFFFF,
+    }.get(stage, 1)
+    return library, process, last_error
 
 
 class ProtocolTests(unittest.TestCase):
@@ -227,51 +276,11 @@ class ProtocolTests(unittest.TestCase):
         }
         for stage, expected_error in stages.items():
             with self.subTest(stage=stage):
-                library = mock.Mock()
-                process = mock.Mock(pid=1001)
-                process.poll.return_value = 0 if stage == "exited" else None
-                library.CreateToolhelp32Snapshot.return_value = ctypes.c_void_p(-1).value if stage == "snapshot" else 17
-                entries = [] if stage == "empty" else [(1002 if stage == "foreign" else 1001, 271)]
-                if stage == "multiple":
-                    entries.append((1001, 272))
-                records = iter(entries)
-
-                def enumerate_thread(_snapshot, pointer, *, records=records):
-                    """Purpose: Supply independently framed read-only thread records.
-                    Inputs: Native entry buffer and frozen records. Outputs: One record or end of enumeration.
-                    """
-                    try:
-                        owner, thread = next(records)
-                    except StopIteration:
-                        return False
-                    entry = ctypes.cast(pointer, ctypes.POINTER(flitzzip_mcp._ThreadEntry)).contents
-                    entry.process_id, entry.thread_id = owner, thread
-                    return True
-
-                library.Thread32First.side_effect = enumerate_thread
-                library.Thread32Next.side_effect = enumerate_thread
-                last_error = {"value": 5 if stage in ("snapshot", "enumeration") else 18}
-
-                def open_thread(_access, _inherit, _thread, *, stage=stage, last_error=last_error):
-                    """Purpose: Model stable thread-local error state rather than a consumable error sequence.
-                    Inputs: Native open arguments and frozen failure stage. Outputs: Owned handle or access denial.
-                    """
-                    if stage == "open":
-                        last_error["value"] = 5
-                        return 0
-                    return 19
-
-                library.OpenThread.side_effect = open_thread
-                library.GetProcessIdOfThread.return_value = 1002 if stage == "owner" else 1001
-                library.ResumeThread.return_value = {
-                    "resume-zero": 0,
-                    "resume-two": 2,
-                    "resume-error": 0xFFFFFFFF,
-                }.get(stage, 1)
+                library, process, last_error = primary_thread_fixture(stage)
                 with (
                     mock.patch.object(flitzzip_mcp.ctypes, "WinDLL", return_value=library),
                     mock.patch.object(
-                        flitzzip_mcp.ctypes, "get_last_error", side_effect=lambda state=last_error: state["value"]
+                        flitzzip_mcp.ctypes, "get_last_error", side_effect=partial(last_error.__getitem__, "value")
                     ),
                 ):
                     if expected_error:
@@ -368,9 +377,15 @@ class ProtocolTests(unittest.TestCase):
             """Purpose: Supply owned accounting. Inputs: Typed query buffer. Outputs: Next controlled active-
             process count.
             """
+            self.assertEqual(
+                (handle, kind, size, returned),
+                (123, 1, ctypes.sizeof(flitzzip_mcp._JobObjectBasicAccountingInformation), None),
+            )
+            count = next(active, None)
+            self.assertIsNotNone(count, "job shutdown queried beyond the controlled active-process sequence")
             ctypes.cast(
                 result, ctypes.POINTER(flitzzip_mcp._JobObjectBasicAccountingInformation)
-            ).contents.active_processes = next(active)
+            ).contents.active_processes = count
             return True
 
         library.QueryInformationJobObject.side_effect = query

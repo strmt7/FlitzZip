@@ -112,8 +112,7 @@ def admit_memory(owned_bytes: int) -> None:
 
     if os.name != "nt":
         raise ValueError("this qualification requires Windows and the production HIP boundary")
-    status = MemoryStatus()
-    status.length = ctypes.sizeof(status)
+    status = MemoryStatus(length=ctypes.sizeof(MemoryStatus))
     if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
         raise ctypes.WinError()
     if owned_bytes <= 0 or owned_bytes > min(status.available // 2, max(0, status.available - 2 * 1024**3)):
@@ -151,32 +150,49 @@ def download(spec: dict, *, deadline: float) -> bytes:
     return result
 
 
+def validate_member_name(member: zipfile.ZipInfo, seen: set[str]) -> None:
+    """Purpose: Admit one canonical unique file name before decoding.
+    Inputs: Published ZIP metadata and previously accepted names. Outputs: Rejects ambiguous or unsafe paths.
+    """
+    path = PurePosixPath(member.filename)
+    if (
+        not member.filename
+        or member.orig_filename != member.filename
+        or "\\" in member.filename
+        or ":" in member.filename
+        or path.is_absolute()
+        or any(part in ("", ".", "..") for part in member.filename.split("/"))
+        or member.filename in seen
+        or member.is_dir()
+    ):
+        raise ValueError("corpus contains an unsupported member")
+
+
+def validate_member_encoding(member: zipfile.ZipInfo) -> None:
+    """Purpose: Refuse non-regular, encrypted or unsupported corpus members.
+    Inputs: ZIP attributes, method and extent. Outputs: Accepts only positive regular stored/Deflate files.
+    """
+    mode = member.external_attr >> 16
+    if (
+        stat.S_ISLNK(mode)
+        or stat.S_IFMT(mode) not in (0, stat.S_IFREG)
+        or member.flag_bits & 1
+        or member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+        or member.file_size <= 0
+    ):
+        raise ValueError("corpus contains an unsupported member")
+
+
 # Purpose: Validate the complete published ZIP inventory before decoding any member.
 # Inputs: ZIP metadata, pinned inventory extent and optional canonical per-file lengths.
-# Outputs: Rejects links, encryption, unsafe/duplicate names, unsupported methods and inconsistent inventory.
+# Outputs: Rejects unsafe members and inconsistent inventory before the first member is opened.
 def validate_members(members: list[zipfile.ZipInfo], spec: dict) -> None:
     if len(members) != spec["file_count"] or sum(member.file_size for member in members) != spec["decoded_bytes"]:
         raise ValueError("published corpus inventory changed")
     seen: set[str] = set()
     for member in members:
-        path = PurePosixPath(member.filename)
-        mode = member.external_attr >> 16
-        if (
-            not member.filename
-            or member.orig_filename != member.filename
-            or "\\" in member.filename
-            or ":" in member.filename
-            or path.is_absolute()
-            or any(part in ("", ".", "..") for part in member.filename.split("/"))
-            or member.filename in seen
-            or member.is_dir()
-            or stat.S_ISLNK(mode)
-            or stat.S_IFMT(mode) not in (0, stat.S_IFREG)
-            or member.flag_bits & 1
-            or member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
-            or member.file_size <= 0
-        ):
-            raise ValueError("corpus contains an unsupported member")
+        validate_member_name(member, seen)
+        validate_member_encoding(member)
         seen.add(member.filename)
     expected = spec.get("file_bytes")
     if expected and {member.filename: member.file_size for member in members} != expected:
@@ -323,6 +339,22 @@ def process_timeout(arguments: list[str], timeout: int, output: bytes, errors: b
     return failure
 
 
+def await_owned_process(process: subprocess.Popen, futures: tuple, timeout: int) -> bool:
+    """Purpose: Observe child completion, transport faults and the deadline without changing ownership.
+    Inputs: The started owned child, bounded I/O futures and positive deadline.
+    Outputs: Returns true on deadline expiry; completed transport errors propagate before cleanup by the caller.
+    """
+    deadline = time.monotonic() + timeout
+    while process.poll() is None:
+        for future in futures:
+            if future is not None and future.done():
+                future.result()
+        if time.monotonic() >= deadline:
+            return True
+        time.sleep(0.01)
+    return False
+
+
 # Purpose: Run an existing executable with bounded binary I/O and an owned lifetime.
 # Inputs: Structured arguments, RAM input/environment, deadline and optional successful-diagnostic byte sink.
 # Outputs: Bounded stdout; failures retain diagnostics, environments stay caller-owned and every child finishes.
@@ -357,16 +389,7 @@ def run_process(
             stdout = pool.submit(read_bounded, process.stdout)
             stderr = pool.submit(read_bounded, process.stderr)
             writer = pool.submit(write_input, process.stdin, data) if data is not None else None
-            deadline = time.monotonic() + timeout
-            timed_out = False
-            while process.poll() is None:
-                for future in (stdout, stderr, writer):
-                    if future is not None and future.done():
-                        future.result()
-                if time.monotonic() >= deadline:
-                    timed_out = True
-                    break
-                time.sleep(0.01)
+            timed_out = await_owned_process(process, (stdout, stderr, writer), timeout)
             # Descendants cannot keep inherited pipe handles alive after their root exits.
             containment.close()
             process.wait(timeout=5)
@@ -583,6 +606,20 @@ def verify_hyperfine(evidence: dict) -> str:
     return digest
 
 
+def resident_corpus(name: str, spec: dict) -> tuple[list[dict], dict]:
+    """Purpose: Acquire and decode a reviewed corpus within one bounded archive-buffer lifetime.
+    Inputs: Canonical corpus name and pinned specification. Outputs: Resident files and provenance; no disk staging.
+    """
+    admit_memory(2 * spec["archive_bytes"] + spec["decoded_bytes"] + 2 * spec["max_file_bytes"])
+    payload = download(spec, deadline=time.monotonic() + 180)
+    decoder = (
+        decode_single_file
+        if spec.get("source_kind") == "file"
+        else (decode_canterbury if name == "Canterbury" else decode_corpus)
+    )
+    return decoder(payload, spec)
+
+
 # Purpose: Run a complete public-corpus study with pinned Hyperfine, fixed residency and exact native qualification.
 # Inputs: Reviewed preset, bounded repetitions/block size/deadlines and current successful HIP build.
 # Outputs: Raw observations, retained Hyperfine diagnostics and size qualification; timing stays unqualified.
@@ -600,15 +637,7 @@ def study(args: argparse.Namespace) -> None:
         banner = run_process([str(HYPERFINE), "--version"], None, 10).decode("ascii").strip()
         if banner != "hyperfine 1.20.0":
             raise ValueError("Installed Hyperfine does not match the reviewed version")
-        admit_memory(2 * spec["archive_bytes"] + spec["decoded_bytes"] + 2 * spec["max_file_bytes"])
-        payload = download(spec, deadline=time.monotonic() + 180)
-        decoder = (
-            decode_single_file
-            if spec.get("source_kind") == "file"
-            else (decode_canterbury if args.corpus == "Canterbury" else decode_corpus)
-        )
-        files, provenance = decoder(payload, spec)
-        del payload
+        files, provenance = resident_corpus(args.corpus, spec)
         print(json.dumps({"corpus": args.corpus, **provenance}), flush=True)
         descriptor = ipc.prepare_session(stack, files, args.runs, admit_memory)
         _, output, _ = ipc.open_session(stack, descriptor)

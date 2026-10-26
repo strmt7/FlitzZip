@@ -2,6 +2,7 @@
 
 import base64
 import ctypes
+import gc
 import gzip
 import hashlib
 import io
@@ -15,6 +16,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import weakref
 import zipfile
 from contextlib import ExitStack
 from multiprocessing.shared_memory import SharedMemory
@@ -47,6 +49,37 @@ def zip_fixture(rows: list[tuple[str, bytes]], *, link: bool = False) -> tuple[b
 # Inputs: Tiny controlled archive/protocol fixtures and mocked fixed-source network responses.
 # Outputs: Rejects malformed, changed, lossy, substituted or disk-writing observations; no benchmark is launched.
 class CorpusContracts(unittest.TestCase):
+    def test_decoded_residency_releases_the_archive_owner_before_worker_setup(self) -> None:
+        """Purpose: Keep transport archive ownership out of the resident measurement phase.
+        Inputs: A real tiny ZIP in a weak-referenceable buffer. Outputs: Independent file bytes and released transport.
+        """
+
+        class TransportArchive(bytearray):
+            """Expose reachability of an otherwise ordinary byte buffer without changing decoding."""
+
+        source = b"independent resident payload"
+        archive, spec = zip_fixture([("natural.txt", source)])
+        spec.update(archive_bytes=len(archive), max_file_bytes=len(source))
+        owners = []
+
+        def acquire(_spec, *, deadline):
+            """Purpose: Supply an archive. Inputs: Pinned source request. Outputs: Tracked in-memory bytes."""
+            self.assertGreater(deadline, 0)
+            payload = TransportArchive(archive)
+            owners.append(weakref.ref(payload))
+            return payload
+
+        with mock.patch.object(corpus, "download", new=acquire), mock.patch.object(corpus, "admit_memory") as admission:
+            files, provenance = corpus.resident_corpus("Govdocs1", spec)
+        gc.collect()
+        self.assertEqual(len(owners), 1)
+        self.assertIsNone(owners[0]())
+        self.assertEqual(files[0]["data"], source)
+        self.assertEqual(files[0]["sha256"], hashlib.sha256(source).hexdigest())
+        self.assertEqual(len(files), 1)
+        self.assertIsInstance(provenance, dict)
+        admission.assert_called_once_with(2 * len(archive) + 3 * len(source))
+
     def test_ram_admission_uses_headroom_and_preserves_os_failures(self) -> None:
         """Purpose: Bound planned residency before allocation. Inputs: Controlled Windows memory observations.
         Outputs: Exact boundary admission, refusal above either headroom reserve, and no allocation.
@@ -1106,6 +1139,7 @@ class RamExchangeContracts(unittest.TestCase):
 
         # Purpose: Fill the real RAM observation transport. Inputs: Controller launch role. Outputs: Fixture telemetry.
         def launch(arguments, data, timeout, **kwargs):
+            self.assertIsNone(data)
             if "--version" in arguments:
                 self.assertNotIn("successful_stderr", kwargs)
                 return b"hyperfine 1.20.0\n"
@@ -1113,8 +1147,8 @@ class RamExchangeContracts(unittest.TestCase):
             descriptor = json.loads(kwargs["env"][ipc.SESSION_ENV])
             with ExitStack() as stack:
                 _, output, _ = ipc.open_session(stack, descriptor)
-                for index, data in enumerate(source_bytes):
-                    ipc.publish_observation(output, index, protocol_fixture(data))
+                for index, member_bytes in enumerate(source_bytes):
+                    ipc.publish_observation(output, index, protocol_fixture(member_bytes))
             return b"successful timing fixture"
 
         printed = io.StringIO()
