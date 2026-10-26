@@ -86,6 +86,16 @@ public static class FlitzZipNativeUi {
     [DllImport("user32.dll")]
     public static extern IntPtr WindowFromPoint(POINT point);
 
+    // Purpose: Identify the native process owning an observed window. Inputs: Window handle and writable process ID.
+    // Outputs: Owning thread ID, with process ID written to the caller.
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    // Purpose: Identify which native window currently receives foreground input. Inputs: None.
+    // Outputs: Foreground window handle, or null when none exists.
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
     [DllImport("user32.dll")]
     public static extern bool IsChild(IntPtr hWndParent, IntPtr hWnd);
 

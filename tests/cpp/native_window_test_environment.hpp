@@ -140,14 +140,15 @@ class HiddenController final {
     }
 
     // Purpose: Deliver a native event without permitting a blocked UI thread to hang the test driver.
-    // Inputs: Owned HWND/message and implicit call site. Outputs: One-second dispatch or exact native/caller evidence.
-    static void send(HWND window, UINT message, WPARAM wparam = 0, LPARAM lparam = 0,
+    // Inputs: Owned HWND/message, bounded millisecond deadline and implicit call site.
+    // Outputs: Acknowledged dispatch or exact native/caller evidence; input retains the one-second default.
+    static void send(HWND window, UINT message, WPARAM wparam = 0, LPARAM lparam = 0, DWORD timeout_ms = 1000,
                      std::source_location caller = std::source_location::current()) {
         DWORD_PTR result = 0;
         const auto started = std::chrono::steady_clock::now();
         SetLastError(ERROR_SUCCESS);
         const auto sent =
-            SendMessageTimeoutW(window, message, wparam, lparam, SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &result);
+            SendMessageTimeoutW(window, message, wparam, lparam, SMTO_ABORTIFHUNG | SMTO_BLOCK, timeout_ms, &result);
         const auto error = GetLastError();
         if (sent == 0) {
             const auto elapsed =
@@ -156,6 +157,7 @@ class HiddenController final {
                 "Native message dispatch failed at " + std::filesystem::path(caller.file_name()).filename().string() +
                 ":" + std::to_string(caller.line()) + " message=" + std::to_string(message) +
                 " win32_error=" + std::to_string(error) + " elapsed_ms=" + std::to_string(elapsed.count()) +
+                " timeout_ms=" + std::to_string(timeout_ms) +
                 " live_window=" + std::to_string(IsWindow(window) != FALSE));
         }
     }

@@ -33,9 +33,9 @@ class VisualSession final {
     }
 
     // Purpose: Observe native rendering without a visible window or image files.
-    // Inputs: Owned frame. Outputs: Synchronously painted memory bitmap.
+    // Inputs: Owned frame. Outputs: Synchronously painted memory bitmap within a bounded render deadline.
     void paint() {
-        HiddenController::send(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(frame.dc()), PRF_CLIENT);
+        HiddenController::send(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(frame.dc()), PRF_CLIENT, 3000);
     }
 
     // Purpose: Capture a small observable region without depending on product state or text formatters.

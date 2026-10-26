@@ -352,10 +352,10 @@ class MainWindow {
     // Outputs: Updates tab and scroll state, then queues repaint when the tab changes.
     void select_license_notices_tab(int tab_index);
 
-    // Purpose: Measure the rendered license-notice body height.
+    // Purpose: Measure the rendered license-notice body height, reusing matching font and device layout.
     // Inputs: `dc` is the current target and `viewport` is the text viewport.
     // Outputs: Returns the DPI-scaled text height needed for scroll bounds.
-    [[nodiscard]] int license_notices_text_height(HDC dc, const RECT& viewport) const;
+    [[nodiscard]] int license_notices_text_height(HDC dc, const RECT& viewport);
 
     // Purpose: Apply a bounded scroll delta to the license-notice modal.
     // Inputs: `delta_pixels` is positive for down and negative for up.
@@ -1490,6 +1490,13 @@ class MainWindow {
     bool text_tooltip_visible_ = false;
     std::wstring text_tooltip_text_;
     std::array<std::wstring, 2> cached_license_notices_text_;
+    struct LicenseNoticeMeasurement {
+        int width = 0;
+        int device_dpi_x = 0;
+        int device_dpi_y = 0;
+        int height = 0;
+    };
+    std::array<LicenseNoticeMeasurement, 2> cached_license_notices_measurement_{};
     KeyboardFocus keyboard_focus_;
     int dropdown_keyboard_index_ = -1;
     int dropdown_scroll_first_row_ = 0;
