@@ -202,6 +202,7 @@ class ReportRedactionTests(unittest.TestCase):
         with (
             patch.object(sys, "argv", ["redact_trufflehog.py", "--help"]),
             patch.object(sys, "stdout", io.StringIO()),
+            patch.object(sys, "path", [str(Path(redactor.__file__).resolve().parent), *sys.path]),
             self.assertRaises(SystemExit) as status,
         ):
             runpy.run_path(str(Path(redactor.__file__).resolve()), run_name="__main__")

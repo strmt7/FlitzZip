@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 
 from tools.bootstrap_scanners import provision_missing_scanners
 from tools.devskim_scope import validate_report_directory, write_options
+from tools.executable_path import executable_path
 from tools.scanner_hosted_review import (
     CURRENT_POLICY,
     MAX_CURRENT_CACHE_BYTES,
@@ -33,7 +34,9 @@ MAX_FILES = 4096
 # Inputs: Checkout with a credential-free GitHub origin. Outputs: Owner/name, or a closed failure.
 def review_repository(root: Path) -> str:
     remote = (
-        subprocess.check_output(["git", "-C", str(root), "remote", "get-url", "origin"], timeout=15).decode().strip()
+        subprocess.check_output([executable_path("git"), "-C", str(root), "remote", "get-url", "origin"], timeout=15)
+        .decode()
+        .strip()
     )
     match = re.fullmatch(
         r"(?:https://github\.com/|git@github\.com:)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?", remote
@@ -101,7 +104,7 @@ def review_snapshot_results(snapshot, report, policy, source_policy, rows, repos
 def changed_paths(root: Path, base: str) -> list[str]:
     revision = (
         subprocess.check_output(
-            ["git", "-C", str(root), "rev-parse", "--verify", "--end-of-options", base + "^{commit}"],
+            [executable_path("git"), "-C", str(root), "rev-parse", "--verify", "--end-of-options", base + "^{commit}"],
             timeout=30,
             stderr=subprocess.PIPE,
         )
@@ -113,7 +116,7 @@ def changed_paths(root: Path, base: str) -> list[str]:
         ["diff", "--name-only", "--diff-filter=ACMR", "-z", revision, "--"],
         ["ls-files", "--others", "--exclude-standard", "-z"],
     ):
-        payload = subprocess.check_output(["git", "-C", str(root), *args], timeout=30)
+        payload = subprocess.check_output([executable_path("git"), "-C", str(root), *args], timeout=30)
         paths.update(name.decode("utf-8") for name in payload.split(b"\0") if name)
     if len(paths) > MAX_FILES:
         raise ValueError("Changed input count exceeds scanner admission; split or explicitly review the batch")

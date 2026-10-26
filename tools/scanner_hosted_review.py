@@ -11,6 +11,7 @@ import subprocess
 from collections import Counter
 from pathlib import Path
 
+from tools.executable_path import executable_path
 from tools.native_build_provenance import INPUT_FILES, INPUT_ROOTS, canonical, capture_inputs, input_path
 
 POLICY = ".github/scanner-hosted-reviews.csv"
@@ -105,7 +106,9 @@ def committed_review_blob(root: Path, commit: str, name: str) -> bytes:
     if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
         raise ValueError("False-positive review requires a full commit")
     options = {"cwd": root, "capture_output": True, "timeout": 15}
-    entry = subprocess.run(["git", "ls-tree", "-l", "-z", commit, "--", name], check=True, **options).stdout
+    entry = subprocess.run(
+        [executable_path("git"), "ls-tree", "-l", "-z", commit, "--", name], check=True, **options
+    ).stdout
     metadata, separator, filename = entry.partition(b"\t")
     fields = metadata.split()
     if (
@@ -118,7 +121,9 @@ def committed_review_blob(root: Path, commit: str, name: str) -> bytes:
         or int(fields[3]) > 2 * 1024**2
     ):
         raise ValueError("False-positive review requires a bounded regular committed file")
-    payload = subprocess.run(["git", "cat-file", "blob", fields[2].decode("ascii")], check=True, **options).stdout
+    payload = subprocess.run(
+        [executable_path("git"), "cat-file", "blob", fields[2].decode("ascii")], check=True, **options
+    ).stdout
     if len(payload) != int(fields[3]):
         raise ValueError("False-positive review blob size changed")
     return payload
@@ -423,7 +428,7 @@ def read_hosted_policy(root: Path) -> list[dict[str, str]]:
 def committed_context_matches(root: Path, commit: str) -> bool:
     result = subprocess.run(
         [
-            "git",
+            executable_path("git"),
             "-c",
             "core.fsmonitor=false",
             "diff",

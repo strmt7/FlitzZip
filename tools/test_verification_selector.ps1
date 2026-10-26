@@ -449,6 +449,17 @@ foreach ($path in @(".semgrepignore", "tools/semgrep_coverage.py", "tools/test_s
     Assert-Selector (-not (Test-RequiredCommand -Plan $coveragePlan -Id "release-build")) "coverage metadata changes alone must not rebuild the product: $path"
 }
 
+foreach ($path in @('tools/executable_path.py', 'tools/test_executable_path.py')) {
+    $executablePlan = Get-FlitzZipVerificationPlan -ChangedPath @($path)
+    foreach ($id in @('executable-path-contracts', 'settings-evolution-contracts', 'benchmark-tooling-tests',
+        'scanner-coverage-tests', 'scanner-preflight-tests', 'scanner-metadata-review-tests',
+        'scanner-hosted-review-tests', 'secret-report-tests', 'agent-context-contracts')) {
+        Assert-Selector (Test-RequiredCommand -Plan $executablePlan -Id $id) "shared command resolution must qualify its actual consumer: $path/$id"
+    }
+    Assert-Selector (-not (Test-RequiredCommand -Plan $executablePlan -Id 'release-build')) "tool lookup contracts must not rebuild the product: $path"
+    Assert-Selector (Test-Workflow -Plan $executablePlan -Name 'component-contracts') "tool lookup contracts must run in hosted CI: $path"
+}
+
 foreach ($path in @('tools/semgrep_findings.py', 'tools/test_semgrep_findings.py', '.github/scanner-false-positive-reviews.csv')) {
     $findingPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path)
     Assert-Selector (Test-RequiredCommand -Plan $findingPlan -Id 'semgrep-findings-tests') "finding-gate inputs must run direct admission tests: $path"

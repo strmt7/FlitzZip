@@ -16,6 +16,13 @@ and unequal-context behavior. The downloaders, URL admission, integrity checks,
 reported locations and scanner recipe remain unchanged. Both individual decisions
 below retain their complete context lists and the refreshed evidence binding.
 
+The review reader now resolves Git to an absolute native executable before each
+query. The shared resolver rejects relative command paths and implicit
+current-directory search. Real Git inventory and shadow-file regressions qualify
+that boundary, and both individual contexts include the resolver and its tests.
+The downloader sources, URL restrictions, digest checks and finding locations
+remain unchanged.
+
 ## Individual findings
 
 ### Alert 8446

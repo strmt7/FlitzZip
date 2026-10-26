@@ -27,6 +27,7 @@ from tools.benchmark_comparators import (
     require_permission,
     timing_eligibility,
 )
+from tools.executable_path import executable_path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
@@ -298,7 +299,7 @@ def host_snapshot() -> dict:
         " | ConvertTo-Json -Compress"
     )
     completed = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-Command", script],
+        [executable_path("powershell.exe"), "-NoProfile", "-Command", script],
         capture_output=True,
         text=True,
         errors="replace",
@@ -514,9 +515,9 @@ def changed_paths(status: bytes) -> list[str]:
 # Inputs: Git checkout root and tested FlitzZip executable.
 # Outputs: Returns clean source commit, executable SHA-256, and unrelated dirty path names.
 def source_identity(binary: Path) -> tuple[str, str, list[str]]:
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    commit = subprocess.check_output([executable_path("git"), "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     status = subprocess.check_output(
-        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=ROOT, timeout=30
+        [executable_path("git"), "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=ROOT, timeout=30
     )
     relevant = (
         "src/",

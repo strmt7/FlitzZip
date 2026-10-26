@@ -662,6 +662,11 @@ tools\package.ps1 -Configuration Release
   the exit status, including tests of expected failures. Keep that intent visible
   at the call rather than hiding it in an expanded options dictionary. The pinned
   Python lint lane enforces explicit exit handling.
+- Resolve native development commands with `tools.executable_path.executable_path`
+  before process creation. Pass an absolute program path or a basename resolved
+  through absolute PATH directories; never depend on implicit current-directory
+  search or launch Windows command scripts as native executables. Keep explicit
+  caller exit-status handling and pinned-tool admission checks.
 - Empty codec jobs must still validate metadata before returning. GPU-use flags
   must describe dispatched nonempty work, not merely a selected backend; retain
   regressions for borrowed/owned input, empty output, and malformed empty layouts.

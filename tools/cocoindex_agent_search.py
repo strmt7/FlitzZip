@@ -23,8 +23,10 @@ from pathlib import Path, PurePosixPath
 
 if __package__:
     from .agent_context import relative_source_path, safe_path
+    from .executable_path import executable_path
 else:
     from agent_context import relative_source_path, safe_path
+    from executable_path import executable_path
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = "0.2.42"
@@ -156,7 +158,7 @@ def install(base: Path) -> None:
 def tracked_files(repo: Path) -> list[tuple[str, Path]]:
     """Purpose: Inventory live code. Inputs: checkout. Outputs: safe paths without Git-confirmed deletions."""
     raw = subprocess.run(
-        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--deduplicate"],
+        [executable_path("git"), "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--deduplicate"],
         cwd=repo,
         timeout=30,
         check=True,
@@ -174,7 +176,7 @@ def tracked_files(repo: Path) -> list[tuple[str, Path]]:
         if not source.exists() and not source.is_symlink():
             if deleted is None:
                 removed = subprocess.run(
-                    ["git", "ls-files", "-z", "--deleted"],
+                    [executable_path("git"), "ls-files", "-z", "--deleted"],
                     cwd=repo,
                     timeout=30,
                     check=True,

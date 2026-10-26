@@ -625,7 +625,9 @@ class CurrentHostedMetadataTests(unittest.TestCase):
             # Inputs: Fixed production Git command and options. Outputs: Original policy or controlled source response.
             def git(arguments, *, selected=advertised, check, **kwargs):
                 self.assertIs(check, True)
-                if arguments[:3] == ["git", "cat-file", "-s"] and arguments[-1] == f"{self.commit}:{self.name}":
+                self.assertTrue(Path(arguments[0]).is_absolute())
+                self.assertIn(Path(arguments[0]).name.lower(), {"git", "git.exe"})
+                if arguments[1:3] == ["cat-file", "-s"] and arguments[-1] == f"{self.commit}:{self.name}":
                     return SimpleNamespace(stdout=selected)
                 return real_run(arguments, check=check, **kwargs)
 
@@ -734,6 +736,7 @@ class ScannerReviewCommandTests(unittest.TestCase):
         for name in (
             "tools/scanner_metadata_review.py",
             "tools/scanner_hosted_review.py",
+            "tools/executable_path.py",
             "tools/native_build_provenance.py",
             ".github/scanner-metadata-reviews.csv",
             ".github/scanner-source-reviews.csv",

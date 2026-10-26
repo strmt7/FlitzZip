@@ -14,6 +14,11 @@ import zipfile
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+if __package__:
+    from .executable_path import executable_path
+else:
+    from executable_path import executable_path
+
 MAX_RECORD_BYTES = 1024 * 1024
 MAX_REVIEW_ARCHIVE_BYTES = 8 * 1024 * 1024
 MAX_REVIEW_EXPANDED_BYTES = 64 * 1024 * 1024
@@ -220,11 +225,13 @@ class PublicFixtureReview:
             return True
         reference = f"{commit}:{path}"
         size = subprocess.check_output(
-            ["git", "cat-file", "-s", reference], cwd=self.root, timeout=10, stderr=subprocess.DEVNULL
+            [executable_path("git"), "cat-file", "-s", reference], cwd=self.root, timeout=10, stderr=subprocess.DEVNULL
         )
         if not size.strip().isdigit() or int(size) > MAX_REVIEW_ARCHIVE_BYTES:
             return False
-        data = subprocess.check_output(["git", "show", reference], cwd=self.root, timeout=10, stderr=subprocess.DEVNULL)
+        data = subprocess.check_output(
+            [executable_path("git"), "show", reference], cwd=self.root, timeout=10, stderr=subprocess.DEVNULL
+        )
         if len(data) != int(size) or hashlib.sha256(data).hexdigest() != review["archive_sha256"]:
             return False
         source = reviewed_member(data, review)

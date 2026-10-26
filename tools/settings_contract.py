@@ -10,6 +10,7 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
+from tools.executable_path import executable_path
 from tools.native_build_provenance import input_path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -126,7 +127,17 @@ def assert_fixtures_unchanged(root: Path = ROOT, base: str | None = None) -> Non
             candidate = None
         base = candidate or ("HEAD~1" if os.environ.get("EVENT_NAME") == "workflow_dispatch" else "HEAD")
     changed = subprocess.check_output(
-        ["git", "-C", str(root), "diff", "--name-only", "--diff-filter=MD", base, "--", "tests/fixtures/settings"],
+        [
+            executable_path("git"),
+            "-C",
+            str(root),
+            "diff",
+            "--name-only",
+            "--diff-filter=MD",
+            base,
+            "--",
+            "tests/fixtures/settings",
+        ],
         timeout=15,
         text=True,
     ).splitlines()

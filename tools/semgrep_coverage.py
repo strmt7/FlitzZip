@@ -8,6 +8,11 @@ import subprocess
 from collections import Counter
 from pathlib import Path, PurePosixPath
 
+if __package__:
+    from .executable_path import executable_path
+else:
+    from executable_path import executable_path
+
 MAX_REPORT_BYTES = 64 * 1024 * 1024
 SOURCE_SUFFIXES = frozenset(
     {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".py", ".js", ".cjs", ".yml", ".yaml"}
@@ -34,7 +39,7 @@ def relative_path(value: object) -> str:
 # Outputs: Sorted unique paths; Git, encoding, size, and duplicate failures are fatal.
 def tracked_paths(root: Path) -> list[str]:
     result = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "--cached", "-z"],
+        [executable_path("git"), "-C", str(root), "ls-files", "--cached", "-z"],
         check=True,
         capture_output=True,
         timeout=30,

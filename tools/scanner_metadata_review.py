@@ -11,6 +11,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from tools.executable_path import executable_path
 from tools.scanner_hosted_review import (
     match_current_false_positives,
     match_historical_hosted_alerts,
@@ -135,10 +136,10 @@ def reviewed_source_finding(root: Path, finding: dict, rows: list[dict[str, str]
 def committed_source_matches(root: Path, commit: str, row: dict[str, str]) -> bool:
     target = f"{commit}:{row['path']}"
     options = {"cwd": root, "capture_output": True, "timeout": 15}
-    size = subprocess.run(["git", "cat-file", "-s", target], check=True, **options).stdout.strip()
+    size = subprocess.run([executable_path("git"), "cat-file", "-s", target], check=True, **options).stdout.strip()
     if not size.isdigit() or int(size) > MAX_POLICY_BYTES:
         raise ValueError("Published reviewed source exceeds its byte budget")
-    payload = subprocess.run(["git", "show", target], check=True, **options).stdout
+    payload = subprocess.run([executable_path("git"), "show", target], check=True, **options).stdout
     return (
         len(payload) == int(size) and hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() == row["input_sha256"]
     )
@@ -177,10 +178,12 @@ def match_current_metadata_alerts(root: Path, alerts: list[dict], commit: str, p
             continue
         if name not in sources:
             options = {"cwd": root, "capture_output": True, "timeout": 15}
-            size = subprocess.run(["git", "cat-file", "-s", f"{commit}:{name}"], check=True, **options).stdout.strip()
+            size = subprocess.run(
+                [executable_path("git"), "cat-file", "-s", f"{commit}:{name}"], check=True, **options
+            ).stdout.strip()
             if not size.isdigit() or int(size) > MAX_POLICY_BYTES:
                 raise ValueError("Current metadata source exceeds its byte budget")
-            payload = subprocess.run(["git", "show", f"{commit}:{name}"], check=True, **options).stdout
+            payload = subprocess.run([executable_path("git"), "show", f"{commit}:{name}"], check=True, **options).stdout
             if len(payload) != int(size):
                 raise ValueError("Current metadata source has an inconsistent size")
             sources[name] = payload
@@ -269,7 +272,12 @@ def main() -> None:
     commit = arguments.commit
     if not commit:
         commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True, timeout=15
+            [executable_path("git"), "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
         ).stdout.strip()
     if arguments.current_reviews:
         if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", arguments.repository) is None:
