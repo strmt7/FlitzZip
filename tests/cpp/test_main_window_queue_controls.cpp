@@ -25,6 +25,15 @@ class QueueSession final {
         return (table.bottom - table.top - ui.px(36)) / ui.px(34);
     }
 
+    // Purpose: Observe mouse capture owned by the actual UI thread.
+    // Inputs: This session's hidden window. Outputs: Captured HWND or a test failure on native query refusal.
+    HWND capture() const {
+        GUITHREADINFO state{};
+        state.cbSize = sizeof(state);
+        REQUIRE_TRUE(GetGUIThreadInfo(GetWindowThreadProcessId(ui.window, nullptr), &state) != FALSE);
+        return state.hwndCapture;
+    }
+
     // Purpose: Supply distinguishable real inputs through the existing native HDROP consumer.
     // Inputs: Bounded count below 64. Outputs: Ordered queue rows and source files with independent indexed payloads.
     void add(int count) {
@@ -212,6 +221,61 @@ TEST_CASE(main_window_queue_wheel_fractional_and_outside_hit_regions) {
     REQUIRE_TRUE(s.ui.pixels(header) == original_header);
     s.ui.wheel(WHEEL_DELTA, point);
     s.require_name(0, 0, count);
+    s.finish();
+}
+
+// Purpose: Keep Queue thumb dragging bounded at both ends and stop moving after native capture is released.
+// Inputs: More real queued files than fit in the viewport and out-of-track pointer movements.
+// Outputs: Requires exact visible row identities, active drag capture, released capture, and unchanged source bytes.
+TEST_CASE(main_window_queue_scrollbar_drag_clamps_and_releases_capture) {
+    QueueSession s;
+    const int count = s.visible() + 6;
+    s.add(count);
+    const RECT track{s.table.right - s.ui.px(18), s.table.top + s.ui.px(44), s.table.right - s.ui.px(6),
+                     s.table.bottom - s.ui.px(8)};
+    const int x = (track.left + track.right) / 2;
+    const auto top = MAKELPARAM(x, track.top + s.ui.px(15));
+    HiddenController::send(s.ui.window, WM_LBUTTONDOWN, MK_LBUTTON, top);
+    REQUIRE_EQ(s.capture(), s.ui.window);
+    const auto below = MAKELPARAM(x, track.bottom + s.ui.px(100));
+    HiddenController::send(s.ui.window, WM_MOUSEMOVE, MK_LBUTTON, below);
+    HiddenController::send(s.ui.window, WM_LBUTTONUP, 0, below);
+    REQUIRE_TRUE(s.capture() != s.ui.window);
+    s.require_name(0, count - s.visible(), count);
+    s.require_name(1, count - s.visible() + 1, count);
+    HiddenController::send(s.ui.window, WM_MOUSEMOVE, 0, top);
+    s.require_name(0, count - s.visible(), count);
+
+    const auto bottom = MAKELPARAM(x, track.bottom - s.ui.px(15));
+    HiddenController::send(s.ui.window, WM_LBUTTONDOWN, MK_LBUTTON, bottom);
+    REQUIRE_EQ(s.capture(), s.ui.window);
+    const auto above = MAKELPARAM(x, track.top - s.ui.px(100));
+    HiddenController::send(s.ui.window, WM_MOUSEMOVE, MK_LBUTTON, above);
+    HiddenController::send(s.ui.window, WM_LBUTTONUP, 0, above);
+    REQUIRE_TRUE(s.capture() != s.ui.window);
+    s.require_name(0, 0, count);
+    s.require_name(1, 1, count);
+    s.finish();
+}
+
+// Purpose: Cancel a Queue thumb drag without retaining stale capture or preventing later page scrolling.
+// Inputs: Overflowing real queue, WM_CANCELMODE, stale pressed motion and an ordinary scrollbar track click.
+// Outputs: Requires no movement after cancellation and the exact expected first row after a new page click.
+TEST_CASE(main_window_queue_scrollbar_cancel_restores_page_clicks) {
+    QueueSession s;
+    const int count = s.visible() + 6;
+    s.add(count);
+    const RECT track{s.table.right - s.ui.px(18), s.table.top + s.ui.px(44), s.table.right - s.ui.px(6),
+                     s.table.bottom - s.ui.px(8)};
+    const int x = (track.left + track.right) / 2;
+    HiddenController::send(s.ui.window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, track.top + s.ui.px(15)));
+    REQUIRE_EQ(s.capture(), s.ui.window);
+    HiddenController::send(s.ui.window, WM_CANCELMODE);
+    REQUIRE_TRUE(s.capture() != s.ui.window);
+    HiddenController::send(s.ui.window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x, track.bottom));
+    s.require_name(0, 0, count);
+    click_native_point(s.ui.window, POINT{x, track.bottom - s.ui.px(2)});
+    s.require_name(0, std::min(s.visible(), 6), count);
     s.finish();
 }
 
