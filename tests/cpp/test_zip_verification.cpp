@@ -60,6 +60,19 @@ void corrupt_verification_zip(const std::filesystem::path& path, std::streamoff 
     REQUIRE_TRUE(file.good());
 }
 
+// Purpose: Replace an exact field in a small independently written ZIP fixture.
+// Inputs: `path` is test-owned, `offset` is a verified ZIP header position, and `bytes` are the replacement wire bytes.
+// Outputs: Writes all bytes or fails the test on an I/O error.
+void overwrite_verification_zip_field(const std::filesystem::path& path, std::streamoff offset,
+                                      const std::string& bytes) {
+    std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+    REQUIRE_TRUE(file.is_open());
+    file.seekp(offset);
+    file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    file.flush();
+    REQUIRE_TRUE(file.good());
+}
+
 // Purpose: Assert that read-only verification rejects a fixture without creating any extraction files.
 // Inputs: `archive` is a malformed or unsafe ZIP in an otherwise single-file test directory.
 // Outputs: Requires an archive/security error and no filesystem additions.
@@ -207,6 +220,81 @@ TEST_CASE(zip_verification_preserves_long_member_names) {
         std::filesystem::path(flitzzip::windows_api_path(root / "extracted" / std::filesystem::path(name)));
     REQUIRE_EQ(read_zip_verification_file(target), "long member payload");
     std::filesystem::remove_all(std::filesystem::path(flitzzip::windows_api_path(root)));
+}
+
+// Purpose: Reject hostile central-directory names and unsupported entry properties before any extraction writes.
+// Inputs: A valid stored ZIP control and bounded fixtures for NUL, encryption, method, empty and over-limit names.
+// Outputs: Both public readers reject the exact unsafe property, retain existing files, and leave no private payloads.
+TEST_CASE(zip_metadata_admission_rejects_hostile_names_and_methods) {
+    const auto root = test_temp_dir("zip-hostile-metadata");
+    const auto valid_archive = root / "valid.zip";
+    write_verification_zip(valid_archive, {{"safe.txt", "payload"}});
+    REQUIRE_EQ(flitzzip::verify_zip(valid_archive).output_bytes, 7U);
+    static_cast<void>(flitzzip::extract_zip(valid_archive, root / "valid-output", false));
+    REQUIRE_EQ(read_zip_verification_file(root / "valid-output" / "safe.txt"), "payload");
+
+    for (const int variant : {0, 1, 2, 3, 4}) {
+        const auto archive = root / ("hostile-" + std::to_string(variant) + ".zip");
+        const auto name = variant == 4 ? std::string(32U * 1024U + 1U, 'A') : std::string("safe.txt");
+        write_verification_zip(archive, {{name, "payload"}});
+        const auto bytes = read_zip_verification_file(archive);
+        REQUIRE_TRUE(bytes.starts_with(std::string("PK\x03\x04", 4)));
+        const auto central = bytes.find(std::string("PK\x01\x02", 4));
+        REQUIRE_TRUE(central != std::string::npos);
+        REQUIRE_TRUE(central + 46U + 8U <= bytes.size());
+        const char* expected = nullptr;
+        if (variant == 0) {
+            overwrite_verification_zip_field(archive, static_cast<std::streamoff>(central + 46U + 1U),
+                                             std::string(1, '\0'));
+            expected = "ZIP filename contains an embedded NUL";
+        } else if (variant == 1) {
+            // ZIP general-purpose flag bit 0 declares encryption.
+            overwrite_verification_zip_field(archive, static_cast<std::streamoff>(central + 8U),
+                                             std::string("\x01\x00", 2));
+            expected = "ZIP entry uses an unsupported method or encryption";
+        } else if (variant == 2) {
+            // Method 99 is not in the supported ZIP method set.
+            overwrite_verification_zip_field(archive, static_cast<std::streamoff>(central + 10U),
+                                             std::string("\x63\x00", 2));
+            expected = "ZIP entry uses an unsupported method or encryption";
+        } else if (variant == 3) {
+            // A central-directory member with no declared name cannot select an extraction target.
+            overwrite_verification_zip_field(archive, static_cast<std::streamoff>(central + 28U),
+                                             std::string("\x00\x00", 2));
+            expected = "cannot open ZIP archive:";
+        } else {
+            expected = "ZIP filename is empty or exceeds FlitzZip resource limits";
+        }
+
+        const auto destination = root / ("output-" + std::to_string(variant));
+        std::filesystem::create_directories(destination);
+        std::ofstream(destination / "sentinel.txt", std::ios::binary) << "unchanged";
+        const auto require_rejection = [&](auto&& operation) {
+            bool rejected = false;
+            try {
+                operation();
+            } catch (const flitzzip::SecurityError& error) {
+                REQUIRE_EQ(variant, 0);
+                REQUIRE_EQ(std::string(error.what()), expected);
+                rejected = true;
+            } catch (const flitzzip::ArchiveError& error) {
+                REQUIRE_TRUE(variant != 0);
+                if (variant == 3) {
+                    REQUIRE_TRUE(std::string(error.what()).starts_with(expected));
+                } else {
+                    REQUIRE_EQ(std::string(error.what()), expected);
+                }
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+        };
+        require_rejection([&] { static_cast<void>(flitzzip::verify_zip(archive)); });
+        require_rejection([&] { static_cast<void>(flitzzip::extract_zip(archive, destination, true)); });
+        REQUIRE_EQ(
+            std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}), 1);
+        REQUIRE_EQ(read_zip_verification_file(destination / "sentinel.txt"), "unchanged");
+    }
+    std::filesystem::remove_all(root);
 }
 
 // Purpose: Detect stored payload corruption without writing a decompressed copy.
