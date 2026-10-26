@@ -1012,7 +1012,7 @@ OperationStats compress_flzip(const std::vector<std::filesystem::path>& sources,
 // Purpose: Extract a native FLZIP archive while publishing each file only after verification.
 // Inputs: `requested_archive` is pinned through publication; `destination`, `options` and `progress_callback` select
 // extraction. Outputs: Restores archive entries into `destination` and returns operation telemetry or throws on
-// validation failure.
+// validation or callback failure; each decoded window reports progress before its private output is published.
 OperationStats extract_flzip(const std::filesystem::path& requested_archive, const std::filesystem::path& destination,
                              const ExtractOptions& options, const ProgressCallback& progress_callback) {
     validate_archive_options(options.chunk_size, options.block_size, options.worker_count, options.max_inflight_chunks);
@@ -1093,7 +1093,12 @@ OperationStats extract_flzip(const std::filesystem::path& requested_archive, con
                                              [&](std::span<const std::byte> bytes) {
                                                  output.write(reinterpret_cast<const char*>(bytes.data()),
                                                               static_cast<std::streamsize>(bytes.size()));
+                                                 if (!output) {
+                                                     throw ArchiveError("failed to write temporary extraction file: " +
+                                                                        path_diagnostic_utf8(temporary_target.file));
+                                                 }
                                                  progress.add_bytes(bytes.size());
+                                                 publish_progress(progress, progress_callback);
                                              });
             output.flush();
             if (!output) {
