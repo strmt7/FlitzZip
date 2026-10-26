@@ -637,7 +637,7 @@ foreach ($corpusPath in @('tools/neutron_corpus_benchmark.py', 'tools/neutron_co
     Assert-Selector (Test-RequiredCommand -Plan $corpusPlan -Id 'neutron-public-corpus-test') 'RAM corpus exchange changes require their actual offline consumer'
     Assert-Selector (-not (Test-RequiredCommand -Plan $corpusPlan -Id 'release-build')) 'offline corpus contracts must not launch a native build'
 }
-foreach ($crawlerPath in @('tools/crawl4ai_tool.py', 'tools/crawl4ai_research.py', 'tools/test_crawl4ai_tool.py',
+foreach ($crawlerPath in @('tools/crawl4ai_tool.py', 'tools/crawl4ai_research.py', 'tools/test_crawl4ai_tool.py', 'tools/json_input.py',
         'tools/crawl4ai_source_build.py', 'tools/test_crawl4ai_source_build.py',
         'tools/crawl4ai_download_opener.py', 'tools/test_crawl4ai_downloads.py', 'third_party/upstream/crawl4ai/0.9.5/build.json',
         'tools/nltk_distribution.py', 'tools/python_wheel.py', 'tools/test_nltk_distribution.py', 'tools/test_nltk_model_security.py',
