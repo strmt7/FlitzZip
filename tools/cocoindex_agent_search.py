@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path, PurePosixPath
 
 if __package__:
@@ -201,7 +202,7 @@ def source_digest(entries: list[tuple[str, Path]]) -> str:
     for name, source in sorted(entries, key=lambda entry: entry[0]):
         digest.update(name.encode("utf-8", "surrogateescape") + b"\0")
         with source.open("rb") as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b""):
+            for block in iter(partial(stream.read, 1024 * 1024), b""):
                 digest.update(block)
         digest.update(b"\0")
     return digest.hexdigest()

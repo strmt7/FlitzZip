@@ -6,11 +6,9 @@ import os
 from pathlib import Path
 
 
-def executable_path(command: str, *, search_path: str | None = None) -> str:
-    """Purpose: Resolve an explicitly selected native program before process creation.
-
-    Inputs: Absolute program path or basename, and optional explicit PATH; only absolute search directories count.
-    Outputs: Absolute executable filename, or ValueError/FileNotFoundError; never selects a Windows command script.
+def _native_program(command: str) -> Path:
+    """Purpose: Admit a native program name without performing PATH lookup.
+    Inputs: Absolute filename or basename. Outputs: Validated path; ValueError for relative paths/Windows scripts.
     """
     if not command or command in {".", ".."} or "\0" in command:
         raise ValueError("Executable name must be nonempty and contain no NUL")
@@ -22,7 +20,15 @@ def executable_path(command: str, *, search_path: str | None = None) -> str:
             program = program.with_suffix(".exe")
         elif program.suffix.lower() not in {".exe", ".com"}:
             raise ValueError("Windows commands must select a native executable, not a command script")
+    return program
 
+
+def executable_path(command: str, *, search_path: str | None = None) -> str:
+    """Purpose: Resolve an explicitly selected native program before process creation.
+    Inputs: Absolute filename or basename, and optional PATH; only absolute search directories count.
+    Outputs: Absolute executable filename, or ValueError/OSError; never selects a Windows command script.
+    """
+    program = _native_program(command)
     if program.is_absolute():
         candidates = [program]
     else:

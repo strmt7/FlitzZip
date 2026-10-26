@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
 from tools.benchmark_cache import read_json
@@ -87,7 +88,7 @@ def verify_corpus(directory: Path, downloads: Path) -> list[dict]:
         decompressed = hashlib.sha256()
         decoded_bytes = 0
         with bz2.open(downloaded, "rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            for chunk in iter(partial(stream.read, 1024 * 1024), b""):
                 decoded_bytes += len(chunk)
                 if decoded_bytes > size:
                     raise ValueError(f"corpus download expands beyond expected size: {name}")

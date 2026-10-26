@@ -118,6 +118,7 @@ class ComparisonRunnerTests(unittest.TestCase):
     def test_host_sampler_failure_is_explicit(self) -> None:
         with (
             patch.object(comparison, "ROOT", PureWindowsPath("C:/unit-fixture")),
+            patch.object(comparison, "executable_path", return_value=sys.executable) as executable,
             patch.object(
                 comparison.subprocess,
                 "run",
@@ -126,6 +127,17 @@ class ComparisonRunnerTests(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError, "sampling failed: unit sampler error"),
         ):
             comparison.host_snapshot()
+        executable.assert_called_once_with("powershell.exe")
+
+    def test_host_sampler_missing_executable_is_explicit(self) -> None:
+        """Purpose: Reject an unavailable native sampler. Inputs: Failed path admission. Outputs: No process launch."""
+        with (
+            patch.object(comparison, "executable_path", side_effect=FileNotFoundError("sampler unavailable")),
+            patch.object(comparison.subprocess, "run") as run,
+            self.assertRaisesRegex(FileNotFoundError, "sampler unavailable"),
+        ):
+            comparison.host_snapshot()
+        run.assert_not_called()
 
     # Purpose: Preserve complete Git filename records and fail closed on malformed rename/copy transport.
     # Inputs: NUL-delimited paths with whitespace/Unicode and truncated or invalid status records.
@@ -751,10 +763,13 @@ class ComparisonRunnerTests(unittest.TestCase):
                 return_value=SimpleNamespace(returncode=0, stdout=json.dumps(sample), stderr=""),
             ) as command,
             patch.object(comparison, "ROOT", PureWindowsPath("C:/FlitzZip")),
+            patch.object(comparison, "executable_path", return_value=sys.executable) as executable,
         ):
             self.assertEqual(comparison.host_snapshot()["cpu_load_percent"], 2)
             self.assertIn("Win32_PerfFormattedData_PerfOS_Processor", command.call_args.args[0][-1])
             self.assertIn("Get-Partition -DriveLetter 'C'", command.call_args.args[0][-1])
+            self.assertEqual(command.call_args.args[0][0], sys.executable)
+            executable.assert_called_once_with("powershell.exe")
         sample["cpu_load_percent"] = None
         with (
             patch.object(
@@ -763,6 +778,7 @@ class ComparisonRunnerTests(unittest.TestCase):
                 return_value=SimpleNamespace(returncode=0, stdout=json.dumps(sample), stderr=""),
             ),
             patch.object(comparison, "ROOT", PureWindowsPath("C:/FlitzZip")),
+            patch.object(comparison, "executable_path", return_value=sys.executable),
             self.assertRaisesRegex(RuntimeError, "missing required fields"),
         ):
             comparison.host_snapshot()

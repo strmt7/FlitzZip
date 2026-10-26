@@ -3,7 +3,7 @@ name: benchmark-graph
 on:
   push:
     branches: [main]
-    paths:
+    paths: &graph-inputs
       - .github/workflows/benchmark-graph.yml
       - docs/benchmarks/README.md
       - docs/neutron-public-corpus-benchmark.md
@@ -37,41 +37,10 @@ on:
       - tools/test_tradeoff_graph.py
       - tools/test_native_tradeoff_graph.py
       - tools/test_benchmark_graph.py
+      - tools/executable_path.py
+      - tools/test_executable_path.py
   pull_request:
-    paths:
-      - .github/workflows/benchmark-graph.yml
-      - docs/benchmarks/README.md
-      - docs/neutron-public-corpus-benchmark.md
-      - tools/neutron_corpus_benchmark.py
-      - tools/neutron_corpus_ipc.py
-      - tools/test_neutron_corpus_benchmark.py
-      - README.md
-      - docs/benchmarks/data/**
-      - docs/comparative-benchmark-methodology.md
-      - docs/benchmark-permissions.md
-      - docs/benchmark-research.md
-      - resources/benchmarks/**
-      - tools/run_archive_comparison.py
-      - tools/benchmark_comparators.py
-      - tools/benchmark_permissions.json
-      - tools/test_benchmark_comparators.py
-      - tools/benchmark_cache.py
-      - tools/test_benchmark_cache.py
-      - tools/render_comparison_graph.py
-      - tools/render_tradeoff_graph.py
-      - tools/render_native_tradeoff_graph.py
-      - tools/render_benchmark_graph.py
-      - tools/render_svg_graph.py
-      - tools/test_svg_graph.py
-      - tools/native_build_provenance.py
-      - tools/native_build_receipt.py
-      - tools/test_native_build_provenance.py
-      - tools/test_native_build_receipt.py
-      - tools/test_archive_comparison.py
-      - tools/test_comparison_graph.py
-      - tools/test_tradeoff_graph.py
-      - tools/test_native_tradeoff_graph.py
-      - tools/test_benchmark_graph.py
+    paths: *graph-inputs
   workflow_dispatch:
 
 permissions:
@@ -97,7 +66,7 @@ jobs:
           python-version: "3.14.8"
       - name: Test graph validation
         run: >-
-          python -m unittest tools.test_benchmark_graph tools.test_archive_comparison
+          python -m unittest tools.test_benchmark_graph tools.test_archive_comparison tools.test_executable_path
           tools.test_svg_graph
           tools.test_comparison_graph tools.test_tradeoff_graph tools.test_native_tradeoff_graph
           tools.test_benchmark_comparators tools.test_benchmark_cache

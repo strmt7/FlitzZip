@@ -458,6 +458,8 @@ foreach ($path in @('tools/executable_path.py', 'tools/test_executable_path.py')
     }
     Assert-Selector (-not (Test-RequiredCommand -Plan $executablePlan -Id 'release-build')) "tool lookup contracts must not rebuild the product: $path"
     Assert-Selector (Test-Workflow -Plan $executablePlan -Name 'component-contracts') "tool lookup contracts must run in hosted CI: $path"
+    Assert-Selector (Test-Workflow -Plan $executablePlan -Name 'benchmark-graph') "tool lookup must retain Linux consumer qualification: $path"
+    Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'benchmark-graph' -Path $path) "Linux lookup qualification must trigger for its source/tests: $path"
 }
 
 foreach ($path in @('tools/semgrep_findings.py', 'tools/test_semgrep_findings.py', '.github/scanner-false-positive-reviews.csv')) {
