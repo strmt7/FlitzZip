@@ -305,13 +305,19 @@ class ControllerFixture final {
         click_native_control(window, layout.destination);
     }
 
-    // Purpose: Admit a real file or folder through the normal Queue drop boundary.
-    // Inputs: Owned Queue HWND and existing local path. Outputs: Complete native HDROP admission.
-    static void queue_path(HWND window, const std::filesystem::path& path) {
-        const auto dpi = GetDpiForWindow(window);
-        const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
-        const auto name = flitzzip::windows_regular_path(path).native();
-        const auto bytes = sizeof(DROPFILES) + (name.size() + 2) * sizeof(wchar_t);
+    // Purpose: Deliver a bounded shell DROPFILES list through the native window handler.
+    // Inputs: Owned HWND, literal path strings and client drop point. Outputs: Handler owns and releases the HDROP.
+    static void drop_paths(HWND window, const std::vector<std::wstring>& paths, POINT point) {
+        REQUIRE_TRUE(paths.size() <= 64U);
+        std::size_t characters = 1;
+        for (const auto& path : paths) {
+            REQUIRE_TRUE(path.find(L'\0') == std::wstring::npos);
+            REQUIRE_TRUE(path.size() < 32768U);
+            characters += path.size() + 1U;
+        }
+        characters = std::max<std::size_t>(characters, 2U);
+        REQUIRE_TRUE(characters <= 65536U);
+        const auto bytes = sizeof(DROPFILES) + characters * sizeof(wchar_t);
         HGLOBAL memory = GlobalAlloc(GHND, bytes);
         REQUIRE_TRUE(memory != nullptr);
         auto* drop = static_cast<DROPFILES*>(GlobalLock(memory));
@@ -321,10 +327,21 @@ class ControllerFixture final {
         }
         drop->pFiles = sizeof(DROPFILES);
         drop->fWide = TRUE;
-        drop->pt = POINT{scale(180), scale(220)};
-        std::copy(name.begin(), name.end(), reinterpret_cast<wchar_t*>(drop + 1));
+        drop->pt = point;
+        auto* cursor = reinterpret_cast<wchar_t*>(drop + 1);
+        for (const auto& path : paths) {
+            cursor = std::copy(path.begin(), path.end(), cursor) + 1;
+        }
         GlobalUnlock(memory);
         HiddenController::send(window, WM_DROPFILES, reinterpret_cast<WPARAM>(memory));
+    }
+
+    // Purpose: Admit a real file or folder through the normal Queue drop boundary.
+    // Inputs: Owned Queue HWND and existing local path. Outputs: Complete native HDROP admission.
+    static void queue_path(HWND window, const std::filesystem::path& path) {
+        const auto dpi = GetDpiForWindow(window);
+        const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
+        drop_paths(window, {flitzzip::windows_regular_path(path).native()}, POINT{scale(180), scale(220)});
     }
 
     // Purpose: End existing Queue lifetimes through its visible Clear action.
