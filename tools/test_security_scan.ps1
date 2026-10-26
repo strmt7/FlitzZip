@@ -12,6 +12,34 @@ $processPolicy = $ast.Find({ param($node)
 if (-not $processPolicy) { throw 'Shared MSI transport policy is missing.' }
 . ([ScriptBlock]::Create($processPolicy.Extent.Text))
 $sourceRoot = Split-Path -Parent $PSScriptRoot
+$wirePolicy = $ast.Find({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-SdkWireCompilationPolicy'
+}, $false)
+if (-not $wirePolicy) { throw 'SDK consumer compilation policy is missing.' }
+. ([ScriptBlock]::Create($wirePolicy.Extent.Text))
+$clusterSource = [IO.File]::ReadAllText((Join-Path $sourceRoot '.clusterfuzzlite/build.sh'))
+$cmakeSource = [IO.File]::ReadAllText((Join-Path $sourceRoot 'CMakeLists.txt'))
+Test-SdkWireCompilationPolicy -ClusterBuild $clusterSource -CMakeLists $cmakeSource
+foreach ($mutation in @(
+        @('fuzz', '"${CXX_FLAGS[@]}"', '$CXXFLAGS'),
+        @('fuzz', 'CpuArchByteAccess.cpp', 'missing-wire.cpp'),
+        @('cmake', 'third_party/lzma_sdk/C/CpuArchByteAccess.cpp', 'missing-wire.cpp'),
+        @('cmake', 'INTERPROCEDURAL_OPTIMIZATION_RELEASE', 'INTERPROCEDURAL_OPTIMIZATION_DEBUG')
+    )) {
+    $changedCluster = $clusterSource
+    $changedCMake = $cmakeSource
+    if ($mutation[0] -eq 'fuzz') {
+        if (-not $clusterSource.Contains($mutation[1])) { throw 'SDK consumer control did not bind actual fuzz source.' }
+        $changedCluster = $clusterSource.Replace($mutation[1], $mutation[2])
+    } else {
+        if (-not $cmakeSource.Contains($mutation[1])) { throw 'SDK consumer control did not bind actual CMake source.' }
+        $changedCMake = $cmakeSource.Replace($mutation[1], $mutation[2])
+    }
+    $rejected = $false
+    try { Test-SdkWireCompilationPolicy -ClusterBuild $changedCluster -CMakeLists $changedCMake }
+    catch { $rejected = $_.Exception.Message -ceq 'SDK typed wire access must be compiled into native and sanitizer consumers with Release MSVC optimization.' }
+    if (-not $rejected) { throw 'SDK consumer policy admitted an independently broken compiler contract.' }
+}
 $workflowSource = [IO.File]::ReadAllText((Join-Path $sourceRoot '.github/workflows/release.yml'))
 $processSource = [IO.File]::ReadAllText((Join-Path $sourceRoot 'tools/msi_process.psm1'))
 Test-InstallerProcessPolicy -ReleaseAction $workflowSource -MsiProcessSource $processSource

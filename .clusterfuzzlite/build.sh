@@ -16,6 +16,11 @@ if [[ "${SANITIZER:-}" == "undefined" ]]; then
   export CXXFLAGS="$CXXFLAGS $alignment_flags"
 fi
 
+# ClusterFuzzLite supplies whitespace-separated flag arguments. Split once into
+# arrays without pathname expansion; quotes and shell operators remain data.
+IFS=$' \t\n' read -r -d '' -a C_FLAGS < <(printf '%s\0' "$CFLAGS")
+IFS=$' \t\n' read -r -d '' -a CXX_FLAGS < <(printf '%s\0' "$CXXFLAGS")
+
 COMMON_FLAGS=(
   -std=c++20
   -Isrc
@@ -88,7 +93,7 @@ build_miniz_objects() {
   for source_name in "${MINIZ_SOURCES[@]}"; do
     local source="$source_dir/$source_name"
     local object="$object_dir/$(basename "$source_name" .c).o"
-    "$CC" $CFLAGS -std=c11 -I"$source_dir" \
+    "$CC" "${C_FLAGS[@]}" -std=c11 -I"$source_dir" \
       -DUSE_EXTERNAL_MZCRC -DFLITZZIP_MINIZ_FUZZ_ALLOCATOR=1 -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION=1 \
       -Wno-conversion -Wno-sign-conversion -c "$source" -o "$object"
     objects+=("$object")
@@ -102,12 +107,12 @@ build_lzma_sdk_objects() {
   local objects=()
   for source in "${LZMA_SDK_SOURCES[@]}"; do
     local object="$object_dir/$(basename "$source" .c).o"
-    "$CC" $CFLAGS -std=c11 -Ithird_party/lzma_sdk/C -DZ7_EXTRACT_ONLY -DZ7_PPMD_SUPPORT \
+    "$CC" "${C_FLAGS[@]}" -std=c11 -Ithird_party/lzma_sdk/C -DZ7_EXTRACT_ONLY -DZ7_PPMD_SUPPORT \
       -Wno-conversion -Wno-sign-conversion -c "$source" -o "$object"
     objects+=("$object")
   done
   local wire_object="$object_dir/CpuArchByteAccess.o"
-  "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -Ithird_party/lzma_sdk/C \
+  "$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" -Ithird_party/lzma_sdk/C \
     -c third_party/lzma_sdk/C/CpuArchByteAccess.cpp -o "$wire_object"
   objects+=("$wire_object")
   printf '%s\n' "${objects[@]}"
@@ -119,7 +124,7 @@ build_lhasa_objects() {
   local objects=()
   for source in "${LHASA_SOURCES[@]}"; do
     local object="$object_dir/$(basename "$source" .c).o"
-    "$CC" $CFLAGS -std=c11 -Ithird_party/lhasa/lib/public -Ithird_party/lhasa/lib \
+    "$CC" "${C_FLAGS[@]}" -std=c11 -Ithird_party/lhasa/lib/public -Ithird_party/lhasa/lib \
       -Wno-conversion -Wno-sign-conversion -c "$source" -o "$object"
     objects+=("$object")
   done
@@ -136,7 +141,7 @@ build_core_objects() {
   local objects=()
   for source in "${CORE_SOURCES[@]}"; do
     local object="$object_dir/$(basename "$source" .cpp).o"
-    "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" "$@" -c "$source" -o "$object"
+    "$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" "$@" -c "$source" -o "$object"
     objects+=("$object")
   done
   printf '%s\n' "${objects[@]}"
@@ -146,19 +151,19 @@ build_core_objects "$OUT/core-objects" > "$OUT/core-objects.list"
 mapfile -t CORE_OBJECTS < "$OUT/core-objects.list"
 PATH_SAFETY_OBJECT="${CORE_OBJECTS[0]}"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/archive_index_fuzzer.cpp \
   src/core/archive_index.cpp \
   -o "$OUT/flitzzip_archive_index_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/path_safety_fuzzer.cpp \
   "$PATH_SAFETY_OBJECT" \
   -o "$OUT/flitzzip_path_safety_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/ar_fuzzer.cpp \
   src/ar/ar_adapter.cpp \
   src/core/archive_name_encoding.cpp \
@@ -166,14 +171,14 @@ PATH_SAFETY_OBJECT="${CORE_OBJECTS[0]}"
   -o "$OUT/flitzzip_ar_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/iso_fuzzer.cpp \
   src/iso/iso_adapter.cpp \
   "${CORE_OBJECTS[@]}" \
   -o "$OUT/flitzzip_iso_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/cab_header_fuzzer.cpp \
   src/cab/cab_format.cpp \
   src/core/archive_name_encoding.cpp \
@@ -181,7 +186,7 @@ PATH_SAFETY_OBJECT="${CORE_OBJECTS[0]}"
   -o "$OUT/flitzzip_cab_header_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/rpm_header_fuzzer.cpp \
   src/rpm/rpm_format.cpp \
   -o "$OUT/flitzzip_rpm_header_fuzzer" \
@@ -195,8 +200,8 @@ LZMA_CRC_OBJECTS=(
   "$OUT/lzma-sdk-objects/CpuArch.o"
 )
 CHECKSUM_OBJECT="$OUT/flitzzip-checksum.o"
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -c src/core/checksum.cpp -o "$CHECKSUM_OBJECT"
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" -c src/core/checksum.cpp -o "$CHECKSUM_OBJECT"
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/sevenzip_fuzzer.cpp \
   src/sevenzip/sevenzip_adapter.cpp \
   "$CHECKSUM_OBJECT" \
@@ -205,7 +210,7 @@ CHECKSUM_OBJECT="$OUT/flitzzip-checksum.o"
   -o "$OUT/flitzzip_sevenzip_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/lzma_fuzzer.cpp \
   src/lzma/lzma_adapter.cpp \
   "${CORE_OBJECTS[@]}" \
@@ -213,7 +218,7 @@ CHECKSUM_OBJECT="$OUT/flitzzip-checksum.o"
   -o "$OUT/flitzzip_lzma_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/lzip_fuzzer.cpp \
   src/lzip/lzip_adapter.cpp \
   src/lzip/lzip_stream.cpp \
@@ -223,7 +228,7 @@ CHECKSUM_OBJECT="$OUT/flitzzip-checksum.o"
   -o "$OUT/flitzzip_lzip_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/arj_fuzzer.cpp \
   src/arj/arj_adapter.cpp \
   "$CHECKSUM_OBJECT" \
@@ -232,14 +237,14 @@ CHECKSUM_OBJECT="$OUT/flitzzip-checksum.o"
   -o "$OUT/flitzzip_arj_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/arc_fuzzer.cpp \
   src/arc/arc_adapter.cpp \
   "${CORE_OBJECTS[@]}" \
   -o "$OUT/flitzzip_arc_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/macbinary_fuzzer.cpp \
   src/macbinary/macbinary_adapter.cpp \
   "${CORE_OBJECTS[@]}" \
@@ -248,7 +253,7 @@ CHECKSUM_OBJECT="$OUT/flitzzip-checksum.o"
 
 build_lhasa_objects "$OUT/lhasa-objects" > "$OUT/lhasa-objects.list"
 mapfile -t LHASA_OBJECTS < "$OUT/lhasa-objects.list"
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/lha_fuzzer.cpp \
   src/lha/lha_adapter.cpp \
   "${CORE_OBJECTS[@]}" \
@@ -259,11 +264,11 @@ mapfile -t LHASA_OBJECTS < "$OUT/lhasa-objects.list"
 build_miniz_objects "$MINIZ_SOURCE" "$OUT/miniz-objects" > "$OUT/miniz-objects.list"
 mapfile -t MINIZ_OBJECTS < "$OUT/miniz-objects.list"
 MINIZ_CRC_OBJECT="$OUT/flitzzip-miniz-checksum.o"
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
   -c src/core/miniz_checksum.cpp -o "$MINIZ_CRC_OBJECT"
 build_core_objects "$OUT/miniz-core-objects" -I"$MINIZ_SOURCE" > "$OUT/miniz-core-objects.list"
 mapfile -t MINIZ_CORE_OBJECTS < "$OUT/miniz-core-objects.list"
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
   fuzz/cpio_fuzzer.cpp \
   src/cpio/cpio_adapter.cpp \
   src/core/archive_name_encoding.cpp \
@@ -274,7 +279,7 @@ mapfile -t MINIZ_CORE_OBJECTS < "$OUT/miniz-core-objects.list"
   -o "$OUT/flitzzip_cpio_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
   fuzz/xar_fuzzer.cpp \
   src/xar/xar_adapter.cpp \
   "${MINIZ_CORE_OBJECTS[@]}" \

@@ -47,8 +47,9 @@ output.chmod(0o700)
 
 class FuzzBuildTests(unittest.TestCase):
     # Purpose: Execute the unchanged production script with a noncompiling compiler fixture.
-    # Inputs: Temporary output root, sanitizer and optional failing source. Outputs: Process result and complete argv.
-    def run_plan(self, directory: Path, sanitizer: str, fail_source: str = "") -> tuple:
+    # Inputs: Temporary output root, sanitizer, optional failing source and whitespace-separated extra flags.
+    # Outputs: Process result and complete compiler argv, without compiling or executing product code.
+    def run_plan(self, directory: Path, sanitizer: str, fail_source: str = "", extra_flags: str = "") -> tuple:
         compiler = directory / "compiler"
         compiler.write_text(COMPILER, encoding="utf-8")
         compiler.chmod(0o700)
@@ -57,8 +58,8 @@ class FuzzBuildTests(unittest.TestCase):
         environment = os.environ | {
             "CC": str(compiler),
             "CXX": str(compiler),
-            "CFLAGS": f"-fsanitize={sanitizer}",
-            "CXXFLAGS": f"-fsanitize={sanitizer}",
+            "CFLAGS": f"-fsanitize={sanitizer} {extra_flags}",
+            "CXXFLAGS": f"-fsanitize={sanitizer} {extra_flags}",
             "LIB_FUZZING_ENGINE": "-fsanitize=fuzzer",
             "OUT": str(directory / "output"),
             "SANITIZER": sanitizer,
@@ -76,6 +77,24 @@ class FuzzBuildTests(unittest.TestCase):
         )
         commands = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.is_file() else []
         return result, commands
+
+    # Purpose: Preserve compiler argument boundaries while refusing filesystem-dependent wildcard expansion.
+    # Inputs: A matching real file, literal wildcard, tabs/newlines and quote characters in framework flags.
+    # Outputs: Every actual compiler invocation receives the independently expected tokens without shell expansion.
+    def test_flag_arrays_preserve_literals_and_whitespace_boundaries(self):
+        with tempfile.TemporaryDirectory(prefix="fuzz-flags-") as temporary:
+            directory = Path(temporary)
+            matched = directory / "would-expand.flag"
+            matched.write_text("independent glob match", encoding="utf-8")
+            wildcard = str(directory / "*.flag")
+            result, commands = self.run_plan(directory, "address", extra_flags=f"\t{wildcard}\n-DQUOTE='literal'\t")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertGreater(len(commands), 15)
+            for command in commands:
+                self.assertIn(wildcard, command)
+                self.assertNotIn(str(matched), command)
+                self.assertIn("-DQUOTE='literal'", command)
+                self.assertIn("-fsanitize=address", command)
 
     # Purpose: Preserve all target links and exact sanitizer/include contexts while removing repeated compilation.
     # Inputs: Address and undefined command plans, not real binaries. Outputs: Shared builds and complete target links.

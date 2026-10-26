@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -62,7 +63,7 @@ class CrawlerContracts(unittest.TestCase):
                 home = Path(temp)
                 observed = []
 
-                def resolve(command, env, _calls=observed, _home=home, _failure=failure):
+                def resolve(command, env, *, _calls, _home, _failure):
                     """Purpose: Inspect the resolver boundary. Inputs: Actual argv/env. Outputs: Result or error."""
                     _calls.append(command)
                     self.assertTrue(Path(command[0]).parent.parent.is_relative_to(_home))
@@ -80,7 +81,9 @@ class CrawlerContracts(unittest.TestCase):
                     patch("tools.nltk_distribution.wheel_path", return_value=home / "nltk/a.whl"),
                     patch("tools.crawl4ai_source_build.ensure_wheel", return_value=home / "crawler/b.whl"),
                     patch.object(tool.venv, "EnvBuilder") as builder,
-                    patch.object(tool, "run", side_effect=resolve),
+                    patch.object(
+                        tool, "run", side_effect=partial(resolve, _calls=observed, _home=home, _failure=failure)
+                    ),
                     patch.object(tool, "install") as install,
                 ):
                     if failure:

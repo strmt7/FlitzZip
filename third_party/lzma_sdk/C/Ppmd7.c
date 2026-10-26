@@ -159,6 +159,9 @@ typedef union
 
 
 
+/* Purpose: Coalesce free nodes and redistribute them among the allocator's size classes.
+   Inputs: Initialized PPMd model owning its validated allocator region and free lists.
+   Outputs: Updates free-list links and node extents without allocating or releasing the model region. */
 static void Ppmd7_GlueFreeBlocks(CPpmd7 *p)
 {
 
@@ -230,7 +233,8 @@ static void Ppmd7_GlueFreeBlocks(CPpmd7 *p)
   }
 
 
-  for (n = head; n != 0;)
+  n = head;
+  while (n != 0)
   {
     CPpmd7_Node *node = NODE(n);
     UInt32 nu = node->NU;

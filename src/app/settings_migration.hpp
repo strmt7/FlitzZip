@@ -19,8 +19,8 @@ inline std::filesystem::path settings_read_path(const std::filesystem::path& inp
         return current;
     }
     if (current.filename() == current_settings_filename()) {
-        for (int generation = kSettingsProfileGeneration - 1; generation >= 4; --generation) {
-            const auto previous = current.parent_path() / (L"settings-v" + std::to_wstring(generation) + L".json");
+        for (const auto filename : kPreviousSettingsFilenames) {
+            const auto previous = current.parent_path() / filename;
             if (std::filesystem::exists(previous))
                 return previous;
         }

@@ -134,9 +134,36 @@ def assert_fixtures_unchanged(root: Path = ROOT, base: str | None = None) -> Non
         raise ValueError("historical settings evidence is append-only; retain original fixtures: " + ", ".join(changed))
 
 
+def validate_profile_locations(source: str, contract: dict) -> None:
+    """Purpose: Enforce direct upgrades. Inputs: Native declaration and registry. Outputs: Exact ordered history."""
+    generation = re.search(r"kSettingsProfileGeneration\s*=\s*(\d+)\s*;", source)
+    locations = re.search(
+        r"inline\s+constexpr\s+std::array<std::wstring_view,\s*(\d+)>\s+kPreviousSettingsFilenames\s*\{([^;]*)\};",
+        source,
+    )
+    if generation is None or int(generation[1]) != contract["currentGeneration"] or locations is None:
+        raise ValueError("native profile generation and migration source declaration must match the registry")
+    literal = r'L"(settings-v\d+\.json)"'
+    filenames = re.findall(literal, locations[2])
+    remainder = re.sub(literal, "", locations[2]).replace(",", "").strip()
+    expected = [
+        f"settings-v{version}.json"
+        for version in sorted(map(int, contract["frozenSchemas"]), reverse=True)
+        if version < contract["currentGeneration"]
+    ]
+    if remainder or int(locations[1]) != len(filenames) or filenames != expected:
+        raise ValueError("native migration source order must retain every earlier versioned profile")
+
+
 def load_contract(root: Path = ROOT) -> tuple[dict, dict, dict[int, dict]]:
     """Purpose: Load local schema evidence. Inputs: Checkout root. Outputs: Registry, schema and frozen baselines."""
     contract = read_contract_json(root, "resources/settings/compatibility.json")
     schema = read_contract_json(root, contract["currentSchema"])
     frozen = {int(version): read_contract_json(root, name) for version, name in contract["frozenSchemas"].items()}
+    profile = input_path(root, "src/app/settings_profile.hpp")
+    with profile.open("rb") as stream:
+        declaration = stream.read(64 * 1024 + 1)
+    if len(declaration) > 64 * 1024:
+        raise ValueError("native profile declaration exceeds its evidence budget")
+    validate_profile_locations(declaration.decode("utf-8"), contract)
     return contract, schema, frozen

@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import ExitStack, redirect_stdout
+from functools import partial
 from pathlib import Path
 from unittest.mock import patch
 
@@ -323,7 +324,7 @@ class HipRegistrationTests(unittest.TestCase):
                 return executable, coverage.identities([self.source])
 
             # Purpose: Model bounded native compiler outputs. Inputs: Typed argv. Outputs: Owned tiny artifacts.
-            def native(command, log, timeout=120, fault=fault, tool_identity=tool_identity):
+            def native(command, log, timeout=120, *, fault, tool_identity):
                 if command[-1] == "--identify":
                     return {"stdout": json.dumps(tool_identity)}
                 destination = Path(command[command.index("-o") + 1])
@@ -351,16 +352,22 @@ class HipRegistrationTests(unittest.TestCase):
                 return image
 
             # Purpose: Model metadata capture. Inputs: Typed argv. Outputs: Strict report from the native fixture.
-            def metadata(command, log, timeout=60):
-                return json.loads(native(command, log, timeout)["stdout"])
+            def metadata(command, log, timeout=60, *, producer):
+                return json.loads(producer(command, log, timeout)["stdout"])
 
             with (
                 self.subTest(fault=fault),
                 patch.object(registration, "SOURCE_DIRECTORY", self.native_source),
                 patch.object(coverage, "PROBE", self.source),
                 patch.object(coverage, "compile_probe", side_effect=compile_baseline) as compiler,
-                patch.object(coverage, "checked", side_effect=native),
-                patch.object(registration, "native_metadata", side_effect=metadata),
+                patch.object(
+                    coverage, "checked", side_effect=partial(native, fault=fault, tool_identity=tool_identity)
+                ),
+                patch.object(
+                    registration,
+                    "native_metadata",
+                    side_effect=partial(metadata, producer=partial(native, fault=fault, tool_identity=tool_identity)),
+                ),
                 patch.object(coverage, "device_image", side_effect=extract),
                 patch.object(coverage, "run_controls") as execute,
                 patch("tools.hip_registration_native_checks.NativeChecks") as native_checks,
@@ -540,7 +547,7 @@ class HipRegistrationTests(unittest.TestCase):
             final = copy.deepcopy(self.completion["after"])
 
             # Purpose: Describe independently specified native repair stages. Inputs: Real argv. Outputs: Owned bytes.
-            def producer(command, log, timeout, fault=fault, initial=initial, final=final):
+            def producer(command, log, timeout, *, fault, initial, final):
                 self.assertEqual(timeout, 30)
                 if log.stem == "absent-original":
                     return copy.deepcopy(initial)
@@ -566,7 +573,11 @@ class HipRegistrationTests(unittest.TestCase):
 
             with (
                 self.subTest(fault=fault),
-                patch.object(native_checks, "native_metadata", side_effect=producer),
+                patch.object(
+                    native_checks,
+                    "native_metadata",
+                    side_effect=partial(producer, fault=fault, initial=initial, final=final),
+                ),
                 patch.object(checker, "rejected") as negative,
             ):
                 if fault is None:

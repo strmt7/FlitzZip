@@ -130,10 +130,15 @@ function Invoke-LifecycleMsi {
 }
 
 # Purpose: Verify complete package ownership and preserved user data after each lifecycle phase.
-# Inputs: Current expected fixture and every other known fixture ProductCode. Outputs: Exact payload and registration assertions.
+# Inputs: Current expected fixture, every known ProductCode and an explicit owned filesystem layout.
+# Outputs: Exact payload, registration, shortcut and user-data assertions; no installation side effects.
 function Assert-LifecycleState {
-    param($Current, [object[]]$Packages)
-    $expected = if ($Current) { @($Current.product) } else { @() }
+    param($Current, [object[]]$Packages, [Parameter(Mandatory = $true)][hashtable]$Layout)
+    $install = $Layout.InstallDirectory
+    $desktopShortcut = $Layout.DesktopShortcut
+    $menuShortcut = $Layout.MenuShortcut
+    $sentinels = $Layout.Sentinels
+    $expected = @(if ($Current) { $Current.product })
     $related = @(Get-MsiRelatedProduct)
     if (@(Compare-Object -ReferenceObject @($expected + '__sentinel__') -DifferenceObject @($related + '__sentinel__')).Count) {
         throw 'A lifecycle phase left an unexpected related product registration.'
@@ -170,50 +175,99 @@ function Assert-LifecycleState {
     }
 }
 
+# Purpose: Check the actual lifecycle oracle with independent registration and filesystem states before installing anything.
+# Inputs: This invocation's owned root; native registration calls are replaced only within this test's dynamic scope.
+# Outputs: Accepts exact installed/uninstalled states and rejects missing, foreign and duplicate registrations.
+function Test-LifecycleStateOracle {
+    $install = Join-Path $root 'state-oracle'
+    $null = New-Item -ItemType Directory -Path (Join-Path $install 'bin')
+    $desktopShortcut = Join-Path $install 'desktop.lnk'
+    $menuShortcut = Join-Path $install 'menu.lnk'
+    $payload = Join-Path $install 'bin/FlitzZip.exe'
+    $reference = Join-Path $install 'expected-payload'
+    [IO.File]::WriteAllText($payload, 'independent expected payload')
+    [IO.File]::WriteAllText($reference, 'independent expected payload')
+    [IO.File]::WriteAllText($menuShortcut, 'owned shortcut control')
+    $layout = @{ InstallDirectory = $install; DesktopShortcut = $desktopShortcut; MenuShortcut = $menuShortcut
+        Sentinels = @{ $reference = (Get-FileHash -LiteralPath $reference).Hash } }
+    $fixture = [pscustomobject]@{ name = 'new'; product = '{11111111-1111-4111-8111-111111111111}'; payload = $reference }
+    $other = [pscustomobject]@{ name = 'other'; product = '{22222222-2222-4222-8222-222222222222}' }
+    $packages = @($fixture, $other)
+    $registration = @($fixture.product)
+
+    # Purpose: Model the external related-product enumeration without touching real registration.
+    # Inputs: Dynamic fixture registration. Outputs: The independently selected product-code list.
+    function Get-MsiRelatedProduct { return $registration }
+
+    # Purpose: Model native product and feature state for the independent fixture installation.
+    # Inputs: ProductCode and optional Feature. Outputs: Documented MSI state values for this test only.
+    function Get-MsiRegistrationState {
+        param([string]$ProductCode, [string]$Feature = '')
+        if ($ProductCode -notin $registration) { return -1 }
+        if ($Feature -eq 'DesktopShortcutFeature') { return 2 }
+        if ($Feature -eq 'StartMenuShortcutFeature') { return 3 }
+        return 5
+    }
+
+    Assert-LifecycleState -Current $fixture -Packages $packages -Layout $layout
+    foreach ($invalid in @(@(), @($other.product), @($fixture.product, $fixture.product))) {
+        $registration = $invalid
+        $rejected = $false
+        try { Assert-LifecycleState -Current $fixture -Packages $packages -Layout $layout }
+        catch { $rejected = $_.Exception.Message -ceq 'A lifecycle phase left an unexpected related product registration.' }
+        if (-not $rejected) { throw 'Lifecycle state oracle accepted invalid registration or failed at an unrelated boundary.' }
+    }
+    $registration = @()
+    Remove-Item -LiteralPath $payload, $menuShortcut
+    Assert-LifecycleState -Current $null -Packages $packages -Layout $layout
+}
+
 # Purpose: Exercise direct, sequential, rejected, failed, repair and replacement paths on an explicitly disposable machine.
 # Inputs: Authoring fixtures and owned test root. Outputs: All expected lifecycle states, preserving user-data sentinels.
 function Test-InstalledLifecycle {
     param([object[]]$Packages)
     $old, $middle, $new, $replacement, $failed = $Packages
-    $script:install = Join-Path $root 'installed'
-    $script:desktopShortcut = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'FlitzZip.lnk'
-    $script:menuShortcut = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'FlitzZip/FlitzZip.lnk'
+    $install = Join-Path $root 'installed'
+    $desktopShortcut = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'FlitzZip.lnk'
+    $menuShortcut = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'FlitzZip/FlitzZip.lnk'
     if ((Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $menuShortcut)) {
         throw 'Disposable runner already has product shortcuts; refusing to alter them.'
     }
     $profileDirectory = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'FlitzZip'
     if (Test-Path -LiteralPath $profileDirectory) { throw 'Disposable runner already has a user profile; refusing to alter it.' }
     $null = New-Item -ItemType Directory -Path $profileDirectory
-    $script:sentinels = @{}
+    $sentinels = @{}
     foreach ($name in @('settings.json', 'settings-v4.json', 'settings-v999.json', 'settings-v4.json.bak', 'user-archive.flzip')) {
         $path = Join-Path $profileDirectory $name
         [IO.File]::WriteAllText($path, "independent opaque user data: $name")
-        $script:sentinels[$path] = (Get-FileHash -LiteralPath $path).Hash
+        $sentinels[$path] = (Get-FileHash -LiteralPath $path).Hash
     }
+    $layout = @{ InstallDirectory = $install; DesktopShortcut = $desktopShortcut; MenuShortcut = $menuShortcut
+        Sentinels = $sentinels }
     $choices = @("INSTALL_ROOT=$install", 'ADDLOCAL=ProductFeature,StartMenuShortcutFeature', 'REMOVE=DesktopShortcutFeature')
     try {
         Invoke-LifecycleMsi -Package $old -Phase fresh-old -Extra $choices
-        Assert-LifecycleState -Current $old -Packages $Packages
+        Assert-LifecycleState -Current $old -Packages $Packages -Layout $layout
         Invoke-LifecycleMsi -Package $new -Phase direct-skipped-upgrade
-        Assert-LifecycleState -Current $new -Packages $Packages
+        Assert-LifecycleState -Current $new -Packages $Packages -Layout $layout
         Invoke-LifecycleMsi -Package $old -Phase reject-downgrade -RejectMarker 'A later version of'
-        Assert-LifecycleState -Current $new -Packages $Packages
+        Assert-LifecycleState -Current $new -Packages $Packages -Layout $layout
         Invoke-LifecycleMsi -Package $failed -Phase rollback-failed-upgrade -RejectMarker 'CustomAction FixtureRejectUpgrade returned actual error code 1603'
-        Assert-LifecycleState -Current $new -Packages $Packages
+        Assert-LifecycleState -Current $new -Packages $Packages -Layout $layout
         Invoke-LifecycleMsi -Package $replacement -Phase authorized-same-version-replacement
-        Assert-LifecycleState -Current $replacement -Packages $Packages
+        Assert-LifecycleState -Current $replacement -Packages $Packages -Layout $layout
         Remove-Item -LiteralPath (Join-Path $install 'bin/FlitzZip.exe')
         Invoke-LifecycleMsi -Package $replacement -Phase repair-missing-payload -Verb '/fa'
-        Assert-LifecycleState -Current $replacement -Packages $Packages
+        Assert-LifecycleState -Current $replacement -Packages $Packages -Layout $layout
         Invoke-LifecycleMsi -Package $replacement -Phase uninstall-direct -Verb '/x'
-        Assert-LifecycleState -Current $null -Packages $Packages
+        Assert-LifecycleState -Current $null -Packages $Packages -Layout $layout
         Invoke-LifecycleMsi -Package $old -Phase reinstall-old -Extra $choices
         Invoke-LifecycleMsi -Package $middle -Phase sequential-middle
-        Assert-LifecycleState -Current $middle -Packages $Packages
+        Assert-LifecycleState -Current $middle -Packages $Packages -Layout $layout
         Invoke-LifecycleMsi -Package $new -Phase sequential-new
-        Assert-LifecycleState -Current $new -Packages $Packages
+        Assert-LifecycleState -Current $new -Packages $Packages -Layout $layout
         Invoke-LifecycleMsi -Package $new -Phase uninstall-sequential -Verb '/x'
-        Assert-LifecycleState -Current $null -Packages $Packages
+        Assert-LifecycleState -Current $null -Packages $Packages -Layout $layout
     } finally {
         foreach ($package in $Packages) {
             if ((Get-MsiRegistrationState -ProductCode $package.product) -eq 5) {
@@ -231,6 +285,7 @@ function Test-InstalledLifecycle {
 }
 
 try {
+    Test-LifecycleStateOracle
     $packages = @(
         (New-LifecyclePackage -Version 0.1.0 -Name old -Obsolete),
         (New-LifecyclePackage -Version 0.2.0 -Name middle),

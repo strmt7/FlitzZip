@@ -4,6 +4,47 @@ FlitzZip uses automatic GitHub security workflows adapted for a native Windows
 C++ app. The workflows are source-controlled, SHA-pinned where GitHub Actions
 are used, and default to read-only repository permissions.
 
+## DeepSource analysis
+
+The [DeepSource GitHub integration](https://app.deepsource.com/gh/strmt7/FlitzZip)
+automatically analyzes commits and pull requests. Repository settings live in
+**Settings > Code Review**, following the provider's
+[dashboard configuration](https://docs.deepsource.com/docs/platform/reference/core-analyzers).
+No local installation, developer token or additional Actions workflow is required.
+The service manages its analyzer versions; retain the actual run and commit
+identity with a finding rather than claiming a locally pinned analyzer version.
+
+Keep C/C++, Python, Shell and Docker analysis enabled, with C++20 selected and
+Python's supported `3.x.x` setting. PowerShell is also selected in the dashboard;
+verify that its run actually executes before claiming DeepSource coverage for it.
+An unavailable or skipped analyzer remains an explicit limitation; the existing
+native PowerShell lint lane remains required. Enable secrets detection separately.
+Classify `tests/**`, `tools/test_*.py` and `tools/test_*.ps1` as tests. These patterns
+provide analysis context and do not exclude files. Keep the exclusion list empty.
+Automatic code formatters remain off: the repository's pinned formatting tools
+own that behavior.
+
+For a new fork or restored integration, grant the GitHub application access to
+the intended repository, configure those analyzers and patterns, then enable code
+review. Review generated configuration before saving it; do not accept generated
+vendor, test or source exclusions. Manual analyzer configuration is the provider's
+documented alternative when automatic detection fails.
+
+Before final acceptance, inspect the **exact pushed commit's** DeepSource results
+in GitHub's commit statuses and the linked analysis run. C/C++, Python, Shell,
+Docker and Secrets must finish successfully; review PowerShell's execution status
+as well. A missing, pending, errored or skipped scan is not a successful scan.
+The dashboard's aggregate issue count or a successful unrelated workflow cannot
+establish acceptance. Preserve original findings and fix their shared causes,
+including test and build-tool defects. A dashboard ignore alone cannot establish
+an exact-source false-positive disposition under the
+[source-remediation contract](security-source-remediation-redesign.md).
+
+DeepSource supplements the existing CodeQL, Semgrep, secret, dependency and native
+analysis lanes. Its source analysis does not establish device-kernel execution,
+complete dependency coverage or runtime correctness. Retain the existing scanners
+and direct behavioral regressions.
+
 ## Installed Scanner Dependencies
 
 Semgrep's reviewed local packaging revision is built from pinned upstream wheels;

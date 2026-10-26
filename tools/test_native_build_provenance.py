@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from functools import partial
 from pathlib import Path
 from unittest.mock import patch
 
@@ -174,7 +175,7 @@ class NativeBuildInputsTests(unittest.TestCase):
 
             # Purpose: Retain an actual owned process while replacing only the external Git operation.
             # Inputs: Production argv and pipe options. Outputs: One bounded fault-producing child.
-            def launch(arguments, selected_program=program, owned_children=children, **kwargs):
+            def launch(arguments, *, selected_program, owned_children, **kwargs):
                 self.assertIn("core.fsmonitor=false", arguments)
                 self.assertIn("core.untrackedCache=false", arguments)
                 child = real_popen([sys.executable, "-B", "-c", selected_program], **kwargs)
@@ -183,7 +184,7 @@ class NativeBuildInputsTests(unittest.TestCase):
 
             # Purpose: Accelerate only the test deadline without changing the production thirty-second policy.
             # Inputs: Production delay/callback. Outputs: A real cancellable timer with the controlled delay.
-            def timer(seconds, callback, accelerated=deadline, owned_timers=timers):
+            def timer(seconds, callback, *, accelerated, owned_timers):
                 self.assertEqual(seconds, 30)
                 value = real_timer(0.15 if accelerated else seconds, callback)
                 owned_timers.append(value)
@@ -191,8 +192,14 @@ class NativeBuildInputsTests(unittest.TestCase):
 
             with (
                 self.subTest(message=message),
-                patch.object(provenance.subprocess, "Popen", side_effect=launch),
-                patch.object(provenance.threading, "Timer", side_effect=timer),
+                patch.object(
+                    provenance.subprocess,
+                    "Popen",
+                    side_effect=partial(launch, selected_program=program, owned_children=children),
+                ),
+                patch.object(
+                    provenance.threading, "Timer", side_effect=partial(timer, accelerated=deadline, owned_timers=timers)
+                ),
                 self.assertRaisesRegex((ValueError, TimeoutError), message),
             ):
                 provenance.git_inventory(self.root)

@@ -54,6 +54,9 @@ Failed reads must not mix a stale counter delta with a newer global clock interv
 Test first reads, independent failures, recovery, counter regressions and observed
 zero separately; unavailable readings remain absent in both text and graphs.
 Produce runtime digests from linked artifacts, not configure-time placeholders.
+Bind per-case callback state explicitly, for example with `functools.partial`,
+instead of mutable default arguments or loop variables captured by reference.
+Keep shared state intentional and retain each case's independent cleanup assertions.
 PowerShell analyzer lint must also parse source with the native grammar parser;
 an analyzer's empty finding list does not establish syntactic validity.
 Current source-remediation requirements remain in

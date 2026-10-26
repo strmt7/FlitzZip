@@ -21,6 +21,10 @@ the AMD HIP product path.
 
 ## Local Adaptations
 
+The PPMd free-list redistribution uses an explicit linked-list `while` traversal.
+It saves the next link before modifying a node's size class; node ordering,
+coalescing, allocation ownership and decoded bytes retain their existing semantics.
+
 The previous 26.02 FilesInfo backport is now supplied by upstream 26.03:
 
 - singleton FilesInfo properties are rejected instead of replacing owning

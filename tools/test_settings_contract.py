@@ -17,10 +17,35 @@ from tools.settings_contract import (
     read_contract_json,
     unique_fields,
     validate_evolution,
+    validate_profile_locations,
 )
 
 
 class SettingsContractTests(unittest.TestCase):
+    # Purpose: Require direct migration from every older versioned profile without speculative unreachable loops.
+    # Inputs: An independent future generation and ordered, omitted, duplicated or misregistered historical names.
+    # Outputs: Exact newest-first history passes; each omission, reordering or identity mismatch is rejected.
+    def test_native_profile_history_is_complete_and_ordered(self):
+        contract = {"currentGeneration": 6, "frozenSchemas": {"4": "four", "5": "five", "6": "six"}}
+        source = (
+            "inline constexpr int kSettingsProfileGeneration = 6;\n"
+            "inline constexpr std::array<std::wstring_view, 2> kPreviousSettingsFilenames"
+            '{L"settings-v5.json", L"settings-v4.json"};'
+        )
+        validate_profile_locations(source, contract)
+        mutations = (
+            source.replace("Generation = 6", "Generation = 5"),
+            source.replace(", 2>", ", 1>"),
+            source.replace('L"settings-v5.json", ', ""),
+            source.replace("settings-v5", "settings-v4"),
+            source.replace("settings-v4", "settings-v7"),
+            source.replace("settings-v5", "settings-v6"),
+            source.replace('L"settings-v5.json", L"settings-v4.json"', 'L"settings-v4.json", L"settings-v5.json"'),
+        )
+        for changed in mutations:
+            with self.subTest(source=changed), self.assertRaises(ValueError):
+                validate_profile_locations(changed, contract)
+
     # Purpose: Check the maintained public contract and all canonical profile fixtures.
     # Inputs: Current schema, registry and independently authored profile documents.
     # Outputs: Every generation is retained and current compatible/future-field examples validate.

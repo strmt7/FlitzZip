@@ -93,6 +93,9 @@ Do not manually edit the profile while an application instance is running.
    existing supported older profile only when the new profile is absent.
    Preserve old bytes. Never consume a newer unknown profile or rewrite an older
    filename with a new schema. Older binaries therefore retain their own profile.
+   Add each preceding versioned filename to `kPreviousSettingsFilenames` in
+   `settings_profile.hpp`, newest first. The evolution gate checks this native
+   lookup order against every frozen earlier schema; omitted versions fail.
 4. Keep frozen fixtures and schema baselines append-only. Add independent examples
    for skipped releases, missing/invalid fields, Unicode, precise opaque values,
    retired identifiers and coupled settings. Test the real serializer/decoder,

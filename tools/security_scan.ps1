@@ -759,6 +759,18 @@ function Test-InstallerScopePolicy {
     Test-InstallerReleaseActionPolicy -ReleaseAction $releaseAction -MsiProcessSource $msiProcessSource
 }
 
+# Purpose: Keep SDK wire code in native and sanitizer consumers with explicit compiler argument boundaries.
+# Inputs: Complete trusted fuzz-build and CMake source text. Outputs: Rejects missing, unquoted or unoptimized consumers.
+function Test-SdkWireCompilationPolicy {
+    param([string]$ClusterBuild, [string]$CMakeLists)
+    if ($ClusterBuild -match '(?m)^\s*"\$(?:CC|CXX)"\s+\$(?:CFLAGS|CXXFLAGS)(?:\s|$)' -or
+        $ClusterBuild -notmatch '(?s)"\$CXX"\s+"\$\{CXX_FLAGS\[@\]\}"[^\n]*\n[^\n]*CpuArchByteAccess\.cpp' -or
+        $CMakeLists -notmatch 'third_party/lzma_sdk/C/CpuArchByteAccess\.cpp' -or
+        $CMakeLists -notmatch 'INTERPROCEDURAL_OPTIMIZATION_RELEASE\s+TRUE') {
+        throw 'SDK typed wire access must be compiled into native and sanitizer consumers with Release MSVC optimization.'
+    }
+}
+
 # Purpose: Keep local sanitizer instrumentation, publication dependencies, and Docker failure propagation mandatory.
 # Inputs: Reads fuzz scripts/targets, SDK byte accessors, and CMake registration.
 # Outputs: Throws when a fuzzer omits required instrumentation or dependencies, or native failures can be masked.
@@ -827,11 +839,7 @@ function Test-FuzzHarnessPolicy {
     if ($sdkAccess -match '\b(?:memcpy|memmove|Z7_GetNative[0-9]+|Z7_SetNative[0-9]+)\s*\(') {
         throw 'SDK wire fields require explicit endian decoding/encoding, without native representation copies.'
     }
-    if ($clusterBuild -notmatch '(?s)"\$CXX"\s+\$CXXFLAGS[^\n]*\n[^\n]*CpuArchByteAccess\.cpp' -or
-        $cmakeLists -notmatch 'third_party/lzma_sdk/C/CpuArchByteAccess\.cpp' -or
-        $cmakeLists -notmatch 'INTERPROCEDURAL_OPTIMIZATION_RELEASE\s+TRUE') {
-        throw 'SDK typed wire access must be compiled into native and sanitizer consumers with Release MSVC optimization.'
-    }
+    Test-SdkWireCompilationPolicy -ClusterBuild $clusterBuild -CMakeLists $cmakeLists
     $sdkChecks = Get-Content -LiteralPath (Join-Path $repo 'tests/cpp/sdk_byte_access_checks.hpp') -Raw
     if ($sdkChecks -notmatch 'check_sdk_argument_evaluation<UInt16>' -or
         $sdkChecks -notmatch 'check_sdk_argument_evaluation<UInt32>' -or

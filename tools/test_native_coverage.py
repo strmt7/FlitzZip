@@ -14,6 +14,7 @@ import unittest
 import xml.etree.ElementTree as ET
 import zipfile
 from contextlib import redirect_stdout
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1215,13 +1216,15 @@ class CoverageTests(unittest.TestCase):
                 observed_masks = []
 
                 # Purpose: Observe actual child-launch conditions. Inputs: Fixed command. Outputs: Independent result.
-                def child(command, masks=observed_masks, expected_directory=directory, **limits):
+                def child(command, *, masks, expected_directory, **limits):
                     masks.append(os.environ.get("HIP_VISIBLE_DEVICES"))
                     self.assertEqual(limits["timeout_seconds"], 30)
                     self.assertEqual(limits["working_directory"], expected_directory)
                     return self.absence_result(command[1])
 
-                owner.return_value.run_bounded_command.side_effect = child
+                owner.return_value.run_bounded_command.side_effect = partial(
+                    child, masks=observed_masks, expected_directory=directory
+                )
                 names = collector.run_cli_device_absence_contracts(
                     self.root / "cli.exe", directory, directory / "source", directory / "destination"
                 )
