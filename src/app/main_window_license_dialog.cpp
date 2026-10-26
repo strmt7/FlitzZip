@@ -125,18 +125,33 @@ void MainWindow::select_license_notices_tab(int tab_index) {
     request_repaint();
 }
 
-// Purpose: Measure the rendered license-notice body height.
+// Purpose: Measure and cache generated notice layout when the font and device metrics match.
 // Inputs: `dc` is the current target and `viewport` is the text viewport.
 // Outputs: Returns the DPI-scaled text height needed for scroll bounds.
-int MainWindow::license_notices_text_height(HDC dc, const RECT& viewport) const {
-    const std::wstring& text = const_cast<MainWindow*>(this)->license_notices_text();
+int MainWindow::license_notices_text_height(HDC dc, const RECT& viewport) {
     const int viewport_width = static_cast<int>(viewport.right - viewport.left);
-    RECT measure{0, 0, std::max(1, viewport_width - scale(8)), 0};
+    const int text_width = std::max(1, viewport_width - scale(8));
+    const int device_dpi_x = GetDeviceCaps(dc, LOGPIXELSX);
+    const int device_dpi_y = GetDeviceCaps(dc, LOGPIXELSY);
+    const bool cacheable =
+        GetMapMode(dc) == MM_TEXT && GetGraphicsMode(dc) == GM_COMPATIBLE && device_dpi_x > 0 && device_dpi_y > 0;
+    auto& cached =
+        cached_license_notices_measurement_[static_cast<std::size_t>(std::clamp(license_notices_tab_index_, 0, 1))];
+    if (cacheable && cached.width == text_width && cached.device_dpi_x == device_dpi_x &&
+        cached.device_dpi_y == device_dpi_y) {
+        return cached.height;
+    }
+    const std::wstring& text = license_notices_text();
+    RECT measure{0, 0, text_width, 0};
     HGDIOBJ previous_font = SelectObject(dc, tiny_font_);
     DrawTextW(dc, text.data(), static_cast<int>(std::min<std::size_t>(text.size(), INT_MAX)), &measure,
               DT_CALCRECT | DT_WORDBREAK | DT_EXPANDTABS | DT_NOPREFIX);
     SelectObject(dc, previous_font);
-    return std::max(scale(1), static_cast<int>(measure.bottom - measure.top));
+    const int height = std::max(scale(1), static_cast<int>(measure.bottom - measure.top));
+    if (cacheable) {
+        cached = LicenseNoticeMeasurement{text_width, device_dpi_x, device_dpi_y, height};
+    }
+    return height;
 }
 
 // Purpose: Apply a bounded scroll delta to the license-notice modal.

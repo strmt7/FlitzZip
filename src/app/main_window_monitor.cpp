@@ -526,8 +526,9 @@ void MainWindow::tick_animation() {
 
 // Purpose: Recreate native fonts at the current monitor DPI.
 // Inputs: None; reads `dpi_`.
-// Outputs: Replaces owned GDI font handles.
+// Outputs: Replaces owned GDI font handles and invalidates notice measurements tied to them.
 void MainWindow::rebuild_fonts() {
+    cached_license_notices_measurement_ = {};
     for (HFONT* font : {&title_font_, &body_font_, &small_font_, &tiny_font_, &mono_font_}) {
         if (*font != nullptr) {
             DeleteObject(*font);

@@ -138,7 +138,7 @@ function Get-GuiTooltipPaintCount {
 
 # Purpose: Require actual tooltip appearance or disappearance through bounded visual observations.
 # Inputs: Owned window/DPI, a same-page tooltip-free baseline, expected visibility and output prefix.
-# Outputs: Retains every capture; throws after six observations or eight seconds without the required paint state.
+# Outputs: Retains every capture and pointer/foreground ownership evidence; throws on absent paint by the deadline.
 function Save-GuiTooltipExpectation {
     param([IntPtr]$Handle, [int]$Dpi, [int]$Baseline, [bool]$Visible, [string]$Prefix, [string]$Extension)
 
@@ -158,7 +158,12 @@ function Save-GuiTooltipExpectation {
         }
         $owner = [FlitzZipNativeUi]::WindowFromPoint($pointer)
         $owned = $owner -eq $Handle -or [FlitzZipNativeUi]::IsChild($Handle, $owner)
-        Write-Information ("Tooltip observation=$observation elapsed_ms=$($watch.ElapsedMilliseconds) visible=$Visible samples=$count baseline=$Baseline pointer_client_x_px=$($pointer.X - $origin.X) pointer_client_y_px=$($pointer.Y - $origin.Y) pointer_owned=$owned") -InformationAction Continue
+        [uint32]$ownerProcessId = 0
+        [uint32]$foregroundProcessId = 0
+        [void][FlitzZipNativeUi]::GetWindowThreadProcessId($owner, [ref]$ownerProcessId)
+        $foreground = [FlitzZipNativeUi]::GetForegroundWindow()
+        [void][FlitzZipNativeUi]::GetWindowThreadProcessId($foreground, [ref]$foregroundProcessId)
+        Write-Information ("Tooltip observation=$observation elapsed_ms=$($watch.ElapsedMilliseconds) visible=$Visible samples=$count baseline=$Baseline pointer_client_x_px=$($pointer.X - $origin.X) pointer_client_y_px=$($pointer.Y - $origin.Y) pointer_owned=$owned owner_pid=$ownerProcessId foreground_pid=$foregroundProcessId") -InformationAction Continue
         $matched = if ($Visible) { $count -ge $Baseline + 300 } else { $count -le $Baseline + 80 }
         if ($matched) { return $captures.ToArray() }
         Start-Sleep -Milliseconds 120
