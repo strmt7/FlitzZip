@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import builtins
 import copy
 import hashlib
 import io
@@ -108,11 +107,20 @@ class GraphPublicationCommandTests(unittest.TestCase):
                 [*command, "--check"], cwd=directory, env=environment, capture_output=True, timeout=30, check=False
             )
             self.assertEqual(checked.returncode, 0, checked.stderr)
+            original = output.read_bytes()
+            malformed = fixture_record()
+            malformed["runs"][0]["compress_seconds"] = 10**400
+            source.write_text(json.dumps(malformed), encoding="utf-8")
+            rejected = subprocess.run(
+                command, cwd=directory, env=environment, capture_output=True, timeout=30, check=False
+            )
+            self.assertEqual(rejected.returncode, 1)
+            self.assertIn(b"invalid phase timing", rejected.stderr)
+            self.assertNotIn(b"Traceback", rejected.stderr)
+            self.assertEqual(output.read_bytes(), original)
 
-    # Purpose: Exercise imported check failure and the supported direct-script import fallback without subprocess gaps.
-    # Inputs: One valid record, stale output and a controlled package-import miss with the tools directory available.
-    # Outputs: Stale bytes are preserved and the fallback exposes the same renderer contracts.
-    def test_imported_check_and_direct_script_fallback(self) -> None:
+    def test_imported_check_and_direct_script_package_identity(self) -> None:
+        """Preserve stale output on failed checks and share helper identities across invocation forms."""
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             source, output = directory / "record.json", directory / "graph.svg"
@@ -130,27 +138,10 @@ class GraphPublicationCommandTests(unittest.TestCase):
                 self.assertEqual(graph.main(), 1)
             self.assertEqual(output.read_bytes(), sentinel)
 
-        original_import = builtins.__import__
-
-        def direct_script_import(name, globals=None, locals=None, fromlist=(), level=0):
-            """Purpose: Model direct-script resolution.
-            Inputs: Import request. Outputs: One package miss, then normal imports.
-            """
-            if name == "tools.benchmark_comparators":
-                raise ModuleNotFoundError(name)
-            return original_import(name, globals, locals, fromlist, level)
-
-        tool_directory = str(Path(graph.__file__).resolve().parent)
-        sys.path.insert(0, tool_directory)
-        try:
-            with patch.object(builtins, "__import__", side_effect=direct_script_import):
-                namespace = runpy.run_path(
-                    str(Path(graph.__file__).resolve()), run_name="render_benchmark_graph_direct"
-                )
-        finally:
-            sys.path.remove(tool_directory)
-        self.assertTrue(callable(namespace["parse_metadata"]))
-        self.assertTrue(callable(namespace["validate_receipt"]))
+        with patch.object(sys, "path", sys.path.copy()):
+            namespace = runpy.run_path(str(Path(graph.__file__).resolve()), run_name="render_benchmark_graph_direct")
+        self.assertIs(namespace["parse_metadata"], graph.parse_metadata)
+        self.assertIs(namespace["validate_receipt"], graph.validate_receipt)
 
 
 # Purpose: Build one complete paired-run record without depending on a real GPU or filesystem benchmark.
@@ -365,6 +356,69 @@ def receipt_fixture() -> dict:
 
 
 class BenchmarkGraphTests(unittest.TestCase):
+    def test_unrepresentable_measurements_reject_without_arithmetic_crashes(self) -> None:
+        """Reject enormous JSON integers at each numeric admission boundary, preserving caller data."""
+        paths = (
+            ("sampling_policy", "minimum_measured_seconds"),
+            ("sampling_policy", "target_relative_standard_error_pct"),
+            ("sampling_policy", "confirmation_wall_budget", "remaining_seconds"),
+            ("sampling_policy", "confirmation_wall_budget", "estimated_seconds"),
+            ("runs", 0, "compress_seconds"),
+            ("runs", 0, "verify_seconds"),
+            ("runs", 0, "extract_seconds"),
+            ("runs", 0, "gpu_avg_pct"),
+            ("runs", 0, "validation_seconds"),
+            ("runs", 0, "wall_seconds"),
+            ("runs", 0, "observation_wall_seconds"),
+        )
+        for path in paths:
+            record = artifact_fixture()
+            target = record
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = 10**400
+            original = copy.deepcopy(record)
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                graph.validate_record(record, False)
+            self.assertEqual(record, original)
+        self.assertEqual(len(graph.summarize_records([artifact_fixture()], False)[1]), 1)
+
+    def test_invalid_observation_collections_fail_at_admission(self) -> None:
+        """Reject non-object observations and non-list collections before geometry and arithmetic."""
+        for field in ("runs", "pilot_runs"):
+            for malformed in (None, {}, "observations", [None], [False]):
+                record = artifact_fixture()
+                record[field] = malformed
+                with self.subTest(field=field, malformed=malformed), self.assertRaises(ValueError):
+                    graph.validate_record(record, False)
+        with self.assertRaisesRegex(ValueError, "no benchmark cases"):
+            graph.summarize_records([], False)
+
+    def test_derived_measurements_must_remain_finite(self) -> None:
+        """Finite inputs must not overflow their sum, size conversion or derived throughput."""
+        record = fixture_record()
+        for phase in ("compress_seconds", "verify_seconds", "extract_seconds"):
+            record["runs"][0][phase] = 10**308
+        with self.assertRaisesRegex(ValueError, "elapsed time"):
+            graph.summarize_records([record], False)
+        for size_field in ("size_mib", "output_bytes"):
+            record = fixture_record()
+            if size_field == "size_mib":
+                record[size_field] = 10**400
+                for run in record["runs"]:
+                    run["input_bytes"] = record[size_field] * 1024**2
+            else:
+                for run in record["runs"]:
+                    run[size_field] = 10**400
+            with self.subTest(size_field=size_field), self.assertRaises(ValueError):
+                graph.summarize_records([record], False)
+        record = fixture_record()
+        for run in record["runs"]:
+            for phase in ("compress_seconds", "verify_seconds", "extract_seconds"):
+                run[phase] = 5e-324
+        with self.assertRaisesRegex(ValueError, "throughput"):
+            graph.summarize_records([record], False)
+
     # Purpose: Refuse malformed trials and incomplete chart populations at the measured-record boundary.
     # Inputs: Independent counter, phase, identity and sample mutations plus empty or undersampled chart sets.
     # Outputs: Each malformed record or population raises ValueError; no sample is repaired or silently dropped.
