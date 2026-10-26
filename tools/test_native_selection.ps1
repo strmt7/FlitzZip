@@ -177,6 +177,16 @@ Assert-NativeSelection ($testOnly.mode -eq 'component' -and -not $testOnly.requi
     ($testOnly.tests -join '|') -eq ($expected -join '|')) 'registered changed test source coverage'
 $combined = Get-FlitzZipNativeTestSelection -Paths ($entropyPaths + $testPath)
 Assert-NativeSelection ($combined.requireHip -and $combined.tests.Count -eq ($entropy.tests.Count + $expected.Count)) 'distinct mechanisms form one deduplicated batch'
+$guiPaths = @('tests/cpp/test_main_window_extraction.cpp', 'tests/cpp/test_main_window_queue_controls.cpp')
+$guiExpected = @($inventory | Where-Object { $_.source -in $guiPaths } | Select-Object -ExpandProperty name | Sort-Object)
+$guiSelection = Get-FlitzZipNativeTestSelection -Paths $guiPaths
+Assert-NativeSelection ($guiExpected.Count -gt 0 -and $guiSelection.mode -eq 'component' -and
+    -not $guiSelection.requireHip -and ($guiSelection.tests -join '|') -ceq ($guiExpected -join '|')) 'conditional GUI target sources select every registered changed case'
+$winSource = 'tests/cpp/test_compression_stream_io.cpp'
+$winExpected = @($inventory | Where-Object source -eq $winSource | Select-Object -ExpandProperty name | Sort-Object)
+$winSelection = Get-FlitzZipNativeTestSelection -Paths @($winSource)
+Assert-NativeSelection ($winExpected.Count -gt 0 -and $winSelection.mode -eq 'component' -and
+    ($winSelection.tests -join '|') -ceq ($winExpected -join '|')) 'conditional Windows test source remains inventoried'
 
 $ownedRoot = [IO.Path]::GetFullPath((Join-Path $root 'out/native-selection-tests'))
 $fixtureRoot = Join-Path $ownedRoot ([guid]::NewGuid().ToString('N'))
@@ -186,6 +196,23 @@ try {
     [IO.File]::WriteAllText((Join-Path $fixtureRoot 'CMakeLists.txt'), 'add_library(flitzzip_test_objects OBJECT tests/cpp/test_fixture.cpp)')
     $fixtureSource = Join-Path $fixtureTests 'test_fixture.cpp'
     [IO.File]::WriteAllText($fixtureSource, "TEST_CASE(sample) {}`nTEST_CASE(sample_longer) {}")
+    $conditionalGui = Join-Path $fixtureTests 'test_gui.cpp'
+    [IO.File]::WriteAllText($conditionalGui, 'TEST_CASE(gui_click) {}')
+    [IO.File]::WriteAllText((Join-Path $fixtureRoot 'CMakeLists.txt'), @'
+add_library(flitzzip_test_objects OBJECT tests/cpp/test_fixture.cpp)
+if(TARGET flitzzip_gui)
+  target_sources(flitzzip_test_objects PRIVATE tests/cpp/test_gui.cpp)
+endif()
+'@)
+    $conditionalSelection = Get-FlitzZipNativeTestSelection -Paths @('tests/cpp/test_gui.cpp') -Root $fixtureRoot
+    Assert-NativeSelection ($conditionalSelection.mode -eq 'component' -and
+        ($conditionalSelection.tests -join '|') -ceq 'gui_click') 'conditional GUI target source is selected without a full driver'
+    [IO.File]::WriteAllText((Join-Path $fixtureRoot 'CMakeLists.txt'), @'
+add_library(flitzzip_test_objects OBJECT tests/cpp/test_fixture.cpp)
+target_sources(flitzzip_test_objects PUBLIC tests/cpp/test_gui.cpp)
+'@)
+    Assert-NativeSelectionRejected { Get-FlitzZipNativeTestInventory -Root $fixtureRoot } 'Unsupported native test object target_sources'
+    [IO.File]::WriteAllText((Join-Path $fixtureRoot 'CMakeLists.txt'), 'add_library(flitzzip_test_objects OBJECT tests/cpp/test_fixture.cpp)')
     $overlapping = Get-FlitzZipNativeTestSelection -Paths @('tests/cpp/test_fixture.cpp') -Root $fixtureRoot
     Assert-NativeSelection ($overlapping.tests.Count -eq 2) 'overlapping names remain distinct exact cases'
     Assert-NativeSelection (-not $overlapping.requireHip) 'ordinary registered sources do not require a device'

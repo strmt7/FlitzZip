@@ -40,16 +40,22 @@ function Assert-FlitzZipNativeRegistrationCondition {
     if ($conditions.Count) { throw "Unbalanced native test condition: $Source" }
 }
 
-# Purpose: Read the authoritative sources registered in the main native test target.
-# Inputs: Root is a checkout containing the existing CMake object target and TEST_CASE registrations.
-# Outputs: Returns unique source/name records; rejects missing registrations and duplicate names.
+# Purpose: Read the Windows release target's initial and conditional native test sources.
+# Inputs: Root is a checkout containing the CMake object target and TEST_CASE registrations.
+# Outputs: Returns unique source/name records; rejects unsupported target statements and duplicate registrations.
 function Get-FlitzZipNativeTestInventory {
     param([string]$Root = (Split-Path -Parent $PSScriptRoot))
     $cmake = Get-Content -LiteralPath (Join-Path $Root 'CMakeLists.txt') -Raw
     $target = [regex]::Match($cmake, '(?s)add_library\(\s*flitzzip_test_objects\s+OBJECT(?<sources>.*?)\)')
     if (-not $target.Success) { throw 'Cannot resolve the native test object target; review its registration.' }
-    $sources = @([regex]::Matches($target.Groups['sources'].Value, 'tests/cpp/[\w/-]+\.cpp') |
-        ForEach-Object { $_.Value } | Sort-Object -Unique)
+    $extensions = @([regex]::Matches($cmake, '(?ms)^\s*target_sources\(\s*flitzzip_test_objects\s+PRIVATE(?<sources>.*?)\)'))
+    $targetStatements = @([regex]::Matches($cmake, '(?m)^\s*target_sources\(\s*flitzzip_test_objects\b'))
+    if ($extensions.Count -ne $targetStatements.Count) {
+        throw 'Unsupported native test object target_sources statement; review its registration.'
+    }
+    $sourceTexts = @($target.Groups['sources'].Value) + @($extensions | ForEach-Object { $_.Groups['sources'].Value })
+    $sources = @($sourceTexts | ForEach-Object { [regex]::Matches($_, 'tests/cpp/[\w/-]+\.cpp') |
+            ForEach-Object { $_.Value } } | Sort-Object -Unique)
     if (-not $sources.Count) { throw 'Native test object target contains no registered test sources.' }
     $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($source in $sources) {
