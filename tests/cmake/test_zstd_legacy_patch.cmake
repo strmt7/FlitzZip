@@ -42,7 +42,7 @@ file(MAKE_DIRECTORY "${SCRATCH}")
 # They construct passive migration inputs only; production uses the current
 # direct canonical generator and never builds these historical implementations.
 find_program(GIT_EXECUTABLE NAMES git REQUIRED)
-set(HISTORICAL_COMMIT "d59f65a59f384ff6f7e43d133c672d7d535e2bfc")
+set(HISTORICAL_COMMIT "06d52f0b21614c74b718b0a7b249e2aec54a0c8b")
 set(HISTORICAL_ROOT "${SCRATCH}/historical")
 set(HISTORICAL_ARCHIVE "${SCRATCH}/historical-cmake.tar")
 execute_process(

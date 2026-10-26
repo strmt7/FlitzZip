@@ -187,6 +187,6 @@ and complete workload coverage. Size gains on one model or file type cannot
 establish broad effectiveness. Numeric efforts 1–9 remain separate from Neutron.
 
 Earlier rounds, unsuccessful complete-corpus attempts and their original claims
-remain in [the benchmark history](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/benchmarks/neutron-public-corpus-rounds.md).
+remain in [the benchmark history](https://github.com/strmt7/FlitzZip/blob/37e8bc1f03bfc02aa74b5ed12d8f303126df67b2/docs/history/benchmarks/neutron-public-corpus-rounds.md).
 The reported system-freeze cause remains unconfirmed; successful studies do not
 establish its resolution.

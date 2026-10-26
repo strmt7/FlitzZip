@@ -369,18 +369,18 @@ consumer binds actual member/source locations separately from reported archive
 attributions, and rejects verified credentials or any unmatched identity.
 
 The maintainer approved the ten exact integrity metadata records in
-[the 5 October review](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-public-checksum-review-2026-10-05.md). These
+[the 5 October review](https://github.com/strmt7/FlitzZip/blob/37e8bc1f03bfc02aa74b5ed12d8f303126df67b2/docs/history/security/security-public-checksum-review-2026-10-05.md). These
 cover original corpus, comparator binary and license-notice hashes. Raw reports
 remain intact, changed file bytes or values expire admission, and source/test
 findings cannot use this metadata ledger. This approval does not dismiss hosted
 alerts or close unresolved legal, source, GPU or release obligations.
 
-The [NLTK public commit review](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-nltk-public-commit-review-2026-10-05.md)
+The [NLTK public commit review](https://github.com/strmt7/FlitzZip/blob/37e8bc1f03bfc02aa74b5ed12d8f303126df67b2/docs/history/security/security-nltk-public-commit-review-2026-10-05.md)
 documents one additional provenance report. Its status and individual maintainer
 authorization are recorded in that review; the admission ledger cannot inherit
 the earlier checksum approvals for this separate value.
 
-The [latest individual review](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-finding-review-2026-10-03.md#latest-individual-metadata-triage)
+The [latest individual review](https://github.com/strmt7/FlitzZip/blob/37e8bc1f03bfc02aa74b5ed12d8f303126df67b2/docs/history/security/security-finding-review-2026-10-03.md#latest-individual-metadata-triage)
 records five metadata/namespace false-positive dispositions at `ed3ea0f`.
 Each has its own source/producer evidence and GitHub audit comment. They are
 not automatic closures or code-finding exemptions; all remaining source and
@@ -672,7 +672,7 @@ variables.
   totals, then applies the unchanged open-alert gate. An unresolved finding still
   fails the command after its report is saved. Ordinary post-push checks remain
   open-only to avoid repeatedly downloading the entire history.
-  See [the review and recurrence map](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/code-scanning-history-review.md).
+  See [the review and recurrence map](https://github.com/strmt7/FlitzZip/blob/37e8bc1f03bfc02aa74b5ed12d8f303126df67b2/docs/history/security/code-scanning-history-review.md).
 - The push and pull-request lane validates the workflow, hash-locked Greenbone
   tools, and GMP script contract without touching a network target.
 - The scheduled/manual live scan lane fails closed with an explicit report when

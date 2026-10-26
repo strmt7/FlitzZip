@@ -372,7 +372,7 @@ Record these fields for every block size:
 | `MemoryOnly`, `DiskWriteBytes` | Confirms the benchmark did not write the workload to storage. |
 | CPU/GPU utilization samples | Helps interpret whether the bottleneck is host, device, or scheduling. |
 
-The owned-output [development checkpoint](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/benchmarks/2026-10-01-pinned-output-pool.md)
+The owned-output [development checkpoint](https://github.com/strmt7/FlitzZip/blob/37e8bc1f03bfc02aa74b5ed12d8f303126df67b2/docs/history/benchmarks/2026-10-01-pinned-output-pool.md)
 records the bounded pin policy, production/RAM path parity, and matched
 extraction measurements. Its new schema-two fields are additive. Historical
 records without decoder counters retain unavailable values; do not infer their

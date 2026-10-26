@@ -1138,6 +1138,15 @@ manufacture a clean scan. Individual authorizations belong in review records.
 ## Git Workflow
 
 - Inspect `git status --short` before staging.
+- For agent-assisted publication, create commits through the authenticated
+  official GitHub connector and let it assign the contributor identity. Verify
+  the returned author and committer; do not substitute an automation identity,
+  override attribution through environment variables, or change global Git
+  configuration. If the connector cannot perform an operation, report its
+  specific limitation before choosing another publication method. Rewriting
+  published history requires explicit authorization, a verified recovery copy,
+  complete history-invariant checks and an expected-head lease. Preserve the
+  original identities of captured test results when commit IDs change.
 - Run `tools\verification_plan.ps1 -IncludeUntracked` before deciding which
   checks to run. Run `tools\verify_changes.ps1 -IncludeUntracked` for the
   selected local checks, and use `-Full` when the classifier escalates or a
@@ -1162,7 +1171,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
   provenance checks, and publication safeguards intact. Never restore compiled
   outputs into a fresh CodeQL build. Cancel superseded stateless checks, but
   preserve stateful live scans and release transactions. See
-  [the workflow performance review](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/development/workflow-performance-review.md).
+  [the workflow performance review](https://github.com/strmt7/FlitzZip/blob/37e8bc1f03bfc02aa74b5ed12d8f303126df67b2/docs/history/development/workflow-performance-review.md).
   When an in-flight C++ analysis still covers the current native/query inputs,
   batch subsequent non-native edits while it finishes when practical. Repeated
   follow-up pushes can cancel that applicable work and require it to start again.
@@ -1284,7 +1293,7 @@ product CI.
 
 Before using, modifying, benchmarking, publishing or redistributing third-party
 material, check the action-specific rights and retained notices in the
-[license audit](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/license-and-permission-audit-2026-10-05.md) and
+[license audit](https://github.com/strmt7/FlitzZip/blob/37e8bc1f03bfc02aa74b5ed12d8f303126df67b2/docs/history/security/license-and-permission-audit-2026-10-05.md) and
 [benchmark permissions](benchmark-permissions.md). A download, root license,
 badge, maintainer instruction or successful test does not establish third-party
 rights. Preserve upstream attribution and modified-source notices. Unknown

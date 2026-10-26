@@ -76,7 +76,7 @@ compatible with making it the default FlitzZip release codec today.
 
 ## Practical Roadmap
 
-The [October 2026 lossless-compression review](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/research/modern-compression-research-2026-10-03.md)
+The [October 2026 lossless-compression review](https://github.com/strmt7/FlitzZip/blob/37e8bc1f03bfc02aa74b5ed12d8f303126df67b2/docs/history/research/modern-compression-research-2026-10-03.md)
 adds recent primary research on invariant bits, bitmap layouts, compact lookup
 tables and GPU data movement. Its experiments are hypotheses; resolving open
 security findings remains the immediate priority.

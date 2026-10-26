@@ -93,7 +93,7 @@ caches from overriding admitted source and prevents new cache writes. The
 temporary directory remains alive until the contained command exits; setup
 and package installation retain their normal cache behavior. NLTK admission
 also rejects native modules and sourceless bytecode in its pure-Python package.
-See [the source-import qualification](https://github.com/strmt7/FlitzZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/nltk-model-artifact-source-repair.md#executed-source-integrity).
+See [the source-import qualification](https://github.com/strmt7/FlitzZip/blob/37e8bc1f03bfc02aa74b5ed12d8f303126df67b2/docs/history/security/nltk-model-artifact-source-repair.md#executed-source-integrity).
 An updated regression contract rechecks the existing installed dependencies and updates
 its admission receipt only after success; it does not reinstall an unchanged
 dependency graph or browser.

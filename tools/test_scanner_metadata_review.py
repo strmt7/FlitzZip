@@ -336,7 +336,7 @@ class ScannerSourceReviewTests(unittest.TestCase):
         self.source.parent.mkdir(parents=True)
         self.source.write_bytes(
             subprocess.check_output(
-                ["git", "-C", str(checkout), "show", "509e6077faf6defca2d90e90f9116dbcd1bcb9ea:" + self.row["path"]]
+                ["git", "-C", str(checkout), "show", "ad5d959dc1b52ce0e58b50dca5febb438182b6d1:" + self.row["path"]]
             )
         )
         self.finding = {
@@ -538,7 +538,7 @@ class ScannerSourceReviewTests(unittest.TestCase):
             source.parent.mkdir(parents=True, exist_ok=True)
             source.write_bytes(
                 subprocess.check_output(
-                    ["git", "-C", str(checkout), "show", "509e6077faf6defca2d90e90f9116dbcd1bcb9ea:" + row["path"]]
+                    ["git", "-C", str(checkout), "show", "ad5d959dc1b52ce0e58b50dca5febb438182b6d1:" + row["path"]]
                 )
             )
             finding = {
