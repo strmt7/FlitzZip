@@ -121,11 +121,14 @@ Current exact Release consumer(s):
 
 ## Immutable registration context
 
-The shared `TestRegistration` constructor now registers each case into the same
-registry, with the same copied name and static function pointer. `TEST_CASE`
-creates a const registration object instead of defining a separate mutable
-registrar type for every case. Registration objects hold no state; the runner,
-test bodies and registry ownership are unchanged.
+Each `TEST_CASE` defines a constructor that directly registers its own case
+into the same registry, with the same copied name and static function pointer.
+The registration instance is const and holds no state. The runner, test bodies
+and registry ownership are unchanged. The per-case constructor preserves an
+explicit function reference in an executable member body. Passing that reference
+only through the initializer of an internal const object to a shared constructor
+lost reachability in CodeQL's unused-static-function analysis; runtime execution
+alone did not establish analysis acceptance. No query or finding is suppressed.
 
 For alert 8422, static construction still registers the TAR case whose body
 calls its helper for all eight inputs. For alert 8431, registration changes no
