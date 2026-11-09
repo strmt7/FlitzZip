@@ -121,7 +121,10 @@ not size-monotone: replacing the earlier parser with a stronger search can
 produce a larger frame. The nested selection prevents this growth for a fixed
 input and block partition without padding or weaker low-effort settings.
 
-Each CPU range owns one reusable Zstandard context and trial buffer; candidates
+Each CPU range lazily owns reusable Zstandard and miniz compressor states and
+one shared trial buffer. Deflate trials reset the full codec state and preserve
+the same zlib framing and effort flags as the independent fresh-stream wrapper;
+they do not allocate another compressor for each effort. Candidates
 are evaluated sequentially and only the winner is retained. At most four ranges
 run per chunk. This search costs additional CPU work, especially when no later
 policy improves the first frame; it is not a CPU speedup claim. Larger effort

@@ -55,26 +55,69 @@ bool block_is_fill(std::span<const std::byte> bytes, std::uint8_t& value) {
     return std::ranges::all_of(bytes, [&](std::byte byte) { return static_cast<std::uint8_t>(byte) == value; });
 }
 
+// Reset a worker-owned compressor to the same zlib policy used by mz_compress2.
+// Input and output are nonempty, caller-bounded short-block spans.
+// Return zero only when the bounded destination cannot hold the complete stream.
+// Every unfinished call must consume input or produce output; invalid extents,
+// codec failures and incomplete input at end-of-stream are terminal errors.
+std::size_t run_deflate_trial(tdefl_compressor& compressor, std::span<const std::byte> input,
+                              std::span<std::byte> output, int effort) {
+    const auto flags =
+        static_cast<int>(TDEFL_COMPUTE_ADLER32 |
+                         tdefl_create_comp_flags_from_zip_params(effort, MZ_DEFAULT_WINDOW_BITS, MZ_DEFAULT_STRATEGY));
+    if (tdefl_init(&compressor, nullptr, nullptr, flags) != TDEFL_STATUS_OKAY) {
+        throw ArchiveError("Deflate native block initialization failed");
+    }
+    std::size_t consumed = 0U;
+    std::size_t written = 0U;
+    for (;;) {
+        auto input_bytes = input.size() - consumed;
+        auto output_bytes = output.size() - written;
+        const auto status = tdefl_compress(&compressor, input.data() + consumed, &input_bytes, output.data() + written,
+                                           &output_bytes, TDEFL_FINISH);
+        if (input_bytes > input.size() - consumed || output_bytes > output.size() - written) {
+            throw ArchiveError("Deflate native block returned invalid extents");
+        }
+        consumed += input_bytes;
+        written += output_bytes;
+        if (status == TDEFL_STATUS_DONE) {
+            if (consumed != input.size() || written == 0U) {
+                throw ArchiveError("Deflate native block finished with incomplete data");
+            }
+            return written;
+        }
+        if (status != TDEFL_STATUS_OKAY) {
+            throw ArchiveError("Deflate native block compression failed");
+        }
+        if (written == output.size()) {
+            return 0U;
+        }
+        if (input_bytes == 0U && output_bytes == 0U) {
+            throw ArchiveError("Deflate native block compression made no progress");
+        }
+    }
+}
+
 // Purpose: Retain the smallest complete Deflate representation from a nested bounded effort search.
-// Inputs: A non-fill short block and maximum requested effort 1-9.
-// Outputs: Returns bytes smaller than raw or empty, preserving earlier frames on ties; throws on codec failure.
-std::vector<std::byte> try_deflate_block(std::span<const std::byte> block, int compression_level) {
+// Inputs: A non-fill short block, maximum effort 1-9, and exclusive worker-owned state/trial storage.
+// Outputs: Returns bytes smaller than raw or empty; resets each trial and preserves earlier frames on ties.
+std::vector<std::byte> try_deflate_block(std::span<const std::byte> block, int compression_level,
+                                         std::unique_ptr<tdefl_compressor>& compressor, std::vector<std::byte>& trial) {
     // A zlib stream needs six framing bytes plus at least two bytes for its Deflate block.
     if (block.size() <= 8U) {
         return {};
     }
-    std::vector<std::byte> trial(block.size() - 1U);
+    if (!compressor) {
+        // tdefl_init establishes every live codec field before use, as it does
+        // for miniz's uninitialized malloc storage; avoid zeroing it twice.
+        compressor = std::make_unique_for_overwrite<tdefl_compressor>();
+    }
+    trial.resize(block.size() - 1U);
     std::vector<std::byte> best;
     for (int effort = 1; effort <= compression_level; ++effort) {
-        auto written = static_cast<mz_ulong>(trial.size());
-        const auto status = compress2(reinterpret_cast<unsigned char*>(trial.data()), &written,
-                                      reinterpret_cast<const unsigned char*>(block.data()),
-                                      static_cast<mz_ulong>(block.size()), effort);
-        if (status == MZ_BUF_ERROR) {
+        const auto written = run_deflate_trial(*compressor, block, trial, effort);
+        if (written == 0U) {
             continue;
-        }
-        if (status != MZ_OK || written > trial.size()) {
-            throw ArchiveError("Deflate native block compression failed");
         }
         if (best.empty() || written < best.size()) {
             best.assign(trial.begin(), trial.begin() + static_cast<std::ptrdiff_t>(written));
@@ -709,7 +752,7 @@ bool block_kind_has_payload(BlockKind kind) {
            is_gpu_sparse_pattern_kind(kind);
 }
 
-// Purpose: Encode a contiguous native CPU block range with one bounded worker-owned Zstandard context.
+// Purpose: Encode a contiguous native CPU block range with bounded worker-owned codec state.
 // Inputs: Source bytes, fixed block size/level, disjoint result slots, and the selected index range.
 // Outputs: Fills each slot with a complete descriptor and optional compressed payload, or throws on codec failure.
 static void encode_cpu_block_range(std::span<const std::byte> input, std::uint32_t block_size, int compression_level,
@@ -718,6 +761,7 @@ static void encode_cpu_block_range(std::span<const std::byte> input, std::uint32
         zstd_runtime().free_compression_context(context);
     };
     std::unique_ptr<ZstdCompressionContext, decltype(release_context)> context(nullptr, release_context);
+    std::unique_ptr<tdefl_compressor> deflate;
     std::vector<std::byte> trial;
     for (std::size_t i = begin; i < end; ++i) {
         const auto pos = i * static_cast<std::size_t>(block_size);
@@ -742,7 +786,7 @@ static void encode_cpu_block_range(std::span<const std::byte> input, std::uint32
             }
         }
         auto compressed = use_zstd ? try_zstd_block(block, compression_level, context.get(), trial)
-                                   : try_deflate_block(block, compression_level);
+                                   : try_deflate_block(block, compression_level, deflate, trial);
         if (!compressed.empty()) {
             block_work[i].descriptor = BlockDescriptor{
                 .kind = use_zstd ? BlockKind::CpuZstd : BlockKind::Deflate,

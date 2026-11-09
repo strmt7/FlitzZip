@@ -15,6 +15,13 @@ the checksum path. Independent literal and overlapping-match fixtures, output
 canaries and guarded input/output pages exercise this contract. Candidate checks
 do not replace the affected product tests or exact-commit hosted analyses.
 
+The native CPU Deflate workspace now reuses worker-owned miniz state. Review of
+that caller change confirms that `materialize_dictionary_cpu`, its exact-length
+check, the dictionary extent parser and the GPU dictionary producer are unchanged.
+The known LZ4 operations below retain their exact source and locations. Renewed
+context identities cover the changed translation unit; they do not admit the new
+Deflate helper or substitute for its own correctness and scanner qualification.
+
 ## DevSkim Reports
 
 The pinned local detector reproduced exactly these six reports on the frozen
@@ -66,7 +73,7 @@ unbounded allocation or mismatched owner and does not admit other lifetime repor
 
 ## Header Inclusion Contract
 
-### Alert 853
+### Alert 10227
 
 `cpp/missing-header-guard`, `third_party/lz4/lz4.h:1`, identifies a deliberately
 re-enterable header. Public declarations and the optional static API have
@@ -80,6 +87,14 @@ declaration and verifies the linked version API. That control passes without
 redefinitions. A whole-file guard would remove the required late-inclusion
 behavior. This static review renews only this known diagnostic; current CPU and
 HIP-host CodeQL analyses remain required after publication.
+
+The current CPU and HIP-host analyses reported this instance after the upstream
+import. Its preceding alert 853 identifies an older producer instance; the active
+ledger now binds the new alert, exact current header and both reported categories.
+A source-bound compile control accepts the original header and linked version API.
+An isolated copy with a whole-file `#pragma once` fails to declare the required
+late opt-in API. This negative control confirms that the suggested whole-file
+guard would remove supported behavior; no product header was changed.
 
 The preceding four `cpp/constant-comparison` decisions are retired from the
 active ledger because their old source locations no longer identify the reviewed

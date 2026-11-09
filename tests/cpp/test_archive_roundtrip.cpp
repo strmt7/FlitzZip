@@ -754,20 +754,25 @@ TEST_CASE(flzip_late_crc_failure_respects_publication_policy) {
 }
 
 // Purpose: Compare native CPU blocks with actual codec sizes instead of a size heuristic.
-// Inputs: Non-uniform periodic and random payloads around the framing and old 512-byte cutoffs at every effort.
+// Inputs: Periodic, random and repeated-history payloads through the short-block boundary at every effort.
 // Outputs: Requires the smallest admitted Raw/Deflate representation, stable ties, and lossless CPU decoding.
 TEST_CASE(flzip_cpu_short_blocks_use_smaller_deflate) {
-    for (const auto size :
-         {2U, 3U, 7U, 8U, 9U, 10U, 11U, 12U, 16U, 17U, 31U, 32U, 63U, 64U, 127U, 255U, 511U, 512U, 513U, 1024U}) {
-        for (const bool periodic : {false, true}) {
+    for (const auto size : {2U,  3U,  7U,   8U,   9U,   10U,  11U,  12U,   16U,   17U,   31U,   32U,
+                            63U, 64U, 127U, 255U, 511U, 512U, 513U, 1024U, 2047U, 2048U, 4094U, 4095U}) {
+        for (const auto family : {0U, 1U, 2U}) {
             std::vector<std::byte> input(size);
             std::uint32_t state = 0xE0DA746BU;
             for (std::size_t i = 0; i < input.size(); ++i) {
                 state ^= state << 13U;
                 state ^= state >> 17U;
                 state ^= state << 5U;
-                input[i] = static_cast<std::byte>(periodic ? 'a' + i % 3U : state & 255U);
+                input[i] = family == 2U && i >= 64U && (state & 7U) != 0U
+                               ? input[(state >> 8U) % i]
+                               : static_cast<std::byte>(family == 1U   ? 'a' + i % 3U
+                                                        : family == 2U ? state & 31U
+                                                                       : state & 255U);
             }
+            const auto original = input;
             for (int level = 1; level <= 9; ++level) {
                 flitzzip::GpuCodecOptions options;
                 options.force_cpu = true;
@@ -787,6 +792,7 @@ TEST_CASE(flzip_cpu_short_blocks_use_smaller_deflate) {
                 }
                 const bool smaller = reference.size() < input.size();
                 const auto encoded = flitzzip::encode_chunk(input, options);
+                REQUIRE_EQ(input, original);
                 REQUIRE_EQ(encoded.blocks.size(), 1U);
                 REQUIRE_EQ(encoded.blocks.front().kind,
                            smaller ? flitzzip::BlockKind::Deflate : flitzzip::BlockKind::Raw);
