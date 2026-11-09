@@ -14,12 +14,12 @@ param(
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'flitzzip_verification.psm1') -Force
 
-# Purpose: Select real dependency resolution only when the research installation inputs change.
-# Inputs: Canonical changed paths. Outputs: True for a lock/provider/recipe or this integration workflow change.
+# Purpose: Select real Crawl4AI resolution only when its installation inputs change.
+# Inputs: Canonical changed paths. Outputs: True for a crawler lock/provider/recipe or this integration workflow change.
 function Test-FlitzZipResearchLockChange {
     param([string[]]$Paths)
     foreach ($path in $Paths) {
-        if ($path.Replace('\', '/') -match ('^(tools/requirements/|' +
+        if ($path.Replace('\', '/') -match ('^(tools/requirements/(crawl4ai|python-build)\.(in|txt)$|' +
             'tools/(crawl4ai_tool|crawl4ai_source_build|python_wheel|nltk_distribution|crawl4ai_download_opener)\.py$|' +
             'third_party/upstream/(crawl4ai|nltk)/|\.github/workflows/component-contracts\.yml$)')) {
             return $true
