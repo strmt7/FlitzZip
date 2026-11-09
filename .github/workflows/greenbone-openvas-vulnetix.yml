@@ -39,6 +39,13 @@ jobs:
           script: |
             const { execFileSync } = require('node:child_process');
             execFileSync(process.execPath, ['--test', '.github/openvas/resolve_config.test.cjs'], { stdio: 'inherit' });
+      - name: Validate signed Vulnetix installation and upload interface
+        uses: Vulnetix/cli@397ab8905b860c351d75a8fea222de8413989fbc # v4.24.6
+        with:
+          version: "4.24.6"
+          verify-provenance: "true"
+          task: upload
+          args: --help
       - name: Install Greenbone tools
         shell: bash
         run: python -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/requirements-gvm-tools-linux.txt

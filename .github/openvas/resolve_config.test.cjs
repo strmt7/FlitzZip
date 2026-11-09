@@ -4,6 +4,44 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const { parseConfiguration, readConfiguration, resolveConfig } = require("./resolve_config.cjs");
 
+// The action and installed binary are a single reviewed release. Keep signature
+// verification explicit; an action-only dependency bump must fail this contract.
+function validateVulnetixRelease(workflow) {
+    const steps = workflow.split(/^      - name: /m).filter((step) => step.includes("uses: Vulnetix/cli@"));
+    assert.equal(steps.length, 1, "Exactly one canonical Vulnetix upload step is required");
+    const step = steps[0];
+    const action = step.match(/^        uses: Vulnetix\/cli@([a-f0-9]{40}) # v(\d+\.\d+\.\d+)\s*$/m);
+    assert.ok(action, "Vulnetix needs an immutable action pin and release identity");
+    const binary = step.match(/^          version: "(\d+\.\d+\.\d+)"\s*$/m);
+    assert.ok(binary, "The installed CLI must have an exact release pin");
+    assert.equal(binary[1], action[2], "Action and CLI releases must match");
+    assert.ok(Number(action[2].split(".")[0]) >= 4, "Use the signed-release action contract");
+    assert.match(step, /^          verify-provenance: "true"\s*$/m);
+    assert.match(step, /^          task: upload\s*$/m);
+    return { version: action[2], step };
+}
+
+test("Vulnetix action and CLI pins remain paired with signed provenance", () => {
+    const { readFileSync } = require("node:fs");
+    const { join } = require("node:path");
+    const workflow = readFileSync(join(__dirname, "../workflows/greenbone-openvas-live.yml"), "utf8");
+    const live = validateVulnetixRelease(workflow);
+    const audit = validateVulnetixRelease(readFileSync(join(__dirname, "../workflows/greenbone-openvas-vulnetix.yml"), "utf8"));
+    assert.equal(audit.version, live.version, "The offline action consumer must qualify the live release");
+    assert.match(audit.step, /^          args: --help\s*$/m);
+    assert.doesNotMatch(audit.step, /^          (?:org-id|api-key|api-token):/m);
+    const mutations = [
+        workflow.replace(/(Vulnetix\/cli@[a-f0-9]{40} # v)\d+\.\d+\.\d+/, (_match, prefix) => prefix + "9.9.9"),
+        workflow.replace(/^          version: "\d+\.\d+\.\d+"/m, '          version: "9.9.9"'),
+        workflow.replace('verify-provenance: "true"', 'verify-provenance: "false"'),
+        workflow.replace(/^          verify-provenance: "true"\r?\n/m, ""),
+    ];
+    for (const changed of mutations) {
+        assert.notEqual(changed, workflow, "The negative control must change its boundary");
+        assert.throws(() => validateVulnetixRelease(changed));
+    }
+});
+
 const valid = {
     greenbone_host: "scanner.example",
     greenbone_username: "test-user",
