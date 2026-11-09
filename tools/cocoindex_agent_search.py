@@ -30,7 +30,10 @@ else:
     from executable_path import executable_path
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "0.2.42"
+VERSION = "0.2.43"
+REQUIREMENTS = ROOT / "tools" / "requirements" / "cocoindex-code.txt"
+REQUIREMENT_BYTES = REQUIREMENTS.read_bytes().replace(b"\r\n", b"\n")
+DEPENDENCY_DIGEST = hashlib.sha256(REQUIREMENT_BYTES).hexdigest()
 MODEL = "Snowflake/snowflake-arctic-embed-xs"
 INDEX_SUFFIXES = (
     ".py",
@@ -73,7 +76,7 @@ PROJECT_SETTINGS = (
     "  - 'third_party/**'\n"
     "  - '.cocoindex_code/**'\n  - '**/.cocoindex_code/**'\n"
 )
-CONFIG_DIGEST = hashlib.sha256((SETTINGS + PROJECT_SETTINGS).encode("utf-8")).hexdigest()
+CONFIG_DIGEST = hashlib.sha256((SETTINGS + PROJECT_SETTINGS + DEPENDENCY_DIGEST).encode("utf-8")).hexdigest()
 
 
 def home() -> Path:
@@ -97,11 +100,12 @@ def home() -> Path:
 def paths(base: Path, repo: Path = ROOT) -> tuple[Path, Path, Path, Path]:
     """Purpose: Scope tool, mirror, and runtime state. Inputs: base/repo. Outputs: four external paths."""
     digest = hashlib.sha256(str(repo.resolve()).encode("utf-8")).hexdigest()[:16]
+    tool = f"{VERSION}-{DEPENDENCY_DIGEST[:16]}"
     return (
-        base / f"venv-{VERSION}",
+        base / f"venv-{tool}",
         base / "mirrors" / digest,
         base / "config" / digest,
-        base / "runtime" / VERSION / digest,
+        base / "runtime" / tool / digest,
     )
 
 
@@ -132,7 +136,10 @@ def install(base: Path) -> None:
     """Purpose: Install pinned development CLI. Inputs: external base. Outputs: verified environment or error."""
     venv = paths(base)[0]
     command = ccc_path(venv)
-    if command.is_file():
+    completion = venv / ".flitzzip-install-complete"
+    if completion.is_file() and completion.read_text(encoding="utf-8").strip() != DEPENDENCY_DIGEST:
+        raise RuntimeError("cached CocoIndex dependency identity mismatch; inspect the owned environment")
+    if command.is_file() and completion.is_file():
         version = _run([str(command), "version"], timeout=30).stdout.strip()
         if version != VERSION:
             raise RuntimeError(f"existing CocoIndex version {version}; expected {VERSION}")
@@ -141,19 +148,42 @@ def install(base: Path) -> None:
     venv.parent.mkdir(parents=True, exist_ok=True)
     _run([sys.executable, "-m", "venv", str(venv)], timeout=300)
     python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    requirement = f"cocoindex-code[full]=={VERSION}"
-    uv = shutil.which("uv")
-    if uv:
-        _run([uv, "pip", "install", "--python", str(python), requirement], timeout=3600)
-    else:
-        _run(
-            [str(python), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", requirement],
-            timeout=3600,
-        )
+    frozen = venv / "flitzzip-requirements.txt"
+    frozen.write_bytes(REQUIREMENT_BYTES)
+    _run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-input",
+            "--require-hashes",
+            "-r",
+            str(frozen),
+        ],
+        timeout=3600,
+    )
+    _run([str(python), "-m", "pip", "check"], timeout=60)
     version = _run([str(command), "version"], timeout=30).stdout.strip()
     if version != VERSION:
         raise RuntimeError(f"CocoIndex version verification failed: {version}")
+    _write_atomic(completion, (DEPENDENCY_DIGEST + "\n").encode("utf-8"))
     print(f"Installed CocoIndex Code {version} in {venv}")
+
+
+def _write_atomic(target: Path, content: bytes) -> None:
+    """Publish complete cache state, preserving old bytes and removing temporary files on failure."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".state-", delete=False) as output:
+            temporary = Path(output.name)
+            output.write(content)
+        os.replace(temporary, target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def tracked_files(repo: Path) -> list[tuple[str, Path]]:
@@ -276,19 +306,20 @@ def index(base: Path, repo: Path = ROOT) -> None:
     if match is None or int(match.group(1)) != 0 or source_digest(tracked_files(repo)) != digest:
         raise RuntimeError("index errors or source changed during indexing; no active marker written")
     marker = base / "active" / (mirror.name + ".json")
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(
-        json.dumps(
-            {
-                "schema": 1,
-                "source_digest": digest,
-                "config_digest": CONFIG_DIGEST,
-                "cocoindex_code": VERSION,
-                "files": len(entries),
-            }
-        )
-        + "\n",
-        encoding="utf-8",
+    _write_atomic(
+        marker,
+        (
+            json.dumps(
+                {
+                    "schema": 1,
+                    "source_digest": digest,
+                    "config_digest": CONFIG_DIGEST,
+                    "cocoindex_code": VERSION,
+                    "files": len(entries),
+                }
+            )
+            + "\n"
+        ).encode("utf-8"),
     )
     print(f"Indexed {len(entries)} Git-visible source files; source SHA-256 {digest[:16]}")
     print(output[-2000:])
@@ -300,7 +331,6 @@ def record_search_use(base: Path, repo: Path, digest: str, query: str, hit_count
     Outputs: atomic local receipt, no query text."""
     mirror = paths(base, repo)[1]
     target = base / "active" / (mirror.name + ".usage.json")
-    target.parent.mkdir(parents=True, exist_ok=True)
     receipt = {
         "schema": 1,
         "source_digest": digest,
@@ -310,15 +340,7 @@ def record_search_use(base: Path, repo: Path, digest: str, query: str, hit_count
         "hit_count": hit_count,
         "completed_at": datetime.now(UTC).isoformat(),
     }
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".search-", delete=False) as output:
-            temporary = Path(output.name)
-            output.write((json.dumps(receipt) + "\n").encode("utf-8"))
-        os.replace(temporary, target)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    _write_atomic(target, (json.dumps(receipt) + "\n").encode("utf-8"))
 
 
 def validate_search_results(payload: object, maximum: int) -> list[dict]:

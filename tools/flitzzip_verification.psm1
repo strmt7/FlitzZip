@@ -1,5 +1,6 @@
 $Script:FlitzZipVerificationRepoRoot = Split-Path -Parent $PSScriptRoot
 $Script:FlitzZipReviewEvidencePattern = '^docs/(?:(?:history/security/)?security-(?:nltk-ssrf-fixture|crawl4ai-public-(?:proxy|test))-review-[0-9-]+|security-reviews/[^/]+)\.md$'
+$Script:FlitzZipAgentToolPattern = '^tools/(?:(?:agent_context|test_agent_context|cocoindex_agent_search|test_cocoindex_agent_search)\.py|requirements/cocoindex-code\.(?:in|txt))$'
 . (Join-Path $PSScriptRoot 'local_resources.ps1')
 . (Join-Path $PSScriptRoot 'native_test_selection.ps1')
 . (Join-Path $PSScriptRoot 'native_ci.ps1')
@@ -313,7 +314,7 @@ function Get-FlitzZipVerificationScope {
         '^tools/cmake-toolchain\.sha256$',
         '^tools/(fuzz_resources|test_fuzz_resources)\.ps1$',
         '^tools/(fuzz_memory|test_fuzz_memory)\.py$',
-        '^tools/(agent_context|test_agent_context|cocoindex_agent_search|test_cocoindex_agent_search)\.py$',
+        $Script:FlitzZipAgentToolPattern,
         '^tools/(crawl4ai_tool|crawl4ai_research|crawl4ai_source_build|test_crawl4ai_source_build|crawl4ai_download_opener|test_crawl4ai_downloads|test_crawl4ai_tool|json_input|python_wheel|nltk_distribution|test_nltk_distribution|test_nltk_model_security|license_inventory|test_license_inventory)\.py$',
         '^tools/(crawl4ai_sites\.json|requirements/(crawl4ai|python-build)\.(in|txt))$',
         '^third_party/upstream/(nltk|crawl4ai)/',
@@ -513,7 +514,7 @@ function Get-FlitzZipToolVerificationCommand {
            Command = (Get-FlitzZipVerificationCommand -Id "secret-report-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_redact_trufflehog") -Reason "scanner artifacts must retain findings without publishing secrets or identities") }
         @{ Pattern = @('^\.github/openvas/', '^\.github/workflows/greenbone-openvas-vulnetix\.yml$')
            Command = (Get-FlitzZipVerificationCommand -Id "greenbone-config-tests" -Stage "local" -Executable "node" -Arguments @("--test", ".github/openvas/resolve_config.test.cjs") -Reason "broker configuration must remain bounded, masked, and authorized before publishing step outputs") }
-        @{ Pattern = @('^tools/(executable_path|test_executable_path)\.py$', '^tools/(agent_context|test_agent_context|cocoindex_agent_search|test_cocoindex_agent_search)\.py$', '^\.agents/skills/(caveman|cocoindex-code-search)/', '^AGENTS\.md$')
+        @{ Pattern = @('^tools/(executable_path|test_executable_path)\.py$', $Script:FlitzZipAgentToolPattern, '^\.agents/skills/(caveman|cocoindex-code-search)/', '^AGENTS\.md$')
            Command = (Get-FlitzZipVerificationCommand -Id "agent-context-contracts" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_agent_context", "tools.test_cocoindex_agent_search") -Reason "mandatory skills, bounded source reads, note freshness and real semantic-routing receipts require executable contracts") }
         @{ Pattern = @('^tools/(crawl4ai_tool|crawl4ai_research|crawl4ai_source_build|test_crawl4ai_source_build|crawl4ai_download_opener|test_crawl4ai_downloads|test_crawl4ai_tool|json_input|python_wheel|nltk_distribution|test_nltk_distribution|test_nltk_model_security)\.py$', '^tools/(crawl4ai_sites\.json|requirements/(crawl4ai|python-build)\.(in|txt))$', '^third_party/upstream/(nltk|crawl4ai)/', '^docs/crawl4ai\.md$', '^docs/licenses/', '^AGENTS\.md$', '^mcp/flitzzip_mcp\.py$')
            Command = (Get-FlitzZipVerificationCommand -Id 'crawl4ai-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/run_locked_python_tests.ps1', '-Modules', 'tools.test_crawl4ai_tool') -Reason 'crawler integration must use upstream APIs, portable external installation and honest source-bound extraction results under a supported Python; contracts never install the crawler, launch browsers, crawl or build') }

@@ -57,7 +57,20 @@ py -3 tools/cocoindex_agent_search.py search --limit 5 "bounded GPU resource own
 ```
 
 Install only if the pinned tool is missing, as its skill describes. Refresh only
-when code bytes or index configuration changed. Search refuses stale inputs
+when code bytes or index configuration changed. Installation uses the new
+virtual environment's own Python and pip, independent of unrelated installers
+on the host's PATH. The [input](../tools/requirements/cocoindex-code.in) and
+[hash lock](../tools/requirements/cocoindex-code.txt) define its complete graph.
+The lock fingerprints the tool environment, runtime and index configuration;
+a refresh leaves older environments intact. Installation freezes the lock and
+publishes readiness only after dependency and CLI-version checks pass.
+The embedding provider uses CPU PyTorch wheels from the official PyTorch
+distribution, and standard macOS wheels where appropriate. This keeps optional
+NVIDIA runtime packages out of the research tool; product HIP support is separate.
+Use Python 3.13 or 3.14 and a host supported by the locked binary distributions.
+The current [PyTorch release files](https://pypi.org/pypi/torch/2.15.0/json)
+require Apple Silicon and macOS 14 or later for the macOS embedding lane.
+Search refuses stale inputs
 both before and after the package call. Successful searches atomically write a
 per-checkout `.usage.json` receipt beside the external active-index marker.
 It records source/config hashes, pinned version, UTC completion, query hash and
@@ -68,6 +81,17 @@ change. Indexing or installing alone never counts as successful search use.
 Exact symbols, strings and known small scopes still use `rg` first. Confirm
 semantic candidates with exact reads. Scores rank hints, not factual confidence.
 Do not install another memory service, model or database to use this guide.
+
+Refresh the input and lock together using a reviewed uv version admitted by
+[the tooling lock guide](../.github/requirements/README.md#refresh):
+
+```powershell
+uv pip compile tools/requirements/cocoindex-code.in --output-file tools/requirements/cocoindex-code.txt --universal --python-version 3.13 --torch-backend cpu --generate-hashes --emit-index-url --emit-build-options --no-annotate --no-header --no-python-downloads
+```
+
+Qualify the installed graph, local embedding index and actual search before
+publishing an update. Universal resolution covers dependency selection across
+platforms; it does not prove execution on every host.
 
 ## Bounded Reads And Context Lifetime
 

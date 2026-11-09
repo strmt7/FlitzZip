@@ -4,6 +4,7 @@ Adapted from strmt7/VulnerabilityScreener tests/test_cocoindex_agent_search.py (
 """
 
 import contextlib
+import hashlib
 import io
 import json
 import math
@@ -179,8 +180,9 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             base = Path(temp)
             self.assertNotEqual(paths(base, base / "a")[1], paths(base, base / "b")[1])
             environment, _mirror, _config, runtime = paths(base, base / "a")
-            self.assertEqual(environment.name, f"venv-{agent_search.VERSION}")
-            self.assertEqual(runtime.parent.name, agent_search.VERSION)
+            tool = f"{agent_search.VERSION}-{agent_search.DEPENDENCY_DIGEST[:16]}"
+            self.assertEqual(environment.name, f"venv-{tool}")
+            self.assertEqual(runtime.parent.name, tool)
 
     def test_tracked_files_rejects_escape_and_real_env(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -297,8 +299,158 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             (repo / "z.py").write_text("z = 2\n", encoding="utf-8")
             self.assertNotEqual(original_digest, source_digest(tracked_files(repo)))
 
-    # Purpose: Exercise pinned installation reuse, both installers and post-install version admission without network.
-    # Inputs: Owned external homes, inert CLI fixtures and bounded process results for uv and pip.
+    def test_install_does_not_select_an_unrelated_path_installer(self):
+        """Keep an unrelated host uv installation outside the tool's dependency boundary."""
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            unrelated_uv = str(base / "unreviewed-uv.exe")
+            paths(base)[0].mkdir(parents=True)
+            responses = [
+                subprocess.CompletedProcess([], 0, stdout=""),
+                subprocess.CompletedProcess([], 0, stdout=""),
+                subprocess.CompletedProcess([], 0, stdout="No broken requirements found."),
+                subprocess.CompletedProcess([], 0, stdout=agent_search.VERSION + "\n"),
+            ]
+            with (
+                patch.object(agent_search.shutil, "which", return_value=unrelated_uv),
+                patch.object(agent_search, "_run", side_effect=responses) as run,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                agent_search.install(base)
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertFalse(any(command[0] == unrelated_uv for command in commands))
+            owned_python = str(paths(base)[0] / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+            self.assertEqual(commands[1][:4], [owned_python, "-m", "pip", "install"])
+            self.assertIn("--require-hashes", commands[1])
+            frozen = paths(base)[0] / "flitzzip-requirements.txt"
+            self.assertEqual(commands[1][-2:], ["-r", str(frozen)])
+            self.assertEqual(frozen.read_bytes(), agent_search.REQUIREMENT_BYTES)
+
+    def test_dependency_lock_has_its_own_environment_and_runtime(self):
+        """A dependency refresh must not mutate the old environment or admit its index."""
+        original = paths(Path("cache"))
+        with patch.object(agent_search, "DEPENDENCY_DIGEST", "f" * 64):
+            refreshed = paths(Path("cache"))
+        self.assertNotEqual(original[0], refreshed[0])
+        self.assertNotEqual(original[3], refreshed[3])
+        self.assertEqual(original[1:3], refreshed[1:3])
+        declarations = (agent_search.REQUIREMENTS.with_suffix(".in")).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(
+            [line for line in declarations if not line.startswith("--") and line.strip()],
+            [f"cocoindex-code[full]=={agent_search.VERSION}"],
+        )
+
+    def test_lock_contains_hashes_for_every_dependency_branch(self):
+        """Even inactive platform requirements must have artifact hashes before publication."""
+        blocks = agent_search.REQUIREMENT_BYTES.decode("utf-8").replace("\\\n", "").splitlines()
+        requirements = [block for block in blocks if block.strip() and not block.startswith(("--", "#"))]
+        self.assertTrue(requirements)
+        for block in requirements:
+            with self.subTest(requirement=block.split(" ", 1)[0]):
+                self.assertRegex(block, r"\s--hash=sha256:[a-f0-9]{64}(?:\s|$)")
+
+    def test_failed_dependency_check_cannot_admit_partial_install(self):
+        """A partially installed CLI must be repaired and checked before cache reuse."""
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            venv = paths(base)[0]
+            command = agent_search.ccc_path(venv)
+            command.parent.mkdir(parents=True)
+            command.write_bytes(b"partially installed CLI fixture")
+            completion = venv / ".flitzzip-install-complete"
+            success = subprocess.CompletedProcess([], 0, stdout="")
+            exact = subprocess.CompletedProcess([], 0, stdout=agent_search.VERSION + "\n")
+            with (
+                patch.object(
+                    agent_search,
+                    "_run",
+                    side_effect=[success, success, subprocess.CalledProcessError(1, ["pip", "check"])],
+                ) as run,
+                self.assertRaises(subprocess.CalledProcessError),
+            ):
+                agent_search.install(base)
+            self.assertEqual(run.call_count, 3)
+            self.assertFalse(completion.exists())
+            with (
+                patch.object(agent_search, "_run", side_effect=[success, success, success, exact]),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                agent_search.install(base)
+            self.assertEqual(completion.read_text(encoding="utf-8").strip(), agent_search.DEPENDENCY_DIGEST)
+            with (
+                patch.object(agent_search, "_run", return_value=exact) as run,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                agent_search.install(base)
+            run.assert_called_once_with([str(command), "version"], timeout=30)
+            completion.write_text("different dependency identity\n", encoding="utf-8")
+            with (
+                patch.object(agent_search, "_run") as run,
+                self.assertRaisesRegex(RuntimeError, "dependency identity mismatch"),
+            ):
+                agent_search.install(base)
+            run.assert_not_called()
+
+    def test_cache_receipt_failures_preserve_previous_bytes_and_clean_temporaries(self):
+        """Real files retain the old receipt after write/replace failures and permit recovery."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "receipt"
+            target.write_bytes(b"previous complete state")
+            for failure in ("write", "replace"):
+                with self.subTest(failure=failure), contextlib.ExitStack() as stack:
+                    if failure == "write":
+                        pending = stack.enter_context(tempfile.NamedTemporaryFile(dir=root, delete=False))
+                        stack.enter_context(
+                            patch.object(agent_search.tempfile, "NamedTemporaryFile", return_value=pending)
+                        )
+                        stack.enter_context(
+                            patch.object(pending, "write", side_effect=OSError("controlled write failure"))
+                        )
+                    else:
+                        stack.enter_context(
+                            patch.object(agent_search.os, "replace", side_effect=OSError("controlled replace failure"))
+                        )
+                    with self.assertRaisesRegex(OSError, "controlled"):
+                        agent_search._write_atomic(target, b"replacement state")
+                self.assertEqual(target.read_bytes(), b"previous complete state")
+                self.assertEqual(list(root.iterdir()), [target])
+            agent_search._write_atomic(target, b"replacement state")
+            self.assertEqual(target.read_bytes(), b"replacement state")
+            self.assertEqual(list(root.iterdir()), [target])
+
+    def test_pre_lock_index_is_stale_even_when_source_and_cli_version_match(self):
+        """An old settings-only marker cannot admit an index after dependency locking."""
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            source = base / "source.py"
+            source.write_text("pass\n", encoding="utf-8")
+            entries = [("source.py", source)]
+            mirror = paths(base, base)[1]
+            marker = base / "active" / (mirror.name + ".json")
+            marker.parent.mkdir()
+            marker.write_text(
+                json.dumps(
+                    {
+                        "source_digest": source_digest(entries),
+                        "config_digest": hashlib.sha256(
+                            (agent_search.SETTINGS + agent_search.PROJECT_SETTINGS).encode()
+                        ).hexdigest(),
+                        "cocoindex_code": agent_search.VERSION,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(agent_search, "tracked_files", return_value=entries),
+                patch.object(agent_search, "_run") as run,
+                self.assertRaisesRegex(RuntimeError, "index is stale"),
+            ):
+                search(base, "ownership", 5, repo=base)
+            run.assert_not_called()
+
+    # Purpose: Exercise pinned installation reuse and post-install version admission without network.
+    # Inputs: Owned external homes, inert CLI fixtures and bounded process results for the owned pip.
     # Outputs: Exact versions reuse/install; stale existing and mismatched new installations fail explicitly.
     def test_install_routes_and_verifies_exact_version(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -307,6 +459,8 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             command = agent_search.ccc_path(paths(cached)[0])
             command.parent.mkdir(parents=True)
             command.write_bytes(b"inert CLI fixture")
+            completion = paths(cached)[0] / ".flitzzip-install-complete"
+            completion.write_text(agent_search.DEPENDENCY_DIGEST + "\n", encoding="utf-8")
             exact = subprocess.CompletedProcess([], 0, stdout=agent_search.VERSION + "\n")
             with (
                 patch.object(agent_search, "_run", return_value=exact) as run,
@@ -321,34 +475,32 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             ):
                 agent_search.install(cached)
 
-            for label, uv in (("uv", str(root / "uv.exe")), ("pip", None)):
-                base = root / label
-                responses = [
-                    subprocess.CompletedProcess([], 0, stdout=""),
-                    subprocess.CompletedProcess([], 0, stdout=""),
-                    exact,
-                ]
-                with (
-                    self.subTest(installer=label),
-                    patch.object(agent_search.shutil, "which", return_value=uv),
-                    patch.object(agent_search, "_run", side_effect=responses) as run,
-                    contextlib.redirect_stdout(io.StringIO()),
-                ):
-                    agent_search.install(base)
-                install_command = run.call_args_list[1].args[0]
-                if uv:
-                    self.assertEqual(install_command[:3], [uv, "pip", "install"])
-                else:
-                    self.assertEqual(install_command[1:4], ["-m", "pip", "install"])
-                self.assertIn(f"cocoindex-code[full]=={agent_search.VERSION}", install_command)
-            base = root / "mismatch"
+            base = root / "new"
+            paths(base)[0].mkdir(parents=True)
             responses = [
                 subprocess.CompletedProcess([], 0, stdout=""),
                 subprocess.CompletedProcess([], 0, stdout=""),
+                subprocess.CompletedProcess([], 0, stdout="No broken requirements found."),
+                exact,
+            ]
+            with (
+                patch.object(agent_search, "_run", side_effect=responses) as run,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                agent_search.install(base)
+            install_command = run.call_args_list[1].args[0]
+            self.assertEqual(install_command[1:4], ["-m", "pip", "install"])
+            self.assertIn("--require-hashes", install_command)
+            self.assertEqual(install_command[-2:], ["-r", str(paths(base)[0] / "flitzzip-requirements.txt")])
+            base = root / "mismatch"
+            paths(base)[0].mkdir(parents=True)
+            responses = [
+                subprocess.CompletedProcess([], 0, stdout=""),
+                subprocess.CompletedProcess([], 0, stdout=""),
+                subprocess.CompletedProcess([], 0, stdout="No broken requirements found."),
                 stale,
             ]
             with (
-                patch.object(agent_search.shutil, "which", return_value=None),
                 patch.object(agent_search, "_run", side_effect=responses),
                 self.assertRaisesRegex(RuntimeError, "version verification failed"),
             ):
