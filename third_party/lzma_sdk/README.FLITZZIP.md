@@ -1,10 +1,10 @@
-# LZMA SDK 26.05
+# LZMA SDK 26.06
 
-FlitzZip vendors the minimal ANSI-C decoder subset from LZMA SDK 26.05.
+FlitzZip vendors the minimal ANSI-C decoder subset from LZMA SDK 26.06.
 
 - Upstream: <https://www.7-zip.org/sdk.html>
-- Archive: `lzma2605.7z` from the official `ip7z/7zip` release `26.05`.
-- SHA-256: `668fda469b7f584f246008cf28359c66ef98d65fafb3b22a52672eebe6970c28`
+- Archive: `lzma2606.7z` from the official `ip7z/7zip` release `26.06`.
+- SHA-256: `1d9da340870b12712e9068be178a4436fbad785486b62aed6e2aa88ea1e3bb65`
 - License: public domain, as stated in `DOC/lzma-sdk.txt` in the upstream archive.
   `LICENSE` is an exact text copy of that upstream file for build-time license
   notice generation on hosts that cannot extract `.7z` archives.
@@ -12,7 +12,7 @@ FlitzZip vendors the minimal ANSI-C decoder subset from LZMA SDK 26.05.
 Only the C decoder files needed by the `7zDec` path are copied into
 `third_party/lzma_sdk/C/`. FlitzZip does not ship or call the SDK's prebuilt
 executables. The original upstream archive and checksum are stored under
-`third_party/upstream/lzma-sdk/26.05/` for provenance. Earlier provenance
+`third_party/upstream/lzma-sdk/26.06/` for provenance. Earlier provenance
 archives remain unchanged.
 
 FlitzZip uses this SDK for read-only `.7z`, `.lzma`, and `.lz` compatibility,
@@ -41,12 +41,14 @@ upstream `Z7_ANALYZE_MODE` warning suppressions are not imported. Some unchanged
 files retain historical comment removal; the upstream archive contains the
 unmodified complete source and public-domain notices.
 
-The 26.05 production-subset comparison found no decoder algorithm changes:
-among 34 upstream-derived `C/` files, only the version header and constant
-64-bit byte-swap macros in `CpuArch.h` changed. Both are imported while
-preserving FlitzZip's byte-access adapter. The 26.05 release's other fixes are
-outside this extract-only subset; release notes do not establish additional
-security or performance claims for this decoder.
+The 26.06 production-subset comparison against 26.05 found no decoder algorithm
+changes: among 34 upstream-derived `C/` files, only `7zVersion.h` changed.
+The other 33 upstream files are byte-identical after line-ending normalization;
+their existing FlitzZip adaptations remain intact. The license text changes
+only its SDK version. The split-file handling described by the upstream release
+is outside this extract-only subset and does not add format capabilities here.
+Release notes do not establish additional security or performance claims for
+this decoder.
 
 `CpuArch.h` routes wire integer access through `CpuArchByteAccess.h`. This local
 component decodes and encodes explicit little/big-endian fields, including the
