@@ -107,6 +107,10 @@ function Invoke-NativeBuildReceipt {
 }
 
 $HipArch = Resolve-HipArchitecture -Architecture $HipArch
+$importProof = @(& py -3 (Join-Path $PSScriptRoot 'vendor_imports.py') --root $repo)
+if ($LASTEXITCODE -ne 0) { throw 'Native dependency import provenance failed validation.' }
+$importIdentity = ($importProof -join [Environment]::NewLine) | ConvertFrom-Json
+Write-Output "vendor_import component=$($importIdentity.component) canonical_files=$($importIdentity.canonical_paths.Count) adapted_files=$($importIdentity.adapted_paths.Count)"
 $cmake = Find-CMake -RepoRoot $repo
 $Generator = Find-CMakeGenerator -Requested $Generator -BuildRoot $build
 if ($EnableHip.IsPresent -and $CpuOnlyValidation.IsPresent) {

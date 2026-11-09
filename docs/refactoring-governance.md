@@ -60,9 +60,47 @@ tools\refactor_audit.ps1 -ChangedOnly -MaxFunctionLines 120 -MaxComplexityMarker
 ```
 
 This gate is wired into `tools\security_scan.ps1` to identify oversized or
-complex changed functions locally. Do not bypass it with exclusions; split
-responsibilities and retain their behavior tests. Documentation correctness
+complex changed functions locally. Locally authored and adapted functions must
+split responsibilities and retain their behavior tests. The only approved
+alternative classification is the exact-source proof below. Documentation correctness
 requires source review and cannot be inferred from comment labels or density.
+
+## Verified Upstream Imports
+
+An unchanged dependency import may retain upstream function structure after an
+executable proof against its immutable, checksum-pinned release archive. The
+maintainer approved this numeric-gate policy separately from source-finding
+dispositions. It applies only to explicitly registered imports, currently LZ4's
+complete `lz4.c`, `lz4.h` and `LICENSE` set. A path under `third_party` grants no
+exemption by itself.
+
+The [import verifier](../tools/vendor_imports.py) checks the fixed publisher,
+versioned provenance path, exact `SHA256SUMS`, bounded archive expansion and every
+selected regular member before comparing the production text. Only Git
+line-ending normalization is permitted. All component files must match; any
+local adaptation removes the component's classification. Missing, ambiguous,
+linked, oversized, duplicate or altered provenance fails validation. The
+versioned checksum manifest remains the single archive-digest authority.
+
+```powershell
+py -3 tools/vendor_imports.py --require-canonical
+```
+
+The native build validates provenance and reports adaptations. The refactor audit
+keeps verified upstream size/complexity leads visible as `upstream_refactor_lead`
+records; they do not block the numeric function gate. First-party code and local
+vendor adaptations retain the normal gate. Invalid proof never grants admission.
+Format limits, license review, all security scanners, raw findings, independent
+interoperability, sanitizer and behavior tests remain required. Source findings
+use their own individual review contract; import identity never disposes them.
+
+This distinction preserves upstream maintenance boundaries rather than creating
+a local codec fork solely to meet a numeric limit. Chromium's
+[third-party procedure](https://chromium.googlesource.com/chromium/src/+/main/docs/adding_to_third_party.md)
+informs provenance and update ownership; LLVM's
+[coding standards](https://llvm.org/docs/CodingStandards.html) inform consistency
+with existing source. Those references guide this repository's decision; they
+do not certify an imported dependency or replace its qualification.
 
 ## Workflow
 

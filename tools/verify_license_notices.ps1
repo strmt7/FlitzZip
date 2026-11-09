@@ -22,7 +22,7 @@ function Test-LicenseNoticeGeneration {
         "bzip2 1.0.8",
         "XZ Embedded",
         "LZMA SDK 26.06",
-        "LZ4 1.10.0",
+        "LZ4 1.11.0",
         "Zstandard 1.5.7",
         "Lhasa 0.6.0",
         "wimlib 1.14.5",

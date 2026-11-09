@@ -36,6 +36,8 @@ on:
       - tools/generate_license_notices_header.ps1
       - tools/native_build_provenance.py
       - tools/native_build_receipt.py
+      - tools/vendor_imports.py
+      - tools/json_input.py
       - tools/bootstrap_rocm_sdk.py
       - tools/native_coverage.py
       - tools/native_coverage_report.py

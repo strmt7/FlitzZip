@@ -636,6 +636,76 @@ TEST_CASE(flzip_dictionary_reader_matches_independent_lz4_corpus) {
     REQUIRE_TRUE(admitted >= 12U);
 }
 
+// A truncated LZ4 sequence can be a valid smaller block. Native framing must
+// reject that successful library result when its descriptor declares more bytes.
+TEST_CASE(flzip_dictionary_reader_rejects_shorter_valid_lz4_prefix) {
+    const std::array<std::byte, 11> wire{std::byte{0x1F}, std::byte{'a'},  std::byte{1},   std::byte{0},
+                                         std::byte{1},    std::byte{0x50}, std::byte{'t'}, std::byte{'a'},
+                                         std::byte{'i'},  std::byte{'l'},  std::byte{'!'}};
+    std::vector<std::byte> expected(21U, std::byte{'a'});
+    for (const auto value : std::array{'t', 'a', 'i', 'l', '!'}) {
+        expected.push_back(static_cast<std::byte>(value));
+    }
+    std::array<char, 26> direct{};
+    REQUIRE_EQ(LZ4_decompress_safe(reinterpret_cast<const char*>(wire.data()), direct.data(), 2,
+                                   static_cast<int>(direct.size())),
+               1);
+    REQUIRE_EQ(direct[0], 'a');
+    const auto payload_for = [](std::span<const std::byte> source) {
+        std::vector<std::byte> payload(8U + source.size());
+        const auto length = static_cast<std::uint32_t>(source.size());
+        for (std::size_t byte = 0U; byte < 4U; ++byte) {
+            payload[4U + byte] = static_cast<std::byte>(length >> (byte * 8U));
+        }
+        std::copy(source.begin(), source.end(), payload.begin() + 8U);
+        return payload;
+    };
+    const auto complete = payload_for(wire);
+    const auto shortened = payload_for(std::span(wire).first(2U));
+    const auto hip_available = flitzzip::query_gpu_info().available;
+    for (const bool hip : {false, true}) {
+        if (hip && !hip_available) {
+            continue;
+        }
+        flitzzip::GpuCodecOptions options;
+        options.force_cpu = !hip;
+        options.require_gpu = hip;
+        for (const bool truncated : {false, true}) {
+            const auto& payload = truncated ? shortened : complete;
+            const std::array blocks{flitzzip::BlockDescriptor{
+                .kind = flitzzip::BlockKind::GpuDictionary,
+                .uncompressed_len = static_cast<std::uint32_t>(expected.size()),
+                .encoded_len = static_cast<std::uint32_t>(payload.size()),
+            }};
+            std::vector<std::byte> guarded(expected.size() + 2U, std::byte{0xD3});
+            auto decoded = std::span(guarded).subspan(1U, expected.size());
+            bool decode_rejected = false;
+            try {
+                REQUIRE_EQ(flitzzip::decode_chunk(payload, blocks, decoded, options), hip);
+                REQUIRE_EQ(std::vector(decoded.begin(), decoded.end()), expected);
+            } catch (const flitzzip::ArchiveError&) {
+                decode_rejected = true;
+            }
+            REQUIRE_EQ(decode_rejected, truncated);
+            REQUIRE_EQ(guarded.front(), std::byte{0xD3});
+            REQUIRE_EQ(guarded.back(), std::byte{0xD3});
+            bool checksum_rejected = false;
+            try {
+                REQUIRE_EQ(
+                    flitzzip::crc_decoded_chunk(payload, blocks, static_cast<std::uint32_t>(expected.size()), options)
+                        .crc32,
+                    flitzzip::crc32(expected));
+            } catch (const flitzzip::ArchiveError&) {
+                checksum_rejected = true;
+            }
+            REQUIRE_EQ(checksum_rejected, truncated);
+        }
+    }
+    if (hip_available) {
+        REQUIRE_TRUE(flitzzip::query_gpu_info().available);
+    }
+}
+
 // Purpose: Distinguish direct extraction from archive-wide validation before final publication.
 // Inputs: A real two-entry FLZIP whose second payload is corrupted, plus existing first-file output.
 // Outputs: Both modes reject the CRC error; staging retains the old first file and cleans all private output after one

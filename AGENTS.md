@@ -115,6 +115,9 @@ source/tool/output identity checks and intermediate/final acceptance.
   Function Documentation, including C++20/RAII, bounded ownership and concise
   substantive API, ownership and behavior documentation, including vendor edits.
   The changed-function size/complexity gate and documentation review are mandatory.
+  Unmodified dependency imports use the approved
+  [exact-source import proof](docs/refactoring-governance.md#verified-upstream-imports);
+  local adaptations keep the ordinary function gates and all scanner coverage.
 - Use the [learning loop](docs/engineering-learning-loop.md): repair the production
   boundary, retain a reproducer, review sibling callers and add a recurrence guard.
   Never evade analysis by relocating code, renaming primitives, suppressing rules,

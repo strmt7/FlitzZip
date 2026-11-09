@@ -308,7 +308,7 @@ function Get-FlitzZipVerificationScope {
         '^tools/(build_parallelism|test_build_parallelism|local_resources|test_workflow_checkpoint)\.ps1$',
         '^tools/(rocm_toolchain|test_rocm_toolchain|compile_hip_object|hip_architecture|test_hip_architecture)\.ps1$',
         '^tools/(bootstrap_rocm_sdk|test_bootstrap_rocm_sdk)\.py$',
-        '^tools/(native_build_(provenance|receipt)|test_native_build_(provenance|receipt))\.py$',
+        '^tools/(native_build_(provenance|receipt)|test_native_build_(provenance|receipt)|vendor_imports|test_vendor_imports)\.py$',
         '^tools/(process_environment|test_process_environment)\.ps1$',
         '^tools/rocm-sdk-lock\.json$',
         '^tools/cmake-toolchain\.sha256$',
@@ -336,7 +336,7 @@ function Get-FlitzZipVerificationScope {
     $touchesNativeBuildInputs = Test-FlitzZipAnyPath -Path $paths -Pattern @(
         '^LICENSE$', '^tests/', '^resources/licenses/',
         '^tools/(build|compile_hip_object|hip_architecture|rocm_toolchain|process_environment|cmake_toolchain|build_parallelism|local_resources|version|generate_brand_logo_header|generate_license_notices_header)\.ps1$',
-        '^tools/flitzzip_brand_logo\.psm1$', '^tools/native_build_(provenance|receipt)\.py$',
+        '^tools/flitzzip_brand_logo\.psm1$', '^tools/(native_build_(provenance|receipt)|vendor_imports|json_input)\.py$',
         '^tools/(rocm-sdk-lock\.json|bootstrap_rocm_sdk\.py|cmake-toolchain\.sha256)$'
     )
     $touchesProductionSource = Test-FlitzZipAnyPath -Path $paths -Pattern @('^src/', '^CMakeLists\.txt$', '^cmake/', '^third_party/(?!upstream/)')
@@ -412,12 +412,20 @@ function Get-FlitzZipPersistenceContractDefinition {
     )
 }
 
+# Keep the import-proof consumer separate from native compilation and scanner behavior.
+function Get-FlitzZipVendorImportContractDefinition {
+    return @{
+        Pattern = @('^tools/(vendor_imports|test_vendor_imports|json_input)\.py$', '^tools/(refactor_audit|test_refactor_audit)\.ps1$', '^third_party/lz4/', '^third_party/upstream/lz4/')
+        Command = (Get-FlitzZipVerificationCommand -Id 'vendor-import-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_vendor_imports') -Reason 'numeric-gate ownership must require complete archive proof and reject local adaptations, ambiguous provenance and first-party exemptions')
+    }
+}
+
 # Purpose: Route development-tool contracts to their changed mechanism and direct consumers.
 # Inputs: Classified scope and canonical changed paths; explicit broad coverage selects every contract.
 # Outputs: Returns command descriptors without launching builds, tools or measurements.
 function Get-FlitzZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
-    $definitions = @(Get-FlitzZipPersistenceContractDefinition) + @(
+    $definitions = @(Get-FlitzZipPersistenceContractDefinition) + @(Get-FlitzZipVendorImportContractDefinition) + @(
         @{ Pattern = @('^tools/(deepsource_inventory|test_deepsource_inventory|json_input)\.py$')
            Command = (Get-FlitzZipVerificationCommand -Id 'deepsource-inventory-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_deepsource_inventory') -Reason 'complete occurrence pagination, source identity, authentication boundaries and partial-failure evidence require offline contracts; no hosted credentials or scan is needed') }
         @{ Pattern = @('^tools/(executable_path|test_executable_path)\.py$')
@@ -476,7 +484,7 @@ function Get-FlitzZipToolVerificationCommand {
            Command = (Get-FlitzZipVerificationCommand -Id "fuzz-memory-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_fuzz_memory") -Reason "local fuzzing must verify real cgroup RAM and zero-swap limits before compiling") }
         @{ Pattern = @('^tools/(github_post_push_audit|test_github_post_push_audit|wait_relevant_workflows)\.ps1$', '^tools/(scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review)\.py$', '^\.github/scanner-(source-reviews|hosted-reviews|hosted-approval|false-positive-reviews)\.csv$', '^\.github/scanner-governance-baseline\.json$')
            Command = (Get-FlitzZipVerificationCommand -Id "github-post-push-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_github_post_push_audit.ps1") -Reason "post-push audits must reject unavailable API evidence, including partial pagination") }
-        @{ Pattern = @('^tools/(refactor_audit|test_refactor_audit)\.ps1$')
+        @{ Pattern = @('^tools/(refactor_audit|test_refactor_audit)\.ps1$', '^tools/(vendor_imports|test_vendor_imports)\.py$')
            Command = (Get-FlitzZipVerificationCommand -Id "refactor-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_refactor_audit.ps1") -Reason "source audits must include new and changed files without traversing ignored workspace copies") }
         @{ Pattern = @('^tools/(security_scan|test_security_scan)\.ps1$', '^tools/msi_process\.psm1$', '^\.github/workflows/release\.yml$')
            Command = (Get-FlitzZipVerificationCommand -Id 'security-scan-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_security_scan.ps1') -Reason 'source policy enumeration must stay within its intended roots while detecting nested and hidden source violations') }

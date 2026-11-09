@@ -28,6 +28,35 @@ $script:AuditMaxComplexityMarkers = $MaxComplexityMarkers
 $script:AuditChangedOnly = $ChangedOnly
 $script:AuditGitBase = $GitBase
 $script:AuditFailOnFindings = $FailOnFindings
+$script:AuditCanonicalSources = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+
+# Classify only the complete, archive-proven LZ4 import. Local adaptations retain
+# normal gates, and a missing or invalid proof never grants an exemption.
+function Get-CanonicalUpstreamSource {
+    param([object[]]$Files)
+    $result = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $candidates = @($Files | Where-Object {
+        (ConvertTo-GitRelativePath -Path $_.FullName) -in @('third_party/lz4/lz4.c', 'third_party/lz4/lz4.h')
+    })
+    $proof = Join-Path $PSScriptRoot 'vendor_imports.py'
+    if (-not $candidates.Count -or -not (Test-Path -LiteralPath $proof -PathType Leaf)) { return ,$result }
+    $python = Get-Command py -CommandType Application -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Source
+    $output = @(& $python -3 $proof --root $repo)
+    if ($LASTEXITCODE -ne 0) { throw 'Verified upstream import proof failed; no numeric-gate exemption is available.' }
+    $identity = ($output -join [Environment]::NewLine) | ConvertFrom-Json
+    $expected = @('third_party/lz4/LICENSE', 'third_party/lz4/lz4.c', 'third_party/lz4/lz4.h')
+    if ($identity.schema_version -ne 1 -or $identity.component -cne 'lz4') {
+        throw 'Verified upstream import proof returned an unknown identity.'
+    }
+    if ($identity.canonical_paths.Count) {
+        if ($identity.adapted_paths.Count -or @($identity.canonical_paths).Count -ne $expected.Count -or
+            @($expected | Where-Object { $_ -cnotin $identity.canonical_paths }).Count) {
+            throw 'Verified upstream import proof returned an incomplete source inventory.'
+        }
+        foreach ($path in $expected) { [void]$result.Add($path) }
+    }
+    return ,$result
+}
 
 # Purpose: Return a repository-relative path for stable audit output.
 # Inputs: `Path` is an absolute or relative filesystem path.
@@ -478,6 +507,8 @@ function Add-RefactorFinding {
         Path = ConvertTo-RepoRelativePath -Path $Path
         Line = $Line
         Detail = $Detail
+        UpstreamImport = ($Category -in @('large-function', 'complex-function') -and
+            $script:AuditCanonicalSources.Contains((ConvertTo-GitRelativePath -Path $Path)))
     })
 }
 
@@ -578,6 +609,7 @@ if ($script:AuditChangedOnly) {
     $files = @(Get-AuditSourceFile)
 }
 
+$script:AuditCanonicalSources = Get-CanonicalUpstreamSource -Files $files
 foreach ($file in $files) {
     $lines = [IO.File]::ReadAllLines($file.FullName)
     if ($lines.Count -gt $script:AuditMaxFileLines) {
@@ -596,9 +628,16 @@ if ($findings.Count -eq 0) {
 }
 
 foreach ($finding in ($findings | Sort-Object Path, Line, Category)) {
-    Write-Output ("refactor_finding category={0} path=""{1}"" line={2} detail=""{3}""" -f $finding.Category, $finding.Path, $finding.Line, $finding.Detail)
+    $prefix = if ($finding.UpstreamImport) { 'upstream_refactor_lead' } else { 'refactor_finding' }
+    Write-Output ("{0} category={1} path=""{2}"" line={3} detail=""{4}""" -f $prefix, $finding.Category, $finding.Path, $finding.Line, $finding.Detail)
 }
-Write-Output "refactor_audit status=findings count=$($findings.Count)"
+$blocking = @($findings | Where-Object { -not $_.UpstreamImport }).Count
+$upstream = $findings.Count - $blocking
+if ($blocking -eq 0) {
+    Write-Output "refactor_audit status=clean upstream_review_leads=$upstream"
+    return
+}
+Write-Output "refactor_audit status=findings count=$blocking upstream_review_leads=$upstream"
 if ($script:AuditFailOnFindings) {
     exit 1
 }

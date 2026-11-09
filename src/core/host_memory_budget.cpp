@@ -79,8 +79,14 @@ std::uint32_t resolve_host_pipeline_inflight_limit(HostMemorySnapshot memory, st
         --limit;
     }
     if (limit == 0) {
-        throw ArchiveError("insufficient physical memory for one archive window within the 80% host RAM target; "
-                           "retry when more memory is available");
+        throw ArchiveError(
+            "insufficient physical memory for one archive window within the " +
+            std::to_string(kHostMemoryTargetUsagePercent) +
+            "% host RAM target; retry when more memory is available (available_bytes=" +
+            std::to_string(memory.available_bytes) + ", total_bytes=" + std::to_string(memory.total_bytes) +
+            ", budget_bytes=" + std::to_string(remaining) + ", window_bytes=" + std::to_string(per_chunk) +
+            ", per_worker_bytes=" + std::to_string(workspace.per_worker_bytes) + ", window_workers=" +
+            std::to_string(std::min(workspace.aggregate_workers, workspace.workers_per_window)) + ")");
     }
     return static_cast<std::uint32_t>(limit);
 }

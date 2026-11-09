@@ -9,6 +9,7 @@
 #include <array>
 #include <limits>
 #include <memory>
+#include <string_view>
 
 namespace {
 
@@ -36,6 +37,51 @@ bool admission_rejected(flitzzip::HostMemorySnapshot memory, std::uint64_t chunk
 }
 
 }  // namespace
+
+// Admission errors must retain the exact decision inputs, including large
+// workspace values, without overflowing while constructing diagnostics.
+TEST_CASE(host_memory_admission_reports_the_rejected_decision) {
+    struct Fixture {
+        flitzzip::HostMemorySnapshot memory;
+        std::uint64_t chunk;
+        std::uint64_t reserve;
+        flitzzip::HostPipelineWorkspace workspace;
+        std::array<std::string_view, 6> expected;
+    };
+    constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+    const std::array fixtures{
+        Fixture{{1000U, 250U},
+                64U,
+                11U,
+                {7U, 17U, 4U, 2U},
+                {"available_bytes=250", "total_bytes=1000", "budget_bytes=39", "window_bytes=199",
+                 "per_worker_bytes=17", "window_workers=2"}},
+        Fixture{{maximum, maximum},
+                1U,
+                maximum,
+                {0U, maximum, 1U, 1U},
+                {"available_bytes=18446744073709551615", "total_bytes=18446744073709551615", "budget_bytes=0",
+                 "window_bytes=3", "per_worker_bytes=18446744073709551615", "window_workers=1"}},
+    };
+    for (const auto& fixture : fixtures) {
+        bool rejected = false;
+        try {
+            (void)flitzzip::resolve_host_pipeline_inflight_limit(fixture.memory, fixture.chunk, fixture.reserve,
+                                                                 fixture.workspace);
+        } catch (const flitzzip::ArchiveError& error) {
+            rejected = true;
+            const std::string_view text(error.what());
+            REQUIRE_TRUE(text.starts_with("insufficient physical memory for one archive window"));
+            for (const auto expected : fixture.expected) {
+                const auto position = text.find(expected);
+                REQUIRE_TRUE(position != text.npos);
+                const auto end = position + expected.size();
+                REQUIRE_TRUE(end < text.size() && (text[end] == ',' || text[end] == ')'));
+            }
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
 
 // Purpose: Validate exact target boundaries, odd totals, invalid counters, and unsigned overflow limits.
 // Inputs: Synthetic physical-memory snapshots, independent of this workstation's RAM size.

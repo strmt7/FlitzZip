@@ -682,6 +682,9 @@ tools\package.ps1 -Configuration Release
   gate does not establish that anonymous-namespace helpers are reachable.
 - New or changed functions must pass
   `tools\refactor_audit.ps1 -ChangedOnly -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings`.
+  Unmodified dependency imports follow the explicitly approved
+  [exact-source classification](refactoring-governance.md#verified-upstream-imports);
+  local adaptations retain the ordinary function gates and all scanner coverage.
   This includes locally edited vendor C/C++ and either opening-brace style.
   Split oversized or overly complex functions at coherent responsibility
   boundaries. Review their documentation under the contract below; a passing

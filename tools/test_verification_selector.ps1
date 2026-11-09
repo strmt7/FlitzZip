@@ -647,7 +647,8 @@ foreach ($crawlerPath in @('tools/crawl4ai_tool.py', 'tools/crawl4ai_research.py
     Assert-Selector (Test-RequiredCommand -Plan $crawlerPlan -Id 'crawl4ai-contracts') "crawler inputs require offline contracts: $crawlerPath"
     Assert-Selector (-not $crawlerPlan.scope.fullEscalationRequired) "crawler integration does not imply native product changes: $crawlerPath"
     foreach ($id in @('release-build', 'native-tests', 'gui-smoke', 'verification-selector-self-test')) {
-        Assert-Selector (-not (Test-RequiredCommand -Plan $crawlerPlan -Id $id)) "crawler-only checks must not select $id"
+        $expected = $id -eq 'release-build' -and $crawlerPath -eq 'tools/json_input.py'
+        Assert-Selector ((Test-RequiredCommand -Plan $crawlerPlan -Id $id) -eq $expected) "crawler inputs must retain only their actual native dependency coverage: $crawlerPath / $id"
     }
 }
 $crawlerRuntimePlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/crawl4ai_tool.py')
@@ -848,8 +849,22 @@ Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -P
 foreach ($path in @('tools/deepsource_inventory.py', 'tools/test_deepsource_inventory.py', 'tools/json_input.py')) {
     $inventoryPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
     Assert-Selector (Test-RequiredCommand -Plan $inventoryPlan -Id 'deepsource-inventory-contracts') 'DeepSource inventory inputs must execute pagination and evidence contracts'
-    Assert-Selector (-not (Test-RequiredCommand -Plan $inventoryPlan -Id 'release-build')) 'inventory contracts must not rebuild the product'
+    Assert-Selector ((Test-RequiredCommand -Plan $inventoryPlan -Id 'release-build') -eq ($path -eq 'tools/json_input.py')) 'only the shared native import decoder also requires a product rebuild'
     Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $path) 'hosted contracts must admit inventory inputs'
+}
+
+foreach ($path in @('tools/vendor_imports.py', 'tools/json_input.py', 'tools/test_vendor_imports.py')) {
+    $importPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
+    Assert-Selector (Test-RequiredCommand -Plan $importPlan -Id 'vendor-import-contracts') "import proof dependencies require their rejection contracts: $path"
+    $production = $path -ne 'tools/test_vendor_imports.py'
+    Assert-Selector ((Test-RequiredCommand -Plan $importPlan -Id 'release-build') -eq $production) "only production import proof changes invalidate native builds: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $importPlan -Id 'unit-tests')) "import proof tooling must not select unrelated codec tests: $path"
+    foreach ($workflow in @('windows-ci', 'rocm-qualification')) {
+        Assert-Selector ((Test-Workflow -Plan $importPlan -Name $workflow) -eq $production) "import proof admission must agree locally and remotely: $path / $workflow"
+        if ($production) {
+            Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow $workflow -Path $path) "native workflow filters must admit the import proof dependency: $path / $workflow"
+        }
+    }
 }
 
 Write-Output "Verification selector self-test passed."

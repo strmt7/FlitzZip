@@ -31,6 +31,8 @@ INPUT_FILES = (
     "tools/generate_license_notices_header.ps1",
     "tools/native_build_provenance.py",
     "tools/native_build_receipt.py",
+    "tools/vendor_imports.py",
+    "tools/json_input.py",
 )
 MAX_INPUT_COUNT = 20000
 MAX_INPUT_BYTES = 8 * 1024**3

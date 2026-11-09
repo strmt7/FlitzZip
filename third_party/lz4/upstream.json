@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "component": "lz4",
+  "version": "1.11.0",
+  "url": "https://github.com/lz4/lz4/releases/download/v1.11.0/lz4-1.11.0.tar.gz",
+  "archive": "third_party/upstream/lz4/1.11.0/lz4-1.11.0.tar.gz",
+  "files": ["LICENSE", "lz4.c", "lz4.h"]
+}
