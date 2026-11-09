@@ -15,7 +15,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 RELEASE_SOURCES = {
     "7-Zip": "https://api.github.com/repos/ip7z/7zip/releases/latest",
-    "Zstd": "https://api.github.com/repos/facebook/zstd/releases/latest",
+    "Zstd": "https://api.github.com/repos/meta/zstd/releases/latest",
     "Bandizip": "https://www.bandisoft.com/bandizip/history/",
     "WinRAR": "https://www.rarlab.com/download.htm",
     "PeaZip": "https://api.github.com/repos/peazip/PeaZip/releases/latest",

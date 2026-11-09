@@ -28,7 +28,7 @@ It cannot substitute for FlitzZip application or GPU measurements.
 
 | Candidate | Execution / original numeric results | Decision and source |
 | --- | --- | --- |
-| 7-Zip 26.05 | Eligible with original notices | [LGPL/BSD/component terms](https://www.7-zip.org/license.txt); no RAR algorithm recreation. |
+| 7-Zip 26.06 | Eligible with original notices | [LGPL/BSD/component terms](https://www.7-zip.org/license.txt); no RAR algorithm recreation. |
 | Zstd 1.5.7 | Eligible with original notices | [BSD option](https://github.com/facebook/zstd/blob/v1.5.7/LICENSE); no implied endorsement. |
 | Bandizip 7.46 Standard | Eligible after verifying the edition | Controlling [Korean EULA](https://kr.bandisoft.com/bandizip/eula/eula.kr.pdf), sections 1(4), 2 and 11(4); commercial Standard use is permitted. No benchmark restriction was found. No software/manual/artwork redistribution is authorized here. |
 | Hyperfine 1.20.0 | Eligible, timing only | [MIT option](https://github.com/sharkdp/hyperfine/blob/v1.20.0/LICENSE-MIT); retain notices, do not bundle the tool. |
@@ -93,18 +93,29 @@ Beta builds, paid editions and new codec modules need separate review.
   screenshots. Generated design studies are not measurements. Asset rights
   and provenance must also be recorded before publishing a generated image.
 
-## 7-Zip 26.05 Comparator Review
+## 7-Zip Comparator Installation
 
-The 26.05 `7zr.exe` and `7z2605-extra.7z` came from the official GitHub release.
+The 26.06 `7zr.exe` and `7z2606-extra.7z` came from the official GitHub release.
 Their complete downloads matched the publisher's release-asset SHA-256 fields.
 The extracted `7za.exe`, `7za.dll` and `7zxa.dll` were independently hashed;
 the exact values in `tools/benchmark_permissions.json` and the installer pins
 match those bytes. An isolated fresh installation passed the binary identity
-check, displayed the 26.05 version, and matched the official stable-release API.
+check, displayed the 26.06 version, and matched the official stable-release API.
 The bundled `License.txt` permits commercial execution; the comparator is kept
 outside release packages. The three digest reports in that manifest identify
-public binary integrity metadata, not credentials. A changed binary or manifest
-expires this review without changing scanner output or scope.
+public binary integrity metadata, not credentials. The bootstrapper installs and
+verifies the original `License.txt` beside the `x64` binary directory before
+publishing the complete tool directory. Existing installations require both
+binary and notice hashes to match. A changed binary or manifest expires this
+review without changing scanner output or scope. Version and installation checks
+do not establish compression effectiveness or performance.
+
+The independent Zstandard comparator likewise retains its pinned BSD license.
+An older cache containing exactly the verified standalone executable receives
+that missing notice from the checked-in upstream text. Unknown layouts, changed
+executables and existing changed notices fail admission; the migration never
+overwrites or removes those files. Both fresh and cached installs remain under
+the repository's ignored tool directory, outside product release packages.
 
 ## Enforcement And Remaining Release Work
 

@@ -1020,12 +1020,20 @@ class RamExchangeContracts(unittest.TestCase):
         """
         args = SimpleNamespace(corpus="Canterbury", configuration="Release")
         with (
+            mock.patch.object(corpus, "require_permission") as permission,
             mock.patch.object(corpus, "validate_current", side_effect=ValueError("stale native fixture")),
             mock.patch.object(corpus, "download") as download,
             mock.patch.object(corpus, "run_process") as launch,
             self.assertRaisesRegex(ValueError, "stale native fixture"),
         ):
             corpus.study(args)
+        self.assertEqual(
+            permission.call_args_list,
+            [
+                mock.call("Canterbury", "execute", version=None),
+                mock.call("Hyperfine", "execute", version="1.20.0"),
+            ],
+        )
         download.assert_not_called()
         launch.assert_not_called()
 
@@ -1084,6 +1092,7 @@ class RamExchangeContracts(unittest.TestCase):
             for key in evidence:
                 with (
                     self.subTest(changed=key),
+                    mock.patch.object(corpus, "require_permission") as permission,
                     mock.patch.object(corpus, "HYPERFINE", binary),
                     mock.patch.object(corpus, "COMPARISON_BOOTSTRAP", bootstrap),
                     mock.patch.object(corpus, "provision_hyperfine", return_value={**evidence, key: "c" * 64}),
@@ -1094,6 +1103,13 @@ class RamExchangeContracts(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, "identity changed"),
                 ):
                     corpus.study(args)
+                self.assertEqual(
+                    permission.call_args_list,
+                    [
+                        mock.call("Canterbury", "execute", version=None),
+                        mock.call("Hyperfine", "execute", version="1.20.0"),
+                    ],
+                )
                 download.assert_not_called()
                 launch.assert_not_called()
 

@@ -47,8 +47,8 @@ CASES = (
 )
 SOURCES = {
     "FlitzZip": "https://github.com/strmt7/FlitzZip",
-    "7-Zip": "https://github.com/ip7z/7zip/releases/tag/26.05",
-    "Zstd": "https://github.com/facebook/zstd/releases/tag/v1.5.7",
+    "7-Zip": "https://github.com/ip7z/7zip/releases/tag/26.06",
+    "Zstd": "https://github.com/meta/zstd/releases/tag/v1.5.7",
 }
 CASE_TOOLS = {"zip": {"FlitzZip", "7-Zip"}, "zst": {"FlitzZip", "Zstd"}}
 MAX_FILESYSTEM_BYTES = 64 * 1024 * 1024

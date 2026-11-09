@@ -185,7 +185,17 @@ class ComparatorPreflightTests(unittest.TestCase):
     def test_permission_scopes(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported permission action"):
             comparators.require_permission("HIGGS", "unreviewed action")
-        with patch.object(comparators, "datetime", wraps=datetime) as clock:
+        # Keep expiry boundaries deterministic when the real tool review advances.
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        policy = Path(temporary.name) / "permissions.json"
+        catalog = json.loads(comparators.PERMISSIONS_PATH.read_text(encoding="utf-8"))
+        catalog["subjects"]["7-Zip"].update(reviewed_on="2026-10-25", versions=["26.05"])
+        policy.write_text(json.dumps(catalog), encoding="utf-8")
+        with (
+            patch.object(comparators, "PERMISSIONS_PATH", policy),
+            patch.object(comparators, "datetime", wraps=datetime) as clock,
+        ):
             clock.now.return_value = datetime(2026, 10, 25, tzinfo=UTC)
             comparators.require_permission("7-Zip", "execute", version="26.05")
             comparators.require_permission("Bandizip", "publish_results", version="7.46", edition="Standard")
@@ -267,8 +277,8 @@ class ComparatorPreflightTests(unittest.TestCase):
             comparators.timing_eligibility([])
 
 
-@unittest.skipUnless(os.name == "nt", "The native benchmark installer uses Windows PowerShell")
-class HyperfineBootstrapTests(unittest.TestCase):
+@unittest.skipUnless(os.name == "nt", "The native comparator installer uses Windows PowerShell")
+class ComparisonBootstrapTestCase(unittest.TestCase):
     def setUp(self) -> None:
         """Purpose: Isolate provisioning from checkout state.
         Inputs: Exact installer bytes. Outputs: Owned fresh fixture.
@@ -283,6 +293,8 @@ class HyperfineBootstrapTests(unittest.TestCase):
         self.output_root = self.fixture_root / "out"
         self.output_root.mkdir()
 
+
+class HyperfineBootstrapTests(ComparisonBootstrapTestCase):
     def test_fresh_checkout_creates_owned_output_before_offline_admission(self) -> None:
         """Purpose: Qualify first use.
         Inputs: Absent output directory and no asset. Outputs: Owned setup, then refusal.
@@ -418,6 +430,145 @@ class HyperfineBootstrapTests(unittest.TestCase):
                 self.assertFalse((target / "nested").exists())
             finally:
                 link.rmdir()
+
+
+class ArchiveReaderInstallationTests(ComparisonBootstrapTestCase):
+    def run_installation_admission(
+        self, root: Path, files: list[list[str]], *, notice_source: Path | None = None
+    ) -> bool:
+        """Run the production admission functions with owned inert file fixtures."""
+        probe = self.fixture_root / "admission.ps1"
+
+        def literal(value: str) -> str:
+            return "'" + value.replace("'", "''") + "'"
+
+        restore = ""
+        if notice_source is not None:
+            restore = (
+                "Restore-ComparisonNotice -Root "
+                + literal(str(root))
+                + " -BinaryName "
+                + literal(files[0][0])
+                + " -BinaryHash "
+                + literal(files[0][1])
+                + " -Source "
+                + literal(str(notice_source))
+                + " -NoticeName "
+                + literal(files[1][0])
+                + " -NoticeHash "
+                + literal(files[1][1])
+                + "\n"
+            )
+        probe.write_text(
+            "$ErrorActionPreference='Stop'\n"
+            "$tokens=$null; $errors=$null\n"
+            "$ast=[Management.Automation.Language.Parser]::ParseFile("
+            + literal(str(self.installer))
+            + ", [ref]$tokens, [ref]$errors)\n"
+            "if ($errors.Count) { throw 'Installer parsing failed.' }\n"
+            "$names=@('Assert-ComparisonOwnedPath','Assert-ComparisonHash','Test-ComparisonInstallation','Restore-ComparisonNotice')\n"
+            "$functions=@($ast.FindAll({param($node) $node -is "
+            "[Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $names}, $true))\n"
+            "if ($functions.Count -ne 4) { throw 'Production admission functions are missing.' }\n"
+            "foreach ($function in $functions) { . ([scriptblock]::Create($function.Extent.Text)) }\n"
+            "$outRoot=" + literal(str(self.output_root)) + "\n"
+            "$files=ConvertFrom-Json "
+            + literal(json.dumps(files))
+            + "\n"
+            + restore
+            + "Test-ComparisonInstallation -Root "
+            + literal(str(root))
+            + " -Files $files -Label 'Fixture'\n",
+            encoding="utf-8",
+        )
+        output = (
+            corpus.run_process(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(probe)], None, 20
+            )
+            .decode("utf-8")
+            .strip()
+        )
+        self.assertIn(output, ("True", "False"))
+        return output == "True"
+
+    def test_missing_corrupt_and_complete_installations(self) -> None:
+        """Require all pinned bytes, including notices, before admitting a cache hit."""
+        directory = self.output_root / "reader"
+        binary, notice = b"inert executable fixture", b"independent notice fixture"
+        files = [
+            ["x64/reader.exe", hashlib.sha256(binary).hexdigest()],
+            ["License.txt", hashlib.sha256(notice).hexdigest()],
+        ]
+        self.assertFalse(self.run_installation_admission(directory, files))
+        (directory / "x64").mkdir(parents=True)
+        (directory / "x64/reader.exe").write_bytes(binary)
+        with self.assertRaisesRegex(ValueError, "License.txt is missing"):
+            self.run_installation_admission(directory, files)
+        (directory / "License.txt").write_bytes(notice)
+        self.assertTrue(self.run_installation_admission(directory, files))
+        for name in ("License.txt", "x64/reader.exe"):
+            path = directory / name
+            original = path.read_bytes()
+            path.write_bytes(original + b"changed")
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                self.run_installation_admission(directory, files)
+            path.write_bytes(original)
+        self.assertTrue(self.run_installation_admission(directory, files))
+
+    def test_single_file_installation_and_path_boundaries(self) -> None:
+        """Retain one-file cache admission and reject unsafe roots or member paths."""
+        directory = self.output_root / "reader"
+        directory.mkdir()
+        path = directory / "reader.exe"
+        path.write_bytes(b"inert fixture")
+        files = [[path.name, hashlib.sha256(path.read_bytes()).hexdigest()]]
+        self.assertTrue(self.run_installation_admission(directory, files))
+        with self.assertRaisesRegex(ValueError, "must remain inside"):
+            self.run_installation_admission(self.fixture_root / "outside", files)
+        with self.assertRaisesRegex(ValueError, "must remain inside"):
+            self.run_installation_admission(directory, [["../reader.exe", files[0][1]]])
+        with self.assertRaisesRegex(ValueError, "not a directory"):
+            self.run_installation_admission(path, files)
+
+    def test_notice_repair_accepts_only_the_exact_previous_layout(self) -> None:
+        """Repair a verified legacy cache without masking corrupted bytes or new layouts."""
+        directory = self.output_root / "reader"
+        directory.mkdir()
+        binary = directory / "reader.exe"
+        binary_bytes, notice_bytes = b"inert fixture", b"notice fixture"
+        binary.write_bytes(binary_bytes)
+        source = self.fixture_root / "upstream-license"
+        source.write_bytes(notice_bytes)
+        notice = directory / "LICENSE"
+        files = [
+            [binary.name, hashlib.sha256(binary_bytes).hexdigest()],
+            [notice.name, hashlib.sha256(notice_bytes).hexdigest()],
+        ]
+        self.assertTrue(self.run_installation_admission(directory, files, notice_source=source))
+        self.assertEqual(notice.read_bytes(), notice_bytes)
+        self.assertTrue(self.run_installation_admission(directory, files, notice_source=source))
+        notice.write_bytes(b"altered existing notice")
+        with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+            self.run_installation_admission(directory, files, notice_source=source)
+        self.assertEqual(notice.read_bytes(), b"altered existing notice")
+        notice.unlink()
+        for role in ("binary", "source", "layout"):
+            with self.subTest(role=role):
+                extra = directory / "unexpected"
+                if role == "binary":
+                    binary.write_bytes(b"altered executable")
+                elif role == "source":
+                    source.write_bytes(b"altered notice source")
+                else:
+                    extra.write_bytes(b"unrecognized owned cache entry")
+                expected = "layout" if role == "layout" else "SHA-256 mismatch"
+                with self.assertRaisesRegex(ValueError, expected):
+                    self.run_installation_admission(directory, files, notice_source=source)
+                self.assertFalse(notice.exists())
+                binary.write_bytes(binary_bytes)
+                source.write_bytes(notice_bytes)
+                if extra.exists():
+                    extra.unlink()
 
 
 if __name__ == "__main__":
