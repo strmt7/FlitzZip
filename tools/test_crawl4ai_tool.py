@@ -227,10 +227,10 @@ class CrawlerContracts(unittest.TestCase):
         ):
             tool.verify_versions(Path(sys.executable), dict(os.environ))
             argv = child.call_args.args[0]
-            pins = json.loads(argv[3])
+            pins = tool.active_lock_pins(json.loads(argv[3]), argv[6])
             self.assertEqual(pins["crawl4ai"], tool.VERSION)
             self.assertEqual(pins["nltk"], "3.10.4")
-            self.assertIn("importlib.metadata.version", argv[2])
+            self.assertIn("dependency_mismatches(json.loads(sys.argv[1]),sys.argv[4])", argv[2])
             self.assertIn("crawl4ai/flitzzip_download.py", json.loads(argv[4]))
             self.assertIn("verify_installed_runtime(sys.argv[3])", argv[2])
             self.assertRegex(argv[5], r"^[a-f0-9]{64}$")
@@ -456,15 +456,58 @@ class CrawlerContracts(unittest.TestCase):
     def test_lock_is_complete_hashed_and_latest_reviewed(self):
         """Purpose: Require immutable wheel selection. Inputs: Checked-in lock. Outputs: Every entry pinned/hashed."""
         text = tool.LOCK.read_text(encoding="utf-8")
-        entries = re.findall(r"^([\w-]+)==([^\s]+) \\\n((?:    --hash=sha256:[a-f0-9]{64}(?: \\)?\n)+)", text, re.M)
+        entries = tool.lock_requirements(text)
         self.assertGreater(len(entries), 50)
-        self.assertEqual(len(entries), len(re.findall(r"^[\w-]+==", text, re.M)))
-        versions = {name: version for name, version, _ in entries}
+        self.assertEqual(len(entries), len(re.findall(r"^[\w-]+(?:==| @ )", text, re.M)))
+        versions = tool.active_lock_pins(entries, "3.10.4")
         self.assertEqual(versions["crawl4ai"], tool.VERSION)
         self.assertNotIn("torch", versions)
         self.assertNotIn("sentence-transformers", versions)
-        for name, version, hashes in entries:
-            self.assertTrue(name and version and hashes)
+        for environment in ({"sys_platform": "win32"}, {"sys_platform": "linux"}, {"sys_platform": "darwin"}):
+            self.assertEqual(tool.active_lock_pins(entries, "3.10.4", environment)["crawl4ai"], tool.VERSION)
+
+    def test_dependency_markers_select_only_the_target_environment(self):
+        """Inactive optional packages are absent; disjoint version pins remain host-specific."""
+        requirements = [
+            'colorama==0.4.6; sys_platform == "win32"',
+            'httpx2-jsfetch==1.0; sys_platform == "emscripten"',
+            'example==1.0; python_version < "3.14"',
+            'example==2.0; python_version >= "3.14"',
+        ]
+        self.assertEqual(
+            tool.active_lock_pins(requirements, "3.10.4", {"sys_platform": "win32", "python_version": "3.13"}),
+            {"colorama": "0.4.6", "example": "1.0"},
+        )
+        self.assertEqual(
+            tool.active_lock_pins(requirements, "3.10.4", {"sys_platform": "linux", "python_version": "3.14"}),
+            {"example": "2.0"},
+        )
+        for invalid in (["example>=1.0"], ["example==1.*"], ["example==1.0", "example==2.0"]):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                tool.active_lock_pins(invalid, "3.10.4")
+
+    def test_marked_lock_entries_still_require_valid_hashes(self):
+        """A false marker cannot conceal missing or malformed artifact identities."""
+        requirement = 'example==1.0; sys_platform == "never"'
+        for suffix in ("", " --hash=sha256:bad", " --hash=sha256:" + "a" * 64 + " trailing"):
+            with self.subTest(suffix=suffix), self.assertRaises(ValueError):
+                tool.lock_requirements(requirement + suffix)
+        self.assertEqual(tool.lock_requirements(requirement + " --hash=sha256:" + "a" * 64), [requirement])
+
+    def test_inactive_packages_are_not_probed_but_active_drift_is_rejected(self):
+        """Independent metadata results distinguish an inactive package from active absence and mutation."""
+        from importlib.metadata import PackageNotFoundError
+
+        requirements = ['inactive==1.0; sys_platform == "never"', "present==2.0", "missing==3.0", "changed==4.0"]
+
+        def installed(name):
+            if name == "missing":
+                raise PackageNotFoundError(name)
+            return {"present": "2.0", "changed": "4.1"}[name]
+
+        with patch("importlib.metadata.version", side_effect=installed) as metadata:
+            self.assertEqual(tool.dependency_mismatches(requirements, "3.10.4"), ["missing", "changed"])
+        self.assertEqual([call.args[0] for call in metadata.call_args_list], ["present", "missing", "changed"])
 
     def test_release_asset_pin_cannot_resolve_to_a_same_version_index_wheel(self):
         """Purpose: Remove same-version artifact ambiguity without changing dependency resolution or hash enforcement.

@@ -215,6 +215,14 @@ download and browser consumers, and repeat the website qualification before
 claiming runtime acceptance. Never patch a working installed environment in place
 or relax upstream requirements simply to select a newer version.
 
+Installed-version verification evaluates PEP 508 environment markers inside the
+selected crawler interpreter. Preserve conditional entries and their hashes in
+portable locks. An inactive platform dependency need not be installed; a missing
+or changed active dependency fails admission. Do not strip markers or install
+irrelevant platform packages to satisfy a verifier. The marker and artifact-hash
+regressions in `tools/test_crawl4ai_tool.py` cover this boundary separately from
+cross-platform resolution and installed browser execution.
+
 ## Access Failures And Alternatives
 
 Follow the [operating guide's research rules](agent-operating-guide.md#agent-workflow).

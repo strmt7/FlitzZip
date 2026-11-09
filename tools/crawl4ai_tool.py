@@ -222,15 +222,84 @@ def run(command: list[str], env: dict[str, str], timeout: int = 900, *, source_o
         raise subprocess.CalledProcessError(code, command)
 
 
+def lock_requirements(contents: str) -> list[str]:
+    """Read hashed requirement lines without interpreting markers on the launcher host.
+
+    pip remains responsible for resolution and artifact admission. Reject missing
+    hashes and unexpected directives before constructing the installed-runtime probe.
+    """
+    requirements = []
+    for line in contents.replace("\\\n", " ").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line in ("--index-url https://pypi.org/simple", "--only-binary :all:", "--only-binary=:all:"):
+            continue
+        requirement, separator, hashes = line.partition(" --hash=")
+        if not separator or not re.fullmatch(r"sha256:[a-f0-9]{64}(?:\s+--hash=sha256:[a-f0-9]{64})*", hashes.strip()):
+            raise ValueError("Crawler lock entry lacks exact artifact hashes")
+        requirements.append(requirement.strip())
+    if not requirements:
+        raise ValueError("Crawler dependency lock is empty")
+    return requirements
+
+
+def active_lock_pins(
+    requirements: list[str], nltk_version: str, environment: dict[str, str] | None = None
+) -> dict[str, str]:
+    """Select exact pins using the installed interpreter's PEP 508 marker environment.
+
+    The optional environment supports cross-platform contract tests. Runtime
+    verification always evaluates inside the selected crawler interpreter.
+    """
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+
+    pins = {}
+    for text in requirements:
+        requirement = Requirement(text)
+        name = canonicalize_name(requirement.name)
+        if requirement.url:
+            if name != "nltk":
+                raise ValueError("Unexpected crawler direct dependency")
+            version = nltk_version
+        else:
+            specifiers = list(requirement.specifier)
+            if len(specifiers) != 1 or specifiers[0].operator != "==" or "*" in specifiers[0].version:
+                raise ValueError("Crawler dependency must have an exact version")
+            version = specifiers[0].version
+        if requirement.marker and not requirement.marker.evaluate(environment=environment):
+            continue
+        if name in pins:
+            raise ValueError("Duplicate active crawler dependency")
+        pins[name] = version
+    return pins
+
+
+def dependency_mismatches(requirements: list[str], nltk_version: str) -> list[str]:
+    """Report missing or changed active distributions; never require inactive platform packages."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    bad = []
+    for name, expected in active_lock_pins(requirements, nltk_version).items():
+        try:
+            actual = version(name)
+        except PackageNotFoundError:
+            bad.append(name)
+            continue
+        if actual != expected:
+            bad.append(name)
+    return bad
+
+
 def verify_versions(python: Path, env: dict[str, str]) -> None:
     """Purpose: Verify dependency/repair bytes. Inputs: Isolated runtime/environment. Outputs: Exact pins or error."""
     from tools import crawl4ai_source_build, nltk_distribution
 
-    pins = dict(re.findall(r"^([\w-]+)==([^\s]+)", LOCK.read_text(encoding="utf-8"), re.M))
-    pins["nltk"] = nltk_distribution.distribution()["version"]
+    requirements = lock_requirements(LOCK.read_text(encoding="utf-8"))
     script = (
-        "import importlib.metadata,json,sys,hashlib; pins=json.loads(sys.argv[1]); "
-        "bad=[n for n,v in pins.items() if importlib.metadata.version(n)!=v]; "
+        "import importlib.metadata,json,sys,hashlib; from tools.crawl4ai_tool import dependency_mismatches; "
+        "bad=dependency_mismatches(json.loads(sys.argv[1]),sys.argv[4]); "
         "dist=importlib.metadata.distribution('crawl4ai'); expected=json.loads(sys.argv[2]); "
         "bad.extend(n for n,h in expected.items() if "
         "hashlib.sha256(dist.locate_file(n).read_bytes().replace(b'\\r\\n',b'\\n')).hexdigest()!=h); "
@@ -242,9 +311,10 @@ def verify_versions(python: Path, env: dict[str, str]) -> None:
             str(python),
             "-c",
             script,
-            json.dumps(pins),
+            json.dumps(requirements),
             json.dumps(crawl4ai_source_build.runtime_hashes()),
             nltk_distribution.runtime_source_sha256(cache_home(env.get("FLITZZIP_CRAWL4AI_HOME"))),
+            nltk_distribution.distribution()["version"],
         ],
         env,
         60,
