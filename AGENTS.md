@@ -85,6 +85,7 @@ means its rules do not apply.
 | CPU/GPU performance, compression policy, benchmarks | Non-Negotiable Boundaries; Build And Test Commands; `docs/performance-block-size-validation.md`; `docs/compression-level-and-benchmark-suite.md`; `docs/gpu-accelerated-ui-and-codec-research.md` |
 | Alternative GPU building blocks | Performance row plus `docs/compression-backend-evaluation.md` |
 | Tools, workflows, MCP, skills, agent routing | Non-Negotiable Boundaries; Security Rules; Git Workflow; `docs/engineering-learning-loop.md` |
+| DeepSource inventory and triage | `.agents/skills/flitzzip-security/SKILL.md`; `docs/security-code-scanning.md#retrieve-every-active-occurrence`; use `tools/deepsource_inventory.py`, requiring its complete source-matched manifest rather than a capped CLI export |
 | Installer, packaging, release, versioning | Non-Negotiable Boundaries; Security Rules; Git Workflow; `docs/release.md`; `docs/development/persistence-and-upgrades.md` |
 | Refactoring | `docs/refactoring-governance.md`; run `tools/refactor_audit.ps1` before broad cleanup |
 | Bug investigation, intermittent failures, coverage gaps | `.agents/skills/flitzzip-test-investigation/SKILL.md`; `docs/debugging-strategy.md#investigation-contract`; `docs/code-coverage.md#meaningful-tests` |
