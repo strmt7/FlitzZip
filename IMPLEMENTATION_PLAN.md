@@ -107,10 +107,13 @@ request; this does not authorize publication of a replacement.
   can order trials; it cannot justify dropping a competitive candidate in a
   minimum-size mode without a proven lower bound. Track native CPU, ZIP/Deflate,
   Gzip, Bzip2, Zstandard and LZMA-family results separately, including losses.
-- **Effort progression:** investigate nested candidate sets and deterministic
-  selection by complete archive size, including dictionaries, models, headers and
-  indexes. A higher numeric effort should retain a lower effort's winning
-  representation where format and resource contracts permit. Cover empty, small,
+- **Effort progression:** preserve the existing nested CPU frame search and GPU
+  entropy selection described in [the effort contract](docs/compression-level-and-benchmark-suite.md).
+  Review remaining gaps across codec competition, block partitioning and whole
+  archive framing before extending those guarantees. Select by complete archive
+  size, including dictionaries, models, headers and indexes. A higher numeric
+  effort should retain a lower effort's winning representation where format and
+  resource contracts permit. Cover empty, small,
   repetitive, mixed and already-compressed inputs with independent decoding
   oracles. Treat a smooth size progression as an empirical objective: inverse
   linear scaling cannot be promised for arbitrary data, and larger low-effort
