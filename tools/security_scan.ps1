@@ -178,6 +178,43 @@ function Assert-ExactDotnetSdkVersion {
     }
 }
 
+# Purpose: Require OSV discovery or an active typed parser argument for every tool dependency lock.
+# Inputs: Repository root and the current security workflow's literal OSV argument block.
+# Outputs: Throws on missing recursive coverage or an undiscoverable lock; never changes scanner scope.
+function Assert-ToolRequirementScanCoverage {
+    param([string]$Root, [string]$WorkflowText)
+
+    $job = [regex]::Match($WorkflowText, '(?ms)^  osv-scanner:[ ]*\r?\n(?<body>.*?)(?=^  [^ \r\n]|\z)')
+    $block = [regex]::Match($job.Groups['body'].Value,
+        '(?m)^      scan-args:[ ]*\|[-+]?[ ]*\r?\n(?<args>(?:        [^\r\n]*(?:\r?\n|\z))+)')
+    if (-not $job.Success -or -not $block.Success) { throw 'OSV must retain its reviewed literal scan argument block.' }
+    $arguments = @($block.Groups['args'].Value -split '\r?\n' | ForEach-Object { $_.Trim() })
+    if ($arguments -cnotcontains '--recursive' -or $arguments -cnotcontains './') {
+        throw 'OSV must retain recursive scanning from the repository root.'
+    }
+    foreach ($directory in @('.github/requirements', 'tools/requirements')) {
+        $folder = Join-Path $Root $directory
+        if (-not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
+        $prefix = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        $pending = [Collections.Generic.Stack[string]]::new()
+        $pending.Push($folder)
+        while ($pending.Count) {
+            $current = Get-Item -LiteralPath $pending.Pop() -Force
+            if ($current.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'OSV lock inventory refuses linked directories.' }
+            foreach ($file in @(Get-ChildItem -LiteralPath $current.FullName -Force)) {
+                if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'OSV lock inventory refuses linked entries.' }
+                if ($file.PSIsContainer) { $pending.Push($file.FullName); continue }
+                if ($file.Extension -ine '.txt') { continue }
+                $relative = $file.FullName.Substring($prefix.Length).Replace([IO.Path]::DirectorySeparatorChar, [char]'/')
+                if ($file.Name -cmatch '^requirements(?:-[a-z0-9][a-z0-9-]*)?\.txt$') { continue }
+                if ($arguments -cnotcontains "--lockfile=requirements.txt:$relative") {
+                    throw "OSV cannot discover tool dependency lock: $relative. Use requirements-*.txt or an active typed argument."
+                }
+            }
+        }
+    }
+}
+
 # Purpose: Verify workflow policy rules that prevent deployments, suppressed failures, and source-scan blind spots.
 # Inputs: Reads tracked GitHub workflow/configuration files from `.github`.
 # Outputs: Throws when workflow policy is violated; otherwise returns normally.
@@ -222,6 +259,7 @@ function Test-WorkflowSecurityPolicy {
     $securityWorkflow = Join-Path $repo ".github\workflows\security-code-scanning.yml"
     if (Test-Path -LiteralPath $securityWorkflow) {
         $securityWorkflowText = Get-Content -LiteralPath $securityWorkflow -Raw
+        Assert-ToolRequirementScanCoverage -Root $repo -WorkflowText $securityWorkflowText
         if ($securityWorkflowText -match 'languages\s*:\s*c-cpp' -and $securityWorkflowText -match 'build-mode\s*:\s*none') {
             throw "CodeQL C++ must not use build-mode none; manual Windows build tracing is required to avoid parser-artifact alerts."
         }

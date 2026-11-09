@@ -119,6 +119,17 @@ retrieval and the CLI/dashboard for individual run details. Its offline tests
 run through the existing component-contract lane; no additional scan workflow
 or credentials in CI are required.
 
+## Tool dependency discovery
+
+Name new tool inputs and locks `requirements-<tool>.in` and
+`requirements-<tool>.txt` under the existing requirements directories so OSV's
+recursive scan discovers the locks. Existing nonstandard filenames require an
+active typed `--lockfile=requirements.txt:<path>` argument in the OSV job.
+The policy scanner checks both requirements directories recursively, rejects
+linked entries and inactive declarations, and requires the root scan to remain
+enabled. Confirm each new lock appears in the actual hosted scanner log;
+a successful job alone does not establish manifest coverage.
+
 ## Installed Scanner Dependencies
 
 Semgrep's reviewed local packaging revision is built from pinned upstream wheels;

@@ -32,6 +32,10 @@ unchanged; MSI transport tests cannot qualify an allocator.
 The SDK compiler-policy check now recognizes the explicit C++ argument array;
 independent controls still reject unquoted flags, a missing wire implementation
 and missing Release optimization. This does not alter miniz instrumentation.
+Tool-lock inventory rules and their filesystem fixtures do not change miniz's
+allocation family, compiler arguments or sanitizer controls. The complete
+`Test-FuzzHarnessPolicy` body and the native/fuzz inputs remain unchanged when
+qualifying that policy-only context update.
 
 The ledger binds complete source, exact location, scanner identity, build/fuzz
 recipes and this evidence. Raw reports remain retained. Changed bound inputs

@@ -31,7 +31,7 @@ else:
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = "0.2.43"
-REQUIREMENTS = ROOT / "tools" / "requirements" / "cocoindex-code.txt"
+REQUIREMENTS = ROOT / "tools" / "requirements" / "requirements-cocoindex-code.txt"
 REQUIREMENT_BYTES = REQUIREMENTS.read_bytes().replace(b"\r\n", b"\n")
 DEPENDENCY_DIGEST = hashlib.sha256(REQUIREMENT_BYTES).hexdigest()
 MODEL = "Snowflake/snowflake-arctic-embed-xs"

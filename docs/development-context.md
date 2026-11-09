@@ -59,8 +59,8 @@ py -3 tools/cocoindex_agent_search.py search --limit 5 "bounded GPU resource own
 Install only if the pinned tool is missing, as its skill describes. Refresh only
 when code bytes or index configuration changed. Installation uses the new
 virtual environment's own Python and pip, independent of unrelated installers
-on the host's PATH. The [input](../tools/requirements/cocoindex-code.in) and
-[hash lock](../tools/requirements/cocoindex-code.txt) define its complete graph.
+on the host's PATH. The [input](../tools/requirements/requirements-cocoindex-code.in) and
+[hash lock](../tools/requirements/requirements-cocoindex-code.txt) define its complete graph.
 The lock fingerprints the tool environment, runtime and index configuration;
 a refresh leaves older environments intact. Installation freezes the lock and
 publishes readiness only after dependency and CLI-version checks pass.
@@ -86,7 +86,7 @@ Refresh the input and lock together using a reviewed uv version admitted by
 [the tooling lock guide](../.github/requirements/README.md#refresh):
 
 ```powershell
-uv pip compile tools/requirements/cocoindex-code.in --output-file tools/requirements/cocoindex-code.txt --universal --python-version 3.13 --torch-backend cpu --generate-hashes --emit-index-url --emit-build-options --no-annotate --no-header --no-python-downloads
+uv pip compile tools/requirements/requirements-cocoindex-code.in --output-file tools/requirements/requirements-cocoindex-code.txt --universal --python-version 3.13 --torch-backend cpu --generate-hashes --emit-index-url --emit-build-options --no-annotate --no-header --no-python-downloads
 ```
 
 Qualify the installed graph, local embedding index and actual search before

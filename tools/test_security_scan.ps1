@@ -12,6 +12,12 @@ $processPolicy = $ast.Find({ param($node)
 if (-not $processPolicy) { throw 'Shared MSI transport policy is missing.' }
 . ([ScriptBlock]::Create($processPolicy.Extent.Text))
 $sourceRoot = Split-Path -Parent $PSScriptRoot
+$osvLockFunction = $ast.Find({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Assert-ToolRequirementScanCoverage'
+}, $false)
+if ($null -eq $osvLockFunction) { throw 'OSV tool-lock coverage admission is missing.' }
+. ([ScriptBlock]::Create($osvLockFunction.Extent.Text))
 $wirePolicy = $ast.Find({ param($node)
     $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-SdkWireCompilationPolicy'
 }, $false)
@@ -112,6 +118,47 @@ try {
     foreach ($directory in @('src/nested', 'include', 'out')) {
         [IO.Directory]::CreateDirectory((Join-Path $repo $directory)) | Out-Null
     }
+    $locks = Join-Path $repo 'tools/requirements'
+    [IO.Directory]::CreateDirectory($locks) | Out-Null
+    foreach ($name in @('requirements-cocoindex-code.txt', 'crawl4ai.txt')) {
+        [IO.File]::WriteAllText((Join-Path $locks $name), 'fixture==1.0')
+    }
+    $workflow = [IO.File]::ReadAllText((Join-Path $sourceRoot '.github/workflows/security-code-scanning.yml'))
+    $typed = '--lockfile=requirements.txt:tools/requirements/crawl4ai.txt'
+    if (-not $workflow.Contains($typed)) { throw 'OSV negative controls must bind the actual typed parser argument.' }
+    Assert-ToolRequirementScanCoverage -Root $repo -WorkflowText $workflow
+    foreach ($changedWorkflow in @(
+            $workflow.Replace($typed, '--lockfile=requirements.txt:tools/requirements/unrelated.txt'),
+            $workflow.Replace($typed, "# $typed"),
+            ($workflow.Replace($typed, '# omitted') + "`n  unrelated-job:`n        $typed`n"),
+            $workflow.Replace('        --recursive', '        # --recursive'),
+            $workflow.Replace('        ./', '        third_party/'),
+            $workflow.Replace('  osv-scanner:', '  unrelated-scanner:')
+        )) {
+        $rejected = $false
+        try { Assert-ToolRequirementScanCoverage -Root $repo -WorkflowText $changedWorkflow }
+        catch {
+            if ($_.Exception.Message -notlike '*OSV*') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected) { throw 'OSV tool-lock coverage admitted a missing or inactive scan argument.' }
+    }
+    foreach ($name in @('unlisted.txt', 'nested/unlisted.txt')) {
+        $unlisted = Join-Path $locks $name
+        [IO.Directory]::CreateDirectory((Split-Path -Parent $unlisted)) | Out-Null
+        [IO.File]::WriteAllText($unlisted, 'fixture==1.0')
+        $rejected = $false
+        try { Assert-ToolRequirementScanCoverage -Root $repo -WorkflowText $workflow }
+        catch {
+            if ($_.Exception.Message -notlike '*OSV cannot discover*unlisted.txt*') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected) { throw 'OSV tool-lock coverage missed an unlisted nonstandard filename.' }
+        $explicit = $workflow.Replace('        ./', "        --lockfile=requirements.txt:tools/requirements/$name`n        ./")
+        Assert-ToolRequirementScanCoverage -Root $repo -WorkflowText $explicit
+        Remove-Item -LiteralPath $unlisted
+    }
+    Assert-ToolRequirementScanCoverage -Root $repo -WorkflowText $workflow
     [IO.File]::WriteAllText((Join-Path $repo 'src/nested/clean.cpp'), 'ordinary product text')
     [IO.File]::WriteAllText((Join-Path $repo 'out/report.txt'), ('ban' + 'dizip'))
     $policy.InvokeWithContext($fixtureFunctions, $null)

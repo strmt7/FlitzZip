@@ -620,7 +620,7 @@ Assert-Selector (Test-RequiredCommand -Plan $packagingPlan -Id "package-smoke") 
 Assert-Selector (Test-Workflow -Plan $packagingPlan -Name "windows-ci") "packaging changes must wait for windows-ci"
 
 $mcpPlan = Get-FlitzZipVerificationPlan -ChangedPath @("mcp/flitzzip_mcp.py")
-foreach ($agentToolPath in @("tools/agent_context.py", "tools/test_agent_context.py", "tools/cocoindex_agent_search.py", "tools/test_cocoindex_agent_search.py", "tools/requirements/cocoindex-code.in", "tools/requirements/cocoindex-code.txt")) {
+foreach ($agentToolPath in @("tools/agent_context.py", "tools/test_agent_context.py", "tools/cocoindex_agent_search.py", "tools/test_cocoindex_agent_search.py", "tools/requirements/cocoindex-code.in", "tools/requirements/cocoindex-code.txt", "tools/requirements/requirements-cocoindex-code.in", "tools/requirements/requirements-cocoindex-code.txt")) {
     $agentToolPlan = Get-FlitzZipVerificationPlan -ChangedPath @($agentToolPath)
     Assert-Selector (-not $agentToolPlan.scope.fullEscalationRequired) "agent context and routing changes require their own contracts"
     Assert-Selector (Test-RequiredCommand -Plan $agentToolPlan -Id "agent-context-contracts") "agent tool changes must exercise real context and search receipt contracts"

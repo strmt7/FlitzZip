@@ -1,6 +1,6 @@
 $Script:FlitzZipVerificationRepoRoot = Split-Path -Parent $PSScriptRoot
 $Script:FlitzZipReviewEvidencePattern = '^docs/(?:(?:history/security/)?security-(?:nltk-ssrf-fixture|crawl4ai-public-(?:proxy|test))-review-[0-9-]+|security-reviews/[^/]+)\.md$'
-$Script:FlitzZipAgentToolPattern = '^tools/(?:(?:agent_context|test_agent_context|cocoindex_agent_search|test_cocoindex_agent_search)\.py|requirements/cocoindex-code\.(?:in|txt))$'
+$Script:FlitzZipAgentToolPattern = '^tools/(?:(?:agent_context|test_agent_context|cocoindex_agent_search|test_cocoindex_agent_search)\.py|requirements/(?:requirements-)?cocoindex-code\.(?:in|txt))$'
 . (Join-Path $PSScriptRoot 'local_resources.ps1')
 . (Join-Path $PSScriptRoot 'native_test_selection.ps1')
 . (Join-Path $PSScriptRoot 'native_ci.ps1')
