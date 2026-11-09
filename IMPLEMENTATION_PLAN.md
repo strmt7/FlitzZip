@@ -107,6 +107,23 @@ request; this does not authorize publication of a replacement.
   can order trials; it cannot justify dropping a competitive candidate in a
   minimum-size mode without a proven lower bound. Track native CPU, ZIP/Deflate,
   Gzip, Bzip2, Zstandard and LZMA-family results separately, including losses.
+- **Effort progression:** investigate nested candidate sets and deterministic
+  selection by complete archive size, including dictionaries, models, headers and
+  indexes. A higher numeric effort should retain a lower effort's winning
+  representation where format and resource contracts permit. Cover empty, small,
+  repetitive, mixed and already-compressed inputs with independent decoding
+  oracles. Treat a smooth size progression as an empirical objective: inverse
+  linear scaling cannot be promised for arbitrary data, and larger low-effort
+  output must never be manufactured to improve the curve. Keep Neutron's GPU-only
+  search and admission separate. Size evidence does not establish speed or
+  scheduling improvements; qualify those independently when measurement is allowed.
+- **Dependency lifecycle:** reconcile release and registry metadata against pinned
+  sources, lock hashes and installed consumers. Upgrade action wrappers and the
+  executables they install together when their contracts require it. In
+  particular, qualify the Vulnetix major-version migration with its signed-release
+  verification and authorized upload consumer before replacing the current pair;
+  an action-only Dependabot change does not qualify a CLI migration. Preserve
+  exact pins and distinguish unavailable live integration from passing tests.
 - **Repository review:** continue risk-prioritized source and document review;
   an inventory is not proof of complete line-by-line review. Refactor demonstrated
   ownership, duplication, complexity or performance problems and retain direct
