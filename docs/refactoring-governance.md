@@ -82,6 +82,12 @@ local adaptation removes the component's classification. Missing, ambiguous,
 linked, oversized, duplicate or altered provenance fails validation. The
 versioned checksum manifest remains the single archive-digest authority.
 
+For LZ4, the admitted URLs are the exact versioned official release asset or
+the same repository's exact versioned tag archive. Branch archives, other
+publishers, mismatched versions, queries and fragments remain rejected. Original
+archive bytes stay in provenance with their checksum; do not regenerate an older
+archive to accommodate a changed remote compression layout or moved tag.
+
 ```powershell
 py -3 tools/vendor_imports.py --require-canonical
 ```

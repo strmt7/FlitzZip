@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 from tools import vendor_imports as imports
 from tools.executable_path import executable_path
@@ -71,6 +72,35 @@ class VendorImportFixture(unittest.TestCase):
 
 
 class VendorImportTests(VendorImportFixture):
+    def test_official_tag_archive_preserves_complete_member_and_adaptation_proof(self) -> None:
+        self.manifest["url"] = "https://github.com/lz4/lz4/archive/refs/tags/v1.11.0.tar.gz"
+        self.save_manifest()
+        expected = sorted(imports.SOURCE_ROOT + name for name in self.members)
+        self.assertEqual(imports.classify(self.root)["canonical_paths"], expected)
+        (self.root / "third_party/lz4/lz4.c").write_bytes(b"local adaptation\n")
+        self.assertEqual(imports.classify(self.root)["canonical_paths"], [])
+
+    def test_tag_archive_origin_cannot_change_publisher_ref_or_url_components(self) -> None:
+        origin = urlsplit("https://github.com/lz4/lz4/archive/refs/tags/v1.11.0.tar.gz")
+        for field, value in (
+            ("scheme", "http"),
+            ("netloc", "github.com.example.invalid"),
+            ("netloc", "github.com@example.invalid"),
+            ("path", "/other/lz4/archive/refs/tags/v1.11.0.tar.gz"),
+            ("path", "/lz4/other/archive/refs/tags/v1.11.0.tar.gz"),
+            ("path", "/lz4/lz4/archive/refs/heads/v1.11.0.tar.gz"),
+            ("path", "/lz4/lz4/archive/refs/tags/v1.11.1.tar.gz"),
+            ("query", "extra=1"),
+            ("fragment", "fragment"),
+            ("path", "/lz4/lz4/archive/refs/tags/../v1.11.0.tar.gz"),
+        ):
+            url = origin._replace(**{field: value}).geturl()
+            with self.subTest(url=url):
+                self.manifest["url"] = url
+                self.save_manifest()
+                with self.assertRaisesRegex(ValueError, "publisher"):
+                    imports.classify(self.root)
+
     def test_complete_import_and_git_line_endings(self) -> None:
         expected = sorted(imports.SOURCE_ROOT + name for name in self.members)
         self.assertEqual(imports.classify(self.root)["canonical_paths"], expected)
@@ -113,6 +143,11 @@ class VendorImportTests(VendorImportFixture):
             ("version", "../1.11.0"),
             ("archive", "../escape"),
             ("url", "https://example.test/source"),
+            ("url", []),
+            ("url", {}),
+            ("url", None),
+            ("url", True),
+            ("url", 7),
             ("files", []),
             ("files", ["lz4.c", "lz4.c", "LICENSE"]),
             ("files", [True, "lz4.h", "LICENSE"]),

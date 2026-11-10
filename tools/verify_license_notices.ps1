@@ -5,6 +5,23 @@ $repo = Split-Path -Parent $PSScriptRoot
 $manifestPath = Join-Path $repo "resources\licenses\license-notices.json"
 $generatorPath = Join-Path $repo "tools\generate_license_notices_header.ps1"
 
+# Derive a display label from canonical imported-component metadata. This checks
+# component/version identity only; the import verifier separately proves archive
+# and source bytes. Reject structured or malformed versions before interpolation.
+function Get-ImportedLicenseNoticeTitle {
+    param(
+        [Parameter(Mandatory = $true)]$Metadata,
+        [Parameter(Mandatory = $true)][string]$Component,
+        [Parameter(Mandatory = $true)][string]$Prefix
+    )
+    if ($Metadata -isnot [pscustomobject] -or $Metadata.component -isnot [string] -or
+        $Metadata.component -cne $Component -or $Metadata.version -isnot [string] -or
+        $Metadata.version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+        throw 'Imported license notice requires a canonical component and release version.'
+    }
+    return "$Prefix $($Metadata.version)"
+}
+
 # Purpose: Assert that generated license notices are built from recorded source files only.
 # Inputs: None; reads the license manifest and generator from the repository.
 # Outputs: Throws on missing notice sources, stale generation failures, or GUI integration regressions.
@@ -16,13 +33,15 @@ function Test-LicenseNoticeGeneration {
         throw "License notice generator is missing."
     }
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $lz4Import = Get-Content -LiteralPath (Join-Path $repo 'third_party/lz4/upstream.json') -Raw | ConvertFrom-Json
+    $lz4Title = Get-ImportedLicenseNoticeTitle -Metadata $lz4Import -Component 'lz4' -Prefix 'LZ4'
     $requiredTitles = @(
         "FlitzZip",
         "miniz 3.1.2",
         "bzip2 1.0.8",
         "XZ Embedded",
         "LZMA SDK 26.06",
-        "LZ4 1.11.0",
+        $lz4Title,
         "Zstandard 1.5.7",
         "Lhasa 0.6.0",
         "wimlib 1.14.5",
@@ -35,6 +54,10 @@ function Test-LicenseNoticeGeneration {
         if ($titles -notcontains $title) {
             throw "License notice manifest is missing required notice '$title'."
         }
+    }
+    $lz4Notice = @($manifest.notices | Where-Object { $_.title -ceq $lz4Title })
+    if ($lz4Notice.Count -ne 1 -or [string]$lz4Notice[0].source -cne 'third_party/lz4/LICENSE') {
+        throw 'The imported LZ4 notice must uniquely identify its checked-in upstream license text.'
     }
     $flitzZipNotice = @($manifest.notices | Where-Object { $_.title -eq "FlitzZip" } | Select-Object -First 1)
     if (-not $flitzZipNotice -or [string]$flitzZipNotice.source -ne "LICENSE") {
@@ -80,7 +103,9 @@ function Test-LicenseNoticeGeneration {
             }
         }
     } finally {
-        Remove-Item -LiteralPath $tempHeader -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $tempHeader) {
+            Remove-Item -LiteralPath $tempHeader -Force -ErrorAction Stop
+        }
     }
 }
 

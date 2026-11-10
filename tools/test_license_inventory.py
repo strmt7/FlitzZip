@@ -17,6 +17,81 @@ from tools import license_inventory as inventory
 class LicenseInventoryTests(unittest.TestCase):
     """Exercise actual repository manifests and failing copies without fetching dependencies."""
 
+    def test_imported_notice_versions_and_license_sources_stay_in_sync(self):
+        """Exercise the actual title/generation functions with future and invalid metadata."""
+        shell = shutil.which("powershell") or shutil.which("pwsh")
+        if shell is None:
+            self.skipTest("PowerShell is required for native notice-generation contracts")
+        script = r"""param([string]$SourceRoot, [string]$FixtureRoot)
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$parseErrors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $SourceRoot 'tools/verify_license_notices.ps1'), [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count -ne 0) { throw 'Notice validator source failed to parse.' }
+foreach ($name in @('Get-ImportedLicenseNoticeTitle', 'Test-LicenseNoticeGeneration')) {
+    $definitions = @($ast.FindAll({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
+    }, $true))
+    if ($definitions.Count -ne 1) { throw 'Expected one actual notice function.' }
+    . ([scriptblock]::Create($definitions[0].Extent.Text))
+}
+$repo = $FixtureRoot
+$manifestPath = Join-Path $repo 'resources/licenses/license-notices.json'
+$generatorPath = Join-Path $SourceRoot 'tools/generate_license_notices_header.ps1'
+Test-LicenseNoticeGeneration
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.copy_sources(root)
+            metadata_path = root / "third_party/lz4/upstream.json"
+            metadata = json.loads((inventory.ROOT / "third_party/lz4/upstream.json").read_text())
+            notices_path = root / inventory.NATIVE
+            original = json.loads(notices_path.read_text())
+            runner = root / "notice-contract.ps1"
+            runner.write_text(script, encoding="utf-8")
+            cases = [
+                ("1.11.1", "LZ4 1.11.1", "third_party/lz4/LICENSE", False, ""),
+                ("42.3.567", "LZ4 42.3.567", "third_party/lz4/LICENSE", False, ""),
+                ("42.3.567", "LZ4 1.11.1", "third_party/lz4/LICENSE", False, "missing required notice"),
+                ("1.11.1", "LZ4 1.11.1", "third_party/bzip2/LICENSE", False, "uniquely identify"),
+                ("1.11.1", "LZ4 1.11.1", "third_party/lz4/LICENSE", True, "uniquely identify"),
+                (["1.11.1"], "LZ4 1.11.1", "third_party/lz4/LICENSE", False, "canonical component"),
+                ("../1.11.1", "LZ4 1.11.1", "third_party/lz4/LICENSE", False, "canonical component"),
+            ]
+            for version, title, source, duplicate, failure in cases:
+                with self.subTest(version=version, source=source, duplicate=duplicate):
+                    metadata_path.write_text(json.dumps({**metadata, "version": version}), encoding="utf-8")
+                    notices = json.loads(json.dumps(original))
+                    entry = next(row for row in notices["notices"] if row["source"] == "third_party/lz4/LICENSE")
+                    entry.update(title=title, source=source)
+                    if duplicate:
+                        notices["notices"].append(dict(entry))
+                    notices_path.write_text(json.dumps(notices), encoding="utf-8")
+                    result = subprocess.run(
+                        [
+                            shell,
+                            "-NoProfile",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-File",
+                            str(runner),
+                            "-SourceRoot",
+                            str(inventory.ROOT),
+                            "-FixtureRoot",
+                            str(root),
+                        ],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                    if failure:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(failure, result.stdout + result.stderr)
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+
     # Purpose: Reject redirected notice sources even when their targets stay inside the owned fixture repository.
     # Inputs: A real Windows junction or POSIX directory link leading to an otherwise valid text file.
     # Outputs: Admission rejects the redirect; cleanup removes only the owned link and leaves its target intact.

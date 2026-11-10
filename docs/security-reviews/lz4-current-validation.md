@@ -6,7 +6,7 @@ do not establish security acceptance. The source ledger binds each decision to
 its complete source, location, producer and relevant evidence. Changed identities
 remain blocking until reviewed; raw reports are retained.
 
-The active library is the unchanged official LZ4 1.11.0 raw-block implementation,
+The active library is the unchanged official LZ4 1.11.1 raw-block implementation,
 verified against its pinned release archive. FlitzZip does not use its frame,
 ring-buffer or deprecated unsafe decoding APIs. The production CPU reader calls
 `LZ4_decompress_safe` with bounded segment extents and requires its returned length
@@ -26,10 +26,18 @@ current hosted analysis remain separate qualification requirements.
 
 ## DevSkim Reports
 
-The pinned local detector reproduced exactly these six reports on the frozen
-1.11.0 source. Every highlighted token and its source coordinates match the
-preceding individually reviewed operation. The complete file and current callers
-were reviewed again rather than inheriting the earlier file hash.
+These six individual reports identify the exact operations below. Their
+highlighted tokens and coordinates remain unchanged in the 1.11.1 source.
+The complete file and current callers were reviewed again rather than inheriting
+the earlier file hash. Fresh detector output remains required for publication.
+
+The approved official tag archive is checksum-pinned and all three imported
+members independently match its tagged Git tree. The raw-block implementation
+delta changes PowerPC64 selection; the header changes release metadata and
+deprecation documentation. The reviewed Windows copy/allocation/debug operations,
+bounded decoder consumers and deliberate header re-entry contract are unchanged.
+Current guarded API and repeated-header controls qualify this source identity;
+product/HIP execution and hosted analysis remain separate requirements.
 
 ### Alert 846
 
@@ -90,9 +98,9 @@ redefinitions. A whole-file guard would remove the required late-inclusion
 behavior. This static review renews only this known diagnostic; current CPU and
 HIP-host CodeQL analyses remain required after publication.
 
-The current CPU and HIP-host analyses reported this instance after the upstream
+The preceding CPU and HIP-host analyses reported this instance after the upstream
 import. Its preceding alert 853 identifies an older producer instance; the active
-ledger now binds the new alert, exact current header and both reported categories.
+ledger binds alert 10227, the reviewed current header and both reported categories.
 A source-bound compile control accepts the original header and linked version API.
 An isolated copy with a whole-file `#pragma once` fails to declare the required
 late opt-in API. This negative control confirms that the suggested whole-file

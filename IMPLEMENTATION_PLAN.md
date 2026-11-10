@@ -139,11 +139,12 @@ The shared-host restriction on local benchmarks remains in effect.
   scheduling improvements; qualify those independently when measurement is allowed.
 - **Dependency lifecycle:** reconcile release and registry metadata against pinned
   sources, lock hashes and installed consumers. Upgrade action wrappers and the
-  executables they install together when their contracts require it. In
-  particular, qualify the Vulnetix major-version migration with its signed-release
-  verification and authorized upload consumer before replacing the current pair;
-  an action-only Dependabot change does not qualify a CLI migration. Preserve
-  exact pins and distinguish unavailable live integration from passing tests.
+  executables they install together when their contracts require it. Keep the
+  Vulnetix action and CLI pins aligned with provenance verification. The signed
+  installation and upload-help audit qualifies the offline interface; authenticated
+  upload still requires a configured broker and authorized live scan. An action-only
+  Dependabot change or passing offline audit does not qualify that live consumer.
+  Preserve exact pins and distinguish unavailable live integration from passing tests.
 - **Repository review:** continue risk-prioritized source and document review;
   an inventory is not proof of complete line-by-line review. Refactor demonstrated
   ownership, duplication, complexity or performance problems and retain direct

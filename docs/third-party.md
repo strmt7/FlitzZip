@@ -45,19 +45,19 @@ upstream. The only FlitzZip-owned file in that directory is
 unmodified upstream 1.0.8 source archive and checksum are stored under
 `third_party/upstream/bzip2/1.0.8/` for provenance.
 
-## LZ4 1.11.0
+## LZ4 1.11.1
 
 FlitzZip vendors the LZ4 library for decoding LZ4 native archive blocks.
 
 - Upstream: <https://github.com/lz4/lz4>
-- Release: `v1.11.0`
-- Source archive SHA-256: `247e5fa64da5f7b75ee3dd3bed484076396c9ebe8254d9ccf693eb62800c5e26`
+- Release: `v1.11.1`
+- Source archive SHA-256: `683fed08a844ad012196381e40badf80c0bbe4962959761416d41c9e67d77ec7`
 - Library license: BSD-2-Clause, preserved at `third_party/lz4/LICENSE`.
 
 The library files under `third_party/lz4/` are compiled in process. This
 does not provide GPU acceleration or authorize use of unrelated LZ4
 command-line source under a different license. The provenance archive and
-checksum remain under `third_party/upstream/lz4/1.11.0/`. The unchanged imported
+checksum remain under `third_party/upstream/lz4/1.11.1/`. The unchanged imported
 members are declared in `third_party/lz4/upstream.json` and verified against that
 archive under the [upstream-import policy](refactoring-governance.md#verified-upstream-imports).
 The frame library and command-line tools are not imported; their release features

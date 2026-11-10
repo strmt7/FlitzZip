@@ -68,7 +68,11 @@ def import_manifest(root: Path) -> dict:
         raise ValueError("Vendor import member inventory is outside its admitted scope")
     if value["archive"] != f"third_party/upstream/lz4/{version}/lz4-{version}.tar.gz":
         raise ValueError("Vendor import archive path differs from its version")
-    if value["url"] != f"https://github.com/lz4/lz4/releases/download/v{version}/lz4-{version}.tar.gz":
+    admitted_urls = {
+        f"https://github.com/lz4/lz4/releases/download/v{version}/lz4-{version}.tar.gz",
+        f"https://github.com/lz4/lz4/archive/refs/tags/v{version}.tar.gz",
+    }
+    if not isinstance(value["url"], str) or value["url"] not in admitted_urls:
         raise ValueError("Vendor import publisher differs from its admitted origin")
     return value
 
