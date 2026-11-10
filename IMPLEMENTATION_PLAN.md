@@ -94,7 +94,10 @@ for Neutron only. Version 12 and kind 14 are approved design assignments, not
 currently emitted product representations. Preserve versions 1–11 and efforts
 1–9, and include inner-stage kinds in writer and reader version admission.
 Continue bounded HIP correctness and ownership qualification independently of
-performance measurement. Enable the production candidate only after independent
+performance measurement. Derive candidate histograms from immutable transition
+counts with exact segment resets, and reuse counts across precision choices.
+Qualify normalization and model/stream construction independently before joining
+the archive pipeline. Enable the production candidate only after independent
 correctness and worthwhile complete-size evidence from representative workloads.
 The shared-host restriction on local benchmarks remains in effect.
 

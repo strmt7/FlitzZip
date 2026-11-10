@@ -92,14 +92,46 @@ completion, including cancellation, failed copies, launches and host exceptions.
 Failed completion must never be reported as successful cleanup or reuse.
 
 Build one full previous-byte transition histogram per admitted block, then
-derive candidate contexts and segment-boundary corrections from those exact
-counts. This avoids rebuilding source histograms for every precision and
-context option. It remains an optimization hypothesis until measured. A bounded
-context-bucket implementation uses limited shared storage and one full output
-histogram, rather than a dense histogram for every segment in an entire file.
-Charge all histograms, models, trial streams, offsets and retained winners to
-the existing resource-admission mechanisms. Do not assume a device wave size,
-installation path or available VRAM.
+derive candidate contexts using those exact counts and the immutable source's
+segment-boundary bytes. Counts alone cannot identify the predecessor changes at
+particular segment boundaries. Avoid rebuilding a complete source histogram for
+every precision and context option; its performance benefit remains a hypothesis
+until measured. A bounded context-bucket implementation uses limited shared
+storage and one full output histogram, rather than a dense histogram for every
+segment in an entire file. Charge all histograms, models, trial streams, offsets
+and retained winners to the existing resource-admission mechanisms. Do not
+assume a device wave size, installation path or available VRAM.
+
+### Exact model reuse
+
+Let `T[p,s]` count source symbol `s` after previous byte `p`, with previous byte
+zero for the first source byte. For one segment shift, copy this immutable table
+into scratch storage. At each subsequent segment start, subtract that sample
+from its actual predecessor row and add it to row zero. A predecessor already
+equal to zero needs no change. Never correct the first source byte again.
+
+Only after correction, merge predecessor rows sharing the selected high context
+bits. Equivalently, for context `c`, let `B[c,s]` count segment-start samples whose
+original predecessor maps to `c`. Then the candidate counts are
+`H[c,s] = sum(T[p,s] for p in c) - B[c,s] + (sum(B[*,s]) if c == 0 else 0)`.
+These are exact integer identities, not estimates or classifier predictions.
+
+Unconditional counts (`context_bits == 0`) are independent of the segment shift:
+all predecessor rows merge into context zero and the corrections cancel. Reuse
+that model across shifts at a fixed precision. More generally, counts do not
+depend on precision. Reuse the same corrected counts while constructing the
+admitted precisions; normalize separately for each distinct distribution and
+precision. This never authorizes reuse of encoded segment streams across shifts,
+whose state resets, offsets and tails differ.
+
+Keep one immutable base table, disposable correction storage and bounded reusable
+projection storage. Subtraction requires an existing count; reject underflow or
+mass overflow and discard faulted scratch before reuse. Unobserved contexts must
+remain absent, including when a boundary correction removes their last sample.
+All source and table owners survive actual stream completion. Independent direct
+counting must challenge every context width and shift, zero predecessors, segment
+tails and disappearing contexts. Omitted-work and deliberately incorrect
+corrections must fail that same oracle before this path can be adopted.
 
 ## Adoption criteria
 
