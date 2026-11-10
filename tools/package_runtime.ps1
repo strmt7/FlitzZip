@@ -127,3 +127,92 @@ function Assert-FlitzZipHipDependencyState {
     }
     if (-not $valid) { throw "Release dependency check failed or contradicted its capability state: $ExitCode" }
 }
+
+# Purpose: Share one pinned WiX CLI/extension identity across local and hosted consumers.
+# Inputs: RepoRoot is the checkout owning the generated cache. Outputs: Versioned paths, never PATH discovery.
+function Get-FlitzZipWixToolchain {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+    $version = '7.0.1'
+    $root = Join-Path ([IO.Path]::GetFullPath($RepoRoot)) "out/tools/wix-$version"
+    return [pscustomobject]@{
+        Version = $version
+        CliVersion = '7.0.1+642f1a0'
+        Path = (Join-Path $root 'wix.exe')
+        ExtensionHome = (Join-Path $root 'extension-cache')
+        UiExtension = "WixToolset.UI.wixext/$version"
+        UiVersion = '7.0.1+642f1a0f7c857ffa4fc9fa3f9d1433aab895dd29'
+    }
+}
+
+# Purpose: Reject prefix matches, prereleases, extra output and failed native version probes.
+# Inputs: Output and ExitCode come from the selected CLI; Expected is the admitted publisher identity.
+# Outputs: Throws unless precisely one successful version line matches.
+function Assert-FlitzZipWixVersion {
+    param([AllowEmptyCollection()][string[]]$Output, [int]$ExitCode, [string]$Expected)
+    if ($ExitCode -ne 0 -or @($Output).Count -ne 1 -or $Output[0] -cne $Expected) {
+        throw "WiX version admission failed; expected exactly '$Expected' with exit code zero."
+    }
+}
+
+# Purpose: Resolve only the pinned checkout-owned tool and validate its actual process output.
+# Inputs: RepoRoot owns the versioned cache. Outputs: Qualified wix.exe; never a global-tool fallback.
+function Resolve-FlitzZipWix {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+    $tool = Get-FlitzZipWixToolchain -RepoRoot $RepoRoot
+    $directory = [IO.Path]::GetFullPath($RepoRoot)
+    foreach ($part in @('out', 'tools', "wix-$($tool.Version)", 'wix.exe')) {
+        $directory = Join-Path $directory $part
+        $item = Get-Item -LiteralPath $directory -Force -ErrorAction Stop
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'WiX tool cache is redirected.' }
+    }
+    if ($item.PSIsContainer) { throw 'WiX tool is not a regular executable.' }
+    $output = @(& $tool.Path --version 2>&1)
+    Assert-FlitzZipWixVersion -Output $output -ExitCode $LASTEXITCODE -Expected $tool.CliVersion
+    return $tool.Path
+}
+
+# Purpose: Scope tool discovery and extension storage to this checkout for the whole native consumer.
+# Inputs: RepoRoot owns the admitted tool; Action performs packaging. Outputs: Propagates failure and restores caller state.
+function Invoke-FlitzZipWixEnvironment {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot, [Parameter(Mandatory = $true)][scriptblock]$Action)
+    $tool = Get-FlitzZipWixToolchain -RepoRoot $RepoRoot
+    $wix = Resolve-FlitzZipWix -RepoRoot $RepoRoot
+    New-Item -ItemType Directory -Force -Path $tool.ExtensionHome | Out-Null
+    if ((Get-Item -LiteralPath $tool.ExtensionHome -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'WiX UI cache is redirected.'
+    }
+    $originalPath = $env:PATH
+    $originalWix = $env:WIX
+    $originalExtensions = $env:WIX_EXTENSIONS
+    try {
+        $env:PATH = (Split-Path -Parent $wix) + [IO.Path]::PathSeparator + $originalPath
+        $env:WIX = Split-Path -Parent $wix
+        $env:WIX_EXTENSIONS = $tool.ExtensionHome
+        & $Action $wix $tool.UiExtension
+    } finally {
+        $env:PATH = $originalPath
+        $env:WIX = $originalWix
+        $env:WIX_EXTENSIONS = $originalExtensions
+    }
+}
+
+# Purpose: Bind CPack to the exact installed UI assembly, bypassing versionless cache selection.
+# Inputs: RepoRoot owns the provisioned extension. Outputs: Documented CPack overrides preserving its standard UI namespace.
+function Get-FlitzZipWixUiArgument {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+    $tool = Get-FlitzZipWixToolchain -RepoRoot $RepoRoot
+    $directory = $tool.ExtensionHome
+    if ((Get-Item -LiteralPath $directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'WiX UI cache is redirected.'
+    }
+    foreach ($part in @('.wix', 'extensions', 'WixToolset.UI.wixext', $tool.Version, 'wixext7', 'WixToolset.UI.wixext.dll')) {
+        $directory = Join-Path $directory $part
+        $item = Get-Item -LiteralPath $directory -Force -ErrorAction Stop
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'WiX UI cache is redirected.' }
+    }
+    if ($item.PSIsContainer -or $item.VersionInfo.ProductVersion -cne $tool.UiVersion) {
+        throw 'WiX UI extension identity differs from the pinned release.'
+    }
+    return @('-D', "CPACK_WIX_EXTENSIONS=$directory", '-D', 'CPACK_WIX_SKIP_WIX_UI_EXTENSION=ON',
+        '-D', 'CPACK_WIX_CUSTOM_XMLNS=ui=http://wixtoolset.org/schemas/v4/wxs/ui')
+}

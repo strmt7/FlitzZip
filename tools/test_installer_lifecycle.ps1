@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'cmake_toolchain.ps1')
 . (Join-Path $PSScriptRoot 'version.ps1')
+. (Join-Path $PSScriptRoot 'package_runtime.ps1')
 Import-Module (Join-Path $PSScriptRoot 'msi_database.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'msi_process.psm1') -Force
 if ($Full -and -not $DisposableMachine) { throw 'Real MSI lifecycle requires -DisposableMachine on an isolated VM/runner.' }
@@ -22,18 +23,9 @@ $root = Join-Path $repo ('out/installer-lifecycle-' + [guid]::NewGuid().ToString
 $null = New-Item -ItemType Directory -Path $root
 $cmake = Find-CMake -RepoRoot $repo
 $cpack = Join-Path (Split-Path -Parent $cmake) 'cpack.exe'
-$wix = Join-Path $repo 'out/tools/wix/wix.exe'
-if (-not (Test-Path -LiteralPath $wix)) {
-    & (Join-Path $PSScriptRoot 'install_wix.ps1')
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $wix)) { throw 'Pinned WiX provisioning failed.' }
-}
-if ((& $wix --version) -notlike '7.0.0*' -or $LASTEXITCODE -ne 0) { throw 'Installer qualification requires pinned WiX 7.0.0.' }
-& $wix eula accept wix7
-if ($LASTEXITCODE -ne 0) { throw 'WiX EULA acceptance failed.' }
-& $wix extension add --global WixToolset.UI.wixext/7.0.0
-if ($LASTEXITCODE -ne 0) { throw 'Pinned WiX UI extension is unavailable.' }
-$originalPath = $env:PATH
-$env:PATH = (Split-Path -Parent $wix) + [IO.Path]::PathSeparator + $env:PATH
+$tool = Get-FlitzZipWixToolchain -RepoRoot $repo
+if (-not (Test-Path -LiteralPath $tool.Path)) { & (Join-Path $PSScriptRoot 'install_wix.ps1') }
+$wix = Resolve-FlitzZipWix -RepoRoot $repo
 
 # Purpose: Author a tiny package through the pinned production CPack/WiX path and inspect its compiled tables.
 # Inputs: Version, unique fixture identity and optional obsolete/failure controls. Outputs: Package plus verified metadata.
@@ -61,7 +53,8 @@ function New-LifecyclePackage {
         & $cmake --build $build --config Release *> (Join-Path $root "$Name-build.log")
         if ($LASTEXITCODE -ne 0) { throw 'Rollback-control DLL build failed.' }
     }
-    & $cpack -G WIX --config (Join-Path $build 'CPackConfig.cmake') -B $build *> (Join-Path $root "$Name-author.log")
+    $wixArguments = @(Get-FlitzZipWixUiArgument -RepoRoot $repo)
+    & $cpack @wixArguments -G WIX --config (Join-Path $build 'CPackConfig.cmake') -B $build *> (Join-Path $root "$Name-author.log")
     if ($LASTEXITCODE -ne 0) { throw "Fixture authoring failed; see $root/$Name-author.log" }
     $path = Join-Path $build "fixture-$Name.msi"
     $metadata = Assert-MsiUpgradeContract -Path $path -ExpectedScope $Scope
@@ -332,7 +325,10 @@ function Test-InstalledLifecycle {
     }
 }
 
-try {
+Invoke-FlitzZipWixEnvironment -RepoRoot $repo -Action {
+    param($wix, $extension)
+    Invoke-FlitzZipPackageTool -FilePath $wix -Operation 'WiX EULA acceptance' -Arguments @('eula', 'accept', 'wix7')
+    Invoke-FlitzZipPackageTool -FilePath $wix -Operation 'WiX UI provisioning' -Arguments @('extension', 'add', '--global', $extension)
     Test-LifecycleStateOracle
     $packages = @(
         (New-LifecyclePackage -Version 0.1.0 -Name old -Obsolete),
@@ -356,4 +352,4 @@ try {
             @{ Name = 'sha256'; Expression = { (Get-FileHash -LiteralPath $_.path -Algorithm SHA256).Hash.ToLowerInvariant() } }) }
     $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
     Write-Output "Installer lifecycle $($result.mode) passed. Evidence: $root"
-} finally { $env:PATH = $originalPath }
+}

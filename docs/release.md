@@ -282,8 +282,14 @@ Install the pinned repo-local WiX CLI before local MSI packaging:
 tools\install_wix.ps1
 ```
 
-That helper installs WiX under `out\tools\wix`. Maintainer authorization is
-recorded in `AGENTS.md` for agents to accept EULAs required by pinned FlitzZip
+That helper installs WiX in a versioned cache under `out\tools`. Packaging
+requires the exact pinned CLI identity and never selects an unrelated global
+installation. The shared runtime helper scopes `PATH`, `WIX` and the extension
+cache to the packaging operation and restores the caller's environment on
+success or failure. Local packaging and hosted qualification use the same
+installer and resolver. They pass the pinned UI assembly to CPack by absolute
+path, preserving its standard UI namespace without versionless extension lookup.
+Maintainer authorization is recorded in `AGENTS.md` for agents to accept EULAs required by pinned FlitzZip
 verification tooling. To package the MSI locally, set:
 
 ```powershell

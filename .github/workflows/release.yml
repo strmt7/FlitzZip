@@ -247,8 +247,8 @@ jobs:
         if: env.CREATE_MSI == 'true'
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          # WiX 7.0.0 ships a net8.0 tool; use its supported runtime explicitly.
-          dotnet-version: "8.0.426"
+          # WiX 7.0.1 ships a net8.0 tool; use its supported runtime explicitly.
+          dotnet-version: "8.0.427"
 
       - name: Install WiX
         env:
@@ -260,12 +260,9 @@ jobs:
           if ($env:WIX_OSMF_EULA_ID -ne "wix7") {
               throw "Set repository variable WIX_OSMF_EULA_ID to wix7 after accepting the WiX v7 OSMF EULA."
           }
-          $toolPath = Join-Path $env:RUNNER_TEMP "wix"
-          dotnet tool install --tool-path $toolPath wix --version 7.0.0
-          Add-Content -LiteralPath $env:GITHUB_PATH -Value $toolPath
-          & (Join-Path $toolPath "wix.exe") eula accept $env:WIX_OSMF_EULA_ID
-          & (Join-Path $toolPath "wix.exe") --version
-          & (Join-Path $toolPath "wix.exe") extension add --global WixToolset.UI.wixext/7.0.0
+          & tools/install_wix.ps1
+          . tools/package_runtime.ps1
+          $null = Resolve-FlitzZipWix -RepoRoot $PWD.Path
 
       - name: Build
         shell: pwsh

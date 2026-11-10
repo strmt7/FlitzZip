@@ -14,6 +14,73 @@ function Assert-RuntimeRejected {
     if (-not $rejected) { throw 'Runtime contract admitted an invalid payload or capability state.' }
 }
 
+# Purpose: Exercise exact native-tool identity without executing a foreign or damaged binary.
+# Inputs: Independent successful and failed probe observations. Outputs: Rejects every ambiguous identity.
+function Test-WixVersionAdmission {
+    $tool = Get-FlitzZipWixToolchain -RepoRoot $fixture
+    Assert-FlitzZipWixVersion -Output @('7.0.1+642f1a0') -ExitCode 0 -Expected $tool.CliVersion
+    foreach ($output in @(@('7.0.10'), @('7.0.1-rc.1'), @('7.0.0+642f1a0'), @('7.0.1'),
+            @('7.0.1+642f1a0', 'extra'), @(), @('7.0.1+unexpected'))) {
+        Assert-RuntimeRejected -ExpectedMessage 'version admission' -Action {
+            Assert-FlitzZipWixVersion -Output $output -ExitCode 0 -Expected $tool.CliVersion
+        }
+    }
+    Assert-RuntimeRejected -ExpectedMessage 'version admission' -Action {
+        Assert-FlitzZipWixVersion -Output @('7.0.1+642f1a0') -ExitCode 17 -Expected $tool.CliVersion
+    }
+    Assert-RuntimeRejected { Resolve-FlitzZipWix -RepoRoot $fixture }
+}
+
+# Purpose: Reject a missing, invalid or redirected UI assembly before CPack can load it.
+# Inputs: Private cache fixtures contain no executable extension. Outputs: Every malformed cache remains rejected.
+function Test-WixUiAdmission {
+    $tool = Get-FlitzZipWixToolchain -RepoRoot $fixture
+    Assert-RuntimeRejected { Get-FlitzZipWixUiArgument -RepoRoot $fixture }
+    $directory = Join-Path $tool.ExtensionHome ".wix/extensions/WixToolset.UI.wixext/$($tool.Version)/wixext7"
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    $assembly = Join-Path $directory 'WixToolset.UI.wixext.dll'
+    [IO.File]::WriteAllText($assembly, 'invalid extension fixture')
+    Assert-RuntimeRejected -ExpectedMessage 'extension identity' -Action { Get-FlitzZipWixUiArgument -RepoRoot $fixture }
+    Remove-Item -LiteralPath $assembly
+    $real = Join-Path $fixture 'real-extension-cache'
+    New-Item -ItemType Directory -Path $real | Out-Null
+    $link = Join-Path $directory 'WixToolset.UI.wixext.dll'
+    New-Item -ItemType Junction -Path $link -Target $real | Out-Null
+    try {
+        Assert-RuntimeRejected -ExpectedMessage 'redirected' -Action { Get-FlitzZipWixUiArgument -RepoRoot $fixture }
+    } finally { [IO.Directory]::Delete($link) }
+}
+
+# Purpose: Prove packaging restores the caller's discovery state after both normal completion and failure.
+# Inputs: A controlled resolver owns no external installation. Outputs: Exact original environment survives both outcomes.
+function Test-WixEnvironmentOwnership {
+    $savedResolver = ${function:Resolve-FlitzZipWix}
+    $before = @($env:PATH, $env:WIX, $env:WIX_EXTENSIONS)
+    try {
+        function Resolve-FlitzZipWix { param([string]$RepoRoot) return (Get-FlitzZipWixToolchain -RepoRoot $RepoRoot).Path }
+        foreach ($fail in @($false, $true)) {
+            $packagingAction = {
+                param($wix, $extension)
+                $expected = Get-FlitzZipWixToolchain -RepoRoot $fixture
+                if ($wix -cne $expected.Path -or $extension -cne $expected.UiExtension -or
+                    $env:WIX_EXTENSIONS -cne $expected.ExtensionHome -or $env:WIX -cne (Split-Path -Parent $wix) -or
+                    -not $env:PATH.StartsWith($env:WIX + [IO.Path]::PathSeparator, [StringComparison]::Ordinal)) {
+                    throw 'Packaging did not receive its owned tool environment.'
+                }
+                if ($fail) { throw 'Independent packaging failure.' }
+            }
+            if ($fail) {
+                Assert-RuntimeRejected -ExpectedMessage 'Independent packaging failure' -Action {
+                    Invoke-FlitzZipWixEnvironment -RepoRoot $fixture -Action $packagingAction
+                }
+            } else { Invoke-FlitzZipWixEnvironment -RepoRoot $fixture -Action $packagingAction }
+            if ($env:PATH -cne $before[0] -or $env:WIX -cne $before[1] -or $env:WIX_EXTENSIONS -cne $before[2]) {
+                throw 'Packaging changed its caller environment.'
+            }
+        }
+    } finally { ${function:Resolve-FlitzZipWix} = $savedResolver }
+}
+
 # Exercise the real process exit boundary and artifact owner together. The child
 # is a deterministic external generator; it does not install a protocol fixture.
 function Test-PackageGenerationTransaction {
@@ -121,6 +188,9 @@ try {
     }
     Assert-RuntimeRejected { Assert-FlitzZipHipDependencyState -Output @('hip_compiled=false') -ExitCode 10 }
     Assert-RuntimeRejected { Assert-FlitzZipHipDependencyState -Output @('hip_compiled=true', 'available=true') -ExitCode 11 }
+    Test-WixVersionAdmission
+    Test-WixEnvironmentOwnership
+    Test-WixUiAdmission
     Test-PackageGenerationTransaction -Root $fixture
     Write-Output 'Package integrity and truthful HIP capability contracts passed.'
 } finally {
