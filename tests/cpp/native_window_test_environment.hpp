@@ -71,6 +71,8 @@ class GatedLauncher final : public flitzzip::app::JobThreadLauncher {
 
 class HiddenController final {
   public:
+    static constexpr DWORD kInputTimeoutMs = 1000;
+
     // Purpose: Run the actual controller on its own native UI thread without displaying or activating it.
     // Inputs: Launcher outlives this owner. Outputs: Running message pump, with exceptions retained for the test.
     explicit HiddenController(const flitzzip::app::JobThreadLauncher& launcher) : completed_(result_.get_future()) {
@@ -142,7 +144,8 @@ class HiddenController final {
     // Purpose: Deliver a native event without permitting a blocked UI thread to hang the test driver.
     // Inputs: Owned HWND/message, bounded millisecond deadline and implicit call site.
     // Outputs: Acknowledged dispatch or exact native/caller evidence; input retains the one-second default.
-    static void send(HWND window, UINT message, WPARAM wparam = 0, LPARAM lparam = 0, DWORD timeout_ms = 1000,
+    static void send(HWND window, UINT message, WPARAM wparam = 0, LPARAM lparam = 0,
+                     DWORD timeout_ms = kInputTimeoutMs,
                      std::source_location caller = std::source_location::current()) {
         DWORD_PTR result = 0;
         const auto started = std::chrono::steady_clock::now();
@@ -221,16 +224,18 @@ inline flitzzip::app::SettingsLayout native_settings_layout(HWND window) {
 
 // Purpose: Deliver native input to one owned point without moving the desktop cursor.
 // Inputs: Live HWND and client point. Outputs: Acknowledged press/release messages.
-inline void click_native_point(HWND window, POINT center) {
+inline void click_native_point(HWND window, POINT center,
+                               std::source_location caller = std::source_location::current()) {
     const auto point = MAKELPARAM(center.x, center.y);
-    HiddenController::send(window, WM_LBUTTONDOWN, MK_LBUTTON, point);
-    HiddenController::send(window, WM_LBUTTONUP, 0, point);
+    HiddenController::send(window, WM_LBUTTONDOWN, MK_LBUTTON, point, HiddenController::kInputTimeoutMs, caller);
+    HiddenController::send(window, WM_LBUTTONUP, 0, point, HiddenController::kInputTimeoutMs, caller);
 }
 
 // Purpose: Activate a real control without changing system input or another window's state.
 // Inputs: Owned HWND and physical control rectangle. Outputs: Acknowledged native press/release.
-inline void click_native_control(HWND window, const RECT& rect) {
-    click_native_point(window, native_rect_center(rect));
+inline void click_native_control(HWND window, const RECT& rect,
+                                 std::source_location caller = std::source_location::current()) {
+    click_native_point(window, native_rect_center(rect), caller);
 }
 
 // Purpose: Recognize a settled Settings switch without accessing controller state.

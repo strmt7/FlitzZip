@@ -146,6 +146,7 @@ jobs:
           python tools/native_build_receipt.py validate --configuration $env:FLITZZIP_CONFIGURATION
           if ($LASTEXITCODE -ne 0) { throw "Configured CPU build receipt is stale or incomplete." }
       - name: Test
+        id: native_test
         if: steps.native_plan.outputs.native_tests == 'true'
         shell: pwsh
         env:
@@ -157,6 +158,16 @@ jobs:
           tools/ci_native_plan.ps1 -EventName $env:EVENT_NAME -PushBase $env:PUSH_BASE `
             -PullRequestBase $env:PR_BASE -DispatchBase $env:DISPATCH_BASE `
             -Configuration $env:FLITZZIP_CONFIGURATION -RunTests
+      - name: Retain native test failure log
+        if: >-
+          failure() && steps.native_test.outcome == 'failure' &&
+          hashFiles('build/Testing/Temporary/LastTest.log') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-test-failure-${{ matrix.os }}
+          path: build/Testing/Temporary/LastTest.log
+          if-no-files-found: error
+          retention-days: 7
       - name: CLI format compatibility matrix
         if: >-
           steps.native_plan.outputs.format_matrix == 'true' &&
@@ -164,6 +175,7 @@ jobs:
         shell: pwsh
         run: tools/format_matrix_smoke.ps1 -Configuration $env:FLITZZIP_CONFIGURATION
       - name: Measure native CPU coverage
+        id: native_coverage
         if: matrix.coverage && steps.native_plan.outputs.native_coverage == 'true'
         shell: pwsh
         run: python -B -m tools.native_coverage
@@ -181,7 +193,10 @@ jobs:
           use_oidc: true
           version: v11.3.1
       - name: Retain coverage evidence
-        if: always() && matrix.coverage && steps.native_plan.outputs.native_coverage == 'true'
+        if: >-
+          always() && (steps.native_coverage.outcome == 'success' ||
+          (steps.native_coverage.outcome == 'failure' &&
+          hashFiles('out/coverage/*.xml', 'out/coverage/*.json', 'out/coverage/*.log') != ''))
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-cpu-coverage

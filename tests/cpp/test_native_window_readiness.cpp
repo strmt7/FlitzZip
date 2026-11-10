@@ -81,15 +81,17 @@ class DelayedNativeWindow final {
 
 // Purpose: Distinguish the declared creation deadline from the shorter responsiveness requirement after startup.
 // Inputs: Native owner deliberately held before its message loop. Outputs: Old one-second check fails, startup wait
-// remains pending until release, then ordinary native input succeeds without changing its one-second deadline.
+// remains pending until release. The failed click identifies its caller, and ordinary input then succeeds.
 TEST_CASE(native_window_readiness_waits_for_initialization_within_creation_budget) {
     DelayedNativeWindow fixture;
     const auto window = fixture.window();
     bool old_boundary_refused = false;
     try {
-        HiddenController::send(window, WM_NULL);
+        click_native_control(window, RECT{0, 0, 2, 2});
     } catch (const std::runtime_error& error) {
-        old_boundary_refused = std::string_view(error.what()).find("win32_error=1460") != std::string_view::npos;
+        const std::string_view diagnostic(error.what());
+        old_boundary_refused = diagnostic.find("test_native_window_readiness.cpp:") != std::string_view::npos &&
+                               diagnostic.find("message=513 win32_error=1460") != std::string_view::npos;
     }
     REQUIRE_TRUE(old_boundary_refused);
     auto startup = std::async(std::launch::async, [window] {
