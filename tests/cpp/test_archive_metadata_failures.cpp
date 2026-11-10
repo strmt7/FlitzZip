@@ -1080,6 +1080,8 @@ TEST_CASE(archive_metadata_hip_layout_rejects_untrusted_extents) {
 // Outputs: Both boundaries agree with the independent matrix; accepted metadata serializes byte for byte.
 TEST_CASE(flzip_index_kind_version_admission_matches_published_wire_matrix) {
     for (std::uint32_t kind = 0; kind <= 255U; ++kind) {
+        const auto minimum = kind < kWireMinimumVersions.size() ? kWireMinimumVersions[kind] : 0U;
+        REQUIRE_EQ(flitzzip::minimum_archive_version_for_kind(static_cast<Kind>(kind)), minimum);
         for (std::uint32_t version = 1; version <= 11U; ++version) {
             auto wire = index_wire_fixture(version);
             wire[50] = static_cast<char>(kind);
@@ -1119,6 +1121,20 @@ TEST_CASE(flzip_index_kind_version_admission_matches_published_wire_matrix) {
                 }
                 REQUIRE_TRUE(write_rejected);
             }
+        }
+    }
+}
+
+// Version selection must retain the extended pattern lineage without mistaking
+// unknown kinds for legacy data. Extent validity remains a separate admission.
+TEST_CASE(flzip_block_minimum_version_preserves_pattern_lineage) {
+    for (std::uint32_t kind = 0U; kind <= 255U; ++kind) {
+        const auto ordinary = kind < kWireMinimumVersions.size() ? kWireMinimumVersions[kind] : 0U;
+        for (const auto encoded : {0U, 1U, 2U, 255U, 256U, 257U, 16384U, 16385U, UINT32_MAX}) {
+            const flitzzip::BlockDescriptor block{
+                .kind = static_cast<Kind>(kind), .uncompressed_len = 32768U, .encoded_len = encoded};
+            const auto expected = kind == 3U && encoded > 256U ? 4U : ordinary;
+            REQUIRE_EQ(flitzzip::minimum_archive_version_for_block(block), expected);
         }
     }
 }

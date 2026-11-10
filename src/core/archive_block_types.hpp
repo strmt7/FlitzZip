@@ -21,6 +21,39 @@ enum class BlockKind : std::uint8_t {
     GpuBytePlaneContexts = 13,
 };
 
+// First native version defining a wire kind; zero means unknown, never version one.
+// This capability query does not validate a descriptor's extents or codec payload.
+inline constexpr std::uint32_t minimum_archive_version_for_kind(BlockKind kind) noexcept {
+    switch (kind) {
+    case BlockKind::Raw:
+    case BlockKind::Fill:
+    case BlockKind::Deflate:
+    case BlockKind::Pattern:
+        return 1U;
+    case BlockKind::GpuPrefix:
+        return 2U;
+    case BlockKind::GpuAdaptivePrefix:
+        return 3U;
+    case BlockKind::GpuDictionary:
+        return 4U;
+    case BlockKind::GpuSparsePattern:
+        return 5U;
+    case BlockKind::CpuZstd:
+        return 6U;
+    case BlockKind::GpuLongSparsePattern:
+        return 7U;
+    case BlockKind::GpuHuffman:
+        return 8U;
+    case BlockKind::GpuCompound:
+        return 9U;
+    case BlockKind::GpuBytePlane:
+        return 10U;
+    case BlockKind::GpuBytePlaneContexts:
+        return 11U;
+    }
+    return 0U;
+}
+
 // Purpose: Group the two versioned sparse GPU encodings without conflating their period limits.
 // Inputs: One decoded native block kind.
 // Outputs: True only for the short or long sparse pattern kind.

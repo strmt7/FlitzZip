@@ -869,24 +869,11 @@ std::uint32_t required_archive_version(const ArchiveIndex& index) {
     std::uint32_t version = kFlitzZipVersion;
     for (const auto& entry : index.entries) {
         for (const auto& block : entry.blocks) {
-            if (block.kind == BlockKind::GpuBytePlaneContexts) {
-                version = std::max(version, 11U);
-            } else if (block.kind == BlockKind::GpuBytePlane) {
-                version = std::max(version, 10U);
-            } else if (block.kind == BlockKind::GpuCompound) {
-                version = std::max(version, 9U);
-            } else if (block.kind == BlockKind::GpuHuffman) {
-                version = std::max(version, 8U);
-            } else if (block.kind == BlockKind::GpuLongSparsePattern) {
-                version = std::max(version, 7U);
-            } else if (block.kind == BlockKind::CpuZstd) {
-                version = std::max(version, 6U);
-            } else if (block.kind == BlockKind::GpuSparsePattern) {
-                version = std::max(version, 5U);
-            } else if (block.kind == BlockKind::GpuDictionary ||
-                       (block.kind == BlockKind::Pattern && block.encoded_len > kLegacyGpuPatternBytes)) {
-                version = std::max(version, 4U);
+            const auto minimum = minimum_archive_version_for_block(block);
+            if (minimum == 0U) {
+                throw ArchiveError("archive block kind is not supported by its version");
             }
+            version = std::max(version, minimum);
         }
     }
     return version;

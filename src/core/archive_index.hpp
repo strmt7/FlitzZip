@@ -20,6 +20,16 @@ constexpr std::uint32_t kFlitzZipMinReadableVersion = 1;
 constexpr std::uint32_t kFlitzZipVersion = 3;
 constexpr std::uint32_t kFlitzZipMaxReadableVersion = 11;
 
+// Descriptor-only version requirement, including the version-four pattern bound.
+// Zero rejects an unknown kind. Nonzero is not full metadata/payload admission;
+// any future composition with newer inner kinds must also inspect its payload.
+inline constexpr std::uint32_t minimum_archive_version_for_block(const BlockDescriptor& block) noexcept {
+    if (block.kind == BlockKind::Pattern && block.encoded_len > kLegacyGpuPatternBytes) {
+        return 4U;
+    }
+    return minimum_archive_version_for_kind(block.kind);
+}
+
 struct ArchiveEntry {
     std::string path;
     bool directory = false;

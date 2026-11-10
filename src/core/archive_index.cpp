@@ -150,34 +150,8 @@ namespace {
 // Inputs: `kind` is a serialized block kind and `version` is a supported native format version.
 // Outputs: Returns whether that version defines the requested block kind.
 bool block_kind_supported_in_version(BlockKind kind, std::uint32_t version) {
-    switch (kind) {
-    case BlockKind::Raw:
-    case BlockKind::Fill:
-    case BlockKind::Deflate:
-    case BlockKind::Pattern:
-        return true;
-    case BlockKind::GpuPrefix:
-        return version >= 2;
-    case BlockKind::GpuAdaptivePrefix:
-        return version >= 3;
-    case BlockKind::GpuDictionary:
-        return version >= 4;
-    case BlockKind::GpuSparsePattern:
-        return version >= 5;
-    case BlockKind::CpuZstd:
-        return version >= 6;
-    case BlockKind::GpuLongSparsePattern:
-        return version >= 7;
-    case BlockKind::GpuHuffman:
-        return version >= 8;
-    case BlockKind::GpuCompound:
-        return version >= 9;
-    case BlockKind::GpuBytePlane:
-        return version >= 10;
-    case BlockKind::GpuBytePlaneContexts:
-        return version >= 11;
-    }
-    return false;
+    const auto minimum = minimum_archive_version_for_kind(kind);
+    return minimum != 0U && version >= minimum;
 }
 
 // Purpose: Enforce the pattern payload bound declared by each native archive version.

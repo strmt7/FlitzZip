@@ -132,6 +132,13 @@ explicit:
   CRC-32, duplicate paths, path safety, and resource limits before publishing
   output files.
 
+Writer version selection and index admission share the block-kind minimum-version
+contract. Extended pattern payloads still require version four. That capability
+query is separate from full descriptor and codec validation; a known kind does
+not establish valid lengths or payload bytes. Any extension admitting an inner
+kind newer than its composition must also inspect the actual composition headers
+when selecting and enforcing the archive version.
+
 ## Detection
 
 Small-file GPU submission batching preserves these version-three records and
