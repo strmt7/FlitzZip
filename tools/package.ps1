@@ -141,11 +141,12 @@ if ($hipEnabled) {
     Assert-FlitzZipHipDependencyState -Output $dependencyOutput -ExitCode $dependencyExit
 }
 
-if (Test-Path $package) {
-    Remove-Item -LiteralPath $package -Force
-}
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $package) | Out-Null
-Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $package -CompressionLevel Optimal
+$package = Publish-FlitzZipGeneratedPackage -OutputDirectory (Join-Path $repo 'out') `
+    -FileName (Split-Path -Leaf $package) -Generate {
+        param($candidate)
+        Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $candidate -CompressionLevel Optimal -ErrorAction Stop
+    }
 Write-Output "Created $package"
 
 $zipHash = Get-FileHash -Algorithm SHA256 -LiteralPath $package
@@ -161,31 +162,35 @@ if ($CreateMsi) {
     Confirm-WixEula -WixPath $wix
     Install-WixUiExtension -WixPath $wix
     $env:PATH = "$(Split-Path -Parent $wix);$env:PATH"
-    & $cpack -G WIX -C $Configuration --config (Join-Path $build "CPackConfig.cmake") -B (Join-Path $repo "out")
-    $msi = Join-Path $repo "out\$packageBase.msi"
-    if (-not (Test-Path $msi)) {
-        throw "Expected MSI was not produced: $msi"
-    }
-    $expectedScope = Read-FlitzZipCMakeCacheValue -BuildRoot $build -Name 'FLITZZIP_MSI_INSTALL_SCOPE'
-    $null = Assert-MsiUpgradeContract -Path $msi -ExpectedScope $expectedScope
-    $expectedProductVersion = Read-FlitzZipCPackValue -BuildRoot $build -Name "CPACK_PACKAGE_VERSION"
-    $expectedProductCode = Format-MsiGuid -GuidText (Read-FlitzZipCPackValue -BuildRoot $build -Name "CPACK_WIX_PRODUCT_GUID")
-    $expectedUpgradeCode = Format-MsiGuid -GuidText (Read-FlitzZipCPackValue -BuildRoot $build -Name "CPACK_WIX_UPGRADE_GUID")
-    $manufacturer = Read-MsiProperty -MsiPath $msi -Name "Manufacturer"
-    if ($manufacturer -ne "Efstratios Mitridis") {
-        throw "MSI Manufacturer was '$manufacturer'; expected 'Efstratios Mitridis'."
-    }
-    $productVersion = Read-MsiProperty -MsiPath $msi -Name "ProductVersion"
-    if ($productVersion -ne $expectedProductVersion) {
-        throw "MSI ProductVersion was '$productVersion'; expected '$expectedProductVersion'."
-    }
-    $productCode = Format-MsiGuid -GuidText (Read-MsiProperty -MsiPath $msi -Name "ProductCode")
-    if ($productCode -ne $expectedProductCode) {
-        throw "MSI ProductCode was '$productCode'; expected deterministic product code '$expectedProductCode'."
-    }
-    $upgradeCode = Format-MsiGuid -GuidText (Read-MsiProperty -MsiPath $msi -Name "UpgradeCode")
-    if ($upgradeCode -ne $expectedUpgradeCode) {
-        throw "MSI UpgradeCode was '$upgradeCode'; expected stable upgrade code '$expectedUpgradeCode'."
+    $msi = Publish-FlitzZipGeneratedPackage -OutputDirectory (Join-Path $repo 'out') `
+        -FileName "$packageBase.msi" -Generate {
+            param($candidate)
+            Invoke-FlitzZipPackageTool -FilePath $cpack -Operation 'MSI generation' -Arguments @(
+                '-G', 'WIX', '-C', $Configuration, '--config', (Join-Path $build 'CPackConfig.cmake'),
+                '-B', (Split-Path -Parent $candidate))
+        } -Validate {
+            param($msi)
+            $expectedScope = Read-FlitzZipCMakeCacheValue -BuildRoot $build -Name 'FLITZZIP_MSI_INSTALL_SCOPE'
+            $null = Assert-MsiUpgradeContract -Path $msi -ExpectedScope $expectedScope
+            $expectedProductVersion = Read-FlitzZipCPackValue -BuildRoot $build -Name "CPACK_PACKAGE_VERSION"
+            $expectedProductCode = Format-MsiGuid -GuidText (Read-FlitzZipCPackValue -BuildRoot $build -Name "CPACK_WIX_PRODUCT_GUID")
+            $expectedUpgradeCode = Format-MsiGuid -GuidText (Read-FlitzZipCPackValue -BuildRoot $build -Name "CPACK_WIX_UPGRADE_GUID")
+            $manufacturer = Read-MsiProperty -MsiPath $msi -Name "Manufacturer"
+            if ($manufacturer -ne "Efstratios Mitridis") {
+                throw "MSI Manufacturer was '$manufacturer'; expected 'Efstratios Mitridis'."
+            }
+            $productVersion = Read-MsiProperty -MsiPath $msi -Name "ProductVersion"
+            if ($productVersion -ne $expectedProductVersion) {
+                throw "MSI ProductVersion was '$productVersion'; expected '$expectedProductVersion'."
+            }
+            $productCode = Format-MsiGuid -GuidText (Read-MsiProperty -MsiPath $msi -Name "ProductCode")
+            if ($productCode -ne $expectedProductCode) {
+                throw "MSI ProductCode was '$productCode'; expected deterministic product code '$expectedProductCode'."
+            }
+            $upgradeCode = Format-MsiGuid -GuidText (Read-MsiProperty -MsiPath $msi -Name "UpgradeCode")
+            if ($upgradeCode -ne $expectedUpgradeCode) {
+                throw "MSI UpgradeCode was '$upgradeCode'; expected stable upgrade code '$expectedUpgradeCode'."
+            }
     }
     $msiHash = Get-FileHash -Algorithm SHA256 -LiteralPath $msi
     Set-Content -LiteralPath "$msi.sha256" -Value "$($msiHash.Hash.ToLowerInvariant())  $(Split-Path -Leaf $msi)"

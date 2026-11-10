@@ -30,6 +30,13 @@ Every product release must be Windows x64 and HIP-enabled. The portable ZIP and
 MSI contain the same application binaries and the same documentation. The
 portable package is installation-free, not feature-reduced.
 
+Packaging generates each ZIP or MSI in a fresh owned workspace. Native tool
+failure, missing/empty output or failed validation stops publication and preserves
+the preceding artifact. A validated artifact replaces its destination atomically;
+its checksum is generated only after successful publication. CPack must report
+success and produce the new MSI: an older file at the final path cannot satisfy
+that contract. Temporary generation data is removed on success and failure.
+
 ## GPU Targets
 
 The release workflow selects the `release` architecture preset from

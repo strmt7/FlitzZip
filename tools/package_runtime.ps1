@@ -36,6 +36,71 @@ function Assert-FlitzZipPackagedRuntime {
     }
 }
 
+# Run one native packaging command and reject failure before inspecting outputs.
+# The executable is selected by the pinned tool resolver; arguments remain an array.
+function Invoke-FlitzZipPackageTool {
+    param([string]$FilePath, [string[]]$Arguments, [string]$Operation)
+    $ErrorActionPreference = 'Stop'
+    if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "${Operation} failed with exit code $LASTEXITCODE." }
+}
+
+# Generate in a fresh owned directory, validate there, then atomically publish.
+# Generate receives the new candidate path and must throw on tool failure.
+# Validate receives a complete regular nonempty file; neither callback may publish it.
+# Failed generation/validation preserves any preceding artifact at the destination.
+function Publish-FlitzZipGeneratedPackage {
+    param(
+        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [Parameter(Mandatory = $true)][string]$FileName,
+        [Parameter(Mandatory = $true)][scriptblock]$Generate,
+        [scriptblock]$Validate
+    )
+    $ErrorActionPreference = 'Stop'
+    if ($FileName -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$') {
+        throw 'Package artifact must have a simple filename.'
+    }
+    $root = Get-Item -LiteralPath $OutputDirectory -Force
+    if (-not $root.PSIsContainer -or ($root.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Package output directory is redirected or invalid.'
+    }
+    $destination = Join-Path $root.FullName $FileName
+    $workspace = Join-Path $root.FullName ('package-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $workspace -ErrorAction Stop | Out-Null
+    try {
+        $candidate = Join-Path $workspace $FileName
+        & $Generate $candidate | Out-Host
+        $file = Get-Item -LiteralPath $candidate -Force -ErrorAction Stop
+        if ($file.PSIsContainer -or $file.Length -eq 0 -or
+            ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Package generator did not produce a complete regular artifact.'
+        }
+        if ($Validate) { & $Validate $candidate | Out-Host }
+        if (Test-Path -LiteralPath $destination) {
+            $previous = Get-Item -LiteralPath $destination -Force
+            if ($previous.PSIsContainer -or ($previous.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'Package publication destination is redirected or invalid.'
+            }
+            [IO.File]::Replace($candidate, $destination, [NullString]::Value)
+        } else {
+            [IO.File]::Move($candidate, $destination)
+        }
+        return $destination
+    } finally {
+        $owned = Get-Item -LiteralPath $workspace -Force -ErrorAction Stop
+        $resolved = [IO.Path]::GetFullPath($owned.FullName)
+        if ($resolved -cne [IO.Path]::GetFullPath($workspace) -or
+            [IO.Path]::GetDirectoryName($resolved) -cne $root.FullName -or
+            ($owned.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Refusing redirected package workspace cleanup.'
+        }
+        Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop
+    }
+}
+
 # Purpose: Admit truthful capability diagnostics without pretending a hardware-free host executed GPU work.
 # Inputs: Output/ExitCode came from the installed CLI; payload bytes must already have passed integrity validation.
 # Outputs: Accepts ready, missing-driver or missing-device states; rejects damaged modules and contradictory output.
