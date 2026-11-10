@@ -3,6 +3,7 @@
 #include "core/byte_plane_block.hpp"
 #include "core/checksum.hpp"
 #include "gpu/gpu_codec.hpp"
+#include "gpu/neutron_chunk_compaction.hpp"
 #include "test_flzip_helpers.hpp"
 #include "test_util.hpp"
 
@@ -750,6 +751,82 @@ TEST_CASE(flzip_neutron_byte_plane_writer_gpu_only_and_isolated) {
         try {
             (void)flitzzip::encode_chunk(input, invalid);
         } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
+
+// Exercise overlapping retention, zero-byte fills and a later trial's original
+// input with the same compactor used by both Neutron production passes.
+TEST_CASE(neutron_payload_compaction_preserves_allocation_and_dense_extents) {
+    using flitzzip::BlockKind;
+    using flitzzip::hip_detail::NeutronBlockReplacement;
+    flitzzip::EncodedChunk chunk{
+        .blocks =
+            {
+                {.kind = BlockKind::GpuPrefix, .uncompressed_len = 64U, .encoded_len = 4U},
+                {.kind = BlockKind::Fill, .fill_value = 42U, .uncompressed_len = 12U, .encoded_offset = 4U},
+                {.uncompressed_len = 5U, .encoded_offset = 4U, .encoded_len = 5U},
+                {.kind = BlockKind::GpuPrefix, .uncompressed_len = 32U, .encoded_offset = 9U, .encoded_len = 3U},
+                {.kind = BlockKind::Fill, .fill_value = 7U, .uncompressed_len = 2U, .encoded_offset = 12U},
+            },
+        .payload = {std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}, std::byte{5}, std::byte{6}, std::byte{7},
+                    std::byte{8}, std::byte{9}, std::byte{10}, std::byte{11}, std::byte{12}},
+        .source_crc32 = 0x731F68A1U,
+        .gpu_used = true,
+        .source_crc32_available = true,
+    };
+    const auto* const allocation = chunk.payload.data();
+    const auto result = flitzzip::hip_detail::compact_neutron_payload(
+        std::move(chunk), [](const auto& block, std::span<const std::byte> original) -> NeutronBlockReplacement {
+            if (block.encoded_offset == 0U) {
+                return {BlockKind::GpuBytePlane, {std::byte{20}, std::byte{21}}};
+            }
+            if (block.encoded_offset == 9U) {
+                REQUIRE_EQ(original.front(), std::byte{10});
+                REQUIRE_EQ(original.back(), std::byte{12});
+                return {BlockKind::GpuCompound, {std::byte{22}}};
+            }
+            return {};
+        });
+
+    const std::vector expected{std::byte{20}, std::byte{21}, std::byte{5}, std::byte{6},
+                               std::byte{7},  std::byte{8},  std::byte{9}, std::byte{22}};
+    REQUIRE_EQ(result.payload.data(), allocation);
+    REQUIRE_EQ(result.payload, expected);
+    REQUIRE_EQ(result.source_crc32, 0x731F68A1U);
+    REQUIRE_TRUE(result.gpu_used && result.source_crc32_available);
+    const std::array<std::uint64_t, 5> offsets{0U, 2U, 2U, 7U, 8U};
+    const std::array<std::uint32_t, 5> lengths{2U, 0U, 5U, 1U, 0U};
+    for (std::size_t i = 0; i != offsets.size(); ++i) {
+        REQUIRE_EQ(result.blocks[i].encoded_offset, offsets[i]);
+        REQUIRE_EQ(result.blocks[i].encoded_len, lengths[i]);
+    }
+    REQUIRE_EQ(result.blocks[0].kind, BlockKind::GpuBytePlane);
+    REQUIRE_EQ(result.blocks[1].fill_value, 42U);
+    REQUIRE_EQ(result.blocks[2].kind, BlockKind::Raw);
+    REQUIRE_EQ(result.blocks[3].kind, BlockKind::GpuCompound);
+    REQUIRE_EQ(result.blocks[4].fill_value, 7U);
+}
+
+TEST_CASE(neutron_payload_compaction_rejects_non_dense_input_and_equal_size_replacements) {
+    using flitzzip::hip_detail::NeutronBlockReplacement;
+    const auto select_equal = [](const auto&, auto) -> NeutronBlockReplacement {
+        return {flitzzip::BlockKind::GpuBytePlane, {std::byte{2}}};
+    };
+    for (const auto offset : {0U, 1U}) {
+        flitzzip::EncodedChunk chunk{
+            .blocks = {{.uncompressed_len = 1U, .encoded_offset = offset, .encoded_len = 1U}},
+            .payload = {std::byte{1}},
+        };
+        bool rejected = false;
+        try {
+            (void)flitzzip::hip_detail::compact_neutron_payload(std::move(chunk), select_equal);
+        } catch (const flitzzip::GpuError& error) {
+            REQUIRE_EQ(std::string_view(error.what()), offset == 0U
+                                                           ? "Neutron replacement must be smaller than its baseline"
+                                                           : "Neutron baseline does not contain dense block payloads");
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
