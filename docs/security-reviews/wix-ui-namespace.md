@@ -1,5 +1,9 @@
 # WiX UI Namespace Review
 
+## Individual Finding
+
+### Alert 10232
+
 DevSkim `DS137138` identifies the literal WiX v4 UI XML namespace in
 `Get-FlitzZipWixUiArgument` in `tools/package_runtime.ps1`. This is an XML
 namespace identifier, not a download or connection endpoint. Replacing its
