@@ -58,6 +58,7 @@ foreach(
   ITEMS libzstd_shared
         flitzzip_zstd_cover_probe
         flitzzip_zstd_cover_owner_probe
+        flitzzip_zstd_pool_probe
         flitzzip_zstd_legacy_fault_objects
         flitzzip_zstd_legacy_buffer_probe
         flitzzip_zstd_bounds_tests
@@ -78,23 +79,58 @@ if(NOT EXISTS "${_asan_runtime}")
   message(
     FATAL_ERROR "Installed MSVC x64 AddressSanitizer runtime is unavailable")
 endif()
-add_custom_command(
-  TARGET flitzzip_zstd_asan_control
-  POST_BUILD
+add_custom_target(
+  flitzzip_zstd_asan_runtime
+  COMMAND "${CMAKE_COMMAND}" -E make_directory
+          "$<TARGET_FILE_DIR:flitzzip_zstd_asan_control>"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_asan_runtime}"
           "$<TARGET_FILE_DIR:flitzzip_zstd_asan_control>"
-  COMMENT "Copying installed MSVC sanitizer runtime"
+  DEPENDS "${_asan_runtime}"
+  COMMENT "Admitting the selected compiler's sanitizer runtime"
   VERBATIM)
+foreach(target IN
+        ITEMS flitzzip_zstd_asan_control flitzzip_zstd_bounds_tests
+              flitzzip_zstd_cover_selection_tests flitzzip_zstd_legacy_tests)
+  add_dependencies("${target}" flitzzip_zstd_asan_runtime)
+endforeach()
+file(SHA256 "${_asan_runtime}" _asan_runtime_sha256)
+file(SHA256 "${CMAKE_CXX_COMPILER}" _asan_compiler_sha256)
+string(CONCAT _toolset_selector
+              "${CMAKE_GENERATOR_INSTANCE}/VC/Auxiliary/Build/"
+              "Microsoft.VCToolsVersion.default.txt")
+if(NOT EXISTS "${_toolset_selector}")
+  message(
+    FATAL_ERROR
+      "Visual Studio's selected default toolset identity is unavailable")
+endif()
+file(SHA256 "${_toolset_selector}" _toolset_selector_sha256)
+set(_runtime_record "{}")
+string(JSON _runtime_record SET "${_runtime_record}" source
+       "\"${_asan_runtime}\"")
+string(JSON _runtime_record SET "${_runtime_record}" compiler
+       "\"${CMAKE_CXX_COMPILER}\"")
+string(JSON _runtime_record SET "${_runtime_record}"
+       sha256 "\"${_asan_runtime_sha256}\"")
+string(JSON _runtime_record SET "${_runtime_record}" compiler_sha256
+       "\"${_asan_compiler_sha256}\"")
+string(JSON _runtime_record SET "${_runtime_record}" toolset_selector
+       "\"${_toolset_selector}\"")
+string(JSON _runtime_record SET "${_runtime_record}" toolset_selector_sha256
+       "\"${_toolset_selector_sha256}\"")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/asan-runtime-source.json"
+     "${_runtime_record}\n")
 add_test(
   NAME flitzzip_zstd_asan_qualification
   COMMAND
     "${CMAKE_COMMAND}" "-DCONTROL=$<TARGET_FILE:flitzzip_zstd_asan_control>" -P
     "${REPO_ROOT}/tests/cmake/test_zstd_asan_control.cmake")
-set_tests_properties(flitzzip_zstd_asan_qualification PROPERTIES TIMEOUT 45)
+set_tests_properties(
+  flitzzip_zstd_asan_qualification PROPERTIES TIMEOUT 45 FIXTURES_SETUP
+                                              flitzzip_zstd_asan_runtime)
 set_tests_properties(
   flitzzip_zstd_bounds_tests flitzzip_zstd_cover_selection_tests
-  flitzzip_zstd_legacy_tests PROPERTIES DEPENDS
-                                        flitzzip_zstd_asan_qualification)
-# Retain the shared composite/child deadlines from ZstdTests.cmake.
-# This standalone project has no product, HIP backend, installer or packaging
+  flitzzip_zstd_legacy_tests PROPERTIES FIXTURES_REQUIRED
+                                        flitzzip_zstd_asan_runtime)
+# Retain the shared composite/child deadlines from ZstdTests.cmake. This
+# standalone project has no product, HIP backend, installer or packaging
 # targets.

@@ -117,6 +117,12 @@ near them:
 
 ## Native Debugging Checklist
 
+Qualify optional features in enabled and disabled build configurations. Keep
+baseline assertions active when a feature is unavailable, and require real
+backend execution in that backend's qualification lane. Check Boolean feature
+macros by value (`#if FEATURE`) when the build defines both zero and one;
+checking only their presence does not distinguish those configurations.
+
 Use the narrowest tool that proves or rejects the hypothesis:
 
 - Breakpoint or tracepoint: prove command routing, state mutation, and worker

@@ -74,8 +74,12 @@ try {
         -Original 'flitzzip_patch_zstd_default_allocator("${source_dir}")' `
         -Replacement '# omitted shared allocator' -Cause 'shared default allocator production dispatch'
     Assert-ZstdPolicyMutation -Path 'cmake/ZstdDefaultAllocator.cmake' `
-        -Original 'ZSTDLIB_STATIC_API extern ZSTD_customMem const ZSTD_defaultCMem;' `
+        -Original 'ZSTDLIB_API extern ZSTD_customMem const ZSTD_defaultCMem;' `
         -Replacement 'static ZSTD_customMem const ZSTD_defaultCMem;' -Cause 'shared default allocator declaration'
+    Assert-ZstdPolicyMutation -Path 'cmake/ZstdDefaultAllocator.cmake' `
+        -Original 'ZSTDLIB_API extern ZSTD_customMem const ZSTD_defaultCMem;' `
+        -Replacement 'ZSTDLIB_STATIC_API extern ZSTD_customMem const ZSTD_defaultCMem;' `
+        -Cause 'shared default allocator declaration'
     Assert-ZstdPolicyMutation -Path 'cmake/ZstdDefaultAllocator.cmake' `
         -Original 'if(NOT actual STREQUAL _zstd_default_allocator_common_original)' `
         -Replacement 'if(FALSE)' -Cause 'shared default allocator source identity'

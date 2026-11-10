@@ -8,12 +8,34 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <span>
 #include <sstream>
+#include <system_error>
+#include <utility>
 
 namespace flitzzip_test {
 
 inline constexpr std::uint32_t kTestFooterMagic = 0x465A5553;  // SUZF
+
+// Own only a directory acquired from test_temp_dir, including assertion paths.
+// Normal completion must remove it explicitly so cleanup errors fail the test;
+// unwinding preserves the original failure and reports any cleanup error.
+struct ScopedTestDirectory {
+    std::filesystem::path path;
+
+    explicit ScopedTestDirectory(std::filesystem::path owned) noexcept : path(std::move(owned)) {}
+    ScopedTestDirectory(const ScopedTestDirectory&) = delete;
+    ScopedTestDirectory& operator=(const ScopedTestDirectory&) = delete;
+
+    ~ScopedTestDirectory() {
+        std::error_code error;
+        std::filesystem::remove_all(path, error);
+        if (error) {
+            std::cerr << "Native fixture directory cleanup failed: " << error.value() << '\n';
+        }
+    }
+};
 
 // Purpose: Overwrite a little-endian 64-bit field at a fixed archive byte offset.
 // Inputs: `path` identifies the archive, `offset` is the zero-based byte offset, and `value` is the replacement value.

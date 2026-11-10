@@ -29,13 +29,17 @@ struct GpuBytePlaneStage {
     std::span<const std::byte> payload;
 };
 
-// Purpose: Validate a nonrecursive byte-plane frame before allocation or device dispatch.
-// Inputs: Exact encoded bytes and a bounded outer descriptor; inner codecs are the closed plain GPU set.
-// Outputs: Returns an equally sized transformed-stage descriptor or throws for noncanonical framing.
-inline GpuBytePlaneStage parse_gpu_byte_plane_block(std::span<const std::byte> encoded, const BlockDescriptor& outer) {
+struct GpuBytePlaneHeader {
+    std::uint8_t width;
+    BlockDescriptor inner;
+};
+
+// Inspect the four-byte header against the complete declared extent without reading codec bytes.
+inline GpuBytePlaneHeader parse_gpu_byte_plane_header(std::span<const std::byte> encoded,
+                                                      const BlockDescriptor& outer) {
     if (outer.kind != BlockKind::GpuBytePlane || outer.fill_value != 0U || outer.uncompressed_len == 0U ||
-        outer.uncompressed_len > kMaxArchiveBlockBytes || encoded.size() != outer.encoded_len ||
-        encoded.size() < kGpuBytePlaneHeaderBytes || encoded.size() >= outer.uncompressed_len) {
+        outer.uncompressed_len > kMaxArchiveBlockBytes || outer.encoded_len < kGpuBytePlaneHeaderBytes ||
+        encoded.size() < kGpuBytePlaneHeaderBytes || outer.encoded_len >= outer.uncompressed_len) {
         throw ArchiveError("GPU byte-plane framing is invalid");
     }
     const auto width = static_cast<std::uint8_t>(encoded[0]);
@@ -44,15 +48,23 @@ inline GpuBytePlaneStage parse_gpu_byte_plane_block(std::span<const std::byte> e
     if (!is_gpu_byte_plane_width(width) || outer.uncompressed_len < width ||
         (!is_gpu_compound_stage(kind) && kind != BlockKind::Fill) || encoded[3] != std::byte{0} ||
         (kind != BlockKind::Fill && fill != 0U) ||
-        (kind == BlockKind::Fill && encoded.size() != kGpuBytePlaneHeaderBytes)) {
+        (kind == BlockKind::Fill && outer.encoded_len != kGpuBytePlaneHeaderBytes)) {
         throw ArchiveError("GPU byte-plane stage is unsupported or noncanonical");
     }
     return {.width = width,
             .inner = {.kind = kind,
                       .fill_value = fill,
                       .uncompressed_len = outer.uncompressed_len,
-                      .encoded_len = static_cast<std::uint32_t>(encoded.size() - kGpuBytePlaneHeaderBytes)},
-            .payload = encoded.subspan(kGpuBytePlaneHeaderBytes)};
+                      .encoded_len = static_cast<std::uint32_t>(outer.encoded_len - kGpuBytePlaneHeaderBytes)}};
+}
+
+// Admit the complete frame extent; returned payload borrows encoded and still needs codec validation.
+inline GpuBytePlaneStage parse_gpu_byte_plane_block(std::span<const std::byte> encoded, const BlockDescriptor& outer) {
+    if (encoded.size() != outer.encoded_len) {
+        throw ArchiveError("GPU byte-plane framing is invalid");
+    }
+    const auto header = parse_gpu_byte_plane_header(encoded, outer);
+    return {.width = header.width, .inner = header.inner, .payload = encoded.subspan(kGpuBytePlaneHeaderBytes)};
 }
 
 struct GpuBytePlaneContextStages {
@@ -60,6 +72,13 @@ struct GpuBytePlaneContextStages {
     std::uint8_t count;
     std::array<BlockDescriptor, 8> blocks{};
     std::span<const std::byte> payload;
+};
+
+struct GpuBytePlaneContextHeader {
+    std::uint8_t width;
+    std::uint8_t count;
+    std::array<BlockDescriptor, 8> blocks{};
+    std::size_t header_bytes;
 };
 
 // Purpose: Classify one nonempty plane's canonical codec metadata independently from payload containment.
@@ -81,14 +100,13 @@ inline bool is_canonical_gpu_byte_plane_context_stage(const BlockDescriptor& sta
     return is_gpu_compound_stage(stage.kind) && stage.encoded_len != 0U && stage.encoded_len < stage.uncompressed_len;
 }
 
-// Purpose: Admit a closed, dense table of independently encoded byte planes before allocation or dispatch.
-// Inputs: Exact frame bytes and a bounded outer descriptor; decoded plane lengths are derived from its extent.
-// Outputs: Returns nonrecursive plain-stage descriptors or rejects noncanonical kinds, lengths and trailing data.
-inline GpuBytePlaneContextStages parse_gpu_byte_plane_contexts(std::span<const std::byte> encoded,
-                                                               const BlockDescriptor& outer) {
+// Admit the complete fixed table and declared payload geometry, without reading codec bodies.
+// At most 52 prefix bytes are needed; all child descriptors are owned values.
+inline GpuBytePlaneContextHeader parse_gpu_byte_plane_context_header(std::span<const std::byte> encoded,
+                                                                     const BlockDescriptor& outer) {
     if (outer.kind != BlockKind::GpuBytePlaneContexts || outer.fill_value != 0U || outer.uncompressed_len == 0U ||
-        outer.uncompressed_len > kMaxArchiveBlockBytes || encoded.size() != outer.encoded_len ||
-        encoded.size() < kGpuBytePlaneHeaderBytes || encoded.size() >= outer.uncompressed_len) {
+        outer.uncompressed_len > kMaxArchiveBlockBytes || outer.encoded_len < kGpuBytePlaneHeaderBytes ||
+        encoded.size() < kGpuBytePlaneHeaderBytes || outer.encoded_len >= outer.uncompressed_len) {
         throw ArchiveError("GPU byte-plane context framing is invalid");
     }
     const auto width = static_cast<std::uint8_t>(encoded[0]);
@@ -97,10 +115,11 @@ inline GpuBytePlaneContextStages parse_gpu_byte_plane_contexts(std::span<const s
         throw ArchiveError("GPU byte-plane context header is noncanonical");
     }
     const auto header_bytes = kGpuBytePlaneHeaderBytes + width * kGpuBytePlaneContextRecordBytes;
-    if (encoded.size() < header_bytes) {
+    if (encoded.size() < header_bytes || outer.encoded_len < header_bytes) {
         throw ArchiveError("GPU byte-plane context table is truncated");
     }
-    GpuBytePlaneContextStages stages{.width = width, .count = width, .payload = encoded.subspan(header_bytes)};
+    GpuBytePlaneContextHeader stages{.width = width, .count = width, .header_bytes = header_bytes};
+    const auto payload_bytes = outer.encoded_len - header_bytes;
     std::size_t cursor = 0U;
     const auto records = outer.uncompressed_len / width;
     for (std::size_t plane = 0U; plane < width; ++plane) {
@@ -120,16 +139,29 @@ inline GpuBytePlaneContextStages parse_gpu_byte_plane_contexts(std::span<const s
         if (!is_canonical_gpu_byte_plane_context_stage(stage)) {
             throw ArchiveError("GPU byte-plane context stage is unsupported or noncanonical");
         }
-        if (cursor > stages.payload.size() || bytes > stages.payload.size() - cursor) {
+        if (cursor > payload_bytes || bytes > payload_bytes - cursor) {
             throw ArchiveError("GPU byte-plane context stage is unsupported or noncanonical");
         }
         stages.blocks[plane] = stage;
         cursor += bytes;
     }
-    if (cursor != stages.payload.size()) {
+    if (cursor != payload_bytes) {
         throw ArchiveError("GPU byte-plane context frame contains trailing bytes");
     }
     return stages;
+}
+
+// Admit exact frame containment as well as its table. The returned payload borrows encoded.
+inline GpuBytePlaneContextStages parse_gpu_byte_plane_contexts(std::span<const std::byte> encoded,
+                                                               const BlockDescriptor& outer) {
+    if (encoded.size() != outer.encoded_len) {
+        throw ArchiveError("GPU byte-plane context framing is invalid");
+    }
+    const auto header = parse_gpu_byte_plane_context_header(encoded, outer);
+    return {.width = header.width,
+            .count = header.count,
+            .blocks = header.blocks,
+            .payload = encoded.subspan(header.header_bytes)};
 }
 
 // Purpose: Resolve both byte-plane versions into one nonrecursive stage table for their common readers.

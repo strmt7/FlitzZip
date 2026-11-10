@@ -57,7 +57,7 @@ function Assert-ZstdOwnedDecoderPolicy {
         @('tests/zstd/headers/CMakeLists.txt', 'elseif(NOT actual STREQUAL "${hash_preprocessing_${extension}_${mode}}")', 'classic hash token equivalence'),
         @('tests/zstd/headers/hash_contract.c', '#ifndef XXH_NO_XXH3', 'classic hash capability boundary'),
         @('cmake/PatchZstdLegacy.cmake', 'flitzzip_patch_zstd_default_allocator("${source_dir}")', 'shared default allocator production dispatch'),
-        @('cmake/ZstdDefaultAllocator.cmake', 'ZSTDLIB_STATIC_API extern ZSTD_customMem const ZSTD_defaultCMem;', 'shared default allocator declaration'),
+        @('cmake/ZstdDefaultAllocator.cmake', 'ZSTDLIB_API extern ZSTD_customMem const ZSTD_defaultCMem;', 'shared default allocator declaration'),
         @('cmake/ZstdDefaultAllocator.cmake', 'if(NOT actual STREQUAL _zstd_default_allocator_common_original)', 'shared default allocator source identity'),
         @('tests/zstd/headers/CMakeLists.txt', 'require_default_allocator_sharing(FALSE)', 'shared default allocator negative control'),
         @('tests/zstd/headers/CMakeLists.txt', 'require_default_allocator_sharing(TRUE)', 'shared default allocator production linkage'),

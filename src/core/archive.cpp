@@ -18,6 +18,7 @@
 #include "core/sparse_pattern_block.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <deque>
 #include <fstream>
@@ -30,6 +31,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace flitzzip {
@@ -296,12 +298,9 @@ ArchiveIndex read_index_from_file(std::ifstream& input) {
     return index;
 }
 
-// Purpose: Read a bounded payload range for one archive entry.
-// Inputs: `input` is the archive stream, `entry` supplies payload base metadata, `archive_size` bounds the file,
-// `relative_offset` is entry-relative payload offset, and `size` is bytes to read. Outputs: Returns payload bytes;
-// throws `ArchiveError` when metadata points outside the archive or bytes are truncated.
-std::vector<std::byte> read_payload_window(std::ifstream& input, const ArchiveEntry& entry, std::uint64_t archive_size,
-                                           std::uint64_t relative_offset, std::uint64_t size) {
+// Validate a complete entry-relative window before allocation or stream positioning.
+std::uint64_t payload_window_offset(const ArchiveEntry& entry, std::uint64_t archive_size,
+                                    std::uint64_t relative_offset, std::uint64_t size) {
     if (entry.payload_offset > archive_size || entry.payload_size > archive_size ||
         entry.payload_offset > archive_size - entry.payload_size || relative_offset > entry.payload_size ||
         size > entry.payload_size - relative_offset) {
@@ -310,12 +309,29 @@ std::vector<std::byte> read_payload_window(std::ifstream& input, const ArchiveEn
     if (size > kMaxArchiveChunkBytes) {
         throw ArchiveError("entry payload window exceeds FlitzZip resource limit");
     }
-    input.seekg(static_cast<std::streamoff>(entry.payload_offset + relative_offset), std::ios::beg);
-    std::vector<std::byte> payload(static_cast<std::size_t>(size));
+    const auto offset = entry.payload_offset + relative_offset;
+    if (offset > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
+        throw ArchiveError("entry payload offset exceeds stream position range");
+    }
+    return offset;
+}
+
+// Read into caller-owned storage after payload_window_offset admitted the full window.
+// A short read fails; no partially read prefix is admitted or decoded.
+void read_payload_at(std::ifstream& input, std::uint64_t offset, std::span<std::byte> payload) {
+    input.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
     input.read(reinterpret_cast<char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
-    if (static_cast<std::uint64_t>(input.gcount()) != size) {
+    if (static_cast<std::size_t>(input.gcount()) != payload.size()) {
         throw ArchiveError("entry payload is truncated");
     }
+}
+
+// Return an owned bounded payload window; admission precedes its allocation.
+std::vector<std::byte> read_payload_window(std::ifstream& input, const ArchiveEntry& entry, std::uint64_t archive_size,
+                                           std::uint64_t relative_offset, std::uint64_t size) {
+    const auto offset = payload_window_offset(entry, archive_size, relative_offset, size);
+    std::vector<std::byte> payload(static_cast<std::size_t>(size));
+    read_payload_at(input, offset, payload);
     return payload;
 }
 
@@ -727,6 +743,41 @@ ArchiveValidationSummary validate_archive_index_metadata(const ArchiveIndex& ind
     return summary;
 }
 
+// Admit all advertised composition stages before allocating codec work or publishing any entry.
+// Index and entry metadata must already be validated. Read at most 52 fixed bytes
+// per composition into reusable stack storage, never codec bodies or decoded data.
+void validate_archive_payload_headers(std::ifstream& input, const ArchiveIndex& index, std::uint64_t archive_size) {
+    std::array<std::byte, kMaxEncodedBlockVersionPrefixBytes> prefix{};
+    for (const auto& entry : index.entries) {
+        for (const auto& block : entry.blocks) {
+            const auto bytes = std::min<std::size_t>(encoded_block_version_prefix_bytes(block.kind), block.encoded_len);
+            if (bytes == 0U) {
+                continue;
+            }
+            const auto offset = payload_window_offset(entry, archive_size, block.encoded_offset, block.encoded_len);
+            const auto window = std::span(prefix).first(bytes);
+            read_payload_at(input, offset, window);
+            if (minimum_archive_version_for_encoded_header(block, window) > index.version) {
+                throw ArchiveError("archive composition stage is not supported by its version");
+            }
+        }
+    }
+}
+
+struct ValidatedArchiveIndex {
+    ArchiveIndex index;
+    ArchiveValidationSummary validation;
+};
+
+// Both public readers must admit paths, extents and all fixed headers before decode setup.
+// Return owned metadata and its matching resource summary; codec bodies remain unvalidated.
+ValidatedArchiveIndex read_validated_index_from_file(std::ifstream& input, std::uint64_t archive_size) {
+    auto index = read_index_from_file(input);
+    const auto validation = validate_archive_index_metadata(index);
+    validate_archive_payload_headers(input, index, archive_size);
+    return {.index = std::move(index), .validation = validation};
+}
+
 // Purpose: Resolve the decode window used for memory budgeting and block grouping.
 // Inputs: `options` contains the caller-requested chunk size and `summary` contains validated archive block
 // requirements. Outputs: Returns a window large enough for any single block while honoring larger caller chunk sizes.
@@ -1001,10 +1052,7 @@ OperationStats extract_flzip(const std::filesystem::path& requested_archive, con
         throw ArchiveError("cannot open archive: " + path_diagnostic_utf8(archive_path));
     }
     const auto archive_size = archive_source.size();
-    auto index = read_index_from_file(input);
-
-    // Validate the complete index up front so extraction cannot create files for malformed metadata.
-    const auto validation = validate_archive_index_metadata(index);
+    auto [index, validation] = read_validated_index_from_file(input, archive_size);
     const auto decode_window_bytes = resolve_decode_window_bytes(options, validation);
     auto budget = resolve_pipeline_budget(decode_window_bytes, options.worker_count, options.max_inflight_chunks,
                                           nullptr, index.version >= 9U);
@@ -1127,8 +1175,7 @@ OperationStats verify_flzip(const std::filesystem::path& requested_archive, cons
         throw ArchiveError("cannot open archive: " + path_diagnostic_utf8(archive_path));
     }
     const auto archive_size = archive_source.size();
-    auto index = read_index_from_file(input);
-    const auto validation = validate_archive_index_metadata(index);
+    auto [index, validation] = read_validated_index_from_file(input, archive_size);
     const auto decode_window_bytes = resolve_decode_window_bytes(options, validation);
     const auto budget = resolve_pipeline_budget(decode_window_bytes, options.worker_count, options.max_inflight_chunks,
                                                 nullptr, index.version >= 9U);

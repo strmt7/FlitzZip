@@ -12,6 +12,16 @@ extern "C" {
 #include <limits>
 #include <memory>
 
+extern "C" const ZSTD_customMem* flitzzip_default_allocator_a(void);
+
+TEST_CASE(zstd_work_group_pool_imports_the_shared_default_allocator) {
+    const auto* allocator = flitzzip_default_allocator_a();
+    REQUIRE_TRUE(allocator == &ZSTD_defaultCMem);
+    REQUIRE_TRUE(allocator->customAlloc == nullptr);
+    REQUIRE_TRUE(allocator->customFree == nullptr);
+    REQUIRE_TRUE(allocator->opaque == nullptr);
+}
+
 namespace {
 using GroupOwner = std::unique_ptr<COVER_workGroup, decltype(&COVER_releaseWorkGroup)>;
 std::size_t contextDestructions = 0;

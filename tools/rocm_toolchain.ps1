@@ -49,7 +49,25 @@ function Resolve-RocmSdkRoot {
     throw "Provision the complete ROCm Core SDK $($lock.version) with tools/bootstrap_rocm_sdk.py; see docs/rocm-toolchain.md."
 }
 
-# Purpose: Scope AMD compiler discovery to one build action and restore every caller setting.
+# Purpose: Provide only OS commands before Visual Studio initializes its explicit toolchain.
+# Inputs: Windows known folders, not the caller's potentially oversized PATH.
+# Outputs: Returns the complete command-search baseline or rejects unavailable OS directories.
+function Get-RocmCompilerCommandPath {
+    $systemDirectory = [Environment]::GetFolderPath('System')
+    $windowsDirectory = [Environment]::GetFolderPath('Windows')
+    if (-not $systemDirectory -or -not $windowsDirectory) {
+        throw 'The Windows HIP compiler requires the Windows system directories.'
+    }
+    $directories = @($systemDirectory, $windowsDirectory, (Join-Path $systemDirectory 'WindowsPowerShell/v1.0'))
+    foreach ($directory in $directories) {
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+            throw 'A required Windows compiler command directory is unavailable.'
+        }
+    }
+    return ($directories -join [IO.Path]::PathSeparator)
+}
+
+# Purpose: Scope AMD compiler discovery and command search to one build action, restoring every caller setting.
 # Inputs: Root is a validated SDK root; Action invokes compilers or their dependency scans, never the product runtime.
 # Outputs: Forwards action output/errors and restores process environment even after an exception.
 function Invoke-RocmCompilerEnvironment {
@@ -58,6 +76,8 @@ function Invoke-RocmCompilerEnvironment {
         HIP_PATH = $Root; ROCM_PATH = $Root; HIP_PLATFORM = 'amd'
         HIP_DEVICE_LIB_PATH = (Join-Path $Root 'lib/llvm/amdgcn/bitcode')
         LLVM_PATH = (Join-Path $Root 'lib/llvm')
+        PATH = Get-RocmCompilerCommandPath
+        __VSCMD_PREINIT_PATH = $null
     }
     Invoke-FlitzZipProcessEnvironment -Settings $settings -Action $Action
 }

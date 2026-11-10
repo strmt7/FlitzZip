@@ -130,6 +130,16 @@ compiler discovery. FlitzZip sets these, `HIP_PATH`, `ROCM_PATH` and
 the caller's values on both success and failure. No global PATH modification or
 SDK runtime redistribution is required.
 
+Compiler actions start with only the discovered Windows system, Windows and
+Windows PowerShell command directories on their process-local `PATH`.
+The selected Visual Studio initialization script then supplies its compiler
+and SDK search paths; inherited application paths and stale
+`__VSCMD_PREINIT_PATH` are not reused. This avoids depending on an unrelated
+user command environment or exceeding [CMD's environment-expansion limit](https://learn.microsoft.com/en-us/troubleshoot/windows-client/shell-experience/command-line-string-limitation).
+Compilation and dependency scans use `cmd /d` to disable unrelated AutoRun
+commands. The original values are restored after success or failure; system
+and user environment settings are never rewritten.
+
 An isolated fixture on one driver configuration crashed with `0xC0000005` when
 the new SDK's `LLVM_PATH` was present, then passed with that variable unset and
 the same System32 runtime loaded. This is finite host evidence, not a claim that

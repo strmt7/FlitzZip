@@ -149,7 +149,7 @@ function Add-HipDeviceDependency {
     $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($architecture in $Arch.Split(',')) {
         $scan = "$Prefix --offload-arch=$architecture --offload-device-only $CompilerArguments -E `"$Source`""
-        cmd /c $scan | ForEach-Object {
+        cmd /d /c $scan | ForEach-Object {
             if ([string]$_ -match '^#\s+\d+\s+"((?:[^"\\]|\\.)*)"') {
                 $path = $Matches[1].Replace('\\', '\')
                 if (-not $path.StartsWith('<')) {
@@ -209,7 +209,7 @@ function Invoke-HipCompile {
     $compilerArguments = "-std=c++20 -O3 -fms-runtime-lib=static -DFLITZZIP_ENABLE_HIP=1 -I`"$IncludePath`""
     $cmd = "$prefix $offloadArguments $dependencyArguments $compilerArguments -c `"$Source`" -o `"$Output`""
     try {
-        cmd /c $cmd | ForEach-Object { Write-Information ([string]$_) -InformationAction Continue }
+        cmd /d /c $cmd | ForEach-Object { Write-Information ([string]$_) -InformationAction Continue }
     } catch {
         Invoke-HipCompileCleanup
         throw

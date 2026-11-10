@@ -137,25 +137,6 @@ std::vector<std::byte> interleaved_context_source(std::uint8_t width) {
     return input;
 }
 
-// Own only this test's directory, including assertion and exception paths.
-// Normal completion explicitly removes it so cleanup errors fail the test;
-// unwinding preserves the original failure and reports any cleanup error.
-struct WriterVersionDirectory {
-    std::filesystem::path path;
-
-    explicit WriterVersionDirectory(std::filesystem::path owned) noexcept : path(std::move(owned)) {}
-    WriterVersionDirectory(const WriterVersionDirectory&) = delete;
-    WriterVersionDirectory& operator=(const WriterVersionDirectory&) = delete;
-
-    ~WriterVersionDirectory() {
-        std::error_code error;
-        std::filesystem::remove_all(path, error);
-        if (error) {
-            std::cerr << "Writer version fixture cleanup failed: " << error.value() << '\n';
-        }
-    }
-};
-
 // Exercise both actual writer paths with a version-eleven winner preceding a
 // legacy fill block. The later lower minimum must never downgrade the archive.
 void require_context_writer_version_accumulation(bool batched) {
@@ -163,7 +144,8 @@ void require_context_writer_version_accumulation(bool batched) {
         std::cout << "[SKIP] context writer version accumulation requires HIP\n";
         return;
     }
-    const WriterVersionDirectory directory{test_temp_dir(batched ? "context-batch-version" : "context-stream-version")};
+    const flitzzip_test::ScopedTestDirectory directory{
+        test_temp_dir(batched ? "context-batch-version" : "context-stream-version")};
     const auto& root = directory.path;
     auto context = interleaved_context_source(8U);
     REQUIRE_EQ(context.size(), 65543U);
@@ -242,7 +224,7 @@ TEST_CASE(flzip_neutron_batch_versions_preserve_earlier_context_winner) {
 TEST_CASE(flzip_writer_version_fixture_releases_directory_on_assertion_failure) {
     std::filesystem::path path;
     try {
-        const WriterVersionDirectory directory{test_temp_dir("context-version-unwind")};
+        const flitzzip_test::ScopedTestDirectory directory{test_temp_dir("context-version-unwind")};
         path = directory.path;
         std::ofstream(path / "owned.bin", std::ios::binary).put('x');
         REQUIRE_TRUE(false);

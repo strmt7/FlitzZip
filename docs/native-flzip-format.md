@@ -137,9 +137,15 @@ contract. The writer accumulates the version floor while each final encoded
 payload is owned, inspecting both compound stages and every byte-plane stage
 before releasing those bytes. Extended pattern payloads still require version four. That capability
 query is separate from full descriptor and codec validation; a known kind does
-not establish valid lengths or payload bytes. Any extension admitting an inner
-kind newer than its composition must also inspect the actual composition headers
-when selecting and enforcing the archive version.
+not establish valid lengths or payload bytes. Before decode setup or extraction
+publication, the reader checks every composition's fixed header against its
+declared extent and archive version. It reads at most 52 bytes per composition
+into reusable storage; ordinary blocks need no payload read for this check.
+Writer inspection, reader preflight and complete-frame parsing share the same
+header admission. Codec bodies, recovered compound payloads and CRCs still
+require their normal downstream validation. Any extension admitting a newer
+inner kind must preserve admission of that kind before dispatch, including
+after a compound intermediate has been recovered.
 
 ## Detection
 

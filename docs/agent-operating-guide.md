@@ -530,6 +530,11 @@ crawling, indexing, MCP commands and experimental tools.
   completion. Success, exceptions, cancellation, output limits and timeouts
   must all release the resources owned by that operation. Report cleanup failures
   rather than returning an unconditional success.
+- Automated CTest drivers must use `--interactive-debug-mode 0`. Validate native
+  compiler/runtime identity before launch, and use fixture prerequisites so a
+  failed environment control prevents dependent tests from starting. Preserve
+  failing exit status and diagnostics; automated failures must not require
+  desktop dialog dismissal.
 - Do not detach unowned work or add a service, scheduled task, startup entry,
   recurring job or keep-alive mechanism unless the maintainer requests that
   persistent behavior. An ordinary tool installation is not permission to add

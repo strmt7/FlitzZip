@@ -86,6 +86,22 @@ set(_dictionary_merge_probe
 flitzzip_generate_zstd_dictionary_probe(
   "${FLITZZIP_ZSTD_LIBRARY_DIR}/dictBuilder/zdict.c"
   "${_dictionary_merge_probe}")
+# The local worker pool owns its advanced functions but imports the product
+# DLL's shared allocator. Keep function and data visibility independent.
+add_library(
+  flitzzip_zstd_pool_probe OBJECT
+  "${FLITZZIP_SOURCE_ROOT}/tests/zstd/headers/default_allocator_a.c"
+  "${FLITZZIP_ZSTD_LIBRARY_DIR}/common/pool.c"
+  "${FLITZZIP_ZSTD_LIBRARY_DIR}/common/threading.c")
+target_include_directories(flitzzip_zstd_pool_probe
+                           PRIVATE "${FLITZZIP_ZSTD_LIBRARY_DIR}")
+target_compile_definitions(
+  flitzzip_zstd_pool_probe
+  PRIVATE ZSTD_MULTITHREAD NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
+          ZSTDLIB_STATIC_API=)
+target_link_libraries(flitzzip_zstd_pool_probe PRIVATE libzstd_shared)
+target_compile_options(flitzzip_zstd_pool_probe
+                       PRIVATE "$<$<C_COMPILER_ID:MSVC>:/we4273>")
 add_executable(
   flitzzip_zstd_cover_selection_tests
   "${FLITZZIP_SOURCE_ROOT}/tests/cpp/test_main.cpp"
@@ -97,9 +113,8 @@ add_executable(
   "${_dictionary_merge_probe}"
   $<TARGET_OBJECTS:flitzzip_zstd_cover_probe>
   $<TARGET_OBJECTS:flitzzip_zstd_cover_owner_probe>
-  "${FLITZZIP_ZSTD_LIBRARY_DIR}/dictBuilder/divsufsort.c"
-  "${FLITZZIP_ZSTD_LIBRARY_DIR}/common/pool.c"
-  "${FLITZZIP_ZSTD_LIBRARY_DIR}/common/threading.c")
+  $<TARGET_OBJECTS:flitzzip_zstd_pool_probe>
+  "${FLITZZIP_ZSTD_LIBRARY_DIR}/dictBuilder/divsufsort.c")
 target_include_directories(
   flitzzip_zstd_cover_selection_tests
   PRIVATE "${FLITZZIP_SOURCE_ROOT}/tests/cpp" "${FLITZZIP_SOURCE_ROOT}/cmake"
@@ -228,8 +243,8 @@ add_test(
     "-DGENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}" -P
     "${_zstd_header_contract}")
 set_tests_properties(flitzzip_zstd_legacy_tests PROPERTIES TIMEOUT 60)
-# This composite includes fresh, historical and malformed-source migrations.
-# Its children retain individual deadlines; allow their cumulative work on a
-# shared host without inheriting a single-child wall-clock budget.
+# This composite includes fresh, historical and malformed-source migrations. Its
+# children retain individual deadlines; allow their cumulative work on a shared
+# host without inheriting a single-child wall-clock budget.
 set_tests_properties(flitzzip_zstd_legacy_patch PROPERTIES TIMEOUT 600)
 set_tests_properties(flitzzip_zstd_header_contracts PROPERTIES TIMEOUT 150)

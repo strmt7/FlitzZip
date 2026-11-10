@@ -38,31 +38,38 @@ try {
         try { Assert-RocmSdkRoot -Root $path | Out-Null } catch { $rejected = $true }
         if (-not $rejected) { throw 'An unsafe compiler root was accepted.' }
     }
-    $names = @('HIP_PATH', 'ROCM_PATH', 'HIP_PLATFORM', 'HIP_DEVICE_LIB_PATH', 'LLVM_PATH')
-    $previous = @{}
-    foreach ($name in $names) { $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
-    foreach ($failAction in @($false, $true)) {
-        $caught = $false
-        try {
-            $result = @(Invoke-RocmCompilerEnvironment -Root $fixture -Action {
-                if ($env:HIP_PATH -cne $fixture -or $env:ROCM_PATH -cne $fixture -or
-                    $env:HIP_PLATFORM -cne 'amd' -or
-                    $env:HIP_DEVICE_LIB_PATH -cne (Join-Path $fixture 'lib/llvm/amdgcn/bitcode') -or
-                    $env:LLVM_PATH -cne (Join-Path $fixture 'lib/llvm')) {
-                    throw 'Compiler inputs do not share the selected SDK.'
+    Invoke-FlitzZipProcessEnvironment -Settings @{ PATH = ('inherited-command-path;' * 500); __VSCMD_PREINIT_PATH = ('old-command-path;' * 500) } -Action {
+        $names = @('HIP_PATH', 'ROCM_PATH', 'HIP_PLATFORM', 'HIP_DEVICE_LIB_PATH', 'LLVM_PATH', 'PATH', '__VSCMD_PREINIT_PATH')
+        $previous = @{}
+        foreach ($name in $names) { $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+        foreach ($failAction in @($false, $true)) {
+            $caught = $false
+            try {
+                $result = @(Invoke-RocmCompilerEnvironment -Root $fixture -Action {
+                    if ($env:HIP_PATH -cne $fixture -or $env:ROCM_PATH -cne $fixture -or
+                        $env:HIP_PLATFORM -cne 'amd' -or
+                        $env:HIP_DEVICE_LIB_PATH -cne (Join-Path $fixture 'lib/llvm/amdgcn/bitcode') -or
+                        $env:LLVM_PATH -cne (Join-Path $fixture 'lib/llvm')) {
+                        throw 'Compiler inputs do not share the selected SDK.'
+                    }
+                    $system = [Environment]::GetFolderPath('System')
+                    $expected = @($system, [Environment]::GetFolderPath('Windows'), (Join-Path $system 'WindowsPowerShell/v1.0')) -join ';'
+                    if ($env:PATH -cne $expected -or (Test-Path Env:__VSCMD_PREINIT_PATH)) {
+                        throw 'Compiler search inherited caller paths or stale Visual Studio initialization state.'
+                    }
+                    if ($failAction) { throw 'test: compiler failure' }
+                    42
+                })
+                if ($result.Count -ne 1 -or $result[0] -ne 42) { throw 'Compiler scope contaminated action output.' }
+            } catch {
+                if ($_.Exception.Message -cne 'test: compiler failure') { throw }
+                $caught = $true
+            }
+            if ($caught -ne $failAction) { throw 'Compiler scope changed failure behavior.' }
+            foreach ($name in $names) {
+                if ([Environment]::GetEnvironmentVariable($name, 'Process') -cne $previous[$name]) {
+                    throw "Compiler scope leaked its $name setting into runtime work."
                 }
-                if ($failAction) { throw 'test: compiler failure' }
-                42
-            })
-            if ($result.Count -ne 1 -or $result[0] -ne 42) { throw 'Compiler scope contaminated action output.' }
-        } catch {
-            if ($_.Exception.Message -cne 'test: compiler failure') { throw }
-            $caught = $true
-        }
-        if ($caught -ne $failAction) { throw 'Compiler scope changed failure behavior.' }
-        foreach ($name in $names) {
-            if ([Environment]::GetEnvironmentVariable($name, 'Process') -cne $previous[$name]) {
-                throw "Compiler scope leaked its $name setting into runtime work."
             }
         }
     }

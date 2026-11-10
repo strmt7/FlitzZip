@@ -3,6 +3,8 @@
 set(_zstd_default_allocator_static_original
     "58f72d1bbfa9d1a2349d7c6077a0414c8b6f56624eef4900816b067344d2733d")
 set(_zstd_default_allocator_static_patched
+    "27528838f5b005b6ec2ef490537df2ad6d6dff17e2676b33347a70474d338e57")
+set(_zstd_default_allocator_static_prior
     "8cee9bec299b27ad672bf717480a01a4ece2a6b3b8424508a0bb1ad1c1ddb257")
 set(_zstd_default_allocator_common_original
     "f49eb8023a90d3de925373bd9ee0d36ed46b26c529840b64220397446cd73795")
@@ -34,8 +36,7 @@ __attribute__((__unused__))
 #if defined(__clang__) && __clang_major__ >= 5
 #pragma clang diagnostic pop
 #endif]=])
-  set(replacement
-      [=[ZSTDLIB_STATIC_API extern ZSTD_customMem const ZSTD_defaultCMem;
+  set(replacement [=[ZSTDLIB_API extern ZSTD_customMem const ZSTD_defaultCMem;
 /**< One shared immutable value defers to the standard allocator. */]=])
   string(FIND "${content}" "${original}" location)
   if(location LESS 0)
@@ -51,11 +52,18 @@ endfunction()
 # Inputs: Component path and its actual digest. Outputs: Atomically publishes
 # shared storage declaration; all unknown component bytes remain rejected.
 function(flitzzip_zstd_migrate_default_allocator path actual)
-  if(NOT actual STREQUAL _zstd_default_allocator_static_original)
+  if(NOT actual STREQUAL _zstd_default_allocator_static_original
+     AND NOT actual STREQUAL _zstd_default_allocator_static_prior)
     return()
   endif()
   file(READ "${path}" content)
-  flitzzip_zstd_share_default_allocator("${content}" content)
+  if(actual STREQUAL _zstd_default_allocator_static_prior)
+    string(REPLACE "ZSTDLIB_STATIC_API extern ZSTD_customMem const "
+                   "ZSTDLIB_API extern ZSTD_customMem const " content
+                   "${content}")
+  else()
+    flitzzip_zstd_share_default_allocator("${content}" content)
+  endif()
   flitzzip_write_verified_zstd_patch(
     "${path}" "${actual}" "${_zstd_default_allocator_static_patched}"
     "${content}")
