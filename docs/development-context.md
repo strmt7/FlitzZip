@@ -149,6 +149,7 @@ py -3 tools/agent_context.py json out/verification-plan.json
 py -3 tools/agent_context.py json out/verification-plan.json --pointer /requiredLocalCommands
 py -3 tools/agent_context.py json out/verification-plan.json --pointer /requiredLocalCommands --field id --field command
 py -3 tools/agent_context.py json out/verification-plan.json --pointer /requiredLocalCommands/0
+py -3 tools/agent_context.py json out/build-validation.json --field inputs_sha256 --field receipt_sha256
 ```
 
 Use actual artifacts, not these example names unless they exist. JSON inspection
@@ -166,9 +167,14 @@ states that the context tool has not established acceptance. The report's own
 status, failures and counts must still be inspected; a successful reader exit
 only establishes a successful read.
 
-For arrays of objects, repeat `--field` to project up to 16 exact member names
-per row in one call. Missing fields fail explicitly. Projected rows still carry
-`expanded=false`: selected fields do not imply their other contents were read.
+Repeat `--field` to select up to 16 exact member names from an object or from
+each row in an array of objects. Object selections follow the requested order;
+`--offset` and `--limit` page those selected fields. Their `count` remains the
+source object's full member count, and `projection` records selected and
+unselected counts. Missing fields fail explicitly. Projected array rows still
+carry `expanded=false`: selected fields do not imply their other contents were
+read. Selecting receipt identities does not establish that the underlying
+validation passed; inspect its outcome and diagnostics separately.
 
 Apply the same discipline to all agent tool calls, including MCP and shell:
 

@@ -298,6 +298,13 @@ def _report_member(parent: str, key: object, item: object, fields: list[str]) ->
     return entry
 
 
+def _report_members(selected: dict | list, fields: list[str]) -> list[tuple]:
+    """Validate all requested object names before paging, without copying unselected members."""
+    if isinstance(selected, dict):
+        return [(key, selected[key]) for key in (fields or selected)]
+    return list(enumerate(selected))
+
+
 def json_report(root: Path, args: argparse.Namespace) -> dict:
     """Purpose: Inspect evidence without flooding context.
     Inputs: Bounded JSON, exact pointer and page/output budgets. Outputs: Source-bound page and explicit omissions.
@@ -311,8 +318,8 @@ def json_report(root: Path, args: argparse.Namespace) -> dict:
     )
     selected = json_pointer(value, args.pointer)
     fields = args.field
-    if fields and (not isinstance(selected, list) or len(fields) > 16 or len(fields) != len(set(fields))):
-        raise ValueError("field projection requires an array and 1-16 unique member names")
+    if fields and (not isinstance(selected, (dict, list)) or len(fields) > 16 or len(fields) != len(set(fields))):
+        raise ValueError("field projection requires an object or array and 1-16 unique member names")
     shape = json_shape(selected)
     result = {
         "path": args.path,
@@ -327,12 +334,20 @@ def json_report(root: Path, args: argparse.Namespace) -> dict:
         full = {**result, "expanded": True, "value": selected}
         result = full if len(compact_json(full)) <= args.max_chars else {**result, "expanded": False}
     else:
-        if args.offset > len(selected):
-            raise ValueError("JSON page offset exceeds the selected container")
-        members = list(selected.items()) if isinstance(selected, dict) else list(enumerate(selected))
+        members = _report_members(selected, fields)
+        row_fields = fields
+        if fields and isinstance(selected, dict):
+            row_fields = []
+            result["projection"] = {
+                "fields": fields,
+                "selected_count": len(fields),
+                "unselected_count": len(selected) - len(fields),
+            }
+        if args.offset > len(members):
+            raise ValueError("JSON page offset exceeds the selected container or projection")
         result.update(offset=args.offset, items=[], next_offset=args.offset, omitted_values=0)
         for index, (key, item) in enumerate(members[args.offset : args.offset + args.limit], args.offset):
-            entry = _report_member(args.pointer, key, item, fields)
+            entry = _report_member(args.pointer, key, item, row_fields)
             candidate = {
                 **result,
                 "items": [*result["items"], entry],

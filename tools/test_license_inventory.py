@@ -50,7 +50,9 @@ Test-LicenseNoticeGeneration
             original = json.loads(notices_path.read_text())
             runner = root / "notice-contract.ps1"
             runner.write_text(script, encoding="utf-8")
+            current_notice = next(row for row in original["notices"] if row["source"] == "third_party/lz4/LICENSE")
             cases = [
+                (metadata["version"], current_notice["title"], current_notice["source"], False, ""),
                 ("1.11.1", "LZ4 1.11.1", "third_party/lz4/LICENSE", False, ""),
                 ("42.3.567", "LZ4 42.3.567", "third_party/lz4/LICENSE", False, ""),
                 ("42.3.567", "LZ4 1.11.1", "third_party/lz4/LICENSE", False, "missing required notice"),

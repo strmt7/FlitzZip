@@ -867,4 +867,10 @@ foreach ($path in @('tools/vendor_imports.py', 'tools/json_input.py', 'tools/tes
     }
 }
 
+foreach ($path in @('tools/verify_license_notices.ps1', 'tools/generate_license_notices_header.ps1')) {
+    $noticePlan = Get-FlitzZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
+    Assert-Selector (Test-RequiredCommand -Plan $noticePlan -Id 'license-inventory-contracts') "notice consumers require their actual version/source regression contracts: $path"
+    Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $path) "hosted filters must admit notice consumer contracts: $path"
+}
+
 Write-Output "Verification selector self-test passed."

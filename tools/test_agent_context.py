@@ -2,6 +2,7 @@
 
 import argparse
 import contextlib
+import hashlib
 import io
 import json
 import math
@@ -507,10 +508,106 @@ class AgentContextTests(unittest.TestCase):
         )
         self.assertTrue(all(not item["expanded"] for item in result["items"]))
         self.assertNotIn("large", json.dumps(result))
-        for args in (["--field", "missing"], ["--field", "id", "--field", "id"], ["--pointer", "/0", "--field", "id"]):
+        for args in (["--field", "missing"], ["--field", "id", "--field", "id"]):
             self.assertEqual(self.invoke(["json", "report.json", *args])[0], 2)
         (self.root / "report.json").write_text("[1,2]", encoding="utf-8")
         self.assertEqual(self.invoke(["json", "report.json", "--field", "id"])[0], 2)
+
+    def test_json_object_projection_preserves_outcome_identity_and_request_order(self):
+        """Select exact receipt fields without printing logs or changing the source evidence."""
+        report = {
+            "log": "retained diagnostic" * 10000,
+            "sha256": "a" * 64,
+            "passed": False,
+            "details": {"reason": "failed"},
+        }
+        path = self.root / "report.json"
+        original = json.dumps(report).encode()
+        path.write_bytes(original)
+        code, result = self.invoke(
+            ["json", "report.json", "--field", "passed", "--field", "sha256", "--field", "details"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(result["count"], 4)
+        self.assertEqual(
+            result["projection"],
+            {"fields": ["passed", "sha256", "details"], "selected_count": 3, "unselected_count": 1},
+        )
+        self.assertEqual([item["pointer"] for item in result["items"]], ["/passed", "/sha256", "/details"])
+        self.assertIs(result["items"][0]["value"], False)
+        self.assertEqual(result["items"][1]["value"], "a" * 64)
+        self.assertFalse(result["items"][2]["expanded"])
+        self.assertEqual(result["omitted_values"], 1)
+        self.assertEqual(result["sha256"], hashlib.sha256(original).hexdigest())
+        self.assertEqual(result["acceptance"], "not_established_by_context_tool")
+        self.assertNotIn("retained diagnostic", context.compact_json(result))
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_json_object_projection_pages_selected_fields_and_escapes_nested_pointers(self):
+        """Page requested members, including null and escaped keys, independently of source order."""
+        report = {"a/b": {"skip": 1, "~key": None, "": True, "large": "x" * 600}}
+        (self.root / "report.json").write_text(json.dumps(report), encoding="utf-8")
+        argv = [
+            "json",
+            "report.json",
+            "--pointer",
+            "/a~1b",
+            "--field",
+            "large",
+            "--field",
+            "~key",
+            "--field",
+            "",
+            "--limit",
+            "1",
+        ]
+        pages = []
+        for offset in range(3):
+            code, result = self.invoke([*argv, "--offset", str(offset)])
+            self.assertEqual(code, 0)
+            self.assertEqual(result["next_offset"], offset + 1 if offset < 2 else None)
+            self.assertEqual(result["count"], 4)
+            pages.append(result["items"][0])
+        self.assertEqual([item["pointer"] for item in pages], ["/a~1b/large", "/a~1b/~0key", "/a~1b/"])
+        self.assertFalse(pages[0]["expanded"])
+        self.assertIsNone(pages[1]["value"])
+        self.assertIs(pages[2]["value"], True)
+        self.assertEqual(self.invoke([*argv, "--offset", "3"])[1]["items"], [])
+        self.assertEqual(self.invoke([*argv, "--offset", "4"])[0], 2)
+
+    def test_json_object_projection_rejects_missing_duplicate_excess_and_scalar_fields(self):
+        """Reject incomplete selections before paging instead of presenting them as valid evidence."""
+        (self.root / "report.json").write_text(json.dumps({"ok": 1}), encoding="utf-8")
+        for args in (
+            ["--field", "ok", "--field", "absent", "--limit", "1"],
+            ["--field", "ok", "--field", "ok"],
+            ["--pointer", "/ok", "--field", "ok"],
+            [part for index in range(17) for part in ("--field", str(index))],
+        ):
+            with self.subTest(args=args):
+                self.assertEqual(self.invoke(["json", "report.json", *args])[0], 2)
+        fields = [str(index) for index in range(16)]
+        (self.root / "report.json").write_text(json.dumps(dict.fromkeys(fields, None)), encoding="utf-8")
+        code, page = self.invoke(["json", "report.json", *[part for field in fields for part in ("--field", field)]])
+        self.assertEqual(code, 0)
+        self.assertEqual(page["projection"]["selected_count"], 16)
+
+    def test_json_object_projection_bounds_metadata_and_serialized_output(self):
+        """Enforce the complete serialized budget even when projection names dominate the output."""
+        fields = ["field" + str(index) for index in range(8)]
+        (self.root / "report.json").write_text(json.dumps(dict.fromkeys(fields, "é" * 40)), encoding="utf-8")
+        argv = ["json", "report.json", *[part for field in fields for part in ("--field", field)], "--max-chars", "800"]
+        seen, offset = [], 0
+        while offset is not None:
+            code, page = self.invoke([*argv, "--offset", str(offset)])
+            self.assertEqual(code, 0)
+            self.assertLessEqual(len(context.compact_json(page)), 800)
+            seen.extend(item["pointer"] for item in page["items"])
+            offset = page["next_offset"]
+        self.assertEqual(seen, ["/" + field for field in fields])
+        key = "k" * 500
+        (self.root / "report.json").write_text(json.dumps({key: 1}), encoding="utf-8")
+        self.assertEqual(self.invoke(["json", "report.json", "--field", key, "--max-chars", "512"])[0], 2)
 
     def test_json_rejects_ambiguous_nonfinite_deep_or_oversized_evidence(self):
         """Purpose: Refuse unbounded evidence. Inputs: Invalid JSON families. Outputs: Explicit failures."""
