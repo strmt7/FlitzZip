@@ -545,6 +545,15 @@ crawling, indexing, MCP commands and experimental tools.
   owner and completion path; do not label it stopped without terminal evidence.
   Host-managed MCP servers and unrelated user applications are not disposable
   task children.
+- Docker's daemon owns its containers separately from a Windows launcher job.
+  For bounded local fuzzing, generate and retain a 32-character lowercase GUID
+  before launch and pass it as `tools/fuzz.ps1 -OwnerId <id>`. The launcher labels
+  and names only that operation's probe/work containers and verifies removal in
+  `finally`. A supervising agent must also invoke
+  `tools/fuzz.ps1 -CleanupOnly -OwnerId <same-id>` after a hard termination or
+  timeout that prevented unwinding. Keep that recovery command bounded; failure
+  to reach the daemon is unresolved cleanup, never evidence of an empty engine.
+  Do not prune containers, images, networks or volumes belonging to other work.
 - Lifecycle changes require success, failure, cancellation and reuse tests at
   the affected boundary. Where relevant, check descendant termination, handle
   release and repeated-operation memory retention in the same process. Diagnose

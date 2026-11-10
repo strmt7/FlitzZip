@@ -41,3 +41,9 @@ The ledger binds complete source, exact location, scanner identity, build/fuzz
 recipes and this evidence. Raw reports remain retained. Changed bound inputs
 expire admission. Current native consumers, real sanitizer controls and fresh
 detector results remain separate required qualifications.
+
+The encoded-block version regression adds only a source to the existing native
+test object target. Miniz's product target, allocation wrappers, fuzz compiler
+arguments, allocator-selection definitions and sanitizer controls are unchanged.
+Those exact inputs were rechecked before renewing this build-context binding;
+the new tests do not qualify the allocator or admit another allocation report.

@@ -1,4 +1,5 @@
 #include "core/archive.hpp"
+#include "core/archive_block_version.hpp"
 #include "core/path_text.hpp"
 
 #include "core/archive_encode_batch.hpp"
@@ -746,11 +747,12 @@ void write_flzip_footer(std::ofstream& output, const ArchiveIndex& index) {
 // Purpose: Drain one completed encode task into the archive output stream and entry metadata.
 // Inputs: `pending` owns encode futures, `entry` receives block descriptors, `output` receives payload bytes, `stats`
 // records GPU use, `payload_written` and `archive_block_count` track bounded archive offsets, and `entry_name` labels
-// diagnostics. Outputs: Mutates archive payload, entry blocks, CRC, counters, and stats; throws on failed writes or
+// diagnostics; `archive_version` accumulates payload-aware minima before owners are released.
+// Outputs: Mutates archive payload, entry blocks, version, CRC, counters, and stats; throws on failed writes or
 // block-count limits.
 void write_one_encoded_chunk(std::deque<PendingEncode>& pending, ArchiveEntry& entry, std::ofstream& output,
                              OperationStats& stats, std::uint64_t& payload_written, std::uint64_t& archive_block_count,
-                             std::uint32_t& crc, const std::string& entry_name) {
+                             std::uint32_t& archive_version, std::uint32_t& crc, const std::string& entry_name) {
     auto chunk_result = pending.front().result.get();
     pending.pop_front();
     auto& encoded = chunk_result.encoded;
@@ -764,7 +766,9 @@ void write_one_encoded_chunk(std::deque<PendingEncode>& pending, ArchiveEntry& e
     }
     archive_block_count += encoded.blocks.size();
     for (auto block : encoded.blocks) {
-        block.encoded_offset += payload_written;
+        const auto inspected = inspect_encoded_block_version(block, encoded.payload);
+        archive_version = std::max(archive_version, inspected.minimum_version);
+        block.encoded_offset = checked_add_u64(block.encoded_offset, payload_written, "archive block offset overflows");
         entry.blocks.push_back(block);
     }
     if (!encoded.payload.empty()) {
@@ -804,13 +808,13 @@ void enqueue_encode_chunk(std::deque<PendingEncode>& pending, std::vector<std::b
 // Inputs: `manifest_entry` identifies the source file, `options` and `budget` bound chunking and concurrency,
 // `gpu_telemetry` receives HIP metrics, `output` receives payload bytes, `entry` receives metadata, `stats` records
 // telemetry, `archive_block_count` tracks global limits, and `progress_callback` receives progress. Outputs: Mutates
-// `entry`, `stats`, `archive_block_count`, and archive payload; throws on read, encode, write, or resource-limit
-// failure.
+// `entry`, `stats`, `archive_block_count`, `archive_version`, and archive payload; throws on read, encode, write, or
+// resource-limit failure.
 void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const CompressOptions& options,
                                   const PipelineBudget& budget, const std::shared_ptr<GpuTelemetry>& gpu_telemetry,
                                   std::ofstream& output, ArchiveEntry& entry, OperationStats& stats,
-                                  std::uint64_t& archive_block_count, ProgressState& progress,
-                                  const ProgressCallback& progress_callback) {
+                                  std::uint64_t& archive_block_count, std::uint32_t& archive_version,
+                                  ProgressState& progress, const ProgressCallback& progress_callback) {
     const auto source_lock = lock_manifest_source(manifest_entry);
     auto input_buffer = make_file_stream_buffer();
     std::ifstream input;
@@ -850,33 +854,16 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
         progress.add_bytes(chunk_bytes);
         publish_progress(progress, progress_callback);
         if (pending.size() >= budget.inflight_chunks) {
-            write_one_encoded_chunk(pending, entry, output, stats, payload_written, archive_block_count, crc,
-                                    manifest_entry.archive_path);
+            write_one_encoded_chunk(pending, entry, output, stats, payload_written, archive_block_count,
+                                    archive_version, crc, manifest_entry.archive_path);
         }
     }
     while (!pending.empty()) {
-        write_one_encoded_chunk(pending, entry, output, stats, payload_written, archive_block_count, crc,
-                                manifest_entry.archive_path);
+        write_one_encoded_chunk(pending, entry, output, stats, payload_written, archive_block_count, archive_version,
+                                crc, manifest_entry.archive_path);
     }
     entry.payload_size = payload_written;
     entry.crc32 = crc;
-}
-
-// Purpose: Select the smallest native version that defines every encoded block.
-// Inputs: A completed archive index with all file block descriptors.
-// Outputs: Returns version three through eleven without downgrading a new block kind.
-std::uint32_t required_archive_version(const ArchiveIndex& index) {
-    std::uint32_t version = kFlitzZipVersion;
-    for (const auto& entry : index.entries) {
-        for (const auto& block : entry.blocks) {
-            const auto minimum = minimum_archive_version_for_block(block);
-            if (minimum == 0U) {
-                throw ArchiveError("archive block kind is not supported by its version");
-            }
-            version = std::max(version, minimum);
-        }
-    }
-    return version;
 }
 
 }  // namespace
@@ -952,14 +939,13 @@ OperationStats compress_flzip(const std::vector<std::filesystem::path>& sources,
         }
 
         compress_manifest_file_entry(manifest_entry, options, budget, gpu_telemetry, output, entry, stats,
-                                     archive_block_count, progress, progress_callback);
+                                     archive_block_count, index.version, progress, progress_callback);
         index.entries.push_back(std::move(entry));
         progress.finish_entry();
         ++entry_index;
     }
 
     publish_progress(progress, progress_callback);
-    index.version = required_archive_version(index);
     index.index_offset = stream_position(output);
     write_archive_index(output, index);
     index.index_size = stream_position(output) - index.index_offset;

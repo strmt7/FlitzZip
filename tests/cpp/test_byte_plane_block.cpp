@@ -1,4 +1,5 @@
 #include "core/archive.hpp"
+#include "core/archive_encode_batch.hpp"
 #include "core/byte_plane_block.hpp"
 #include "core/checksum.hpp"
 #include "gpu/gpu_codec.hpp"
@@ -12,6 +13,7 @@
 #include <limits>
 #include <sstream>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -135,7 +137,120 @@ std::vector<std::byte> interleaved_context_source(std::uint8_t width) {
     return input;
 }
 
+// Own only this test's directory, including assertion and exception paths.
+// Normal completion explicitly removes it so cleanup errors fail the test;
+// unwinding preserves the original failure and reports any cleanup error.
+struct WriterVersionDirectory {
+    std::filesystem::path path;
+
+    explicit WriterVersionDirectory(std::filesystem::path owned) noexcept : path(std::move(owned)) {}
+    WriterVersionDirectory(const WriterVersionDirectory&) = delete;
+    WriterVersionDirectory& operator=(const WriterVersionDirectory&) = delete;
+
+    ~WriterVersionDirectory() {
+        std::error_code error;
+        std::filesystem::remove_all(path, error);
+        if (error) {
+            std::cerr << "Writer version fixture cleanup failed: " << error.value() << '\n';
+        }
+    }
+};
+
+// Exercise both actual writer paths with a version-eleven winner preceding a
+// legacy fill block. The later lower minimum must never downgrade the archive.
+void require_context_writer_version_accumulation(bool batched) {
+    if (!flitzzip::query_gpu_info().available) {
+        std::cout << "[SKIP] context writer version accumulation requires HIP\n";
+        return;
+    }
+    const WriterVersionDirectory directory{test_temp_dir(batched ? "context-batch-version" : "context-stream-version")};
+    const auto& root = directory.path;
+    auto context = interleaved_context_source(8U);
+    REQUIRE_EQ(context.size(), 65543U);
+    context.resize(65536U);
+    std::vector<std::pair<std::filesystem::path, std::vector<std::byte>>> files;
+    files.emplace_back(root / "a-context.bin", std::move(context));
+    if (batched) {
+        files.emplace_back(root / "z-fill.bin", std::vector<std::byte>(65536U, std::byte{0}));
+    } else {
+        files.front().second.resize(131072U, std::byte{0});
+    }
+    std::vector<std::filesystem::path> sources;
+    std::vector<flitzzip::ManifestEntry> selection;
+    for (const auto& [path, bytes] : files) {
+        std::ofstream file(path, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        file.close();
+        REQUIRE_TRUE(!file.fail());
+        sources.push_back(path);
+        selection.push_back({.source_path = path, .size = bytes.size()});
+    }
+    flitzzip::CompressOptions options;
+    options.gpu_required = true;
+    options.compression_level = 9;
+    options.compression_mode = flitzzip::NativeCompressionMode::NeutronStar;
+    options.block_size = 65536U;
+    options.chunk_size = batched ? 131072U : 65536U;
+    options.worker_count = 1U;
+    options.max_inflight_chunks = 1U;
+    options.verify_after_write = true;
+    REQUIRE_EQ(flitzzip::archive_encode_batch_count(selection, options), batched ? 2U : 0U);
+    const auto archive = root / "data.flzip";
+    const auto stats = flitzzip::compress_flzip(sources, archive, options);
+    REQUIRE_TRUE(stats.gpu_used && stats.gpu_runtime.kernel_launches > 0U);
+    const auto index = flitzzip_test::read_test_archive_index(archive);
+    REQUIRE_EQ(index.version, 11U);
+    REQUIRE_EQ(index.entries.size(), files.size());
+    REQUIRE_EQ(index.entries.front().blocks.front().kind, flitzzip::BlockKind::GpuBytePlaneContexts);
+    REQUIRE_EQ(index.entries.back().blocks.back().kind, flitzzip::BlockKind::Fill);
+    {
+        std::ifstream input(archive, std::ios::binary);
+        input.seekg(-20, std::ios::end);
+        const std::array<char, 4> expected{11, 0, 0, 0};
+        std::array<char, 4> version{};
+        input.read(version.data(), static_cast<std::streamsize>(version.size()));
+        REQUIRE_EQ(input.gcount(), 4);
+        REQUIRE_EQ(version, expected);
+    }
+    for (const bool gpu : {false, true}) {
+        const auto destination = root / (gpu ? "hip" : "cpu");
+        const auto extracted = flitzzip::extract_flzip(archive, destination,
+                                                       {.gpu_required = gpu,
+                                                        .force_cpu = !gpu,
+                                                        .chunk_size = 65536U,
+                                                        .block_size = 65536U,
+                                                        .worker_count = 1U,
+                                                        .max_inflight_chunks = 1U});
+        REQUIRE_EQ(extracted.gpu_used, gpu);
+        for (const auto& file : files) {
+            REQUIRE_TRUE(flitzzip_test::files_are_equal(file.first, destination / file.first.filename()));
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
 }  // namespace
+
+TEST_CASE(flzip_neutron_streaming_versions_preserve_earlier_context_winner) {
+    require_context_writer_version_accumulation(false);
+}
+
+TEST_CASE(flzip_neutron_batch_versions_preserve_earlier_context_winner) {
+    require_context_writer_version_accumulation(true);
+}
+
+TEST_CASE(flzip_writer_version_fixture_releases_directory_on_assertion_failure) {
+    std::filesystem::path path;
+    try {
+        const WriterVersionDirectory directory{test_temp_dir("context-version-unwind")};
+        path = directory.path;
+        std::ofstream(path / "owned.bin", std::ios::binary).put('x');
+        REQUIRE_TRUE(false);
+    } catch (const std::runtime_error& error) {
+        REQUIRE_EQ(std::string_view(error.what()), "require failed: false");
+    }
+    REQUIRE_TRUE(!path.empty() && !std::filesystem::exists(path));
+}
 
 // Purpose: Keep the context-stage catalog and every extent/fill refusal independent from production classification.
 // Inputs: All serialized byte kinds, an explicit format catalog and independently constructed dense tables.

@@ -43,6 +43,14 @@ callback catches exceptions at the C boundary and rejects every short read
 before the sealed extent even if the CRT also sets its EOF flag. These input
 integrity checks do not transfer ownership of the borrowed callback context.
 
+The encoded-block version tests add `test_archive_block_version.cpp` to the
+existing native test object target. That translation unit does not call the LHA
+stream constructor. The reported source, three compiled callers, ownership
+classes, Lhasa target sources, compiler definitions and regression registration
+remain unchanged. The build-context renewal therefore preserves this specific
+borrow-lifetime conclusion; native execution and hosted analysis remain separate
+qualification requirements.
+
 This is separate from the callback-table lifetime defect reported as alert
 8396. That defect was repaired: the stream now owns a complete callback-table
 snapshot. The regression mutates the original table and verifies that the

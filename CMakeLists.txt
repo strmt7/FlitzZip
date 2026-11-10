@@ -959,6 +959,7 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_byte_plane_block.cpp
     tests/cpp/test_archive_verification.cpp
     tests/cpp/test_archive_metadata_failures.cpp
+    tests/cpp/test_archive_block_version.cpp
     tests/cpp/test_integrity.cpp
     tests/cpp/test_sha256_provider.cpp
     tests/cpp/test_trusted_runtime.cpp

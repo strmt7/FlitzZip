@@ -30,6 +30,13 @@ satisfy these final assertions. The complete HIP-enabled Release registry passed
 all 1,045 cases at the reviewed checkpoint, including this regression and the
 new independently validated native-failure and live-owner rejection controls.
 
+The encoded-block version test registration adds a separate translation unit
+without changing this loop, its paint callbacks, surface owner, runner or test
+registration. Relevant compiler definitions and target properties remain intact.
+The complete reported source and those consumers were rechecked before renewing
+the CMake context; the unsigned induction and failure-recovery reasoning above
+still applies to this exact condition.
+
 This is an individually proven false positive under the maintainer's existing
 authorization. The reason for CodeQL's incorrect inferred range has not been
 established. The decision is limited to this report, its two observed categories

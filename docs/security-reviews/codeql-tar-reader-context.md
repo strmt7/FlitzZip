@@ -22,6 +22,12 @@ collection. The source, test registration, direct call and scanner configuration
 were individually re-reviewed before renewing the exact current ledger entries.
 Previous source identities remain historical evidence, not current admission.
 
+Registering `test_archive_block_version.cpp` adds an independent translation unit
+to the same test object target. It does not change this source, the direct call,
+`TEST_CASE` registration, runner, compiler definitions or link properties. Those
+bound inputs were rechecked individually before renewing the changed CMake
+context; this decision still applies only to the reported helper and location.
+
 The internal cause of CodeQL's reachability inference has not been established.
 Removing or relocating the helper, changing registration or suppressing the rule
 would discard useful checks without repairing a demonstrated production defect.

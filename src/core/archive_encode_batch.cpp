@@ -1,4 +1,5 @@
 #include "core/archive_encode_batch.hpp"
+#include "core/archive_block_version.hpp"
 
 #include "core/path_text.hpp"
 #include "core/result.hpp"
@@ -47,9 +48,10 @@ std::vector<std::byte> read_batch_sources(std::span<const ManifestEntry> entries
 
 // Purpose: Preserve native per-file metadata when publishing one block from a shared codec payload.
 // Inputs: source, block, payload, and checksum describe one encoded file; output receives only that file's bytes.
-// Outputs: Returns an entry with zero-relative block offset; throws on inconsistent codec output or stream failure.
+// Outputs: Returns an entry with zero-relative block offset and accumulates its payload-aware version requirement;
+// throws on inconsistent codec output or stream failure.
 ArchiveEntry write_batch_entry(const ManifestEntry& source, BlockDescriptor block, std::span<const std::byte> payload,
-                               std::uint32_t checksum, std::ostream& output) {
+                               std::uint32_t checksum, std::ostream& output, std::uint32_t& archive_version) {
     if (block.uncompressed_len != source.size || block.encoded_offset > payload.size() ||
         block.encoded_len > payload.size() - block.encoded_offset) {
         throw ArchiveError("batched archive encoder returned inconsistent block bounds");
@@ -58,13 +60,15 @@ ArchiveEntry write_batch_entry(const ManifestEntry& source, BlockDescriptor bloc
     if (position < 0) {
         throw ArchiveError("failed to query archive stream position");
     }
-    const auto bytes = payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len);
+    const auto inspected = inspect_encoded_block_version(block, payload);
+    const auto bytes = inspected.payload;
     if (!bytes.empty()) {
         output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         if (!output) {
             throw ArchiveError("failed to write archive payload");
         }
     }
+    archive_version = std::max(archive_version, inspected.minimum_version);
     block.encoded_offset = 0;
     return ArchiveEntry{.path = source.archive_path,
                         .directory = false,
@@ -140,7 +144,7 @@ void compress_manifest_batch(std::span<const ManifestEntry> entries, const Compr
             throw ArchiveError("operation cancelled");
         }
         index.entries.push_back(write_batch_entry(entries[i], batch.encoded.blocks[i], batch.encoded.payload,
-                                                  batch.block_crc32[i], output));
+                                                  batch.block_crc32[i], output, index.version));
         ++block_count;
         progress.set_current(entries[i].archive_path);
         progress.finish_entry();
