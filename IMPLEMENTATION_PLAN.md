@@ -97,7 +97,10 @@ Continue bounded HIP correctness and ownership qualification independently of
 performance measurement. Derive candidate histograms from immutable transition
 counts with exact segment resets, and reuse counts across precision choices.
 Qualify normalization and model/stream construction independently before joining
-the archive pipeline. Enable the production candidate only after independent
+the archive pipeline, then connect actual device-produced counts, models and
+streams in the integrated proof. Bound source scanning without resetting
+predecessors at dispatch boundaries, and reject partial statistics after
+cancellation. Enable the production candidate only after independent
 correctness and worthwhile complete-size evidence from representative workloads.
 The shared-host restriction on local benchmarks remains in effect.
 

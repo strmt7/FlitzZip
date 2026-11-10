@@ -91,6 +91,15 @@ allowed. Buffers, streams and retained winners stay owned through actual
 completion, including cancellation, failed copies, launches and host exceptions.
 Failed completion must never be reported as successful cleanup or reuse.
 
+Bound source scanning separately from entropy segments. Accumulate disjoint
+source-tile ranges into one initially zero histogram and observe completion
+between dispatches. Tile offsets refer to the complete source: a dispatch boundary
+does not reset the previous byte. Reject empty, overlapping or out-of-range work
+at the owning boundary. Publish reusable statistics only after every range has
+completed and passed admission. Cancellation discards partial statistics; it
+must not cache a successful source identity or release an in-flight allocation.
+The dispatch bound does not reduce the supported decoded block size.
+
 Build one full previous-byte transition histogram per admitted block, then
 derive candidate contexts using those exact counts and the immutable source's
 segment-boundary bytes. Counts alone cannot identify the predecessor changes at
@@ -128,10 +137,31 @@ Keep one immutable base table, disposable correction storage and bounded reusabl
 projection storage. Subtraction requires an existing count; reject underflow or
 mass overflow and discard faulted scratch before reuse. Unobserved contexts must
 remain absent, including when a boundary correction removes their last sample.
+Reuse is bound to exact input bytes and the stage that produced them. A different
+transform output requires fresh statistics even when its length is unchanged.
 All source and table owners survive actual stream completion. Independent direct
 counting must challenge every context width and shift, zero predecessors, segment
 tails and disappearing contexts. Omitted-work and deliberately incorrect
 corrections must fail that same oracle before this path can be adopted.
+
+### Model-to-stream integration
+
+Keep normalization, cumulative-model construction and entropy coding as distinct
+bounded operations with explicit status and extent admission. A valid nonempty
+row must produce a monotonic cumulative distribution starting at zero and ending
+at exactly `2^precision`. Empty rows remain absent. An upstream failure must not
+publish a usable model, and singleton mass 65,536 remains a full-width integer
+until its implicit wire representation is serialized.
+
+Qualification must connect actual device outputs: normalization consumes the GPU
+counts, model construction consumes the GPU frequencies, encoding consumes those
+models, and decoding consumes the encoder's actual workspace and returned extents.
+CPU-built models and streams are comparison oracles, never substitute inputs for
+that integrated proof. Compare the complete serialized payload, including sparse
+rows, offsets and states, against an independent encoder. Also compare raw
+transition counts directly: a singleton's normalized model could otherwise hide
+an incorrect histogram mass. Use safe omitted-work and arithmetic controls to
+establish that these observations detect failures at the intended stage.
 
 ## Adoption criteria
 

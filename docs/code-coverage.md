@@ -357,6 +357,14 @@ inputs to the same ineffective assertion.
 | Concurrency | Controlled event ordering and actual completion/lifetime assertions; elapsed sleeps alone do not prove ordering |
 | Tool orchestration | Actual command selection, refused stale identities and preserved failed outputs, rather than matching the implementation's text |
 
+For an integrated pipeline test, each stage must consume its predecessor's actual
+output. Golden intermediate data can verify an individual stage, but supplying it
+to downstream stages does not establish that the pipeline is connected correctly.
+Observe intermediate invariants as well as final bytes when a later operation
+could mask an earlier defect, such as normalization concealing a wrong histogram
+mass. Challenge both the isolated stage and the connected path with a safe control
+that must fail at the intended boundary.
+
 Generated tests complement these oracles. Use bounded domains, reproducible seeds
 and minimized failing inputs; retain each confirmed failure as a deterministic
 regression. Property and metamorphic assertions need an independent justification:
