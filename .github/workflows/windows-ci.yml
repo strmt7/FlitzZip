@@ -16,6 +16,11 @@ on:
       - resources/brand/**
       - resources/licenses/**
       - tools/build.ps1
+      - tools/package.ps1
+      - tools/install_wix.ps1
+      - tools/msi_database.psm1
+      - tools/msi_process.psm1
+      - tools/test_installer_lifecycle.ps1
       - tools/test.ps1
       - tools/gui_smoke.ps1
       - tools/FlitzZip.GuiSmoke.*.psm1

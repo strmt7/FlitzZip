@@ -22,6 +22,8 @@ function Assert-CiContractPlan {
 }
 
 Assert-CiContractPlan -Path 'tools/cocoindex_agent_search.py' -Required @('agent-context-contracts')
+Assert-CiContractPlan -Path 'tools/package.ps1' -Required @('package-runtime-contracts', 'native-ci-contracts')
+Assert-CiContractPlan -Path 'tools/future_native_input.ps1' -Required @('native-ci-contracts')
 Assert-CiContractPlan -Path 'resources/settings/settings-v4.schema.json' -Required @('settings-evolution-contracts')
 Assert-CiContractPlan -Path 'tests/fixtures/settings/current-v4.json' -Required @('settings-evolution-contracts')
 Assert-CiContractPlan -Path 'tools/gui_settings_choices.ps1' -Required @('gui-settings-choice-contracts')

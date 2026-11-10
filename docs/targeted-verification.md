@@ -218,6 +218,14 @@ merge result. Initial pushes classify tracked files, and manual dispatch remains
 explicit broad CPU qualification. Missing or malformed bases fail rather than
 silently using an arbitrary preceding commit. Checkout retains comparison history.
 
+`tools/test_native_ci.ps1` checks every tracked path against the canonical hosted
+selector and the workflows' actual ordered push/PR filters. A required native
+producer without an admitting event filter fails this offline contract. Tool
+changes always select this check, including newly added tools, so its hosted
+consumer detects missing triggers after new files enter the tracked inventory. Keep
+the intentional HIP-only exclusions and shared push/PR aliases intact when
+adding build, installer or packaging inputs.
+
 Windows CI executes only admitted steps. Registered test-only changes use their
 component cohort; runner-only changes retain their compiled registry contracts
 in the component lane. Format-matrix smoke runs when selected for a production

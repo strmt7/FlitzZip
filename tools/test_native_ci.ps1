@@ -39,24 +39,34 @@ Assert-NativeCi (Test-NativeCTestFailFast '& $ctestExe --output-on-failure --sto
 Assert-NativeCi (-not (Test-NativeCTestFailFast "# --stop-on-failure`n& `$ctestExe --output-on-failure")) 'comment cannot replace CTest fail-fast behavior'
 Assert-NativeCi (-not (Test-NativeCTestFailFast 'Write-Output "& $ctestExe --stop-on-failure"')) 'displayed command cannot replace CTest execution'
 
+$script:NativeCiWorkflowRules = @{}
+
 # Purpose: Apply the actual owned GitHub push/PR filters, including ordered exclusions.
 # Inputs: Workflow and Path are checkout-relative fixtures with literal/star path syntax.
 # Outputs: Returns filter admission; rejects unsupported patterns or divergent push/PR aliases.
 function Test-NativeCiWorkflowPath {
     param([string]$Workflow, [string]$Path)
-    $root = Split-Path -Parent $PSScriptRoot
-    $text = Get-Content -LiteralPath (Join-Path $root ".github/workflows/$Workflow.yml") -Raw
-    $filter = [regex]::Match($text, '(?m)^    paths: &(?<anchor>[\w-]+)\r?\n(?<paths>(?:      - [^\r\n]+\r?\n)+)')
-    Assert-NativeCi ($filter.Success -and $text.Contains("    paths: *$($filter.Groups['anchor'].Value)")) "shared event path filter: $Workflow"
+    # Freeze the owned rules once per test invocation, including the alias proof.
+    if (-not $script:NativeCiWorkflowRules.ContainsKey($Workflow)) {
+        $root = Split-Path -Parent $PSScriptRoot
+        $text = Get-Content -LiteralPath (Join-Path $root ".github/workflows/$Workflow.yml") -Raw
+        $filter = [regex]::Match($text, '(?m)^    paths: &(?<anchor>[\w-]+)\r?\n(?<paths>(?:      - [^\r\n]+\r?\n)+)')
+        Assert-NativeCi ($filter.Success -and $text.Contains("    paths: *$($filter.Groups['anchor'].Value)")) "shared event path filter: $Workflow"
+        $script:NativeCiWorkflowRules[$Workflow] = @(
+            foreach ($line in ($filter.Groups['paths'].Value -split '\r?\n')) {
+                if (-not $line) { continue }
+                $glob = $line.Substring(8).Trim("'")
+                $negative = $glob.StartsWith('!')
+                if ($negative) { $glob = $glob.Substring(1) }
+                Assert-NativeCi ($glob -notmatch '[!\[\]?]') "unsupported fixture path syntax: $Workflow"
+                $pattern = [regex]::Escape($glob).Replace('\*\*', 'DOUBLE_STAR').Replace('\*', '[^/]*').Replace('DOUBLE_STAR', '.*')
+                [pscustomobject]@{ pattern = "^$pattern`$"; negative = $negative }
+            }
+        )
+    }
     $admitted = $false
-    foreach ($line in ($filter.Groups['paths'].Value -split '\r?\n')) {
-        if (-not $line) { continue }
-        $glob = $line.Substring(8).Trim("'")
-        $negative = $glob.StartsWith('!')
-        if ($negative) { $glob = $glob.Substring(1) }
-        Assert-NativeCi ($glob -notmatch '[!\[\]?]') "unsupported fixture path syntax: $Workflow"
-        $pattern = [regex]::Escape($glob).Replace('\*\*', 'DOUBLE_STAR').Replace('\*', '[^/]*').Replace('DOUBLE_STAR', '.*')
-        if ($Path -cmatch "^$pattern`$") { $admitted = -not $negative }
+    foreach ($rule in $script:NativeCiWorkflowRules[$Workflow]) {
+        if ($Path -cmatch $rule.pattern) { $admitted = -not $rule.negative }
     }
     return $admitted
 }
@@ -85,6 +95,22 @@ foreach ($path in @('docs/design.md', 'resources/design/fixture.svg', 'tools/nat
 $mixed = Get-FlitzZipHostedWorkflowSelection -Paths @('src/gpu/hip_codec.hip.cpp', 'src/core/checksum.cpp')
 Assert-NativeCi ($mixed.windows -and $mixed.rocm) 'mixed CPU/HIP batches retain both compile boundaries'
 $root = Split-Path -Parent $PSScriptRoot
+$tracked = @(& git -C $root -c core.quotepath=false ls-files --)
+Assert-NativeCi ($LASTEXITCODE -eq 0 -and $tracked.Count -gt 0) 'complete tracked path inventory is required'
+$missingInputs = @()
+foreach ($workflow in @('windows-ci', 'rocm-qualification')) {
+    $notTriggered = @($tracked | Where-Object { -not (Test-NativeCiWorkflowPath $workflow $_) })
+    if ($notTriggered.Count -eq 0) { continue }
+    $selection = Get-FlitzZipHostedWorkflowSelection -Paths $notTriggered
+    $property = if ($workflow -eq 'windows-ci') { 'windows' } else { 'rocm' }
+    if ($selection.$property) {
+        $orphans = @($notTriggered | Where-Object {
+            (Get-FlitzZipHostedWorkflowSelection -Paths @($_)).$property
+        })
+        $missingInputs += "${workflow}: $($orphans -join ', ')"
+    }
+}
+Assert-NativeCi ($missingInputs.Count -eq 0) "required native inputs must trigger their owned workflows: $($missingInputs -join '; ')"
 Push-Location $root
 try {
     $collectorInputsJson = & py -3 -c 'import json; from tools.native_coverage import SCENARIO_INPUTS; print(json.dumps(SCENARIO_INPUTS))'
