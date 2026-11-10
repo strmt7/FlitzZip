@@ -611,9 +611,36 @@ EncodedChunk compose_neutron_winners(EncodedChunk baseline, const GpuCodecOption
     });
 }
 
-// Purpose: Encode independent byte-plane contexts with the existing plain HIP portfolio.
-// Inputs: Transposed source, admitted width, exclusive complete-frame limit and operation-owned HIP policy.
-// Outputs: Returns a strictly competitive dense frame or an empty proven loss; device errors remain errors.
+struct NeutronPlaneContext {
+    BlockKind kind;
+    std::uint8_t fill_value;
+    std::span<const std::byte> payload;
+};
+
+// The views borrow completed trial payloads. Allocate only after the fixed
+// table and every child payload have been admitted against the winner's size.
+static std::vector<std::byte> serialize_neutron_plane_contexts(std::span<const NeutronPlaneContext> planes,
+                                                               std::size_t frame_bytes) {
+    std::vector<std::byte> frame;
+    frame.reserve(frame_bytes);
+    frame.resize(kGpuBytePlaneHeaderBytes + planes.size() * kGpuBytePlaneContextRecordBytes, std::byte{0});
+    frame[0] = static_cast<std::byte>(planes.size());
+    for (std::size_t plane = 0U; plane < planes.size(); ++plane) {
+        const auto& child = planes[plane];
+        const auto offset = kGpuBytePlaneHeaderBytes + plane * kGpuBytePlaneContextRecordBytes;
+        const auto encoded_len = static_cast<std::uint32_t>(child.payload.size());
+        frame[offset] = static_cast<std::byte>(child.kind);
+        frame[offset + 1U] = static_cast<std::byte>(child.fill_value);
+        for (std::size_t byte = 0U; byte < sizeof(encoded_len); ++byte) {
+            frame[offset + 2U + byte] = static_cast<std::byte>((encoded_len >> (byte * 8U)) & 0xFFU);
+        }
+        frame.insert(frame.end(), child.payload.begin(), child.payload.end());
+    }
+    return frame;
+}
+
+// Encode a strictly smaller context frame, retaining the owning trial outputs
+// until their views have been serialized. Device errors propagate to the caller.
 static std::vector<std::byte> encode_neutron_plane_contexts(std::span<const std::byte> transformed, std::uint8_t width,
                                                             std::size_t exclusive_limit,
                                                             const GpuCodecOptions& options) {
@@ -621,13 +648,11 @@ static std::vector<std::byte> encode_neutron_plane_contexts(std::span<const std:
         exclusive_limit > transformed.size()) {
         throw GpuError("Neutron byte-plane context geometry is invalid");
     }
-    const auto header_bytes = kGpuBytePlaneHeaderBytes + width * kGpuBytePlaneContextRecordBytes;
-    if (exclusive_limit <= header_bytes) {
+    auto frame_bytes = kGpuBytePlaneHeaderBytes + width * kGpuBytePlaneContextRecordBytes;
+    if (exclusive_limit <= frame_bytes) {
         return {};
     }
-    std::vector<std::byte> frame(header_bytes, std::byte{0});
-    frame.reserve(exclusive_limit);
-    frame[0] = static_cast<std::byte>(width);
+
     const auto records = transformed.size() / width;
     std::array<std::uint32_t, 8> lengths{};
     for (std::size_t plane = 0U; plane < width; ++plane) {
@@ -636,8 +661,8 @@ static std::vector<std::byte> encode_neutron_plane_contexts(std::span<const std:
     auto trial_options = options;
     trial_options.block_size = lengths[width - 1U];
     EncodedChunk grouped;
-    // Preserve the preceding two-plane candidate's exact isolated search. Added wider
-    // candidates share uploads, classification and entropy launches across independent planes.
+    // The two-plane candidate retains its isolated search. Wider candidates
+    // share uploads, classification and entropy launches.
     if (width > 2U) {
         grouped = encode_chunk_hip_impl(transformed, nullptr, trial_options, std::span(lengths).first(width), nullptr,
                                         HipEncodeRole::CompoundTrial);
@@ -645,19 +670,22 @@ static std::vector<std::byte> encode_neutron_plane_contexts(std::span<const std:
             throw GpuError("Neutron context batch returned an inconsistent block count");
         }
     }
+
+    std::array<EncodedChunk, 2> isolated;
+    std::array<NeutronPlaneContext, 8> selected{};
     std::size_t cursor = 0U;
     for (std::size_t plane = 0U; plane < width; ++plane) {
         const auto bytes = lengths[plane];
-        EncodedChunk isolated;
         if (width == 2U) {
             trial_options.block_size = bytes;
-            isolated = encode_chunk_hip_impl(transformed.subspan(cursor, bytes), nullptr, trial_options, {}, nullptr,
-                                             HipEncodeRole::CompoundTrial);
-            if (isolated.blocks.size() != 1U) {
+            auto& trial = isolated[plane];
+            trial = encode_chunk_hip_impl(transformed.subspan(cursor, bytes), nullptr, trial_options, {}, nullptr,
+                                          HipEncodeRole::CompoundTrial);
+            if (trial.blocks.size() != 1U) {
                 throw GpuError("Neutron context trial returned an inconsistent block count");
             }
         }
-        const auto& trial = width == 2U ? isolated : grouped;
+        const auto& trial = width == 2U ? isolated[plane] : grouped;
         const auto& inner = trial.blocks[width == 2U ? 0U : plane];
         if (inner.uncompressed_len != bytes || inner.encoded_offset > trial.payload.size() ||
             inner.encoded_len > trial.payload.size() - inner.encoded_offset) {
@@ -666,21 +694,19 @@ static std::vector<std::byte> encode_neutron_plane_contexts(std::span<const std:
         if (!is_canonical_gpu_byte_plane_context_stage(inner)) {
             throw GpuError("Neutron byte-plane context trial returned a recursive or CPU codec");
         }
-        if (inner.encoded_len >= exclusive_limit - frame.size()) {
+        if (inner.encoded_len >= exclusive_limit - frame_bytes) {
             return {};
         }
-        const auto offset = kGpuBytePlaneHeaderBytes + plane * kGpuBytePlaneContextRecordBytes;
-        frame[offset] = static_cast<std::byte>(inner.kind);
-        frame[offset + 1U] = inner.kind == BlockKind::Fill ? static_cast<std::byte>(inner.fill_value) : std::byte{0};
-        for (std::size_t byte = 0U; byte < sizeof(inner.encoded_len); ++byte) {
-            frame[offset + 2U + byte] = static_cast<std::byte>((inner.encoded_len >> (byte * 8U)) & 0xFFU);
-        }
-        const auto payload =
-            std::span(trial.payload).subspan(static_cast<std::size_t>(inner.encoded_offset), inner.encoded_len);
-        frame.insert(frame.end(), payload.begin(), payload.end());
+        selected[plane] = {
+            .kind = inner.kind,
+            .fill_value = inner.fill_value,
+            .payload =
+                std::span(trial.payload).subspan(static_cast<std::size_t>(inner.encoded_offset), inner.encoded_len),
+        };
+        frame_bytes += inner.encoded_len;
         cursor += bytes;
     }
-    return frame;
+    return serialize_neutron_plane_contexts(std::span(selected).first(width), frame_bytes);
 }
 
 // Each width tries independent contexts before a whole-block trial. Only a
