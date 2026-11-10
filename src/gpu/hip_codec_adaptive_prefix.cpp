@@ -53,49 +53,82 @@ struct AdaptiveBatchSelection {
     std::vector<AdaptiveEncodeTable> pack_tables;
 };
 
-// Purpose: Rank symbols identically for both admission probes and full adaptive codebooks.
-// Inputs: A complete or sampled byte histogram.
-// Outputs: Returns all byte values ordered by descending frequency, with stable numeric tie breaks.
-std::array<std::uint16_t, 256> rank_adaptive_symbols(const std::array<std::uint64_t, 256>& histogram) {
+// Only the first 84 symbols are serialized. Count order and symbol tie
+// breaks form a total order, so the unused tail need not be sorted.
+std::array<std::uint16_t, 256> rank_adaptive_codebook_symbols(const std::array<std::uint64_t, 256>& histogram) {
     std::array<std::uint16_t, 256> order{};
     std::iota(order.begin(), order.end(), static_cast<std::uint16_t>(0));
-    std::stable_sort(order.begin(), order.end(), [&](std::uint16_t lhs, std::uint16_t rhs) {
-        if (histogram[lhs] != histogram[rhs]) {
-            return histogram[lhs] > histogram[rhs];
-        }
-        return lhs < rhs;
-    });
+    std::partial_sort(order.begin(), order.begin() + kGpuAdaptivePrefixCodebookBytes, order.end(),
+                      [&](std::uint16_t lhs, std::uint16_t rhs) {
+                          if (histogram[lhs] != histogram[rhs]) {
+                              return histogram[lhs] > histogram[rhs];
+                          }
+                          return lhs < rhs;
+                      });
     return order;
 }
 
-// Purpose: Admit promising low/mid-effort adaptive candidates without scanning full blocks unnecessarily.
-// Inputs: One eligible source block and validated compression level 2-9.
-// Outputs: Returns true for high efforts or when actual code widths predict a clear sampled size gain.
-bool should_try_sampled_adaptive_prefix(std::span<const std::byte> block, int compression_level) {
-    if (compression_level >= 7) {
-        return true;
-    }
-    std::array<std::uint64_t, 256> histogram{};
-    constexpr std::size_t window_bytes = 256U;
-    for (const auto start : {std::size_t{0}, block.size() / 2U, block.size() - window_bytes}) {
-        for (std::size_t index = start; index < start + window_bytes; ++index) {
-            ++histogram[static_cast<std::uint8_t>(block[index])];
+struct AdaptivePrefixSampleCost {
+    std::uint32_t fixed_bits;
+    std::uint32_t adaptive_bits;
+};
+
+constexpr std::size_t kAdaptiveProbeWindowBytes = 256U;
+constexpr std::size_t kAdaptiveProbeBytes = 3U * kAdaptiveProbeWindowBytes;
+
+// The three probe windows contain exactly 768 sampled bytes. The caller
+// admits at least a complete 4 KiB prefix segment. Counts with the same
+// frequency contribute equally across each adaptive code-width boundary.
+AdaptivePrefixSampleCost sampled_adaptive_prefix_cost(std::span<const std::byte> block) {
+    std::array<std::uint16_t, 256> histogram{};
+    for (const auto start : {std::size_t{0}, block.size() / 2U, block.size() - kAdaptiveProbeWindowBytes}) {
+        for (const auto value : block.subspan(start, kAdaptiveProbeWindowBytes)) {
+            ++histogram[static_cast<std::uint8_t>(value)];
         }
     }
-    const auto order = rank_adaptive_symbols(histogram);
-    std::uint64_t static_bits = 0;
-    std::uint64_t adaptive_bits = 0;
-    for (std::size_t rank = 0; rank < order.size(); ++rank) {
-        const auto value = order[rank];
-        const auto static_width = value < 4U ? 3U : value < 20U ? 6U : value < 84U ? 9U : 11U;
-        const auto adaptive_width = rank < kGpuAdaptivePrefixSmallSymbols                                     ? 3U
-                                    : rank < kGpuAdaptivePrefixSmallSymbols + kGpuAdaptivePrefixMediumSymbols ? 6U
-                                    : rank < kGpuAdaptivePrefixCodebookBytes                                  ? 9U
-                                                                                                              : 11U;
-        static_bits += histogram[value] * static_width;
-        adaptive_bits += histogram[value] * adaptive_width;
+
+    std::array<std::uint16_t, kAdaptiveProbeBytes + 1U> frequency_groups{};
+    std::uint32_t greatest_frequency = 0U;
+    std::uint32_t present_symbols = 0U;
+    std::uint32_t fixed_bits = 0U;
+    for (std::uint32_t symbol = 0U; symbol < histogram.size(); ++symbol) {
+        const auto frequency = static_cast<std::uint32_t>(histogram[symbol]);
+        if (frequency == 0U) {
+            continue;
+        }
+        ++frequency_groups[frequency];
+        ++present_symbols;
+        greatest_frequency = std::max(greatest_frequency, frequency);
+        const auto width = symbol < 4U ? 3U : symbol < 20U ? 6U : symbol < 84U ? 9U : 11U;
+        fixed_bits += frequency * width;
     }
-    return adaptive_bits * 100U < static_bits * 95U;
+
+    // Start with the literal width. The three nested prefixes save an
+    // additional 2, 3 and 3 bits for their respective ranked symbols.
+    const auto target = std::min(kGpuAdaptivePrefixCodebookBytes, present_symbols);
+    std::uint32_t adaptive_bits = static_cast<std::uint32_t>(kAdaptiveProbeBytes) * 11U;
+    std::uint32_t rank = 0U;
+    for (auto frequency = greatest_frequency; frequency > 0U && rank < target; --frequency) {
+        const auto group = frequency_groups[frequency];
+        if (group == 0U) {
+            continue;
+        }
+        const auto end = rank + group;
+        const auto overlap = [rank, end](std::uint32_t boundary) {
+            return std::min(end, boundary) - std::min(rank, boundary);
+        };
+        const auto saved = 2U * overlap(kGpuAdaptivePrefixCodebookBytes) +
+                           3U * overlap(kGpuAdaptivePrefixSmallSymbols + kGpuAdaptivePrefixMediumSymbols) +
+                           3U * overlap(kGpuAdaptivePrefixSmallSymbols);
+        adaptive_bits -= frequency * saved;
+        rank = end;
+    }
+    return {fixed_bits, adaptive_bits};
+}
+
+bool should_try_sampled_adaptive_prefix(std::span<const std::byte> block) {
+    const auto cost = sampled_adaptive_prefix_cost(block);
+    return cost.adaptive_bits * 100U < cost.fixed_bits * 95U;
 }
 
 // Purpose: Build an adaptive prefix codebook and device encode table for one archive block.
@@ -103,7 +136,7 @@ bool should_try_sampled_adaptive_prefix(std::span<const std::byte> block, int co
 // Outputs: Returns the serialized codebook and sampled bit estimate; fills `table` with device-ready codes and widths.
 AdaptiveCodebookEstimate build_adaptive_prefix_codebook(const std::array<std::uint64_t, 256>& histogram,
                                                         AdaptiveEncodeTable& table) {
-    const auto order = rank_adaptive_symbols(histogram);
+    const auto order = rank_adaptive_codebook_symbols(histogram);
 
     AdaptiveCodebookEstimate estimate;
     estimate.codebook.resize(kGpuAdaptivePrefixCodebookBytes);
@@ -359,15 +392,16 @@ void append_entropy_candidate(std::span<const std::byte> block, int level, bool 
 // Outputs: Adds at most sixteen unique candidates; both codecs reuse nested samples counted only once.
 void build_entropy_candidates(std::span<const std::byte> block, BlockKind baseline_kind, int level,
                               AdaptiveEncodeBlockPlan& plan, std::vector<AdaptiveEncodeTable>& code_tables) {
-    const auto try_low_adaptive = should_try_sampled_adaptive_prefix(block, 2);
+    const auto offset_bytes = (static_cast<std::size_t>(plan.segment_count) + 1U) * sizeof(std::uint32_t);
+    const bool adaptive_header_fits = kGpuAdaptivePrefixCodebookBytes + offset_bytes < plan.payload_limit;
+    const bool try_low_adaptive = adaptive_header_fits && should_try_sampled_adaptive_prefix(block);
     std::array<std::size_t, 3> previous_samples{};
     EntropyHistogramSampler sampler(block);
-    const auto offset_bytes = (static_cast<std::size_t>(plan.segment_count) + 1U) * sizeof(std::uint32_t);
     for (int effort = 2; effort <= level; ++effort) {
         const auto samples = entropy_sample_count(block.size(), effort);
         const auto phase = effort < 7 ? 0U : 1U;
-        const bool adaptive = (try_low_adaptive || effort >= 7) && previous_samples[phase] != samples &&
-                              kGpuAdaptivePrefixCodebookBytes + offset_bytes < plan.payload_limit;
+        const bool adaptive =
+            adaptive_header_fits && (try_low_adaptive || effort >= 7) && previous_samples[phase] != samples;
         const bool huffman = (effort != 2 || baseline_kind == BlockKind::GpuPrefix) && previous_samples[2] != samples &&
                              kGpuHuffmanLookupBytes + offset_bytes < plan.payload_limit;
         if (!adaptive && !huffman) {
