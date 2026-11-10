@@ -131,6 +131,8 @@ class InstallationTests(unittest.TestCase):
             "--only-binary=:all:",
             "-r .github/requirements/requirements-semgrep-linux.txt",
             '"$RUNNER_TEMP/semgrep/bin/python" -m pip check',
+            'source "$RUNNER_TEMP/semgrep/bin/activate"',
+            'echo "$RUNNER_TEMP/semgrep/bin" >> "$GITHUB_PATH"',
             '"$RUNNER_TEMP/semgrep/bin/python" -m unittest tools.test_semgrep_runtime',
             "--no-git-ignore",
             "--disable-nosem",

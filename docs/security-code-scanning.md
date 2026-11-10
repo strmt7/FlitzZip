@@ -530,10 +530,10 @@ resolution followed by `pip check`, actual consumer regressions, and the full
 scanner with its tracked coverage audit.
 
 [The MCP session-retention advisory](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv)
-is fixed in official MCP 1.30.0. Semgrep 1.181.0 still requires exactly MCP
+is fixed in official MCP 1.30.0. Semgrep 1.184.0 still requires exactly MCP
 1.29.0, so those official distributions cannot be installed together normally.
 The repository identifies its narrow downstream packaging revision as
-`semgrep==1.181.0+flitzzip.security2`. This is not an official Semgrep release.
+`semgrep==1.184.0+flitzzip.security1`. This is not an official Semgrep release.
 The pinned artifact manifest records the original and derived Linux/Windows
 x64 wheels. `tools/semgrep_distribution.py` validates the complete original
 wheel and RECORD, then changes only the distribution version and the exact reviewed
@@ -542,8 +542,24 @@ and notices remain unchanged. The version displayed by scanner code continues
 to identify its upstream source; installed distribution metadata identifies the
 downstream packaging revision.
 
+The rebase to [Semgrep 1.184.0](https://github.com/semgrep/semgrep/releases/tag/v1.184.0)
+includes upstream proxy-credential and source-snippet logging fixes. The targeted
+lock update retains the existing dependency versions and adds the new upstream
+`structlog` requirement. This does not qualify other dependency upgrades or change
+scanner coverage.
+
+Activate the scanner environment before invoking its CLI and retain that
+environment's executable directory first in `PATH` for later workflow steps.
+Semgrep's native entry point can redispatch `pysemgrep` by basename; an absolute
+initial command alone does not bind that child to the same installation.
+The runtime gate independently checks the Python package, packaged native engine,
+CLI, JSON and SARIF versions against the admitted upstream identity. It rejects
+an older scanner selected through inherited `PATH`, even when installation
+metadata and the fixture finding counts appear correct. This follows the normal
+[virtual-environment activation contract](https://docs.python.org/3.14/library/venv.html#how-venvs-work).
+
 The OpenTelemetry tracestate parsing advisory GHSA-xcq7-p3pf-p88h is fixed in
-official API 1.45.1. Even Semgrep 1.182.1 still pins the affected 1.37 family.
+official API 1.45.1. Semgrep 1.184.0 still pins the affected 1.37 family.
 The same explicitly authorized packaging exception now installs the coordinated
 official API/SDK/OTLP 1.45.1 and requests/threading instrumentation 0.66b1 cohort.
 This is an exact reviewed change, not a general resolver override. The complete

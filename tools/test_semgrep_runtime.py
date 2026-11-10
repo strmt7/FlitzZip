@@ -23,6 +23,25 @@ from tools.semgrep_distribution import recipe
 REQUIREMENTS = Path(__file__).resolve().parents[1] / ".github/requirements"
 
 
+def scanner_environment(root: Path) -> dict[str, str]:
+    """Scope native CLI redispatch to the tested interpreter's environment.
+
+    Semgrep's native entry point can resolve pysemgrep by basename. Use the
+    virtual environment's ordinary activation order and drop its account token
+    without changing the parent. Runtime identity checks reject external dispatch.
+    """
+    env = {
+        **os.environ,
+        "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
+        "HOME": str(root),
+        "SEMGREP_SETTINGS_FILE": str(root / "settings.yml"),
+        "SEMGREP_SEND_METRICS": "off",
+        "SEMGREP_ENABLE_VERSION_CHECK": "0",
+    }
+    env.pop("SEMGREP_APP_TOKEN", None)
+    return env
+
+
 # Purpose: Read one exact package identity from a tooling input or generated lock.
 # Inputs: requirements text and package name. Outputs: the unique pinned version or ValueError.
 def pinned_version(contents: str, package: str) -> str:
@@ -53,6 +72,42 @@ class SemgrepRuntimeTests(unittest.TestCase):
             "aud": "scanner-fixture",
             "exp": int(time.time()) + 300,
         }
+
+    def test_scanner_versions_match_the_admitted_distribution(self):
+        """Require the Python package, native engine and actual CLI to agree.
+
+        Metadata alone cannot detect a native launcher dispatching another
+        installation's Python CLI through PATH.
+        """
+        import semgrep
+        from semgrep.semgrep_core import SemgrepCore
+
+        upstream = recipe()["upstream_version"]
+        self.assertEqual(semgrep.__VERSION__, upstream)
+        scripts = Path(sys.executable).parent
+        cli = scripts / ("semgrep.exe" if os.name == "nt" else "semgrep")
+        # Exercise the scanner's actual engine selector, including its ownership
+        # check, rather than independently inventing a second lookup procedure.
+        core = Path(SemgrepCore.path())
+        self.assertTrue(core.is_file())
+        self.assertTrue(core.resolve().is_relative_to(Path(semgrep.__file__).resolve().parent))
+        with tempfile.TemporaryDirectory(prefix="semgrep-identity-") as directory:
+            root = Path(directory)
+            env = scanner_environment(root)
+            for executable, arguments, expected in (
+                (cli, ["--disable-version-check", "--version"], upstream),
+                (core, ["-version"], None),
+            ):
+                with self.subTest(executable=executable.name):
+                    run = subprocess.run(
+                        [str(executable), *arguments], cwd=root, env=env, capture_output=True, check=False, timeout=30
+                    )
+                    self.assertEqual(run.returncode, 0, run.stderr.decode(errors="replace")[-1000:])
+                    actual = run.stdout.decode("utf-8").strip()
+                    if expected is not None:
+                        self.assertEqual(actual, expected)
+                    else:
+                        self.assertRegex(actual, r"^semgrep-core version:\s*" + re.escape(upstream) + r"(?=\s|$)")
 
     # Purpose: Require the identified scanner revision and official fixed MCP/JWT distributions.
     # Inputs: Installed metadata and pinned recipe. Outputs: Exact identities and satisfied declared dependencies.
@@ -235,14 +290,7 @@ class SemgrepRuntimeTests(unittest.TestCase):
             positive.write_text('print("runtime fixture")\n', encoding="utf-8")
             negative = root / "negative.py"
             negative.write_text("value = 42\n", encoding="utf-8")
-            env = {
-                **os.environ,
-                "HOME": str(root),
-                "SEMGREP_SETTINGS_FILE": str(root / "settings.yml"),
-                "SEMGREP_SEND_METRICS": "off",
-                "SEMGREP_ENABLE_VERSION_CHECK": "0",
-            }
-            env.pop("SEMGREP_APP_TOKEN", None)
+            env = scanner_environment(root)
             common = [
                 str(executable),
                 "scan",
@@ -265,6 +313,7 @@ class SemgrepRuntimeTests(unittest.TestCase):
                 )
                 self.assertEqual(completed.returncode, code, completed.stderr.decode(errors="replace")[-2000:])
                 scan = json.loads(completed.stdout)
+                self.assertEqual(scan["version"], recipe()["upstream_version"])
                 self.assertEqual(len(scan["results"]), count)
                 self.assertEqual(scan["errors"], [])
             completed = subprocess.run(
@@ -273,6 +322,7 @@ class SemgrepRuntimeTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr.decode(errors="replace")[-2000:])
             sarif = json.loads(completed.stdout)
             self.assertEqual(sarif["version"], "2.1.0")
+            self.assertEqual(sarif["runs"][0]["tool"]["driver"]["semanticVersion"], recipe()["upstream_version"])
             self.assertEqual(len(sarif["runs"][0]["results"]), 1)
 
 

@@ -37,8 +37,8 @@ def recipe() -> dict:
         set(data) != {"schema", "upstream_version", "version", "mcp_before", "mcp_after", "advisory", "wheels"}
         or type(data.get("schema")) is not int
         or data["schema"] != 1
-        or data.get("upstream_version") != "1.181.0"
-        or data.get("version") != "1.181.0+flitzzip.security2"
+        or data.get("upstream_version") != "1.184.0"
+        or data.get("version") != "1.184.0+flitzzip.security1"
         or data.get("mcp_before") != "1.29.0"
         or data.get("mcp_after") != "1.30.0"
         or data.get("advisory")

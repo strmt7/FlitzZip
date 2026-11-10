@@ -19,7 +19,7 @@ from tools import semgrep_distribution as distribution
 
 def fixture(*, newline="\n", dependency="1.29.0", extra=None) -> bytes:
     """Purpose: Create an independent standard-wheel fixture. Inputs: Metadata variant. Outputs: Recorded ZIP bytes."""
-    info = "semgrep-1.181.0.dist-info/"
+    info = "semgrep-1.184.0.dist-info/"
     files = {
         "semgrep/scan.py": b"print('scanner fixture')\n",
         "semgrep/bin/semgrep-core": b"executable fixture\x00\xff",
@@ -29,7 +29,7 @@ def fixture(*, newline="\n", dependency="1.29.0", extra=None) -> bytes:
             [
                 "Metadata-Version: 2.4",
                 "Name: semgrep",
-                "Version: 1.181.0",
+                "Version: 1.184.0",
                 f"Requires-Dist: mcp=={dependency}",
                 "Requires-Dist: pyjwt[crypto]<3,>=2.15.0",
                 "Requires-Dist: opentelemetry-api~=1.37.0",
@@ -120,13 +120,13 @@ class DistributionTests(unittest.TestCase):
                 self.assertEqual(len(before), len(after))
                 for name, value in before.items():
                     renamed = name.replace(
-                        "semgrep-1.181.0.dist-info/", "semgrep-1.181.0+flitzzip.security2.dist-info/"
+                        "semgrep-1.184.0.dist-info/", "semgrep-1.184.0+flitzzip.security1.dist-info/"
                     )
                     if not name.endswith(("/METADATA", "/RECORD")):
                         self.assertEqual(after[renamed], value)
-                info = "semgrep-1.181.0+flitzzip.security2.dist-info/"
-                expected = before["semgrep-1.181.0.dist-info/METADATA"][0]
-                expected = expected.replace(b"Version: 1.181.0", b"Version: 1.181.0+flitzzip.security2")
+                info = "semgrep-1.184.0+flitzzip.security1.dist-info/"
+                expected = before["semgrep-1.184.0.dist-info/METADATA"][0]
+                expected = expected.replace(b"Version: 1.184.0", b"Version: 1.184.0+flitzzip.security1")
                 expected = expected.replace(b"Requires-Dist: mcp==1.29.0", b"Requires-Dist: mcp==1.30.0")
                 for package in ("api", "sdk", "exporter-otlp-proto-http"):
                     name = f"Requires-Dist: opentelemetry-{package}".encode()
@@ -149,7 +149,7 @@ class DistributionTests(unittest.TestCase):
     # Inputs: A valid file map with corrupted RECORD or payload. Outputs: Refusal for every incomplete record.
     def test_record_corruption_is_rejected(self):
         files = distribution.read_wheel(fixture())
-        record = "semgrep-1.181.0.dist-info/RECORD"
+        record = "semgrep-1.184.0.dist-info/RECORD"
         variants = [
             {**files, "semgrep/scan.py": (b"altered", 0o100644)},
             {**files, record: (files[record][0].split(b"\n", 1)[1], 0o100644)},
@@ -188,8 +188,8 @@ class DistributionTests(unittest.TestCase):
         """Purpose: Bind the upstream wheel identity before changing metadata.
         Inputs: A correctly recorded wheel with the wrong project identity. Outputs: Refusal before patching.
         """
-        info = "semgrep-1.181.0.dist-info/"
-        metadata = b"Name: other\nVersion: 1.181.0\nRequires-Dist: mcp==1.29.0\n\n"
+        info = "semgrep-1.184.0.dist-info/"
+        metadata = b"Name: other\nVersion: 1.184.0\nRequires-Dist: mcp==1.29.0\n\n"
         with self.assertRaisesRegex(ValueError, "metadata differs"):
             distribution.derive_wheel(fixture(extra={info + "METADATA": metadata}), distribution.recipe())
 

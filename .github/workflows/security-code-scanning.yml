@@ -315,6 +315,8 @@ jobs:
             --find-links "$RUNNER_TEMP/semgrep-distribution" \
             -r .github/requirements/requirements-semgrep-linux.txt
           "$RUNNER_TEMP/semgrep/bin/python" -m pip check
+          source "$RUNNER_TEMP/semgrep/bin/activate"
+          echo "$RUNNER_TEMP/semgrep/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/semgrep/bin/python" -m unittest tools.test_semgrep_runtime
           "$RUNNER_TEMP/semgrep/bin/python" -m tools.scanner_dependency_snapshot build "$RUNNER_TEMP/scanner-dependencies.json"
       - name: Retain the verified installed dependency graph

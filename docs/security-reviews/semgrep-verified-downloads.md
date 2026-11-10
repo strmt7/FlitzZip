@@ -1,35 +1,36 @@
 # Semgrep Verified Download Reviews
 
-These are two individually reviewed reports from Semgrep OSS 1.181.0. Their
+These are two individually reviewed reports from Semgrep OSS 1.184.0. Their
 exact source, scanner, location, callers, provenance and tests are bound in the
 current review ledger. Raw reports remain available. Changed identities require
 a new review; these decisions do not admit any other URL finding.
 
 ## Checked source context
 
-The Git-backed review reader verifies bounded regular blobs and complete source
-hashes. Its blob queries pass `check=True` directly; a failing query cannot supply
-plausible bytes for admission. The context comparison explicitly permits Git
-diff's ordinary exit codes zero and one, rejects other failures and accepts only
-zero. Making these call arguments explicit preserves the preceding checked-query
-and unequal-context behavior. The downloaders, URL admission, integrity checks,
-reported locations and scanner recipe remain unchanged. Both individual decisions
-below retain their complete context lists and the refreshed evidence binding.
+Both reported downloader sources, callers' URL restrictions, byte budgets and
+integrity checks are unchanged. The current scanner uses the reviewed Semgrep
+1.184.0 packaging revision and its normally resolved MCP/OpenTelemetry cohort.
+Original scanner source, native executables, permissions and notices remain
+byte-identical to that upstream release.
 
-The review reader now resolves Git to an absolute native executable before each
-query. The shared resolver rejects relative command paths and implicit
-current-directory search. Real Git inventory and shadow-file regressions qualify
-that boundary, and both individual contexts include the resolver and its tests.
-The downloader sources, URL restrictions, digest checks and finding locations
-remain unchanged.
+Runtime qualification checks the Python package, packaged native engine, CLI,
+JSON and SARIF identities. The environment's own script directory takes
+precedence during native redispatch. An inherited older global CLI was detected
+by the identity regression; its results were retained as failed qualification,
+not accepted as results from the new scanner.
 
-The identified Crawl4AI build now records the download handle's optional
-ownership type and types the extracted tar-member list. The handle change is
-annotation-only; validation, transfer and cleanup operations are unchanged.
-The new downstream version and wheel digest identify those source bytes. The
-upstream HTTPS URL, archive digest, length budget and redirect behavior are
-unchanged. Both transport decisions were reviewed against the new context;
-the downloader regression suite still exercises malformed URLs and payloads.
+The actual new scanner reproduces both reported calls at the original locations.
+Their source hashes and complete JSON/SARIF finding identities agree. Direct
+download regressions retain malformed-URL, size, digest, redirected-cache and
+failure-cleanup controls. Each decision binds the scanner recipe, lock, workflow,
+runtime qualification, acquisition callers and their relevant tests.
+
+The Git-backed review reader admits bounded regular blobs, checked Git queries
+and complete source hashes. Its executable resolver rejects relative command
+paths and implicit current-directory search. Nonzero comparison results never
+establish equal context. Neither review admits another URL finding, incomplete
+analysis or a different scanner/version. Hosted Linux execution and the exact
+committed-context audit remain separate required evidence.
 
 ## Individual findings
 

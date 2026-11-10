@@ -53,7 +53,7 @@ class SnapshotTests(unittest.TestCase):
         tool.validate_snapshot(self.snapshot, self.environment)
         graph = self.snapshot["manifests"][tool.MANIFEST]["resolved"]
         self.assertEqual(len(graph), len(self.pins))
-        self.assertIn("pkg:pypi/semgrep@1.181.0%2Bflitzzip.security2", graph)
+        self.assertIn("pkg:pypi/semgrep@1.184.0%2Bflitzzip.security1", graph)
         self.assertIn("pkg:pypi/opentelemetry-api@1.45.1", graph)
         self.assertNotIn("pkg:pypi/opentelemetry-api@1.37.0", graph)
         self.assertNotIn("file:", json.dumps(self.snapshot))
