@@ -19,6 +19,23 @@ from unittest import mock
 
 import flitzzip_mcp
 
+LIVE_DESCENDANT_PARENT = """
+import json, os, pathlib, subprocess, sys, threading, time
+ready, gate = map(pathlib.Path, sys.argv[1:3])
+child = subprocess.Popen([sys.executable, '-c', 'import threading; threading.Event().wait(60)'],
+    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    creationflags=subprocess.CREATE_NO_WINDOW)
+temporary = ready.with_suffix('.tmp')
+temporary.write_text(json.dumps({'root': os.getpid(), 'child': child.pid}))
+os.replace(temporary, ready)
+deadline = time.monotonic() + 15
+while not gate.exists():
+    if time.monotonic() >= deadline:
+        raise RuntimeError('test parent gate was not released')
+    threading.Event().wait(0.01)
+sys.exit(int(sys.argv[3]))
+"""
+
 
 @contextlib.contextmanager
 def retained_process_witness(pid: int):
@@ -67,6 +84,49 @@ def current_process_handle_count() -> int:
     if not kernel.GetProcessHandleCount(kernel.GetCurrentProcess(), ctypes.byref(count)):
         raise ctypes.WinError(ctypes.get_last_error())
     return count.value
+
+
+def observed_child_containment(factory, observations):
+    """Observe real per-instance native acquisitions and successful releases.
+
+    The observer keeps the actual job, membership checks, stops and waits. Its
+    ledger distinguishes task-owned leaks from unrelated runtime handle release.
+    """
+
+    def create(process, memory_limit_bytes):
+        owner = factory(process, memory_limit_bytes)
+        kernel = owner._kernel32
+        native_open, native_close = kernel.OpenProcess, kernel.CloseHandle
+        observation = {"outstanding": {owner._handle}, "opened_pids": []}
+
+        def open_process(rights, inherit, pid):
+            handle = native_open(rights, inherit, pid)
+            if handle:
+                try:
+                    if handle in observation["outstanding"]:
+                        raise AssertionError("native acquisition reused a live owned handle")
+                    observation["outstanding"].add(handle)
+                    observation["opened_pids"].append(pid)
+                except BaseException:
+                    native_close(handle)
+                    raise
+            return handle
+
+        def close_handle(handle):
+            released = native_close(handle)
+            if released:
+                observation["outstanding"].remove(handle)
+            return released
+
+        kernel.OpenProcess, kernel.CloseHandle = open_process, close_handle
+        try:
+            observations.append(observation)
+        except BaseException:
+            owner.close()
+            raise
+        return owner
+
+    return create
 
 
 class FailedReadPipe:
@@ -1138,31 +1198,25 @@ class BoundedChildTests(unittest.TestCase):
         self.assertTrue(base_python.is_file())
         # Tempfile and subprocess initialization retain a fixed runtime handle
         # set on Windows. Initialize both before measuring per-operation retention;
-        # require exact return to that baseline, without GC or a growing allowance.
+        # reject growth from the lowest observed baseline, without GC or a growing
+        # allowance. Direct ownership evidence below also catches a leak that an
+        # unrelated runtime handle release could conceal in the aggregate count.
         with tempfile.TemporaryDirectory(prefix="flitzzip-child-initialize-"):
             warm = flitzzip_mcp.run_bounded_command([str(base_python), "-c", "pass"], timeout_seconds=15)
             self.assertEqual(warm["exit_code"], 0)
         baseline = current_process_handle_count()
-        parent = """
-import json, os, pathlib, subprocess, sys, threading, time
-ready, gate = map(pathlib.Path, sys.argv[1:3])
-child = subprocess.Popen([sys.executable, '-c', 'import threading; threading.Event().wait(60)'],
-    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    creationflags=subprocess.CREATE_NO_WINDOW)
-temporary = ready.with_suffix('.tmp')
-temporary.write_text(json.dumps({'root': os.getpid(), 'child': child.pid}))
-os.replace(temporary, ready)
-deadline = time.monotonic() + 15
-while not gate.exists():
-    if time.monotonic() >= deadline:
-        raise RuntimeError('test parent gate was not released')
-    threading.Event().wait(0.01)
-sys.exit(int(sys.argv[3]))
-"""
+        containment_factory = flitzzip_mcp.ChildContainment
 
-        def run(command, cancellation, results, failures) -> None:
+        def run(command, cancellation, results, failures, observations) -> None:
             try:
-                results.append(flitzzip_mcp.run_bounded_command(command, timeout_seconds=20, cancellation=cancellation))
+                with mock.patch.object(
+                    flitzzip_mcp,
+                    "ChildContainment",
+                    new=observed_child_containment(containment_factory, observations),
+                ):
+                    results.append(
+                        flitzzip_mcp.run_bounded_command(command, timeout_seconds=20, cancellation=cancellation)
+                    )
             except Exception as error:
                 failures.append(error)
 
@@ -1173,11 +1227,13 @@ sys.exit(int(sys.argv[3]))
             ):
                 ready, gate = Path(temporary) / "ready.json", Path(temporary) / "release"
                 cancellation = threading.Event()
-                results, failures = [], []
+                results, failures, observations = [], [], []
 
-                command = [str(base_python), "-c", parent, str(ready), str(gate), str(expected_exit)]
+                command = [str(base_python), "-c", LIVE_DESCENDANT_PARENT, str(ready), str(gate), str(expected_exit)]
                 worker = threading.Thread(
-                    target=run, args=(command, cancellation, results, failures), name="owned-descendant-regression"
+                    target=run,
+                    args=(command, cancellation, results, failures, observations),
+                    name="owned-descendant-regression",
                 )
                 worker.start()
                 try:
@@ -1202,13 +1258,16 @@ sys.exit(int(sys.argv[3]))
                         self.assertEqual(
                             kernel.WaitForSingleObject(handle, 0), 0, "owned descendant survived root completion"
                         )
+                        self.assertEqual(len(observations), 1)
+                        self.assertFalse(observations[0]["outstanding"], "owned native handles were not released")
+                        self.assertIn(observed["child"], observations[0]["opened_pids"])
                 finally:
                     cancellation.set()
                     worker.join(timeout=10)
                     self.assertFalse(worker.is_alive(), "test-owned command cleanup did not complete")
-                self.assertEqual(
-                    current_process_handle_count(), baseline, "native handles retained after command cleanup"
-                )
+                current = current_process_handle_count()
+                self.assertLessEqual(current, baseline, "native handle count grew after command cleanup")
+                baseline = current
 
     def test_delayed_termination_retries_wait_and_preserves_cancellation_status(self) -> None:
         """Purpose: Finish owned process cleanup when asynchronous termination outlasts the first wait.

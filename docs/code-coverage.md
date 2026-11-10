@@ -365,6 +365,12 @@ could mask an earlier defect, such as normalization concealing a wrong histogram
 mass. Challenge both the isolated stage and the connected path with a safe control
 that must fail at the intended boundary.
 
+Resource-retention assertions need direct evidence of owned acquisitions and
+releases; aggregate counters are supporting observations. A falling handle count
+is not a leak, and unrelated cleanup can conceal growth in a total. Observers
+should retain identifiers and outcomes rather than resource-owning arguments:
+mock call history can otherwise keep the observed resource alive itself.
+
 Generated tests complement these oracles. Use bounded domains, reproducible seeds
 and minimized failing inputs; retain each confirmed failure as a deterministic
 regression. Property and metamorphic assertions need an independent justification:
