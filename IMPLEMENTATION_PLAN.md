@@ -87,6 +87,17 @@ request; this does not authorize publication of a replacement.
    failed required collection and unexplained regressions block release.
    CPU, GUI, tooling, HIP host and device measurements retain separate scopes.
 
+## Approved Entropy Extension
+
+Implement and qualify the [compact rANS design](docs/native-rans-extension.md)
+for Neutron only. Version 12 and kind 14 are approved design assignments, not
+currently emitted product representations. Preserve versions 1–11 and efforts
+1–9, and include inner-stage kinds in writer and reader version admission.
+Continue bounded HIP correctness and ownership qualification independently of
+performance measurement. Enable the production candidate only after independent
+correctness and worthwhile complete-size evidence from representative workloads.
+The shared-host restriction on local benchmarks remains in effect.
+
 ## Deferred Improvement Work
 
 - **Neutron effectiveness:** the complete version-eleven Govdocs1 study now

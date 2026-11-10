@@ -116,6 +116,12 @@ heuristic. Competitive graphs retain the complete minimum-byte search.
 
 ## Research Priorities
 
+The [approved compact entropy design](native-rans-extension.md) specifies the
+proposed Neutron-only version-12 rANS representation, composition admission and
+GPU ownership requirements. Its prototype is separate from the current product;
+production adoption requires independent correctness and representative complete
+archive-size evidence. Approval does not establish that it beats existing codecs.
+
 The current [standard-format references](neutron-public-corpus-benchmark.md#standard-format-size-reference)
 show the remaining workload-specific gap: Canterbury needs 723,429 complete
 Neutron bytes, versus 543,236 for TAR/bzip2 and 494,376 for TAR/XZ. Pythia14M
