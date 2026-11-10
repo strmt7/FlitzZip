@@ -36,6 +36,10 @@ the underlying format or product lineage.
 - Do not stop, reconfigure, or interfere with unrelated host work. Defer only
   benchmark timing when substantial CPU/GPU/RAM/storage contention makes the
   measurement unreliable; ordinary correctness work need not wait for idle.
+- Follow the [owned-work lifecycle](docs/agent-operating-guide.md#owned-work-and-cleanup)
+  for task-created processes, containers, jobs and host registrations. Account
+  for cleanup on success, failure and cancellation; do not leave unrequested
+  background services, scheduled tasks or other persistent host work.
 - Work as one agent. Do not spawn, fork, delegate, or fan out model workers
   unless the maintainer explicitly reverses that rule for a specific task.
   The sole standing exception is the Codex Security vulnerability scanner:

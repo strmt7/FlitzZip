@@ -76,6 +76,15 @@ reaps the owned child and closes its pipes before returning the error.
 An output-pipe read error also terminates the owned tree. The collector retains
 the first read failure and refuses to render partial output as complete command
 evidence, even when the child itself exited successfully.
+Cleanup retains handles to observed job members, rechecks job membership before
+termination and waits for those process handles to signal. It rescans for children
+created during shutdown before accepting empty membership. A root exit or zero
+active-job count alone is not that process-completion barrier:
+[Windows process termination is asynchronous](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess).
+Membership snapshots have a bounded capacity of 65,536 identifiers. A failed
+query, refused handle, exhausted bound or unconfirmed termination remains a
+cleanup failure; emergency job termination is not relabelled as a successful
+drain. Acquired witness handles are released on partial failure as well as success.
 Results include `job_memory_limit_bytes`; allocation denial remains
 a command failure, never a passed or deferred check.
 

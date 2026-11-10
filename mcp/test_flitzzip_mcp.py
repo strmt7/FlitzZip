@@ -20,6 +20,55 @@ from unittest import mock
 import flitzzip_mcp
 
 
+@contextlib.contextmanager
+def retained_process_witness(pid: int):
+    """Retain the actual waiting child, including cleanup if an assertion fails.
+
+    The process must remain alive until the test releases its parent. A retained
+    native handle prevents PID reuse from substituting a different process.
+    """
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel.TerminateProcess.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x100000 | 0x0001, False, pid)  # SYNCHRONIZE | PROCESS_TERMINATE
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        yield kernel, handle
+    finally:
+        try:
+            state = kernel.WaitForSingleObject(handle, 0)
+            if state == 0x102:  # WAIT_TIMEOUT: the controlled child still exists.
+                if not kernel.TerminateProcess(handle, 1) and ctypes.get_last_error() != 5:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if kernel.WaitForSingleObject(handle, 5000) != 0:
+                    raise RuntimeError("controlled descendant did not terminate during test cleanup")
+            elif state != 0:
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            if not kernel.CloseHandle(handle):
+                raise ctypes.WinError(ctypes.get_last_error())
+
+
+def current_process_handle_count() -> int:
+    """Observe this test process's live native handles, without changing its working set or GC."""
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetCurrentProcess.argtypes = []
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.GetProcessHandleCount.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel.GetProcessHandleCount.restype = wintypes.BOOL
+    count = wintypes.DWORD()
+    if not kernel.GetProcessHandleCount(kernel.GetCurrentProcess(), ctypes.byref(count)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return count.value
+
+
 class FailedReadPipe:
     def __init__(self, stream: io.BufferedReader) -> None:
         """Purpose: Inject a transport read failure while retaining the real owned pipe.
@@ -314,6 +363,10 @@ class ProtocolTests(unittest.TestCase):
                     """Purpose: Return independent job limits or zero active-process accounting.
                     Inputs: Native query buffer and frozen failure stage. Outputs: Controlled OS-query result.
                     """
+                    if kind == 3:
+                        ctypes.cast(pointer, ctypes.POINTER(wintypes.DWORD))[0] = 0
+                        ctypes.cast(pointer, ctypes.POINTER(wintypes.DWORD))[1] = 0
+                        return True
                     if kind == 1:
                         info = ctypes.cast(
                             pointer, ctypes.POINTER(flitzzip_mcp._JobObjectBasicAccountingInformation)
@@ -365,70 +418,186 @@ class ProtocolTests(unittest.TestCase):
                         output.render(rendered)
                     self.assertIs(failure.exception.__cause__, original)
 
-    def test_job_close_confirms_zero_and_is_idempotent(self) -> None:
-        """Purpose: Verify drain ordering. Inputs: Job accounting moving from one to zero. Outputs: Termination
-        then one close.
-        """
+    def test_job_close_waits_members_rescans_and_is_idempotent(self) -> None:
+        """Account for children born during shutdown; accounting zero is not the member-handle barrier."""
         library = mock.Mock()
-        library.TerminateJobObject.return_value = True
-        active = iter((1, 0))
+        library.CloseHandle.return_value = True
+        library.OpenProcess.side_effect = lambda _rights, _inherit, pid: pid + 1000
+        stopped = set()
+        trace = []
 
-        def query(handle, kind, result, size, returned):
-            """Purpose: Supply owned accounting. Inputs: Typed query buffer. Outputs: Next controlled active-
-            process count.
-            """
-            self.assertEqual(
-                (handle, kind, size, returned),
-                (123, 1, ctypes.sizeof(flitzzip_mcp._JobObjectBasicAccountingInformation), None),
-            )
-            count = next(active, None)
-            self.assertIsNotNone(count, "job shutdown queried beyond the controlled active-process sequence")
-            ctypes.cast(
+        def membership(handle, job, result):
+            self.assertEqual(job, 123)
+            ctypes.cast(result, ctypes.POINTER(wintypes.BOOL)).contents.value = True
+            trace.append(("retain", handle))
+            return True
+
+        def stop(handle, code):
+            self.assertEqual(code, 1)
+            trace.append(("stop", handle))
+            stopped.add(handle)
+            return True
+
+        def wait(handle, _milliseconds):
+            trace.append(("wait", handle))
+            return 0 if handle in stopped else 0x102
+
+        def accounting(_handle, kind, result, _size, _returned):
+            self.assertEqual(kind, 1)
+            information = ctypes.cast(
                 result, ctypes.POINTER(flitzzip_mcp._JobObjectBasicAccountingInformation)
-            ).contents.active_processes = count
+            ).contents
+            information.active_processes = 0
+            return True
+
+        library.IsProcessInJob.side_effect = membership
+        library.TerminateProcess.side_effect = stop
+        library.WaitForSingleObject.side_effect = wait
+        library.QueryInformationJobObject.side_effect = accounting
+        owner = flitzzip_mcp.ChildContainment.__new__(flitzzip_mcp.ChildContainment)
+        owner._handle, owner._kernel32 = 123, library
+        with mock.patch.object(owner, "_process_ids", side_effect=((11, 12), (13,), ())):
+            owner.close()
+            owner.close()
+        self.assertLess(trace.index(("retain", 1012)), trace.index(("stop", 1011)))
+        self.assertEqual(stopped, {1011, 1012, 1013})
+        self.assertEqual(library.CloseHandle.call_args_list, [mock.call(h) for h in (1011, 1012, 1013, 123)])
+        library.TerminateJobObject.assert_not_called()
+        self.assertIsNone(owner._handle)
+
+    def test_job_close_preserves_failed_drain_and_handle_release(self) -> None:
+        """Failed completion requests emergency containment and remains a failure, even if the job closes."""
+        for error in (RuntimeError("query failed"), TimeoutError("process not signaled")):
+            with self.subTest(error=type(error).__name__):
+                library = mock.Mock()
+                library.CloseHandle.return_value = True
+                owner = flitzzip_mcp.ChildContainment.__new__(flitzzip_mcp.ChildContainment)
+                owner._handle, owner._kernel32 = 123, library
+                with mock.patch.object(owner, "_drain", side_effect=error), self.assertRaises(type(error)) as caught:
+                    owner.close()
+                self.assertIs(caught.exception, error)
+                library.TerminateJobObject.assert_called_once_with(123, 1)
+                library.CloseHandle.assert_called_once_with(123)
+                self.assertIsNone(owner._handle)
+        library = mock.Mock()
+        library.CloseHandle.return_value = False
+        owner = flitzzip_mcp.ChildContainment.__new__(flitzzip_mcp.ChildContainment)
+        owner._handle, owner._kernel32 = 123, library
+        with (
+            mock.patch.object(owner, "_drain"),
+            mock.patch.object(flitzzip_mcp.ctypes, "get_last_error", return_value=5),
+            self.assertRaisesRegex(RuntimeError, "job handle release failed"),
+        ):
+            owner.close()
+        self.assertEqual(owner._handle, 123)
+
+    def test_job_member_snapshot_resizes_without_truncating_ids(self) -> None:
+        library = mock.Mock()
+        calls = []
+        members = tuple(range(100, 170))
+
+        def query(_handle, kind, buffer, size, _returned):
+            self.assertEqual(kind, 3)
+            calls.append(size)
+            header = ctypes.cast(buffer, ctypes.POINTER(wintypes.DWORD))
+            header[0], header[1] = 70, 0 if len(calls) == 1 else 70
+            if len(calls) == 1:
+                return False
+            values = (ctypes.c_size_t * 70).from_buffer(buffer, 8)
+            values[:] = members
             return True
 
         library.QueryInformationJobObject.side_effect = query
         owner = flitzzip_mcp.ChildContainment.__new__(flitzzip_mcp.ChildContainment)
         owner._handle, owner._kernel32 = 123, library
-        with mock.patch.object(flitzzip_mcp.time, "sleep"):
-            owner.close()
-            owner.close()
-        library.TerminateJobObject.assert_called_once_with(123, 1)
-        library.CloseHandle.assert_called_once_with(123)
-        self.assertEqual(library.QueryInformationJobObject.call_count, 2)
+        with mock.patch.object(flitzzip_mcp.ctypes, "get_last_error", return_value=234):
+            self.assertEqual(owner._process_ids(time.monotonic() + 5), members)
+        self.assertEqual(calls, [8 + 64 * ctypes.sizeof(ctypes.c_size_t), 8 + 128 * ctypes.sizeof(ctypes.c_size_t)])
 
-    def test_job_close_rejects_query_failure_and_timeout(self) -> None:
-        """Purpose: Preserve shutdown failures. Inputs: Failed termination, invalid accounting or no progress.
-        Outputs: Failure plus
-        released owner.
-        """
-        for failure in ("query", "timeout", "termination"):
-            with self.subTest(failure=failure):
+    def test_job_member_snapshot_rejects_invalid_results_and_exhausted_bounds(self) -> None:
+        cases = [
+            (1, 2, (), True, 0),
+            (65, 65, (), True, 0),
+            (1, 1, (0,), True, 0),
+            (2, 2, (7, 7), True, 0),
+            (65537, 0, (), False, 234),
+            (0, 0, (), False, 5),
+        ]
+        for assigned, count, members, complete, error in cases:
+            with self.subTest(assigned=assigned, count=count, error=error):
                 library = mock.Mock()
-                library.TerminateJobObject.return_value = failure != "termination"
 
-                def query(handle, kind, result, size, returned, *, fail=failure == "query"):
-                    """Purpose: Model a shutdown failure. Inputs: Query buffer. Outputs: Failure or a persistently
-                    active job.
-                    """
-                    ctypes.cast(
-                        result, ctypes.POINTER(flitzzip_mcp._JobObjectBasicAccountingInformation)
-                    ).contents.active_processes = 1
-                    return not fail
+                def query(_handle, _kind, buffer, _size, _returned, *, snapshot=(assigned, count, members, complete)):
+                    assigned_value, count_value, ids, succeeded = snapshot
+                    header = ctypes.cast(buffer, ctypes.POINTER(wintypes.DWORD))
+                    header[0], header[1] = assigned_value, count_value
+                    if ids:
+                        (ctypes.c_size_t * len(ids)).from_buffer(buffer, 8)[:] = ids
+                    return succeeded
 
                 library.QueryInformationJobObject.side_effect = query
                 owner = flitzzip_mcp.ChildContainment.__new__(flitzzip_mcp.ChildContainment)
                 owner._handle, owner._kernel32 = 123, library
-                expected = TimeoutError if failure == "timeout" else RuntimeError
                 with (
-                    mock.patch.object(flitzzip_mcp.time, "monotonic", side_effect=(0, 6)),
-                    mock.patch.object(flitzzip_mcp.ctypes, "get_last_error", return_value=5),
-                    self.assertRaises(expected),
+                    mock.patch.object(flitzzip_mcp.ctypes, "get_last_error", return_value=error),
+                    self.assertRaises(RuntimeError),
                 ):
-                    owner.close()
-                library.CloseHandle.assert_called_once_with(123)
-                self.assertIsNone(owner._handle)
+                    owner._process_ids(time.monotonic() + 5)
+        with self.assertRaises(TimeoutError):
+            owner._process_ids(time.monotonic() - 1)
+
+    def test_retained_members_reject_foreign_pid_reuse_and_close_on_partial_failure(self) -> None:
+        library = mock.Mock()
+        library.OpenProcess.side_effect = (111, 112)
+        library.CloseHandle.return_value = True
+
+        def membership(handle, _job, result):
+            ctypes.cast(result, ctypes.POINTER(wintypes.BOOL)).contents.value = handle == 111
+            return True
+
+        library.IsProcessInJob.side_effect = membership
+        owner = flitzzip_mcp.ChildContainment.__new__(flitzzip_mcp.ChildContainment)
+        owner._handle, owner._kernel32 = 123, library
+        with owner._retained_members((11, 12)) as handles:
+            self.assertEqual(handles, [111])
+        self.assertEqual(library.CloseHandle.call_args_list, [mock.call(112), mock.call(111)])
+        library.TerminateProcess.assert_not_called()
+        library.OpenProcess.side_effect = (111, 0)
+        library.CloseHandle.reset_mock()
+        with (
+            mock.patch.object(flitzzip_mcp.ctypes, "get_last_error", return_value=5),
+            self.assertRaisesRegex(RuntimeError, "handle acquisition failed"),
+            owner._retained_members((11, 12)),
+        ):
+            self.fail("partial handle acquisition was accepted")
+        library.CloseHandle.assert_called_once_with(111)
+        library.OpenProcess.side_effect = (0,)
+        with (
+            mock.patch.object(flitzzip_mcp.ctypes, "get_last_error", return_value=87),
+            owner._retained_members((11,)) as handles,
+        ):
+            self.assertEqual(handles, [])
+
+    def test_member_stop_requires_actual_signaling_even_after_access_denied(self) -> None:
+        library = mock.Mock()
+        library.TerminateProcess.return_value = False
+        owner = flitzzip_mcp.ChildContainment.__new__(flitzzip_mcp.ChildContainment)
+        owner._kernel32 = library
+        for state, expected in ((0, None), (0x102, TimeoutError), (0xFFFFFFFF, RuntimeError)):
+            with self.subTest(state=state):
+                library.WaitForSingleObject.side_effect = (0x102, state)
+                with mock.patch.object(flitzzip_mcp.ctypes, "get_last_error", return_value=5):
+                    if expected:
+                        with self.assertRaises(expected):
+                            owner._stop_members((55,), time.monotonic() + 5)
+                    else:
+                        owner._stop_members((55,), time.monotonic() + 5)
+        library.WaitForSingleObject.side_effect = (0x102,)
+        with (
+            mock.patch.object(flitzzip_mcp.ctypes, "get_last_error", return_value=6),
+            self.assertRaisesRegex(RuntimeError, "termination failed"),
+        ):
+            owner._stop_members((55,), time.monotonic() + 5)
 
     def test_indirect_powershell_environment_is_child_only(self) -> None:
         """Purpose: Isolate PS5 discovery from PS7; inputs: mixed-case environment; outputs: no caller mutation."""
@@ -957,6 +1126,90 @@ class MemoryAdmissionTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "nt", "Windows-native command execution and aggregate job memory")
 class BoundedChildTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows descendant and native-handle lifetime contract")
+    def test_root_exit_drains_live_descendants_without_retaining_handles(self) -> None:
+        """Root completion must not leave a detached child or grow this process's handle set.
+
+        Retain a real child handle while its root waits at a controlled gate.
+        Exercise successful and failed roots repeatedly. Test cleanup still owns
+        and terminates that exact child if the production assertion fails.
+        """
+        base_python = Path(sys.base_prefix) / "python.exe"
+        self.assertTrue(base_python.is_file())
+        # Tempfile and subprocess initialization retain a fixed runtime handle
+        # set on Windows. Initialize both before measuring per-operation retention;
+        # require exact return to that baseline, without GC or a growing allowance.
+        with tempfile.TemporaryDirectory(prefix="flitzzip-child-initialize-"):
+            warm = flitzzip_mcp.run_bounded_command([str(base_python), "-c", "pass"], timeout_seconds=15)
+            self.assertEqual(warm["exit_code"], 0)
+        baseline = current_process_handle_count()
+        parent = """
+import json, os, pathlib, subprocess, sys, threading, time
+ready, gate = map(pathlib.Path, sys.argv[1:3])
+child = subprocess.Popen([sys.executable, '-c', 'import threading; threading.Event().wait(60)'],
+    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    creationflags=subprocess.CREATE_NO_WINDOW)
+temporary = ready.with_suffix('.tmp')
+temporary.write_text(json.dumps({'root': os.getpid(), 'child': child.pid}))
+os.replace(temporary, ready)
+deadline = time.monotonic() + 15
+while not gate.exists():
+    if time.monotonic() >= deadline:
+        raise RuntimeError('test parent gate was not released')
+    threading.Event().wait(0.01)
+sys.exit(int(sys.argv[3]))
+"""
+
+        def run(command, cancellation, results, failures) -> None:
+            try:
+                results.append(flitzzip_mcp.run_bounded_command(command, timeout_seconds=20, cancellation=cancellation))
+            except Exception as error:
+                failures.append(error)
+
+        for expected_exit in (0, 7, 0, 7):
+            with (
+                self.subTest(exit_code=expected_exit),
+                tempfile.TemporaryDirectory(prefix="flitzzip-child-") as temporary,
+            ):
+                ready, gate = Path(temporary) / "ready.json", Path(temporary) / "release"
+                cancellation = threading.Event()
+                results, failures = [], []
+
+                command = [str(base_python), "-c", parent, str(ready), str(gate), str(expected_exit)]
+                worker = threading.Thread(
+                    target=run, args=(command, cancellation, results, failures), name="owned-descendant-regression"
+                )
+                worker.start()
+                try:
+                    deadline = time.monotonic() + 10
+                    while not ready.exists():
+                        if not worker.is_alive() or time.monotonic() >= deadline:
+                            self.fail(f"owned child did not reach its gate: {failures!r}")
+                        cancellation.wait(0.01)
+                    observed = json.loads(ready.read_text())
+                    with retained_process_witness(observed["child"]) as (kernel, handle):
+                        self.assertEqual(kernel.WaitForSingleObject(handle, 0), 0x102)
+                        gate.write_bytes(b"release")
+                        worker.join(timeout=25)
+                        self.assertFalse(worker.is_alive(), "owned command did not complete")
+                        if failures:
+                            raise failures[0]
+                        self.assertEqual(len(results), 1)
+                        self.assertEqual(results[0]["root_pid"], observed["root"])
+                        self.assertEqual(results[0]["exit_code"], expected_exit)
+                        self.assertFalse(results[0]["timed_out"])
+                        self.assertFalse(results[0]["output_limit_exceeded"])
+                        self.assertEqual(
+                            kernel.WaitForSingleObject(handle, 0), 0, "owned descendant survived root completion"
+                        )
+                finally:
+                    cancellation.set()
+                    worker.join(timeout=10)
+                    self.assertFalse(worker.is_alive(), "test-owned command cleanup did not complete")
+                self.assertEqual(
+                    current_process_handle_count(), baseline, "native handles retained after command cleanup"
+                )
+
     def test_delayed_termination_retries_wait_and_preserves_cancellation_status(self) -> None:
         """Purpose: Finish owned process cleanup when asynchronous termination outlasts the first wait.
         Inputs: Cancellation after verified admission and one controlled wait timeout.

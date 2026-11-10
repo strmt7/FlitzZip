@@ -515,6 +515,44 @@ scope and provenance; skills contain reusable procedures rather than run counts.
   or memory-bandwidth headroom from CPU utilization. Keep timing claims separate
   from correctness and compression-size results.
 
+### Owned Work And Cleanup
+
+These requirements apply throughout development, including builds, tests,
+crawling, indexing, MCP commands and experimental tools.
+
+- Own each task-created process tree, container and background job from launch
+  through actual completion. Retain its run handle or verified process identity
+  in local evidence. A PID alone can be reused; a log, lock file, result marker
+  or the root process's exit does not prove that descendants stopped.
+- Use the existing bounded execution and containment mechanisms. Arrange cleanup
+  before fallible initialization, release handles and pipes in scope guards or
+  `finally`, join workers, and retain GPU allocations until actual stream
+  completion. Success, exceptions, cancellation, output limits and timeouts
+  must all release the resources owned by that operation. Report cleanup failures
+  rather than returning an unconditional success.
+- Do not detach unowned work or add a service, scheduled task, startup entry,
+  recurring job or keep-alive mechanism unless the maintainer requests that
+  persistent behavior. An ordinary tool installation is not permission to add
+  autonomous host work. Preserve approved installations and reusable caches;
+  repeatedly reinstalling tools is not cleanup.
+- Cancel or terminate only work whose ownership has been established. Use bounded
+  shutdown and the owned process tree's containment, then verify termination.
+  Do not kill processes by a broad name match, stop a shared service, reset the
+  GPU driver, or alter unrelated tasks to obtain a clean-looking system.
+- Before a checkpoint or handoff, account for task-created processes, containers,
+  jobs and temporary host registrations. Close completed work and remove temporary
+  registrations. Keep any legitimately running work explicitly tracked with its
+  owner and completion path; do not label it stopped without terminal evidence.
+  Host-managed MCP servers and unrelated user applications are not disposable
+  task children.
+- Lifecycle changes require success, failure, cancellation and reuse tests at
+  the affected boundary. Where relevant, check descendant termination, handle
+  release and repeated-operation memory retention in the same process. Diagnose
+  growth through actual owners and controlled inputs; system-wide RAM changes
+  alone cannot distinguish a leak from other applications or operating-system
+  caches. Do not hide a leak with forced garbage collection, working-set trimming,
+  retries or a periodic restart.
+
 Use these from the repository root. Start every change by asking the verifier
 what is relevant:
 

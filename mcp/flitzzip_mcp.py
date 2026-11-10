@@ -8,6 +8,7 @@ commands that leak secrets or launch the GUI.
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import json
 import math
@@ -29,6 +30,7 @@ MAX_RESPONSE_CHARACTERS = 12_000
 CHILD_TIMEOUT_SECONDS = 900.0
 COMMAND_TIMEOUT_SECONDS = {"verify_changes": 3600.0, "wait_final_commit_workflows": 4500.0}
 READ_CHUNK_BYTES = 64 * 1024
+MAX_JOB_PROCESS_IDS = 65536
 MIB = 1024 * 1024
 CREATE_SUSPENDED = 0x00000004
 JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
@@ -163,7 +165,7 @@ class _JobObjectBasicLimitInformation(ctypes.Structure):
 
 
 class _JobObjectBasicAccountingInformation(ctypes.Structure):
-    """Typed Windows accounting result used to confirm complete owned-tree shutdown."""
+    """Final membership accounting; process handles independently establish termination."""
 
     _fields_ = [
         ("total_user_time", ctypes.c_longlong),
@@ -350,6 +352,14 @@ class ChildContainment:
         kernel32.TerminateJobObject.restype = wintypes.BOOL
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
+        kernel32.IsProcessInJob.restype = wintypes.BOOL
+        kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        kernel32.TerminateProcess.restype = wintypes.BOOL
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
 
         handle = kernel32.CreateJobObjectW(None, None)
         information = _JobObjectExtendedLimitInformation()
@@ -381,39 +391,122 @@ class ChildContainment:
         self._handle = handle
         self._kernel32 = kernel32
 
-    def terminate(self, process: subprocess.Popen[bytes]) -> None:
-        """Purpose: Terminate the contained child and every descendant.
-        Inputs: process is the root child associated with this containment object.
-        Outputs: Requests hard tree termination and falls back to killing the root process.
+    def _process_ids(self, deadline: float) -> tuple[int, ...]:
+        """Read the current owned-job membership with bounded storage and sizing retries."""
+        capacity = 64
+        while True:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("owned process enumeration exceeded its cleanup deadline")
+            buffer = ctypes.create_string_buffer(8 + capacity * ctypes.sizeof(ctypes.c_size_t))
+            complete = self._kernel32.QueryInformationJobObject(self._handle, 3, buffer, len(buffer), None)
+            if not complete and ctypes.get_last_error() != 234:  # ERROR_MORE_DATA
+                raise RuntimeError(f"owned process enumeration failed ({ctypes.get_last_error()})")
+            assigned, count = (wintypes.DWORD * 2).from_buffer(buffer)
+            if count > capacity or assigned < count:
+                raise RuntimeError("owned process enumeration returned inconsistent counts")
+            if not complete or assigned > count:
+                if capacity == MAX_JOB_PROCESS_IDS or assigned > MAX_JOB_PROCESS_IDS:
+                    raise RuntimeError("owned process membership exceeds the bounded snapshot capacity")
+                capacity = min(MAX_JOB_PROCESS_IDS, max(assigned, capacity * 2))
+                continue
+            members = tuple((ctypes.c_size_t * count).from_buffer(buffer, 8))
+            if any(pid == 0 for pid in members) or len(set(members)) != len(members):
+                raise RuntimeError("owned process enumeration returned invalid identities")
+            return members
+
+    @contextlib.contextmanager
+    def _retained_members(self, members: Sequence[int]) -> Iterator[list[int]]:
+        """Retain and recheck job membership before termination; close every acquired handle."""
+        handles: list[int] = []
+        try:
+            for pid in members:
+                handle = self._kernel32.OpenProcess(0x100000 | 0x1000 | 0x0001, False, pid)
+                if not handle:
+                    if ctypes.get_last_error() == 87:  # Process disappeared before OpenProcess.
+                        continue
+                    raise RuntimeError(f"owned process handle acquisition failed ({ctypes.get_last_error()})")
+                try:
+                    member = wintypes.BOOL()
+                    if not self._kernel32.IsProcessInJob(handle, self._handle, ctypes.byref(member)):
+                        raise RuntimeError(f"owned process membership check failed ({ctypes.get_last_error()})")
+                    if member.value:
+                        handles.append(handle)
+                        handle = None
+                finally:
+                    if handle is not None and not self._kernel32.CloseHandle(handle):
+                        raise RuntimeError(f"process witness release failed ({ctypes.get_last_error()})")
+            yield handles
+        finally:
+            first_error = 0
+            for handle in handles:
+                if not self._kernel32.CloseHandle(handle) and not first_error:
+                    first_error = ctypes.get_last_error() or 1
+            if first_error:
+                raise RuntimeError(f"owned process witness release failed ({first_error})")
+
+    def _stop_members(self, handles: Sequence[int], deadline: float) -> None:
+        """Request individual stops, then use each retained process handle as its completion barrier."""
+        for handle in handles:
+            state = self._kernel32.WaitForSingleObject(handle, 0)
+            if state == 0:
+                continue
+            if state != 0x102:
+                raise RuntimeError(f"owned process state query failed ({ctypes.get_last_error()})")
+            if not self._kernel32.TerminateProcess(handle, 1) and ctypes.get_last_error() != 5:
+                raise RuntimeError(f"owned process termination failed ({ctypes.get_last_error()})")
+            # ERROR_ACCESS_DENIED can mean termination is already underway.
+            # It is accepted only if the actual handle signals below.
+        for handle in handles:
+            remaining_ms = max(0, math.ceil((deadline - time.monotonic()) * 1000))
+            state = self._kernel32.WaitForSingleObject(handle, remaining_ms)
+            if state == 0x102:
+                raise TimeoutError("owned process did not finish termination within the cleanup deadline")
+            if state != 0:
+                raise RuntimeError(f"owned process termination wait failed ({ctypes.get_last_error()})")
+
+    def _drain(self) -> None:
+        """Stop observed members before rescanning for children born during shutdown.
+
+        Job termination and zero active accounting are not process-handle waits.
+        Keep the job open, retain all observed members before stopping any, and
+        rescan after those handles signal. Native containment still covers births.
         """
-        if self._handle is not None and self._kernel32 is not None:
-            self._kernel32.TerminateJobObject(self._handle, 1)
-        if process.poll() is None:
-            process.kill()
+        deadline = time.monotonic() + 5
+        while True:
+            members = self._process_ids(deadline)
+            if not members:
+                accounting = _JobObjectBasicAccountingInformation()
+                if not self._kernel32.QueryInformationJobObject(
+                    self._handle, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None
+                ):
+                    raise RuntimeError(f"owned job shutdown query failed ({ctypes.get_last_error()})")
+                if accounting.active_processes == 0:
+                    return
+            with self._retained_members(members) as handles:
+                self._stop_members(handles, deadline)
+                if not handles:
+                    time.sleep(0.01)
+
+    def terminate(self, process: subprocess.Popen[bytes]) -> None:
+        """Stop and wait for the contained tree; absence of containment is never a root-only success."""
+        if self._handle is None or self._kernel32 is None:
+            if process.poll() is None:
+                raise RuntimeError("live child has no owned process containment")
+            return
+        self._drain()
 
     def close(self) -> None:
-        """Purpose: Terminate and drain the owned process tree before releasing containment.
-        Inputs: None.
-        Outputs: Confirms zero active processes within five seconds, or raises; always closes the job exactly once.
-        """
+        """Drain the owned tree and close its job exactly once; errors retain an explicit failure."""
         if self._handle is not None and self._kernel32 is not None:
             try:
-                if not self._kernel32.TerminateJobObject(self._handle, 1):
-                    raise RuntimeError(f"owned job termination failed ({ctypes.get_last_error()})")
-                deadline = time.monotonic() + 5
-                while True:
-                    accounting = _JobObjectBasicAccountingInformation()
-                    if not self._kernel32.QueryInformationJobObject(
-                        self._handle, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None
-                    ):
-                        raise RuntimeError(f"owned job shutdown query failed ({ctypes.get_last_error()})")
-                    if accounting.active_processes == 0:
-                        break
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError("owned process tree did not finish termination within five seconds")
-                    time.sleep(0.01)
+                self._drain()
+            except BaseException:
+                # Emergency containment on failure is not reported as confirmed cleanup.
+                self._kernel32.TerminateJobObject(self._handle, 1)
+                raise
             finally:
-                self._kernel32.CloseHandle(self._handle)
+                if not self._kernel32.CloseHandle(self._handle):
+                    raise RuntimeError(f"owned job handle release failed ({ctypes.get_last_error()})")
                 self._handle = None
 
 
