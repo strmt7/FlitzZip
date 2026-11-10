@@ -503,6 +503,7 @@ TEST_CASE(neutron_dictionary_complete_archive_readback) {
 // Purpose: Preserve an existing destination when a Neutron progress observer cancels archive creation.
 // Inputs: A bounded source, existing destination bytes and a deliberately failing progress observer.
 // Outputs: Requires the original exception and unchanged destination without partial publication.
+// Unexpected failures propagate with their original diagnostics rather than losing the first cause.
 TEST_CASE(neutron_dictionary_archive_cancellation_preserves_destination) {
     if (!flitzzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron archive cancellation requires HIP\n";
@@ -527,7 +528,10 @@ TEST_CASE(neutron_dictionary_archive_cancellation_preserves_destination) {
             }
         });
     } catch (const std::runtime_error& error) {
-        cancelled = std::string_view(error.what()) == "Neutron archive cancellation control";
+        if (std::string_view(error.what()) != "Neutron archive cancellation control") {
+            throw;
+        }
+        cancelled = true;
     }
     REQUIRE_TRUE(cancelled);
     std::ifstream stream(output, std::ios::binary);

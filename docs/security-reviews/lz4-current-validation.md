@@ -15,12 +15,14 @@ the checksum path. Independent literal and overlapping-match fixtures, output
 canaries and guarded input/output pages exercise this contract. Candidate checks
 do not replace the affected product tests or exact-commit hosted analyses.
 
-The native CPU Deflate workspace now reuses worker-owned miniz state. Review of
-that caller change confirms that `materialize_dictionary_cpu`, its exact-length
-check, the dictionary extent parser and the GPU dictionary producer are unchanged.
-The known LZ4 operations below retain their exact source and locations. Renewed
-context identities cover the changed translation unit; they do not admit the new
-Deflate helper or substitute for its own correctness and scanner qualification.
+Consumer review confirms that `materialize_dictionary_cpu`, its exact-length
+check, the dictionary extent parser and the GPU dictionary producer retain their
+reviewed behavior. Cancellation regressions propagate unexpected exceptions rather
+than replacing their diagnostics with a boolean assertion. That test-only change
+does not alter decoder extents, allocations, copy operations or header inclusion.
+The individual operations below retain their complete source and locations.
+Context renewal admits only these reviewed operations; native execution and
+current hosted analysis remain separate qualification requirements.
 
 ## DevSkim Reports
 

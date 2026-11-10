@@ -33,8 +33,10 @@ Prefer real OS rejection, independently framed corrupt input and bounded stream
 failures. If those cannot reach the contract, use a narrow per-instance adapter
 around the external dependency. Preserve production API semantics and keep
 successful acquisitions real where feasible. Assert cleanup and successful reuse,
-not just a mock call count. Do not patch process imports, add mutable global
-hooks, exhaust host resources or expose a public bypass solely for testability.
+not just a mock call count. Catch expected exceptions narrowly and rethrow any
+unexpected exception so the runner retains its original cause, rather than only
+a failed boolean control. Do not patch process imports, add mutable global hooks,
+exhaust host resources or expose a public bypass solely for testability.
 
 Match injected failures to the actual runtime and exception guarantee. A Debug
 library allocation inside a nonthrowing operation is not automatically a Release

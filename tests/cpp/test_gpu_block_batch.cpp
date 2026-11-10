@@ -326,6 +326,7 @@ TEST_CASE(gpu_block_batch_archive_roundtrip) {
 // Purpose: Preserve the old destination and release all pinned sources when a batch is interrupted.
 // Inputs: An isolated fixture, existing destination sentinel, and a callback throwing after the first source read.
 // Outputs: Requires exact sentinel preservation, no staging file, and unlocked source files after failure.
+// Unexpected errors propagate so resource rejection cannot masquerade as a failed interruption control.
 TEST_CASE(gpu_block_batch_archive_abort) {
     const auto root = test_temp_dir("block-batch-abort");
     write_archive_batch_fixture(root / "source");
@@ -343,7 +344,10 @@ TEST_CASE(gpu_block_batch_archive_abort) {
                                      }
                                  });
     } catch (const flitzzip::ArchiveError& error) {
-        interrupted = std::string(error.what()) == "test batch interruption";
+        if (std::string_view(error.what()) != "test batch interruption") {
+            throw;
+        }
+        interrupted = true;
     }
     REQUIRE_TRUE(interrupted);
     {
