@@ -9,6 +9,14 @@ function Assert-NativeCi {
     if (-not $Condition) { throw "Native CI contract failed: $Message" }
 }
 
+# Full CTest includes exact historical migration fixtures. Require complete history
+# in the actual checkout step, rather than accepting a similarly named field elsewhere.
+function Test-NativeCiCompleteCheckout {
+    param([string]$Source)
+    $checkouts = [regex]::Matches($Source, '(?m)^      - name: Checkout\r?\n(?:        [^\r\n]*\r?\n)*')
+    return $checkouts.Count -eq 1 -and $checkouts[0].Value -match '(?m)^          fetch-depth: 0\r?$'
+}
+
 # Purpose: Require actual CTest invocations to stop after failure, without admitting a flag in a comment or string.
 # Inputs: PowerShell source from the native driver or controlled policy mutations.
 # Outputs: True only for parseable source with CTest commands whose literal arguments all retain fail-fast behavior.
@@ -260,6 +268,15 @@ Assert-NativeCi ($workflow.Contains('tools/security_scan.ps1') -and $workflow.Co
 Assert-NativeCi ($workflow.Contains("!(matrix.coverage && steps.native_plan.outputs.native_coverage == 'true')")) 'the matrix runs inside Debug coverage or standalone, never both'
 $hipWorkflow = Get-Content -LiteralPath (Join-Path $root '.github/workflows/rocm-qualification.yml') -Raw
 Assert-NativeCi ($hipWorkflow.Contains('--require-hip') -and $hipWorkflow.Contains("inputs.runner || 'windows-2025-vs2026'")) 'automatic HIP compilation uses an explicit runner and actual required-HIP receipt'
+Assert-NativeCi (Test-NativeCiCompleteCheckout $hipWorkflow) 'HIP correctness requires exact historical fixtures from a complete checkout'
+foreach ($invalidCheckout in @(
+        $hipWorkflow.Replace('          fetch-depth: 0', '          fetch-depth: 1'),
+        $hipWorkflow.Replace('          fetch-depth: 0', '          fetch-tags: true'),
+        ($hipWorkflow.Replace('          fetch-depth: 0', '          fetch-depth: 1') + "`n      - name: unrelated`n        run: |`n          fetch-depth: 0`n"),
+        ($hipWorkflow + "`n      - name: Checkout`n        with:`n          fetch-depth: 0`n")
+    )) {
+    Assert-NativeCi (-not (Test-NativeCiCompleteCheckout $invalidCheckout)) 'shallow, missing, unrelated or ambiguous checkout metadata must fail'
+}
 $entry = Join-Path $PSScriptRoot 'ci_native_plan.ps1'
 $rejected = $false
 try { & $entry -ChangedPath 'tests/cpp/test_dictionary_block.cpp' -DispatchBase $base | Out-Null } catch { $rejected = $true }
