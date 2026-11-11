@@ -33,14 +33,198 @@ universal 100% line coverage is not a release requirement.
    and current documentation concise. Reuse evidence only when its identities match.
 7. Qualify the exact portable ZIP and MSI payloads, checksums and installer lifecycle
    before requesting publication approval.
-8. Improve the CPU lane across supported algorithms. Measure each writer and reader
-   separately at equal complete size or equal time, including startup, allocation,
-   checksums and streaming. Preserve independent interoperability and avoid claiming
+8. Improve the CPU lane across supported algorithms. Review each writer and reader
+   separately, including allocation, checksums and streaming. Qualify comparative
+   performance only when permitted. Preserve independent interoperability and avoid claiming
    that a native Zstandard improvement qualifies Deflate, Bzip2, LZMA or other codecs.
 
 [Agent instructions](AGENTS.md) define the mandatory operating rules.
 [Benchmark index](docs/benchmarks/README.md) identifies current evidence and limitations.
 Completed checkpoint narratives remain in Git history and local review artifacts.
+
+## Current Assessment
+
+Baseline: source `dec2dca` and its
+[qualified candidate](https://github.com/strmt7/FlitzZip/actions/runs/42993879195).
+Revalidate changed inputs and live services before using this assessment for a
+later revision. This is a source-backed baseline, not a claim of a flawless app.
+
+| Area | Verified state | Remaining problem or limit |
+| --- | --- | --- |
+| Product | Windows-native C++20 app, CLI, in-process adapters and HIP compute boundary | Exact methods differ by format; preserve the [capability matrix](docs/archive-format-support.md) |
+| Native tests | Seven local suites passed with GPU admission and with devices unavailable; main registry had 1,220 passing cases | Counts do not prove universal hardware coverage or absence of defects |
+| Hosted/package checks | Required Actions, HIP compilation/no-device execution, ZIP/MSI and installer lifecycle passed | Later changed inputs require applicable fresh qualification |
+| GitHub maintenance | Only `main`; no open PRs or Dependabot alerts at assessment | These inventories are live, not permanent guarantees |
+| Analysis acceptance | Exact governance baseline accepted; raw reports retained | DeepSource is queued and its API returned `Run does not exist.`; current analyzer results and complete inventory are unavailable |
+| Neutron | GPU-only search remains separate from efforts 1–9; independent readback and real device-work controls exist | Broad size superiority and comparative speed are unproven; approved rANS is inactive in production |
+| Numeric efforts | Nested CPU frame search and GPU entropy selection have scoped contracts | Complete-archive monotonicity is not established across all writers, partitions and resource policies |
+| Build generation | Three probe producers rewrite unchanged C inputs and provenance; an isolated replacement preserved bytes and metadata | Canonical adoption and recurrence tests are unfinished |
+| Observation | Null-telemetry decode avoids optional timing events; device-resident CRC and checked scratch release are qualified | Non-null counters remain coupled to profiling events and clocks |
+| Maintainability | Audit identifies large GUI, GPU, test and tooling files | Size is a review lead, not a defect or justification for mechanical splitting |
+| Dependencies/tools | Pinned graphs have provenance and installed-consumer evidence; constrained parents remain explicit | Resolution is not runtime acceptance; universal upstream latestness is not established |
+| Coverage/docs | CPU, HIP host, GUI, tooling and device scopes are separate; user/developer guides have canonical homes | No verified whole-repository percentage or universal hardware claim is available |
+
+## Execution With The Active Goal
+
+This canonical plan is already required by `AGENTS.md` and the development-context
+reading map. Use it with the existing active goal and one local continuation;
+do not create another goal, worker pool, maintenance service or recurring workflow.
+Execution remains serial under the repository's single-agent rule.
+
+The active goal prohibits benchmarks and performance-timing calculations. Continue
+source review, implementation, ordinary correctness tests, independent complete-size
+fixtures and deterministic work-count checks. Do not invoke benchmark controllers
+or corpus campaigns, including size-only campaigns. Preserve safety deadlines,
+cancellation and resource admission. Keep prohibited qualification deferred.
+
+For each package, establish the contract, concrete problem, independent oracle and
+affected consumers before editing. Batch one coherent mechanism with its regressions;
+retain old-source or isolated mutation controls when practical. Preserve the first
+failure and distinguish product, fixture, collector and infrastructure causes.
+
+Use the canonical targeted verifier and inspect command roles before execution.
+Reuse only matching source/tool/output evidence; do not hide a deferred check behind
+a narrower pass. Publish reviewed batches on `main` through the official connector,
+verify contributor/parent/tree, sample exact-SHA workflows once, and continue
+independent work. Update durable package status when it changes and retain detailed
+results in the single local continuation. A passing checkpoint does not complete
+the full goal.
+
+## Ordered Work Packages
+
+The default ready sequence is **B01 → B02 → N01 → C01 → C02 → Q01**. D01 interrupts
+it for a demonstrated dependency vulnerability or incompatibility. T01 addresses
+missing tool portability evidence without repeating valid installation checks. Resume R01 on
+a provider state change; do not let that external blocker stall independent work.
+N02 remains held by the measurement restriction. U01 follows affected product changes.
+
+| ID | Work and current state | Dependency | Required completion evidence |
+| --- | --- | --- | --- |
+| R01 | Current analysis acceptance: externally unavailable | DeepSource creates/completes the current run | Successful required analyzers, complete paginated inventory and exact-commit audit; retain the accepted governance baseline |
+| B01 | Probe output invalidation: ready, isolated candidate exists | Canonical regression integration | Old behavior detected; unchanged outputs preserve identities and avoid recompilation; changed inputs rebuild consumers |
+| B02 | Counters-only observation: design mapped | Coherent snapshot/aggregation contract | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
+| C01 | Complete-size effort progression: scoped review next | Existing nested-search inventory | Independent full-size/decoding regressions for every advertised guarantee; no padding or manufactured low-effort losses |
+| C02 | CPU codec mechanisms: planned | Demonstrated work/ownership problem per codec | Independent read/write oracles and failure/recovery checks; supported capabilities unchanged; no unmeasured speed claim |
+| N01 | Approved entropy integration: private bounded proofs exist | B02 and approved format contract | Integrated device-produced models/streams, independent readback/CRC, malformed-input and lifetime controls |
+| N02 | Representative Neutron effectiveness: deferred | N01 and lifted benchmark restriction | Complete-size evidence on licensed independent workloads, including losses and all model/framing bytes, before production adoption |
+| D01 | Dependency lifecycle: alerts clear at assessment | Official metadata, compatible graph and provenance | Reproducible pins plus fresh/update installed-consumer tests; explicit unsupported/constrained platforms |
+| T01 | Development-tool portability: retain qualified consumers and close evidence gaps | Supported provider/host/checkout contracts | Fresh/update/recovery consumers, actual index/crawl receipts and owned-process cleanup; no user-specific repository configuration |
+| Q01 | Critical gaps and complexity: ongoing | Actual risk and source-bound gap inventory | Meaningful success/rejection/recovery assertions and repaired root causes; explicit residual behavior/measurement gaps |
+| U01 | User experience, upgrades and docs: maintain affected contracts | Changed product/settings/package behavior | Migration and failure/recovery tests, disposable-host installer qualification, affected GUI/figure review and accurate docs |
+
+### B01 — Probe Generation Contract
+
+Scope: `tests/zstd/RawBlockProbe.cmake`, `HuffmanTableProbe.cmake`,
+`DictionaryMergeProbe.cmake` and the existing dependency CMake contract suite.
+
+1. Share a small text-output boundary. Validate source/region identities before
+   output reuse; preserve generated definitions and provenance. Do not cache
+   unverified compiler products.
+2. Cover first emission, unchanged output, corruption repair, changed bridge input,
+   restoration and unrelated-producer independence. Use fixed metadata sentinels,
+   not elapsed measurements, to detect unnecessary writes.
+3. Reject altered source inputs without mutating admitted outputs. Keep native
+   newline semantics and the declared CMake minimum compatible; avoid adding a
+   dependency merely to compare generated text.
+4. Check real unchanged incremental compile work and a real input-induced rebuild.
+   Counts establish eliminated work, not a measured speedup.
+
+### B02 — Observation Contract
+
+Scope: telemetry/snapshots, shared dispatch, prefix/dictionary encoders,
+`NeutronStageClock`, child attempts and structured-output consumers.
+
+Define an immutable operation mode and distinct not-requested, measured and
+failed/incomplete timing states. Specify mixed-mode aggregation before changing
+consumers; missing timing must not become zero. Inherit the mode into every child.
+
+Counters-only mode must avoid optional event creation, elapsed queries and profiling
+clocks throughout the operation. Preserve completion waits, mandatory deadlines,
+cancellation, overflow checks and ownership. Count actual completed work and
+transfers; do not invent internal-library kernel counts.
+
+Test inheritance, aggregation, failure, poisoned event reuse and immediate recovery
+independently. Audit CLI/output/figure/qualification consumers together. Preserve
+existing measured-mode contracts and explicitly defer prohibited timing-producing
+qualification rather than silently disabling it.
+
+### C01 — Complete-Size Effort Contract
+
+Map the existing nested CPU frame search and GPU entropy selection before extending
+them. Distinguish per-block savings from full archive framing, dictionary choices,
+partition changes and resource admission. Retain a lower effort's winning complete
+representation wherever the same format/resource contracts permit it.
+
+Use bounded empty, small, repetitive, mixed and already-compressed fixtures with
+independent decoding. Count every descriptor, dictionary, model, name, checksum and
+index byte. Repair demonstrated regressions through shared candidate accounting,
+explicit admissibility and duplicate-trial elimination while preserving tie policy.
+Do not manufacture low-effort losses or promise inverse-linear size on arbitrary data.
+Keep Neutron outside numeric progression. Representative effectiveness campaigns and
+speed qualification remain separate and deferred under the active restriction.
+
+### C02 — CPU Codec Review Contract
+
+Review supported readers and writers separately: ZIP/Deflate/Gzip, Bzip2,
+Zstandard, native CPU blocks and read-only LZMA-family adapters. This does not
+authorize adding writers to extract-only formats. Start with the format registry
+and native codec inventory so every enabled reader/writer, including LZ4 and
+method-specific decoders, receives an explicit scope rather than assuming this
+summary list is exhaustive.
+
+Inspect repeated allocation, copying, checksum passes, buffer ownership and stream
+handoffs. Share bounded mechanisms only where a demonstrated problem warrants it.
+Preserve errors, cancellation, interoperability and publication semantics. Retain
+independent empty/partial/truncated input, allocation-failure, cleanup and reuse
+controls, including an old-source or isolated failure oracle where practical.
+
+Keep instruction-set admission portable across supported x64 hosts; avoid
+machine-specific global flags or optimistic execution followed by crash recovery.
+Comparative performance remains unqualified until measurement is permitted.
+
+### Q01 And U01 — Review And Maintenance Contract
+
+Review large GUI state, HIP host, format/stream test and build/smoke modules by
+responsibility, ownership and consumers. Split only a demonstrated duplication or
+responsibility problem, not a file merely because it is long. Batch meaningful
+tests before recollecting coverage; review zero-hit and unmeasured-source inventories
+with their actual source/tool/binary scope.
+
+Follow the [persistence and upgrade contract](docs/development/persistence-and-upgrades.md)
+for stable external keys, unknown fields, schema transitions and recovery. Preserve
+append-only historical fixtures and direct upgrades from supported earlier versions;
+do not infer compatibility with unknown future implementations. Preserve installer
+scope, upgrade identity, portable/MSI parity, repair, rollback, uninstall and user-data
+policy. Qualify lifecycle on disposable hosts rather than altering the maintainer's install.
+
+Keep README/user guides product-oriented and developer rules canonical and linked.
+Recheck affected GUI capability/settings gates and user journeys when behavior
+changes. Review affected figures, error bars, units, legends and source/data identities
+when charts change. Old measurements and golden renderer fixtures are not current
+results; preserve the canonical mark and native product-text rendering system.
+
+Critical changes beyond existing approvals require a concrete reviewed proposal
+before execution: additional public format assignments, new application runtime
+dependencies, platform expansion, destructive history changes or weakened gates.
+Routine repairs and already-approved work proceed within their existing contracts.
+
+### T01 — Portable Development Tools
+
+Qualify Caveman instruction delivery, source-bound CocoIndex search, Crawl4AI
+extraction and affected MCP/verification consumers through their canonical launchers.
+Cover fresh and existing installations, absent/stale providers, moved checkouts,
+supported configuration overrides and actionable access failures. Preserve valid
+receipts rather than reinstalling unchanged tools at every checkpoint.
+
+Use discovered paths and capabilities; do not track a maintainer-specific cache or
+overwrite another task's registration. Treat site challenges as access limitations,
+retain failed crawl receipts and use only permitted alternatives. Actual tool
+defects require repair; a changed cache context is not evidence of a product defect.
+
+Verify owned subprocess, pipe, cancellation and shutdown lifetimes. Leave no stale
+workers, scheduled services or unbounded buffers, and do not interfere with unrelated
+host work. Installation, an index marker or a resolver result alone is not proof of
+actual tool use, runtime acceptance or complete analysis.
 
 ## Release Blockers
 
@@ -104,15 +288,15 @@ cancellation. Enable the production candidate only after independent
 correctness and worthwhile complete-size evidence from representative workloads.
 The shared-host restriction on local benchmarks remains in effect.
 
-## Deferred Improvement Work
+## Domain Work And Deferred Qualification
 
-- **Neutron effectiveness:** the complete version-eleven Govdocs1 study now
-  covers all 991 original files through the licensed RAM-only controller at
-  its recorded native source identity. The 6,060-byte aggregate gain is small.
-  Follow with controlled, paired CPU/GPU measurements and multiple independent
-  workload classes. Preserve complete archive sizes and byte-exact readback;
-  current evidence does not establish broad size superiority or a GPU speedup.
-- **Compression research:** evaluate the retained primary-source research before
+- **N02 — Neutron effectiveness:** the retained
+  [public-corpus evidence](docs/neutron-public-corpus-benchmark.md) reports limited
+  gains for its stated native source and workload. When measurement is permitted,
+  follow with controlled paired CPU/GPU comparisons and independent workload classes.
+  Preserve complete archive sizes and byte-exact readback; current evidence does
+  not establish broad size superiority or a GPU speedup.
+- **N01/N02 — Compression research:** evaluate the retained primary-source research before
   another broad crawl. Test GPU-suitable dictionary search, parsing, entropy and
   lossless model-data ideas, counting every model, dictionary and format byte.
   Keep Neutron GPU-only and separate from efforts 1–9. Adopt an idea only after
@@ -124,20 +308,11 @@ The shared-host restriction on local benchmarks remains in effect.
   can order trials; it cannot justify dropping a competitive candidate in a
   minimum-size mode without a proven lower bound. Track native CPU, ZIP/Deflate,
   Gzip, Bzip2, Zstandard and LZMA-family results separately, including losses.
-- **Effort progression:** preserve the existing nested CPU frame search and GPU
-  entropy selection described in [the effort contract](docs/compression-level-and-benchmark-suite.md).
-  Review remaining gaps across codec competition, block partitioning and whole
-  archive framing before extending those guarantees. Select by complete archive
-  size, including dictionaries, models, headers and indexes. A higher numeric
-  effort should retain a lower effort's winning representation where format and
-  resource contracts permit. Cover empty, small,
-  repetitive, mixed and already-compressed inputs with independent decoding
-  oracles. Treat a smooth size progression as an empirical objective: inverse
-  linear scaling cannot be promised for arbitrary data, and larger low-effort
-  output must never be manufactured to improve the curve. Keep Neutron's GPU-only
-  search and admission separate. Size evidence does not establish speed or
-  scheduling improvements; qualify those independently when measurement is allowed.
-- **Dependency lifecycle:** reconcile release and registry metadata against pinned
+  Lossy model quantization is not a lossless archive technique.
+- **C01 — Effort progression:** follow the complete-size contract above and
+  [the effort specification](docs/compression-level-and-benchmark-suite.md).
+  Extend its advertised scope only after the relevant format and resource cases pass.
+- **D01 — Dependency lifecycle:** reconcile release and registry metadata against pinned
   sources, lock hashes and installed consumers. Upgrade action wrappers and the
   executables they install together when their contracts require it. Keep the
   Vulnetix action and CLI pins aligned with provenance verification. The signed
@@ -145,19 +320,22 @@ The shared-host restriction on local benchmarks remains in effect.
   upload still requires a configured broker and authorized live scan. An action-only
   Dependabot change or passing offline audit does not qualify that live consumer.
   Preserve exact pins and distinguish unavailable live integration from passing tests.
-- **Repository review:** continue risk-prioritized source and document review;
+  Qualify fresh installation and existing-installation updates with actual installed
+  consumers; platform resolution alone is insufficient. Keep newer constrained
+  parents visible, upgrade coherent graphs and keep one-off constraint exceptions
+  exceptional. No floating requirements, untested prereleases or global host changes.
+- **Q01 — Repository review:** continue risk-prioritized source and document review;
   an inventory is not proof of complete line-by-line review. Refactor demonstrated
   ownership, duplication, complexity or performance problems and retain direct
   consumers. Recheck frontend Neutron admission and interaction when their code
   changes. Preserve the existing AGPL-3.0 license, third-party notices and
   action-specific benchmark permissions.
-- **Benchmark presentation:** the current quantitative SVG fixture and all
-  31 Mermaid diagrams across seven documents have been rendered and visually
-  inspected. Repeat the affected visual and data checks when figures change,
+- **U01 — Benchmark presentation:** retained visual checks qualify their own
+  quantitative fixtures and diagram sources. Repeat affected checks when figures change,
   including uncertainty/error bars, units, scales and legends. Keep current
   measurements distinct from golden renderer fixtures; archive obsolete
   narratives locally without removing tests.
-- **Development efficiency:** optimize measured build/workflow bottlenecks while
+- **B01/B02 — Development efficiency:** optimize demonstrated build/workflow bottlenecks while
   retaining traced security analysis and release gates. Finish fresh-host and
   existing-installation tool qualification where evidence is missing. Keep
   canonical agent rules concise, crawler installation portable and finding
