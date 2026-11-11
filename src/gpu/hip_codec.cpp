@@ -406,47 +406,43 @@ void materialize_prefix_segments_device(const std::byte* device_payload, std::by
     device_plans.reset_checked("hipFree prefix decode plans");
 }
 
-// Purpose: Verify decoded bytes for compressed HIP blocks without copying the decoded chunk back to the host.
-// Inputs: `payload`, `blocks`, `output_size`, and `options` describe one validated decoded chunk.
-// Outputs: Returns a finalized CRC-32 computed from a GPU-materialized output buffer.
-std::uint32_t compute_materialized_crc32_device(std::span<const std::byte> payload,
-                                                std::span<const BlockDescriptor> blocks, std::uint64_t output_size,
-                                                const GpuCodecOptions& options) {
-    auto* telemetry = options.telemetry.get();
-    record_gpu_decode_chunk(telemetry);
+// Materialize one validated, nonempty chunk before exposing its device output to a synchronous consumer.
+// The consumer must finish using the borrowed pointer before it returns. This scope owns all allocations
+// and their reservation through consumption, including when a decoder or the consumer throws.
+template <typename Consumer>
+void with_materialized_chunk_device(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
+                                    std::size_t output_size, GpuTelemetry* telemetry, Consumer consume) {
     auto host_blocks = build_decode_device_blocks(blocks);
     const auto prefix_plans = build_prefix_decode_segments(host_blocks);
     const auto dictionary_plans = build_dictionary_decode_segments(payload, host_blocks);
     const auto payload_bytes = std::max<std::size_t>(payload.size(), 1);
     const auto block_table_bytes =
-        checked_multiply_bytes(host_blocks.size(), sizeof(DeviceBlock), "prefix CRC decode block table");
-    auto required_bytes =
-        checked_add_bytes(payload_bytes, static_cast<std::size_t>(output_size), "prefix CRC decode memory");
-    required_bytes = checked_add_bytes(required_bytes, block_table_bytes, "prefix CRC decode memory");
-    HipDeviceMemoryReservation reservation(required_bytes, "prefix CRC decode");
-    HipDeviceBuffer<std::byte> device_payload(payload_bytes, "hipMalloc prefix CRC payload");
-    HipDeviceBuffer<std::byte> device_output(static_cast<std::size_t>(output_size), "hipMalloc prefix CRC output");
-    HipDeviceBuffer<DeviceBlock> device_blocks(block_table_bytes, "hipMalloc prefix CRC blocks");
+        checked_multiply_bytes(host_blocks.size(), sizeof(DeviceBlock), "decode block table");
+    const auto payload_and_output_bytes = checked_add_bytes(payload_bytes, output_size, "decode device memory");
+    const auto required_bytes = checked_add_bytes(payload_and_output_bytes, block_table_bytes, "decode device memory");
+    HipDeviceMemoryReservation reservation(required_bytes, "decode");
+    HipDeviceBuffer<std::byte> device_payload(payload_bytes, "hipMalloc decode payload");
+    HipDeviceBuffer<std::byte> device_output(output_size, "hipMalloc decode output");
+    HipDeviceBuffer<DeviceBlock> device_blocks(block_table_bytes, "hipMalloc decode blocks");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
     if (!payload.empty()) {
         check_hip(copy_on_codec_stream(device_payload.get(), payload.data(), payload.size(), hipMemcpyHostToDevice),
-                  "hipMemcpy prefix CRC payload");
+                  "hipMemcpy decode payload");
         record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(payload.size()));
     }
     check_hip(copy_on_codec_stream(device_blocks.get(), host_blocks.data(), block_table_bytes, hipMemcpyHostToDevice),
-              "hipMemcpy prefix CRC blocks");
+              "hipMemcpy decode blocks");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(block_table_bytes));
     materialize_non_prefix_segments_device(device_payload.get(), device_blocks.get(), host_blocks, device_output.get(),
-                                           static_cast<std::size_t>(output_size), telemetry);
+                                           output_size, telemetry);
     materialize_sparse_patches_device(device_payload.get(), device_blocks.get(), host_blocks, device_output.get(),
                                       telemetry);
     materialize_prefix_segments_device(device_payload.get(), device_output.get(), prefix_plans, telemetry);
     dictionary::decode_segments_device(device_payload.get(), dictionary_plans, device_output.get(), telemetry);
-    const auto crc = compute_crc32_device(device_output.get(), output_size, telemetry, "prefix decoded CRC");
-    device_payload.reset_checked("hipFree prefix CRC payload");
-    device_output.reset_checked("hipFree prefix CRC output");
-    device_blocks.reset_checked("hipFree prefix CRC blocks");
-    return crc;
+    consume(device_output.get());
+    device_payload.reset_checked("hipFree decode payload");
+    device_output.reset_checked("hipFree decode output");
+    device_blocks.reset_checked("hipFree decode blocks");
 }
 
 // Purpose: Mark a sequential HIP encode phase boundary using host steady-clock time.
@@ -999,40 +995,11 @@ static void decode_plain_chunk_hip(std::span<const std::byte> payload, std::span
     require_hip_kernel_device_support();
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     validate_decode_layout(payload, blocks, output.size(), block_size);
-    auto host_blocks = build_decode_device_blocks(blocks);
-    const auto prefix_plans = build_prefix_decode_segments(host_blocks);
-    const auto dictionary_plans = build_dictionary_decode_segments(payload, host_blocks);
-
-    const auto payload_bytes = std::max<std::size_t>(payload.size(), 1);
-    const auto block_table_bytes =
-        checked_multiply_bytes(host_blocks.size(), sizeof(DeviceBlock), "decode block table");
-    auto required_bytes = checked_add_bytes(payload_bytes, output.size(), "decode device memory");
-    required_bytes = checked_add_bytes(required_bytes, block_table_bytes, "decode device memory");
-    HipDeviceMemoryReservation reservation(required_bytes, "decode");
-    HipDeviceBuffer<std::byte> device_payload(payload_bytes, "hipMalloc payload");
-    HipDeviceBuffer<std::byte> device_output(output.size(), "hipMalloc output");
-    HipDeviceBuffer<DeviceBlock> device_blocks(block_table_bytes, "hipMalloc decode blocks");
-    record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
-    if (!payload.empty()) {
-        check_hip(copy_on_codec_stream(device_payload.get(), payload.data(), payload.size(), hipMemcpyHostToDevice),
-                  "hipMemcpy payload");
-        record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(payload.size()));
-    }
-    check_hip(copy_on_codec_stream(device_blocks.get(), host_blocks.data(), block_table_bytes, hipMemcpyHostToDevice),
-              "hipMemcpy decode blocks");
-    record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(block_table_bytes));
-    materialize_non_prefix_segments_device(device_payload.get(), device_blocks.get(), host_blocks, device_output.get(),
-                                           output.size(), telemetry);
-    materialize_sparse_patches_device(device_payload.get(), device_blocks.get(), host_blocks, device_output.get(),
-                                      telemetry);
-    materialize_prefix_segments_device(device_payload.get(), device_output.get(), prefix_plans, telemetry);
-    dictionary::decode_segments_device(device_payload.get(), dictionary_plans, device_output.get(), telemetry);
-    check_hip(copy_on_codec_stream(output.data(), device_output.get(), output.size(), hipMemcpyDeviceToHost),
-              "hipMemcpy output");
-    record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(output.size()));
-    device_payload.reset_checked("hipFree payload");
-    device_output.reset_checked("hipFree output");
-    device_blocks.reset_checked("hipFree decode blocks");
+    with_materialized_chunk_device(payload, blocks, output.size(), telemetry, [&](const std::byte* device_output) {
+        check_hip(copy_on_codec_stream(output.data(), device_output, output.size(), hipMemcpyDeviceToHost),
+                  "hipMemcpy decode output");
+        record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(output.size()));
+    });
 }
 
 // Purpose: Materialize a closed two-stage Neutron block exclusively through existing HIP decoders.
@@ -1157,7 +1124,13 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
                                   is_gpu_sparse_pattern_kind(block.kind);
     }
     if (needs_materialized_crc) {
-        return compute_materialized_crc32_device(payload, blocks, output_size, options);
+        record_gpu_decode_chunk(telemetry);
+        std::uint32_t crc = 0U;
+        with_materialized_chunk_device(
+            payload, blocks, static_cast<std::size_t>(output_size), telemetry, [&](const std::byte* device_output) {
+                crc = compute_crc32_device(device_output, output_size, telemetry, "materialized decoded CRC");
+            });
+        return crc;
     }
 
     record_gpu_decode_chunk(telemetry);

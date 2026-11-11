@@ -181,6 +181,20 @@ inline void launch_measured_kernel(void (*kernel)(Args...), dim3 grid, dim3 bloc
     launch_kernel_with_timing(kernel, grid, block, shared_bytes, stream, events.start, events.stop, action, args...);
 }
 
+// Complete a codec dispatch on the calling thread's stream before its caller reads or releases
+// borrowed buffers. Allocate timing events only for a caller that requested telemetry.
+template <typename... Args>
+inline void dispatch_codec_kernel(GpuTelemetry* telemetry, void (*kernel)(Args...), dim3 grid, dim3 block,
+                                  const char* action, std::type_identity_t<Args>... args) {
+    const auto events = telemetry != nullptr ? make_hip_event_pair("create HIP codec events") : HipEventPair{};
+    launch_kernel_with_timing(kernel, grid, block, 0, hipStreamPerThread, events.start, events.stop, action, args...);
+    if (telemetry != nullptr) {
+        finish_measured_kernel(telemetry, events, action);
+    } else {
+        check_hip(hipStreamSynchronize(hipStreamPerThread), action);
+    }
+}
+
 // Purpose: Add two allocation byte counts with overflow detection.
 // Inputs: `lhs` and `rhs` are host/device allocation sizes; `action` labels the failing GPU operation.
 // Outputs: Returns the sum or throws `GpuError` before wraparound.

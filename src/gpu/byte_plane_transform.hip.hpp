@@ -5,6 +5,15 @@
 
 namespace flitzzip::hip_detail {
 
+// Transform two disjoint device windows of the same admitted extent on the current HIP device.
+// The caller admits geometry and retains both windows until this synchronous operation returns.
+inline void transform_byte_planes_device(const std::byte* source, std::byte* destination, std::uint32_t extent,
+                                         std::uint8_t width, bool inverse, GpuTelemetry* telemetry) {
+    const auto grid = (extent + 255U) / 256U;
+    dispatch_codec_kernel(telemetry, hip_kernel_api().byte_plane_transform, grid, 256, "byte_plane_transform_kernel",
+                          source, destination, extent, static_cast<std::uint32_t>(width), inverse);
+}
+
 // Purpose: Execute the reversible transform exclusively on HIP with operation-owned admitted buffers.
 // Inputs: Equal bounded host spans, admitted width/direction, caller checkpoints and actual device telemetry.
 // Outputs: Returns exact transformed bytes after synchronization; errors and cancellation propagate.
@@ -27,12 +36,8 @@ inline void transform_byte_planes_hip(std::span<const std::byte> source, std::sp
     check_hip(copy_on_codec_stream(input.get(), source.data(), source.size(), hipMemcpyHostToDevice),
               "hipMemcpy byte-plane input");
     record_gpu_h2d_bytes(telemetry, source.size());
-    const auto events = make_hip_event_pair("create byte-plane timing events");
-    const auto grid = static_cast<unsigned int>((source.size() + 255U) / 256U);
-    launch_measured_kernel(hip_kernel_api().byte_plane_transform, grid, 256, 0, hipStreamPerThread, events,
-                           "launch byte_plane_transform_kernel", input.get(), output.get(),
-                           static_cast<std::uint32_t>(source.size()), static_cast<std::uint32_t>(width), inverse);
-    finish_measured_kernel(telemetry, events, "synchronize byte_plane_transform_kernel");
+    transform_byte_planes_device(input.get(), output.get(), static_cast<std::uint32_t>(source.size()), width, inverse,
+                                 telemetry);
     check_hip(copy_on_codec_stream(destination.data(), output.get(), destination.size(), hipMemcpyDeviceToHost),
               "hipMemcpy byte-plane output");
     record_gpu_d2h_bytes(telemetry, destination.size());

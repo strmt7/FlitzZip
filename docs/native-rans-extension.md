@@ -163,6 +163,22 @@ transition counts directly: a singleton's normalized model could otherwise hide
 an incorrect histogram mass. Use safe omitted-work and arithmetic controls to
 establish that these observations detect failures at the intended stage.
 
+### Candidate size admission
+
+For `S` segments, a plain frame needs at least `11 + 8*S` bytes. This counts
+the four-byte fixed header, the smallest three-byte model, `S + 1` offsets
+and one four-byte state per segment. Once models are built, replace the
+minimum model extent with the exact serialized extent. While streams are
+assembled, count the complete streams already produced and reserve four
+bytes for every remaining segment.
+
+Compare that lower bound against the current winner's complete block size.
+Charge any compound header or byte-plane context table before admitting its
+child trials. Use checked arithmetic and reject a trial when its lower bound
+reaches the available budget. A trial that survives the bound must still
+finish and beat the previous winner after all framing is counted. Equal sizes
+retain the previous representation and its minimum archive version.
+
 ## Adoption criteria
 
 The isolated reference, independent public-domain

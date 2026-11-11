@@ -337,12 +337,12 @@ nor this ledger reserves physical memory against other applications.
 
 ### Dispatch-Bound Timing
 
-Production codec and diagnostic launches now attach their start/stop events
-directly through HIP's `hipExtLaunchKernel` API. A shared helper derives the
-argument storage types from the kernel signature, checks the dispatch result,
-preserves the existing per-thread stream and ordered-launch flags, and retains
-stop-event synchronization before reading results or releasing device memory.
-This changes instrumentation, not kernel algorithms or archive bytes.
+Production codec and diagnostic launches attach timing events directly through
+HIP's `hipExtLaunchKernel` API. The shared launch helper derives argument
+storage types from the kernel signature and preserves the per-thread stream and
+ordered-launch flags. Checksum and byte-plane launches allocate timing events
+only when telemetry is requested. Their uninstrumented path synchronizes the
+calling thread's stream before reading results or releasing device memory.
 
 Regression coverage exercises concurrent HIP callers, fill, pattern,
 static/adaptive prefix and raw data, short tails, independent-block and decoded

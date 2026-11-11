@@ -1,0 +1,51 @@
+# CodeQL HIP decode and dispatch context
+
+This review covers the existing CodeQL 2.27.4 `hip-host` reports below after
+the host decode and CRC refactoring. The reported HIP translation unit,
+coordinates and rule remain unchanged. The ledger binds this review, the
+changed callers, the dispatch helper and the relevant tests to exact bytes.
+It does not admit another report or replace fresh hosted analysis.
+
+## Individual decisions
+
+### Alert 703
+
+The report identifies `__constant__` on `kDeviceCrc32Table` as an unused static
+variable. The declaration is a HIP device-memory qualifier; the table has five
+device reads in contiguous, independent-range and decoded-block CRC kernels.
+The [device review](codeql-hip-device-semantics.md#alert-703) records the original
+source interpretation and its limits.
+
+The shared materialization helper retains the validated payload, descriptor
+table, output buffer and device-memory reservation until its synchronous
+consumer returns. Extraction copies the completed output; verification calls
+the same contiguous CRC kernel on that output and downloads CRC metadata only.
+The decoder sequence and kernel binding are unchanged. The shared dispatch
+helper completes the calling thread's stream before a consumer reads or frees
+its buffers. With telemetry it retains the existing event completion path;
+without telemetry it synchronizes the same stream directly.
+
+These changes neither remove the device reads nor turn the qualifier into a
+host variable. Removing the table would break integrity checking. Independent
+bitwise CRC and guarded production-kernel tests exercise these consumers;
+required-HIP archive tests cover the materialized verification route.
+
+### Alert 8452
+
+The local `block_end` at the reported location still bounds the immediately
+following fill, literal and periodic-data loops in the decoded CRC kernel.
+Each branch reads the value before advancing to the next descriptor. The
+[device review](codeql-hip-device-semantics.md#alert-8452) covers the unchanged
+device source.
+
+The host CRC entry point still validates the decoded layout and routes compound
+and materialized representations separately. Raw, fill and periodic descriptors
+retain their direct decoded-CRC route. Dispatch still passes the admitted
+payload, descriptor count, decoded extent and CRC segment geometry to the same
+kernel. The helper changes completion ownership and optional instrumentation,
+not the loop's bounds or reachability. The independent mixed-block CRC test
+also verifies that payload and descriptor bytes remain unchanged.
+
+The value is used and is not static. This individual false-positive decision
+does not establish device instruction coverage or explain CodeQL's extraction
+behavior. Raw reports and complete CPU/HIP-host analysis remain required.

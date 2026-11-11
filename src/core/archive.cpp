@@ -31,6 +31,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -54,18 +55,16 @@ struct PendingEncode {
     std::future<EncodedArchiveChunk> result;
 };
 
-struct PendingDecode {
-    std::future<DecodedChunk> result;
+struct ArchiveDecodeWindow {
+    std::vector<std::byte> payload;
+    std::vector<BlockDescriptor> blocks;
+    std::uint64_t decoded_size = 0;
 };
 
 struct DecodedCrcChunk {
     std::uint32_t crc32 = 0;
-    std::uint64_t uncompressed_size = 0;
+    std::uint64_t decoded_size = 0;
     bool gpu_used = false;
-};
-
-struct PendingDecodedCrc {
-    std::future<DecodedCrcChunk> result;
 };
 
 struct DecodeStreamResult {
@@ -335,65 +334,56 @@ std::vector<std::byte> read_payload_window(std::ifstream& input, const ArchiveEn
     return payload;
 }
 
-// Purpose: Process one entry's block stream in bounded memory chunks.
-// Inputs: `input` is the archive stream, `entry` is validated metadata, `archive_size` bounds reads,
-// `decode_window_bytes` is the memory-accounted decode window, `gpu_options` controls codec behavior, and `consume`
-// receives decoded bytes. Outputs: Returns true if any chunk used AMD HIP; throws on malformed block windows, decode
-// errors, or callback failures.
-DecodeStreamResult decode_entry_streaming(std::ifstream& input, const ArchiveEntry& entry, std::uint64_t archive_size,
-                                          std::uint64_t decode_window_bytes, const GpuCodecOptions& gpu_options,
-                                          const PipelineBudget& budget,
-                                          const std::function<void(std::span<const std::byte>)>& consume) {
-    const auto chunk_limit = decode_window_bytes;
-    DecodeStreamResult stream_result;
-    std::size_t block_index = 0;
-    std::deque<PendingDecode> pending;
-    auto flush_one = [&]() {
-        auto decoded = pending.front().result.get();
-        pending.pop_front();
-        stream_result.gpu_used = decoded.gpu_used || stream_result.gpu_used;
-        stream_result.crc32 = crc32_combine(stream_result.crc32, decoded.crc32, decoded.bytes().size());
-        consume(decoded.bytes());
-    };
-    while (block_index < entry.blocks.size()) {
-        std::uint64_t payload_start = entry.payload_size;
-        std::uint64_t payload_end = 0;
-        const auto first = block_index;
-        const auto window = resolve_decode_block_window(entry.blocks, first, chunk_limit);
-        const auto uncompressed_window = window.uncompressed_size;
-        block_index = window.end;
-        for (std::size_t i = first; i < block_index; ++i) {
-            const auto& block = entry.blocks[i];
-            if (block_has_payload(block.kind)) {
-                payload_start = std::min<std::uint64_t>(payload_start, block.encoded_offset);
-                payload_end =
-                    std::max<std::uint64_t>(payload_end, checked_add_u64(block.encoded_offset, block.encoded_len,
-                                                                         "block payload bounds overflow"));
-            }
+// Own one admitted payload and its window-relative block table before submitting it to a worker.
+ArchiveDecodeWindow read_entry_decode_window(std::ifstream& input, const ArchiveEntry& entry,
+                                             std::uint64_t archive_size, std::span<const BlockDescriptor> blocks,
+                                             std::uint64_t decoded_size) {
+    std::uint64_t payload_start = entry.payload_size;
+    std::uint64_t payload_end = 0;
+    for (const auto& block : blocks) {
+        if (block_has_payload(block.kind)) {
+            payload_start = std::min(payload_start, block.encoded_offset);
+            payload_end = std::max(
+                payload_end, checked_add_u64(block.encoded_offset, block.encoded_len, "block payload bounds overflow"));
         }
+    }
 
-        const bool has_payload = payload_end > payload_start;
-        const auto payload_size = has_payload ? payload_end - payload_start : 0;
-        auto payload = read_payload_window(input, entry, archive_size, has_payload ? payload_start : 0, payload_size);
-        std::vector<BlockDescriptor> adjusted;
-        adjusted.reserve(block_index - first);
-        for (std::size_t i = first; i < block_index; ++i) {
-            auto block = entry.blocks[i];
-            if (block_has_payload(block.kind)) {
-                block.encoded_offset -= payload_start;
-            } else {
-                block.encoded_offset = 0;
-            }
-            adjusted.push_back(block);
-        }
-        pending.push_back(PendingDecode{
-            .result = std::async(std::launch::async,
-                                 [payload = std::move(payload), adjusted = std::move(adjusted), uncompressed_window,
-                                  gpu_options]() mutable {
-                                     return decode_owned_chunk(
-                                         payload, adjusted, static_cast<std::size_t>(uncompressed_window), gpu_options);
-                                 }),
-        });
+    const bool has_payload = payload_end > payload_start;
+    auto payload = read_payload_window(input, entry, archive_size, has_payload ? payload_start : 0U,
+                                       has_payload ? payload_end - payload_start : 0U);
+    std::vector<BlockDescriptor> adjusted(blocks.begin(), blocks.end());
+    for (auto& block : adjusted) {
+        block.encoded_offset = block_has_payload(block.kind) ? block.encoded_offset - payload_start : 0U;
+    }
+    return {std::move(payload), std::move(adjusted), decoded_size};
+}
+
+// Read bounded whole-block windows, then consume completed results in archive order. The producer owns
+// each window until it is submitted. Each asynchronous result joins on unwinding, and the consumer's
+// borrowed result expires when its invocation returns.
+template <typename Decode, typename Consume>
+DecodeStreamResult stream_entry_windows(std::ifstream& input, const ArchiveEntry& entry, std::uint64_t archive_size,
+                                        std::uint64_t decode_window_bytes, const GpuCodecOptions& gpu_options,
+                                        const PipelineBudget& budget, Decode decode, Consume consume) {
+    using Result = std::invoke_result_t<Decode, const ArchiveDecodeWindow&, const GpuCodecOptions&>;
+    DecodeStreamResult stream_result;
+    std::deque<std::future<Result>> pending;
+    const auto flush_one = [&] {
+        const auto decoded = pending.front().get();
+        pending.pop_front();
+        stream_result.gpu_used |= decoded.gpu_used;
+        stream_result.crc32 = crc32_combine(stream_result.crc32, decoded.crc32, decoded.decoded_size);
+        consume(decoded);
+    };
+    const std::span blocks(entry.blocks);
+    for (std::size_t first = 0; first < blocks.size();) {
+        const auto range = resolve_decode_block_window(blocks, first, decode_window_bytes);
+        auto window = read_entry_decode_window(input, entry, archive_size, blocks.subspan(first, range.end - first),
+                                               range.uncompressed_size);
+        pending.push_back(std::async(std::launch::async, [window = std::move(window), gpu_options, decode] {
+            return decode(window, gpu_options);
+        }));
+        first = range.end;
         if (pending.size() >= budget.inflight_chunks) {
             flush_one();
         }
@@ -404,78 +394,32 @@ DecodeStreamResult decode_entry_streaming(std::ifstream& input, const ArchiveEnt
     return stream_result;
 }
 
-// Purpose: Verify one entry's block stream by computing decoded CRCs in bounded chunks.
-// Inputs: `input` is the archive stream, `entry` is validated metadata, `archive_size` bounds reads,
-// `decode_window_bytes` is the memory-accounted decode window, `gpu_options` controls codec behavior, and
-// `consume_bytes` receives decoded byte counts. Outputs: Returns GPU-use and CRC state for the entry; throws on
-// malformed block windows, CRC decode errors, or callback failures.
+// Deliver only completed decoded bytes to the extraction writer.
+DecodeStreamResult decode_entry_streaming(std::ifstream& input, const ArchiveEntry& entry, std::uint64_t archive_size,
+                                          std::uint64_t decode_window_bytes, const GpuCodecOptions& gpu_options,
+                                          const PipelineBudget& budget,
+                                          const std::function<void(std::span<const std::byte>)>& consume) {
+    return stream_entry_windows(
+        input, entry, archive_size, decode_window_bytes, gpu_options, budget,
+        [](const ArchiveDecodeWindow& window, const GpuCodecOptions& options) {
+            return decode_owned_chunk(window.payload, window.blocks, static_cast<std::size_t>(window.decoded_size),
+                                      options);
+        },
+        [&](const DecodedChunk& decoded) { consume(decoded.bytes()); });
+}
+
+// Verify each window through its CRC consumer so required HIP verification need not download decoded bytes.
 DecodeStreamResult verify_entry_streaming(std::ifstream& input, const ArchiveEntry& entry, std::uint64_t archive_size,
                                           std::uint64_t decode_window_bytes, const GpuCodecOptions& gpu_options,
                                           const PipelineBudget& budget,
                                           const std::function<void(std::uint64_t)>& consume_bytes) {
-    const auto chunk_limit = decode_window_bytes;
-    DecodeStreamResult stream_result;
-    std::size_t block_index = 0;
-    std::deque<PendingDecodedCrc> pending;
-    auto flush_one = [&]() {
-        auto decoded = pending.front().result.get();
-        pending.pop_front();
-        stream_result.gpu_used = decoded.gpu_used || stream_result.gpu_used;
-        stream_result.crc32 = crc32_combine(stream_result.crc32, decoded.crc32, decoded.uncompressed_size);
-        consume_bytes(decoded.uncompressed_size);
-    };
-    while (block_index < entry.blocks.size()) {
-        std::uint64_t payload_start = entry.payload_size;
-        std::uint64_t payload_end = 0;
-        const auto first = block_index;
-        const auto window = resolve_decode_block_window(entry.blocks, first, chunk_limit);
-        const auto uncompressed_window = window.uncompressed_size;
-        block_index = window.end;
-        for (std::size_t i = first; i < block_index; ++i) {
-            const auto& block = entry.blocks[i];
-            if (block_has_payload(block.kind)) {
-                payload_start = std::min<std::uint64_t>(payload_start, block.encoded_offset);
-                payload_end =
-                    std::max<std::uint64_t>(payload_end, checked_add_u64(block.encoded_offset, block.encoded_len,
-                                                                         "block payload bounds overflow"));
-            }
-        }
-
-        const bool has_payload = payload_end > payload_start;
-        const auto payload_size = has_payload ? payload_end - payload_start : 0;
-        auto payload = read_payload_window(input, entry, archive_size, has_payload ? payload_start : 0, payload_size);
-        std::vector<BlockDescriptor> adjusted;
-        adjusted.reserve(block_index - first);
-        for (std::size_t i = first; i < block_index; ++i) {
-            auto block = entry.blocks[i];
-            if (block_has_payload(block.kind)) {
-                block.encoded_offset -= payload_start;
-            } else {
-                block.encoded_offset = 0;
-            }
-            adjusted.push_back(block);
-        }
-        pending.push_back(PendingDecodedCrc{
-            .result = std::async(std::launch::async,
-                                 [payload = std::move(payload), adjusted = std::move(adjusted), uncompressed_window,
-                                  gpu_options]() mutable {
-                                     const auto crc =
-                                         crc_decoded_chunk(payload, adjusted, uncompressed_window, gpu_options);
-                                     return DecodedCrcChunk{
-                                         .crc32 = crc.crc32,
-                                         .uncompressed_size = uncompressed_window,
-                                         .gpu_used = crc.gpu_used,
-                                     };
-                                 }),
-        });
-        if (pending.size() >= budget.inflight_chunks) {
-            flush_one();
-        }
-    }
-    while (!pending.empty()) {
-        flush_one();
-    }
-    return stream_result;
+    return stream_entry_windows(
+        input, entry, archive_size, decode_window_bytes, gpu_options, budget,
+        [](const ArchiveDecodeWindow& window, const GpuCodecOptions& options) {
+            const auto crc = crc_decoded_chunk(window.payload, window.blocks, window.decoded_size, options);
+            return DecodedCrcChunk{.crc32 = crc.crc32, .decoded_size = window.decoded_size, .gpu_used = crc.gpu_used};
+        },
+        [&](const DecodedCrcChunk& decoded) { consume_bytes(decoded.decoded_size); });
 }
 
 // Purpose: Add GPU telemetry counters from two phases of the same operation.

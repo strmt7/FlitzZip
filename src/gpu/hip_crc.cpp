@@ -55,13 +55,9 @@ std::uint32_t compute_crc32_device(const std::byte* device_input, std::uint64_t 
     HipDeviceMemoryReservation reservation(segment_bytes, action);
     HipDeviceBuffer<DeviceCrcSegment> device_segments(segment_bytes, "hipMalloc CRC segments");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(segment_bytes));
-    constexpr auto threads = kCrcSegmentThreads;
-    const auto grid = segments;
-    auto events = make_hip_event_pair("create crc32_segments_kernel events");
-    launch_measured_kernel(hip_kernel_api().crc32_segments_kernel, grid, threads, 0, hipStreamPerThread, events,
-                           "launch crc32_segments_kernel", device_input, static_cast<std::size_t>(input_len),
-                           device_segments.get(), segments, crc_segment_bytes);
-    finish_measured_kernel(telemetry, events, "synchronize crc32_segments_kernel");
+    dispatch_codec_kernel(telemetry, hip_kernel_api().crc32_segments_kernel, segments, kCrcSegmentThreads,
+                          "crc32_segments_kernel", device_input, static_cast<std::size_t>(input_len),
+                          device_segments.get(), segments, crc_segment_bytes);
 
     std::vector<DeviceCrcSegment> host_segments(segments);
     check_hip(copy_on_codec_stream(host_segments.data(), device_segments.get(), segment_bytes, hipMemcpyDeviceToHost),
@@ -102,13 +98,8 @@ std::vector<std::uint32_t> compute_block_crc32_device(const std::byte* device_in
               "hipMemcpy batch CRC ranges");
     record_gpu_h2d_bytes(telemetry, range_bytes);
     const auto count = static_cast<std::uint32_t>(ranges.size());
-    constexpr auto threads = kCrcSegmentThreads;
-    const auto grid = count;
-    auto events = make_hip_event_pair("create independent CRC events");
-    launch_measured_kernel(hip_kernel_api().crc32_independent_ranges_kernel, grid, threads, 0, hipStreamPerThread,
-                           events, "launch independent CRC kernel", device_input, device_ranges.get(),
-                           device_segments.get(), count);
-    finish_measured_kernel(telemetry, events, "synchronize independent CRC kernel");
+    dispatch_codec_kernel(telemetry, hip_kernel_api().crc32_independent_ranges_kernel, count, kCrcSegmentThreads,
+                          "independent CRC kernel", device_input, device_ranges.get(), device_segments.get(), count);
     std::vector<DeviceCrcSegment> segments(count);
     check_hip(copy_on_codec_stream(segments.data(), device_segments.get(), segment_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy independent CRC results");
@@ -143,13 +134,9 @@ std::uint32_t compute_decoded_crc32_device(const std::byte* device_payload, cons
     HipDeviceMemoryReservation reservation(segment_bytes, action);
     HipDeviceBuffer<DeviceCrcSegment> device_segments(segment_bytes, "hipMalloc decoded CRC segments");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(segment_bytes));
-    constexpr auto threads = kCrcSegmentThreads;
-    const auto grid = segments;
-    auto events = make_hip_event_pair("create decoded_crc32_segments_kernel events");
-    launch_measured_kernel(hip_kernel_api().decoded_crc32_segments_kernel, grid, threads, 0, hipStreamPerThread, events,
-                           "launch decoded_crc32_segments_kernel", device_payload, device_blocks, block_count,
-                           static_cast<std::size_t>(output_len), device_segments.get(), segments, crc_segment_bytes);
-    finish_measured_kernel(telemetry, events, "synchronize decoded_crc32_segments_kernel");
+    dispatch_codec_kernel(telemetry, hip_kernel_api().decoded_crc32_segments_kernel, segments, kCrcSegmentThreads,
+                          "decoded_crc32_segments_kernel", device_payload, device_blocks, block_count,
+                          static_cast<std::size_t>(output_len), device_segments.get(), segments, crc_segment_bytes);
 
     std::vector<DeviceCrcSegment> host_segments(segments);
     check_hip(copy_on_codec_stream(host_segments.data(), device_segments.get(), segment_bytes, hipMemcpyDeviceToHost),
