@@ -1,6 +1,7 @@
 # Purpose: Resolve configure-time targets through the compiler wrapper's policy.
 # Inputs: output names the receiving variable; selection is the requested preset
-# or target list. Outputs: Returns canonical targets or fails closed.
+# or target list. Outputs: Returns canonical targets or fails closed, retaining
+# child results and both streams for launch, deadline and validation failures.
 function(flitzzip_resolve_hip_architecture output selection)
   execute_process(
     COMMAND
@@ -14,7 +15,11 @@ function(flitzzip_resolve_hip_architecture output selection)
     TIMEOUT 15)
   if(NOT result STREQUAL "0"
      OR NOT targets MATCHES "^gfx[0-9a-z]+(,gfx[0-9a-z]+)*$")
-    message(FATAL_ERROR "HIP architecture resolution failed: ${diagnostics}")
+    message(FATAL_ERROR
+            "HIP architecture resolution failed.\n"
+            "result: [${result}]\n"
+            "stdout: [${targets}]\n"
+            "stderr: [${diagnostics}]")
   endif()
   set(${output}
       "${targets}"

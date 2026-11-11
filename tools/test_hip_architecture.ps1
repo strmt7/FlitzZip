@@ -42,6 +42,59 @@ foreach ($value in $invalid) {
 # The configure path must use the same resolver, including rejected selections.
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $cmake = Find-CMake -RepoRoot $repoRoot
+
+# Exercise real child exits, streams, launch refusal and the production deadline
+# without changing the resolver or installing a replacement executable.
+function Test-HipResolutionFailure {
+    param([string]$RepoRoot, [string]$CMake)
+
+    $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    $fixtureRoot = Join-Path $temporaryRoot ('flitzzip-hip-resolution-' + [guid]::NewGuid().ToString('N'))
+    $null = New-Item -ItemType Directory -Path $fixtureRoot
+    $failureCases = @(
+        @{ Name = 'stdout-exit'; Result = '7'; Stream = 'stdout: \[resolution-stdout-sentinel\]' },
+        @{ Name = 'stderr-exit'; Result = '9'; Stream = 'stderr: \[resolution-stderr-sentinel\s*\]' },
+        @{ Name = 'malformed-success'; Result = '0'; Stream = 'stdout: \[gfx1201 trailing\]' },
+        @{ Name = 'deadline'; Result = '[^\]]*timeout[^\]]*'; Stream = 'stdout: \[gfx1201\]' },
+        @{ Name = 'missing-command'; Result = '[^\]]+'; Stream = 'stdout: \[\]' }
+    )
+    try {
+        foreach ($case in $failureCases) {
+            $arguments = @("-DREPO_ROOT=$RepoRoot", "-DFIXTURE_ROOT=$fixtureRoot",
+                "-DFAILURE_CASE=$($case.Name)", '-P', (Join-Path $RepoRoot 'tests/cmake/test_hip_architecture.cmake'))
+            if ($case.Name -eq 'missing-command') {
+                $arguments = @('-E', 'env', "PATH=$fixtureRoot", $CMake) + $arguments
+            }
+            $savedPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                $output = @(& $CMake @arguments 2>&1)
+                $exitCode = $LASTEXITCODE
+            } finally { $ErrorActionPreference = $savedPreference }
+            $diagnostic = (($output | ForEach-Object {
+                if ($_ -is [Management.Automation.ErrorRecord]) { $_.Exception.Message } else { [string]$_ }
+            }) -join ' ') -replace '\s+', ' '
+            if ($exitCode -eq 0 -or $diagnostic -notmatch 'HIP architecture resolution failed' -or
+                $diagnostic -notmatch "result: \[$($case.Result)\]" -or $diagnostic -notmatch $case.Stream) {
+                throw "HIP resolver lost failure identity or streams: $($case.Name); $diagnostic"
+            }
+            Write-Output "hip_resolution_failure=$($case.Name) status=passed"
+        }
+        # A failure must not poison later canonical resolution.
+        & $CMake "-DREPO_ROOT=$RepoRoot" '-DSELECTION=gfx1201' '-DEXPECTED=gfx1201' `
+            -P (Join-Path $RepoRoot 'tests/cmake/test_hip_architecture.cmake')
+        if ($LASTEXITCODE -ne 0) { throw 'HIP architecture resolution did not recover after failure controls.' }
+    } finally {
+        $resolvedRoot = [IO.Path]::GetFullPath($fixtureRoot)
+        if ((Split-Path -Parent $resolvedRoot) -cne $temporaryRoot.TrimEnd('\', '/') -or
+            (Split-Path -Leaf $resolvedRoot) -notmatch '\Aflitzzip-hip-resolution-[0-9a-f]{32}\z') {
+            throw 'Refusing cleanup outside the owned HIP resolution fixture.'
+        }
+        [IO.Directory]::Delete($resolvedRoot, $true)
+    }
+}
+
+Test-HipResolutionFailure -RepoRoot $repoRoot -CMake $cmake
 foreach ($selection in @('release', 'gfx1100,gfx1201', 'gfx1201,gfx1201', 'native', 'gfx1201;gfx1100')) {
     $expected = if ($selection -eq 'release') { $releaseTargets } else { $selection }
     $savedPreference = $ErrorActionPreference

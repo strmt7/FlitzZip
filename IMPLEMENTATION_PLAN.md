@@ -113,7 +113,7 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 
 | ID | Work and current state | Dependency | Required completion evidence |
 | --- | --- | --- | --- |
-| B00 | Current HIP configuration failure: investigate first | Preserved failing run and shared resolver boundary | Established cause, actionable child-process diagnostics, independent rejection/recovery controls and successful affected hosted qualification |
+| B00 | HIP failure diagnostics repaired with independent controls; hosted cause remains unconfirmed | Current ROCm qualification and retained failing run | Actionable child-process diagnostics, independent rejection/recovery controls and successful affected hosted qualification; preserve unexplained historical failures |
 | R01 | Current analysis acceptance: quota exhausted | Provider allowance resumes and a current run completes | Successful required analyzers, complete paginated inventory and exact-commit audit; retain the accepted governance baseline |
 | B01 | Probe output invalidation: implemented with canonical regressions and local native/sanitizer qualification | Retain source-bound hosted acceptance | Old behavior detected; unchanged outputs preserve identities and avoid recompilation; changed inputs rebuild consumers |
 | B02 | Counters-only observation: design mapped | Coherent snapshot/aggregation contract | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
@@ -130,6 +130,15 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 
 Scope: `cmake/ResolveHipArchitecture.cmake`, `tools/hip_architecture.ps1`, their
 direct callers and existing configuration/architecture tests.
+
+The resolver now retains its child result and both captured streams in failures.
+Real subprocess controls cover nonzero stdout/stderr, malformed successful output,
+missing commands and deadline expiry after valid partial output, followed by
+canonical recovery. Both Windows PowerShell and PowerShell 7 passed these controls;
+the original resolver fails the diagnostic-loss assertion. Target policy and the
+existing deadline are unchanged. This repairs diagnostic loss, not the unconfirmed
+cause of the earlier hosted configuration failure. Current hosted qualification
+remains required.
 
 1. Preserve the failing run, exact source, SDK/compiler identity and command.
    The observed failure precedes HIP compilation; it does not demonstrate a
