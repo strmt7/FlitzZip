@@ -1,6 +1,7 @@
 #include "core/archive_block_version.hpp"
 #include "core/archive.hpp"
 #include "core/checksum.hpp"
+#include "core/result.hpp"
 #include "gpu/gpu_codec.hpp"
 #include "test_flzip_helpers.hpp"
 #include "test_util.hpp"
@@ -180,14 +181,10 @@ TEST_CASE(flzip_payload_preflight_rejects_later_bad_headers_before_decode_or_pub
 }
 
 TEST_CASE(flzip_payload_preflight_preserves_cpu_and_required_hip_legacy_readback) {
-    // CPU-only validation exercises every CPU fixture. HIP qualification
-    // requires a real device and exercises both explicitly selected readers.
-#if FLITZZIP_ENABLE_HIP
-    REQUIRE_TRUE(flitzzip::query_gpu_info().available);
+    // Compilation and hardware admission are separate. Always exercise CPU readback, then either actual HIP
+    // readback or explicit required-HIP rejection. The canonical HIP cohort independently requires a real device.
+    const bool hip_available = flitzzip::query_gpu_info().available;
     constexpr std::array backends{false, true};
-#else
-    constexpr std::array backends{false};
-#endif
     const flitzzip_test::ScopedTestDirectory directory{test_temp_dir("payload-header-preflight-readback")};
     std::size_t serial = 0;
     for (const auto& fixture : preflight_fixtures()) {
@@ -195,9 +192,28 @@ TEST_CASE(flzip_payload_preflight_preserves_cpu_and_required_hip_legacy_readback
         write_preflight_archive(archive, fixture);
         for (const bool hip : backends) {
             const flitzzip::ExtractOptions options{.gpu_required = hip, .force_cpu = !hip};
+            const auto destination = directory.path / (std::to_string(serial++) + "-output");
+            if (hip && !hip_available) {
+                bool rejected = false;
+                try {
+                    (void)flitzzip::verify_flzip(archive, options);
+                } catch (const flitzzip::GpuError&) {
+                    rejected = true;
+                }
+                REQUIRE_TRUE(rejected);
+                rejected = false;
+                try {
+                    (void)flitzzip::extract_flzip(archive, destination, options);
+                } catch (const flitzzip::GpuError&) {
+                    rejected = true;
+                }
+                REQUIRE_TRUE(rejected);
+                REQUIRE_TRUE(!std::filesystem::exists(destination / "earlier.bin"));
+                REQUIRE_TRUE(!std::filesystem::exists(destination / "later.bin"));
+                continue;
+            }
             const auto verified = flitzzip::verify_flzip(archive, options);
             REQUIRE_EQ(verified.gpu_used, hip);
-            const auto destination = directory.path / (std::to_string(serial++) + "-output");
             const auto extracted = flitzzip::extract_flzip(archive, destination, options);
             REQUIRE_EQ(extracted.gpu_used, hip);
             for (const auto& name : {"earlier.bin", "later.bin"}) {

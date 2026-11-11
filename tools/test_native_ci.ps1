@@ -79,18 +79,23 @@ foreach ($path in @('src/gpu/hip_codec.hip.cpp', 'src/gpu/hip_codec_static_prefi
 foreach ($path in @('CMakeLists.txt', 'cmake/ResolveHipArchitecture.cmake', 'src/core/checksum.hpp',
         'src/gpu/hip_device.cpp', 'src/gpu/hip_codec_support.hpp', 'tools/build.ps1',
         'tools/rocm-sdk-lock.json', 'tools/cmake-toolchain.sha256', 'tools/compile_hip_object.ps1', 'tools/native_build_receipt.py',
-        'third_party/lzma_sdk/CpuArch.c')) {
+        'third_party/lzma_sdk/CpuArch.c', 'tests/cpp/test_zip_compat.cpp',
+        'tests/cmake/runtime_identity/CMakeLists.txt', 'tests/zstd/RawBlockProbe.cmake')) {
     $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path)
     Assert-NativeCi ($selection.windows -and $selection.rocm) "shared/native ABI inputs retain both builds: $path"
 }
-foreach ($path in @('src/core/checksum.cpp', 'src/app/main_window_controls.cpp', 'tests/cpp/test_zip_compat.cpp',
+foreach ($path in @('src/core/checksum.cpp', 'src/app/main_window_controls.cpp',
         'tools/gui_smoke.ps1', 'resources/brand/fixture.svg', 'LICENSE')) {
     $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path)
     Assert-NativeCi ($selection.windows -and -not $selection.rocm) "CPU mechanisms avoid unrelated SDK provisioning: $path"
 }
-foreach ($path in @('docs/design.md', 'resources/design/fixture.svg', 'tools/native_test_selection.ps1', 'tools/native_ci.ps1')) {
+foreach ($path in @('docs/design.md', 'resources/design/fixture.svg', 'tools/native_ci.ps1')) {
     $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path)
     Assert-NativeCi (-not $selection.windows -and -not $selection.rocm) "tool/docs contracts do not require product builds: $path"
+}
+foreach ($path in @('tools/native_test_selection.ps1', 'tools/test.ps1')) {
+    $absenceSelection = Get-FlitzZipHostedWorkflowSelection -Paths @($path)
+    Assert-NativeCi (-not $absenceSelection.windows -and $absenceSelection.rocm) "HIP absence inputs retain their real no-device consumer: $path"
 }
 $mixed = Get-FlitzZipHostedWorkflowSelection -Paths @('src/gpu/hip_codec.hip.cpp', 'src/core/checksum.cpp')
 Assert-NativeCi ($mixed.windows -and $mixed.rocm) 'mixed CPU/HIP batches retain both compile boundaries'

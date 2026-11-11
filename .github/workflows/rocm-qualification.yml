@@ -8,8 +8,13 @@ on:
       - cmake/**
       - src/gpu/**
       - src/core/*.hpp
+      - tests/cpp/**
+      - tests/cmake/**
+      - tests/zstd/**
       - third_party/**
       - tools/build.ps1
+      - tools/test.ps1
+      - tools/native_test_selection.ps1
       - tools/compile_hip_object.ps1
       - tools/hip_architecture.ps1
       - tools/rocm_toolchain.ps1
@@ -88,7 +93,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'HIP qualification requires a current successful native receipt.' }
           $identity = ($receipt -join [Environment]::NewLine) | ConvertFrom-Json
           Write-Output "HIP receipt SHA-256: $($identity.receipt_sha256); native inputs: $($identity.inputs_sha256)."
-      - name: Record compile qualification limits
+      - name: Test HIP-enabled binaries without an admitted device
+        shell: pwsh
+        env:
+          HIP_VISIBLE_DEVICES: "-1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . ./tools/native_test_selection.ps1
+          $cli = Join-Path $PWD.Path 'build/Release/flitzzip_cli.exe'
+          Assert-FlitzZipNativeHipAbsence -Cli $cli
+          . ./tools/cmake_toolchain.ps1
+          $ctest = Join-Path (Split-Path -Parent (Find-CMake -RepoRoot $PWD.Path)) 'ctest.exe'
+          & $ctest --test-dir build -C Release --interactive-debug-mode 0 --output-on-failure --stop-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'HIP-enabled no-device correctness failed.' }
+          Assert-FlitzZipNativeHipAbsence -Cli $cli
+      - name: Record qualification limits
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -97,6 +116,7 @@ jobs:
           $lockHash = (Get-FileHash tools/rocm-sdk-lock.json -Algorithm SHA256).Hash.ToLowerInvariant()
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "Source: $commit; SDK lock SHA-256: $lockHash."
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value (
-            'Complete pinned SDK provisioning and HIP compilation/linking passed for the release target set. ' +
-            'This job does not test GPU execution, install drivers, package or publish a release.'
+            'Pinned SDK compilation/linking and HIP-enabled no-device correctness passed for the release target set. ' +
+            'This job tests CPU behavior and required-HIP rejection; it does not qualify GPU execution, install ' +
+            'drivers, package or publish a release.'
           )

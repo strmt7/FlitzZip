@@ -13,6 +13,13 @@ no existing test body, allocator definition, LHA callback, TAR helper call or
 GDI loop. Transfer assertions reject decoded-payload host round trips, while
 CRC equality and reuse controls retain the real successful device path.
 
+The legacy payload-preflight regression also distinguishes HIP compilation
+from hardware admission. Its independent CPU fixtures remain active; required-HIP
+readback uses an admitted device or must reject verification and extraction
+without publishing either fixture file. This changes no reported source,
+allocator selection, LHA callback, TAR helper or GDI loop. The separately
+admitted real-HIP cohort still requires device execution.
+
 ## Individual decisions
 
 ### Alert 703

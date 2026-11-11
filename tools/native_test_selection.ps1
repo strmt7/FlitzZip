@@ -166,6 +166,22 @@ function Assert-FlitzZipNativeSelectionHip {
     }
 }
 
+# Purpose: Admit HIP-enabled hardware-absence tests without accepting CPU-only artifacts or dependency failures.
+# Inputs: Cli is receipt-validated; documented dependency statuses 11/12 and coherent capability fields are required.
+# Outputs: Emits diagnostics, normalizes only admitted absence statuses, and propagates every other failure.
+function Assert-FlitzZipNativeHipAbsence {
+    param([Parameter(Mandatory = $true)][string]$Cli)
+    $PSNativeCommandUseErrorActionPreference = $false
+    $diagnostics = @(& $Cli dependency-check)
+    $exitCode = $LASTEXITCODE
+    $diagnostics
+    if ($exitCode -notin @(11, 12) -or $diagnostics -notcontains 'hip_compiled=true' -or
+        $diagnostics -notcontains 'available=false') {
+        throw 'HIP absence qualification requires an HIP-enabled binary and admitted runtime/device absence.'
+    }
+    $global:LASTEXITCODE = 0
+}
+
 # Purpose: Execute exact cases once, optionally retaining ordinary assertion failures for a development batch.
 # Inputs: Validated selection/binaries; CpuOnlyValidation requires HIP OFF. The caller owns process-tree deadlines.
 # Outputs: Throws for any failure; batch mode continues only after a complete one-case assertion result and retained

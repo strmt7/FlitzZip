@@ -236,8 +236,12 @@ its existing lanes and under its own admission rules.
 
 HIP implementation files are excluded from the CPU-only build's event filter.
 They instead trigger `rocm-qualification`, which provisions the complete pinned
-SDK, compiles and links all release targets, and validates the current required-HIP
-build receipt. GPU sources, shared GPU/core headers, vendored dependencies and
+SDK, compiles and links all release targets, validates the current required-HIP
+build receipt, and runs correctness tests with no admitted device. Dependency
+admission must identify an HIP-enabled binary and documented runtime/device
+absence before and after those tests. This checks CPU behavior and required-HIP
+rejection, not GPU execution; the real-device cohort remains required. Native
+tests, GPU sources, shared GPU/core headers, vendored dependencies and
 compiler/provisioning inputs admit that qualification; shared/CPU inputs still
 admit Windows CI. The path exclusions follow
 [GitHub's ordered path-filter rules](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onpushpull_requestpull_request_targetpathspaths-ignore).

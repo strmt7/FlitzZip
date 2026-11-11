@@ -21,8 +21,8 @@ function Get-FlitzZipHostedWorkflowSelection {
         (Test-FlitzZipNativeCoverageInput -Paths $Paths)
     $rocm = $Full.IsPresent -or (Test-FlitzZipAnyPath -Path $Paths -Pattern @(
         '^\.github/workflows/rocm-qualification\.yml$', '^CMakeLists\.txt$', '^cmake/',
-        '^src/gpu/', '^src/core/[^/]+\.hpp$', '^third_party/',
-        '^tools/(build|compile_hip_object|hip_architecture|rocm_toolchain|process_environment|cmake_toolchain|build_parallelism|local_resources)\.ps1$',
+        '^src/gpu/', '^src/core/[^/]+\.hpp$', '^third_party/', '^tests/(cpp|cmake|zstd)/',
+        '^tools/(build|test|native_test_selection|compile_hip_object|hip_architecture|rocm_toolchain|process_environment|cmake_toolchain|build_parallelism|local_resources)\.ps1$',
         '^tools/(bootstrap_rocm_sdk|native_build_provenance|native_build_receipt|vendor_imports|json_input)\.py$', '^tools/rocm-sdk-lock\.json$',
         '^tools/cmake-toolchain\.sha256$'
     ))

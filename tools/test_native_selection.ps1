@@ -382,4 +382,60 @@ foreach ($cases in @(@(), @('first', 'first'))) {
     Assert-NativeSelectionRejected { Invoke-FlitzZipNativeTestSelection -Selection $invalid -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli } 'nonempty unique selection'
     Assert-NativeSelection ($script:NativeFixtureCalls.Count -eq 0) 'invalid plans must execute nothing'
 }
-Write-Output 'Native selection registry, component, HIP, exact execution and early-stop contracts passed.'
+# Purpose: Exercise the actual absence gate with independent status/field combinations and CLI acquisition failure.
+# Inputs: One fixture row and the expected dependency-check command; caller preferences must remain unchanged.
+# Outputs: Returns declared public capability fields or throws; never invokes a native workload.
+function Invoke-NativeAbsenceFixtureCli {
+    param([string]$Argument)
+    Assert-NativeSelection ($Argument -ceq 'dependency-check') 'absence gate uses dependency admission'
+    Assert-NativeSelection (-not $PSNativeCommandUseErrorActionPreference) 'expected absence codes are captured'
+    if ($script:NativeAbsenceCase.ContainsKey('throw')) { throw 'independent CLI acquisition failure' }
+    $global:LASTEXITCODE = $script:NativeAbsenceCase.exitCode
+    if ($script:NativeAbsenceCase.ContainsKey('compiled')) { "hip_compiled=$($script:NativeAbsenceCase.compiled)" }
+    if ($script:NativeAbsenceCase.ContainsKey('available')) { "available=$($script:NativeAbsenceCase.available)" }
+}
+
+$absenceCases = @(
+    @{ exitCode = 11; compiled = 'true'; available = 'false'; accepted = $true },
+    @{ exitCode = 12; compiled = 'true'; available = 'false'; accepted = $true },
+    @{ exitCode = 0; compiled = 'true'; available = 'true'; accepted = $false },
+    @{ exitCode = 13; compiled = 'true'; available = 'false'; accepted = $false },
+    @{ exitCode = 1; compiled = 'true'; available = 'false'; accepted = $false },
+    @{ exitCode = 10; compiled = 'false'; available = 'false'; accepted = $false },
+    @{ exitCode = 11; compiled = 'false'; available = 'false'; accepted = $false },
+    @{ exitCode = 12; compiled = 'true'; available = 'true'; accepted = $false },
+    @{ exitCode = 11; available = 'false'; accepted = $false },
+    @{ exitCode = 12; compiled = 'true'; accepted = $false }
+)
+$priorNativePreference = Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+$priorNativePreferenceValue = if ($null -ne $priorNativePreference) { $priorNativePreference.Value } else { $null }
+try {
+    foreach ($parentPreference in @($false, $true)) {
+        $PSNativeCommandUseErrorActionPreference = $parentPreference
+        foreach ($case in $absenceCases) {
+            $script:NativeAbsenceCase = $case
+            if ($case.accepted) {
+                Assert-FlitzZipNativeHipAbsence -Cli Invoke-NativeAbsenceFixtureCli | Out-Null
+                Assert-NativeSelection ($LASTEXITCODE -eq 0) 'admitted absence normalizes its handled status'
+            } else {
+                Assert-NativeSelectionRejected {
+                    Assert-FlitzZipNativeHipAbsence -Cli Invoke-NativeAbsenceFixtureCli
+                } 'admitted runtime/device absence'
+            }
+            Assert-NativeSelection ($PSNativeCommandUseErrorActionPreference -eq $parentPreference) 'absence gate restores caller preferences'
+        }
+        $script:NativeAbsenceCase = @{ throw = $true }
+        Assert-NativeSelectionRejected {
+            Assert-FlitzZipNativeHipAbsence -Cli Invoke-NativeAbsenceFixtureCli
+        } 'independent CLI acquisition failure'
+        Assert-NativeSelection ($PSNativeCommandUseErrorActionPreference -eq $parentPreference) 'failed absence query restores caller preferences'
+    }
+} finally {
+    if ($null -ne $priorNativePreference) {
+        $PSNativeCommandUseErrorActionPreference = $priorNativePreferenceValue
+    } else {
+        Remove-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+    }
+}
+$global:LASTEXITCODE = 0
+Write-Output 'Native selection registry, component, HIP, absence, exact execution and early-stop contracts passed.'

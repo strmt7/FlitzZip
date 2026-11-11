@@ -185,6 +185,9 @@ insufficient capacity fails rather than removing runner software or extracting
 only selected SDK components.
 
 Run it on the intended pushed source before release qualification. Its successful
-result establishes fresh SDK provisioning and HIP compilation/linking for that
-runner image. It does not establish GPU execution, driver compatibility,
+result establishes fresh SDK provisioning, HIP compilation/linking and
+HIP-enabled correctness without an admitted device for that runner image.
+The no-device profile must reject required-HIP operations explicitly; it cannot
+substitute for the separately admitted real-GPU cohort. It does not establish
+GPU execution, driver compatibility,
 compression speed or package acceptance, and it never publishes a release.
