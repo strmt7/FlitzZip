@@ -49,13 +49,23 @@ Baseline: source `dec2dca` and its
 Revalidate changed inputs and live services before using this assessment for a
 later revision. This is a source-backed baseline, not a claim of a flawless app.
 
+Revision `089d944` contains the subsequent probe-generation repair. Its hosted
+ASan, component-contract, lint and Scorecard workflows passed. ROCm qualification
+[failed during configuration](https://github.com/strmt7/FlitzZip/actions/runs/43010070857)
+with `HIP architecture resolution failed:` and no child diagnostic; the cause is
+not established. Windows CI and C++ analysis were still running at inspection,
+and DeepSource reported `Analysis quota is exhausted.` with a skipped check.
+Do not infer current acceptance from the
+qualified baseline. The same live inventory confirmed only `main`, no open PRs
+and no open Dependabot alerts; those facts must be refreshed at final acceptance.
+
 | Area | Verified state | Remaining problem or limit |
 | --- | --- | --- |
 | Product | Windows-native C++20 app, CLI, in-process adapters and HIP compute boundary | Exact methods differ by format; preserve the [capability matrix](docs/archive-format-support.md) |
 | Native tests | Seven local suites passed with GPU admission and with devices unavailable; main registry had 1,220 passing cases | Counts do not prove universal hardware coverage or absence of defects |
 | Hosted/package checks | Required Actions, HIP compilation/no-device execution, ZIP/MSI and installer lifecycle passed | Later changed inputs require applicable fresh qualification |
 | GitHub maintenance | Only `main`; no open PRs or Dependabot alerts at assessment | These inventories are live, not permanent guarantees |
-| Analysis acceptance | Exact governance baseline accepted; raw reports retained | DeepSource is queued and its API returned `Run does not exist.`; current analyzer results and complete inventory are unavailable |
+| Analysis acceptance | Exact governance baseline accepted; raw reports retained | DeepSource skipped the current revision because its analysis quota is exhausted; current analyzer results and complete inventory are unavailable |
 | Neutron | GPU-only search remains separate from efforts 1–9; independent readback and real device-work controls exist | Broad size superiority and comparative speed are unproven; approved rANS is inactive in production |
 | Numeric efforts | Nested CPU frame search and GPU entropy selection have scoped contracts | Complete-archive monotonicity is not established across all writers, partitions and resource policies |
 | Build generation | Shared probe output writing preserves unchanged bytes/metadata; actual source/header/bridge dependencies are registered and have canonical regressions | Work-count controls prove eliminated recompilation and targeted rebuilds, not a measured speedup |
@@ -92,7 +102,10 @@ the full goal.
 
 ## Ordered Work Packages
 
-The default ready sequence is **B01 → B02 → N01 → C01 → C02 → Q01**. D01 interrupts
+The immediate priority is **B00**, the failed current HIP configuration boundary.
+The subsequent ready sequence is **B02 → N01 → C01 → C02 → Q01**; B01 is implemented,
+with its successful local evidence retained and overall hosted acceptance pending.
+D01 interrupts
 it for a demonstrated dependency vulnerability or incompatibility. T01 addresses
 missing tool portability evidence without repeating valid installation checks. Resume R01 on
 a provider state change; do not let that external blocker stall independent work.
@@ -100,7 +113,8 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 
 | ID | Work and current state | Dependency | Required completion evidence |
 | --- | --- | --- | --- |
-| R01 | Current analysis acceptance: externally unavailable | DeepSource creates/completes the current run | Successful required analyzers, complete paginated inventory and exact-commit audit; retain the accepted governance baseline |
+| B00 | Current HIP configuration failure: investigate first | Preserved failing run and shared resolver boundary | Established cause, actionable child-process diagnostics, independent rejection/recovery controls and successful affected hosted qualification |
+| R01 | Current analysis acceptance: quota exhausted | Provider allowance resumes and a current run completes | Successful required analyzers, complete paginated inventory and exact-commit audit; retain the accepted governance baseline |
 | B01 | Probe output invalidation: implemented with canonical regressions and local native/sanitizer qualification | Retain source-bound hosted acceptance | Old behavior detected; unchanged outputs preserve identities and avoid recompilation; changed inputs rebuild consumers |
 | B02 | Counters-only observation: design mapped | Coherent snapshot/aggregation contract | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
 | C01 | Complete-size effort progression: scoped review next | Existing nested-search inventory | Independent full-size/decoding regressions for every advertised guarantee; no padding or manufactured low-effort losses |
@@ -111,6 +125,27 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 | T01 | Development-tool portability: retain qualified consumers and close evidence gaps | Supported provider/host/checkout contracts | Fresh/update/recovery consumers, actual index/crawl receipts and owned-process cleanup; no user-specific repository configuration |
 | Q01 | Critical gaps and complexity: ongoing | Actual risk and source-bound gap inventory | Meaningful success/rejection/recovery assertions and repaired root causes; explicit residual behavior/measurement gaps |
 | U01 | User experience, upgrades and docs: maintain affected contracts | Changed product/settings/package behavior | Migration and failure/recovery tests, disposable-host installer qualification, affected GUI/figure review and accurate docs |
+
+### B00 — HIP Configuration Failure
+
+Scope: `cmake/ResolveHipArchitecture.cmake`, `tools/hip_architecture.ps1`, their
+direct callers and existing configuration/architecture tests.
+
+1. Preserve the failing run, exact source, SDK/compiler identity and command.
+   The observed failure precedes HIP compilation; it does not demonstrate a
+   kernel defect, unsupported GPU or defective probe output.
+2. Inspect the subprocess result, standard output and standard error together.
+   The current fatal message reports only standard error and can lose the useful
+   distinction between failed launch, deadline, nonzero exit and malformed output.
+   Establish the actual cause before changing environment or admission policy.
+3. Exercise canonical success and independent nonzero, malformed-output,
+   unavailable-command and bounded-deadline controls at the resolver boundary.
+   Keep diagnostics actionable, reject partial target lists and prove recovery.
+   Do not repair this by weakening validation, retrying into a pass or blindly
+   increasing a deadline.
+4. Qualify the affected native configure/build consumer and current hosted ROCm
+   job. Reuse unrelated successful evidence while source/tool identities match;
+   retain incomplete Windows/analysis results until their actual outcomes arrive.
 
 ### B01 — Probe Generation Contract
 
