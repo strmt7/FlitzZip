@@ -71,12 +71,18 @@ source and repaired-wheel build were separately qualified. Neither users nor
 webpage content control the URL. The reported local-file-scheme concern does
 not apply to this pinned acquisition path.
 
-The crawler's browser dependency now pins Playwright 1.65.0. The lock change
-replaces only that package version and its wheel hashes. Source acquisition,
-recipe validation, bounded reads, digest verification and wheel construction
-finish before browser provisioning. They use the same standard-library
-`urllib` transport and immutable recipe, independently of Playwright. The
-download regression and installed-consumer checks retain those boundaries.
-The scanner-asset transport in alert 8446 has unchanged source, pins, callers
-and tests. These two existing decisions retain their reported sources,
-locations, rules and scanner identities.
+The crawler retains Playwright 1.65.0, the original source-build identity and
+official NLTK 3.10.4. Its compatible dependency refresh updates file locking,
+package metadata, Markdown, HTML selection and the existing OpenAI SDK cohort.
+The SDK adds its normally resolved lazy-import dependency; no external LLM is
+used for research or qualification. Normal installation, dependency consistency,
+download/model consumers, the real headless browser and the existing website
+cohort qualify the changed environment. Platform projections are resolution
+evidence, not cross-host execution.
+
+Source acquisition, recipe validation, bounded reads, digest verification and
+wheel construction finish before browser provisioning or SDK consumers. They
+use the same standard-library `urllib` transport and immutable recipe,
+independently of these dependency changes. The scanner-asset transport in alert
+8446 has unchanged source, pins, callers and tests. Both individual decisions
+retain their reported sources, locations, rules and scanner identities.
