@@ -4,9 +4,9 @@
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 #include "gpu/hip_device.hpp"
+#include "gpu/worker_phase_clock.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <utility>
 
 namespace flitzzip {
@@ -98,25 +98,17 @@ DecodedChunk decode_owned_chunk(std::span<const std::byte> payload, std::span<co
         return {};
     }
     auto* telemetry = options.telemetry.get();
-    auto phase_started = telemetry ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    WorkerPhaseClock phase_clock{telemetry != nullptr};
     auto storage = allocate_decoded_storage(decoded_size, blocks, options);
     const std::span<std::byte> output(storage.get(), decoded_size);
-    if (telemetry) {
-        const auto finished = std::chrono::steady_clock::now();
-        record_owned_decode_stage_time(telemetry, OwnedDecodeStage::OutputAllocation, finished - phase_started);
-        phase_started = finished;
-    }
+    phase_clock.finish(
+        [&](auto elapsed) { record_owned_decode_stage_time(telemetry, OwnedDecodeStage::OutputAllocation, elapsed); });
     const auto gpu_used = decode_chunk(payload, blocks, output, options);
-    if (telemetry) {
-        const auto finished = std::chrono::steady_clock::now();
-        record_owned_decode_stage_time(telemetry, OwnedDecodeStage::Materialization, finished - phase_started);
-        phase_started = finished;
-    }
+    phase_clock.finish(
+        [&](auto elapsed) { record_owned_decode_stage_time(telemetry, OwnedDecodeStage::Materialization, elapsed); });
     const auto checksum = gpu_used ? crc32_parallel(output, options.worker_count) : crc32(output);
-    if (telemetry) {
-        record_owned_decode_stage_time(telemetry, OwnedDecodeStage::HostChecksum,
-                                       std::chrono::steady_clock::now() - phase_started);
-    }
+    phase_clock.finish(
+        [&](auto elapsed) { record_owned_decode_stage_time(telemetry, OwnedDecodeStage::HostChecksum, elapsed); });
     const auto& owner = storage.get_deleter();
     if (gpu_used && (owner.pool || owner.release == release_hip_host_output)) {
         record_gpu_host_pinned_output_bytes(options.telemetry.get(), decoded_size);

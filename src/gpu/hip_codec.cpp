@@ -8,6 +8,7 @@
 #include "gpu/dictionary_candidate.hpp"
 #include "gpu/neutron_chunk_compaction.hpp"
 #include "gpu/byte_plane_transform.hip.hpp"
+#include "gpu/worker_phase_clock.hpp"
 
 #include "core/checksum.hpp"
 #include "core/host_memory_budget.hpp"
@@ -441,23 +442,17 @@ void with_materialized_chunk_device(std::span<const std::byte> payload, std::spa
 }
 
 // Purpose: Mark a sequential HIP encode phase boundary using host steady-clock time.
-// Inputs: Optional telemetry, the completed phase, and its mutable start point.
-// Outputs: Accumulates worker time and advances the start point to the next phase.
-void record_encode_phase(GpuTelemetry* telemetry, GpuEncodeStage stage,
-                         std::chrono::steady_clock::time_point& started) {
-    const auto finished = std::chrono::steady_clock::now();
-    record_gpu_encode_stage_time(telemetry, stage, finished - started);
-    started = finished;
+// Inputs: Optional telemetry, the completed phase and its operation-local clock.
+// Outputs: Advances a tracked phase; untracked source/trial work reads no profiling clock.
+void record_encode_phase(GpuTelemetry* telemetry, GpuEncodeStage stage, WorkerPhaseClock<>& clock) {
+    clock.finish([&](auto elapsed) { record_gpu_encode_stage_time(telemetry, stage, elapsed); });
 }
 
 // Purpose: Mark nested classification boundaries without resetting the enclosing encode-phase clock.
-// Inputs: Optional telemetry, the completed substage, and its mutable steady-clock start point.
+// Inputs: Optional telemetry, the completed substage and its nested phase clock.
 // Outputs: Records worker time and advances only the nested start point; no HIP synchronization is added.
-void record_classification_phase(GpuTelemetry* telemetry, GpuClassificationStage stage,
-                                 std::chrono::steady_clock::time_point& started) {
-    const auto finished = std::chrono::steady_clock::now();
-    record_gpu_classification_stage_time(telemetry, stage, finished - started);
-    started = finished;
+void record_classification_phase(GpuTelemetry* telemetry, GpuClassificationStage stage, WorkerPhaseClock<>& clock) {
+    clock.finish([&](auto elapsed) { record_gpu_classification_stage_time(telemetry, stage, elapsed); });
 }
 
 }  // namespace
@@ -840,7 +835,7 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
     const bool source_selection = role == HipEncodeRole::Source;
     auto* phase_telemetry = source_selection ? telemetry : nullptr;
     // Nested trial work contributes device counters; its enclosing source publication owns the phase duration.
-    auto phase_started = std::chrono::steady_clock::now();
+    WorkerPhaseClock phase_started{phase_telemetry != nullptr};
     record_gpu_encode_chunk(telemetry);
     require_hip_kernel_device_support();
     record_encode_phase(phase_telemetry, GpuEncodeStage::Readiness, phase_started);

@@ -16,6 +16,18 @@ device reads in contiguous, independent-range and decoded-block CRC kernels.
 The [device review](codeql-hip-device-semantics.md#alert-703) records the original
 source interpretation and its limits.
 
+The worker-phase clock refactoring was reviewed against the original report.
+The device translation unit and all five table reads are unchanged. The shared
+host clock now skips reads for absent phase telemetry, including nested trials;
+tracked copies retain the enclosing phase boundary. Owned decoding uses the
+same helper. This changes no device dispatch, CRC argument, completion wait,
+buffer owner or kernel binding. Fixed fake-clock controls cover disabled reads,
+nested boundaries and recorder rejection/recovery without measuring hardware.
+An untracked CPU reader fixture also checks literal bytes, the independent
+`123456789` CRC-32 vector and move ownership through the shared phase helper.
+The renewed context includes that helper and its owned-decode consumer. These
+controls do not replace fresh hosted analysis or required-HIP qualification.
+
 The shared materialization helper retains the validated payload and descriptor
 table through synchronous decoding and status validation, then checks their
 release before reducing the reservation. The output buffer and its remaining
@@ -63,6 +75,14 @@ following fill, literal and periodic-data loops in the decoded CRC kernel.
 Each branch reads the value before advancing to the next descriptor. The
 [device review](codeql-hip-device-semantics.md#alert-8452) covers the unchanged
 device source.
+
+The worker-phase clock change leaves this exact device source and its reported
+coordinates unchanged. Host encode/decode instrumentation now shares a guarded
+phase clock; none of the changes alter decoded extents, descriptor admission,
+CRC launch arguments, synchronization or the device loop's use of `block_end`.
+The helper and owned-decode caller were inspected with the original report and
+are included in the renewed exact context. Fake-clock lifetime controls provide
+no device-coverage claim; complete hosted analysis remains required.
 
 The host CRC entry point still validates the decoded layout and routes compound
 and materialized representations separately. Raw, fill and periodic descriptors

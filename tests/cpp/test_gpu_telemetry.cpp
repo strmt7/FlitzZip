@@ -4,6 +4,7 @@
 #include "gpu/hip_device.hpp"
 #include "gpu/device_memory_budget.hpp"
 #include "gpu/pinned_host_budget.hpp"
+#include "gpu/worker_phase_clock.hpp"
 #include "core/checksum.hpp"
 #include "core/decoded_chunk.hpp"
 #include "core/resource_limits.hpp"
@@ -15,12 +16,94 @@
 
 #include <array>
 #include <barrier>
+#include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <future>
 #include <limits>
+#include <stdexcept>
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
+
+namespace {
+
+struct WorkerClockReadProbe {
+    std::uint32_t& reads;
+
+    auto operator()() const {
+        ++reads;
+        return std::chrono::steady_clock::time_point{std::chrono::steady_clock::duration{reads}};
+    }
+};
+
+}  // namespace
+
+// Read counts are the oracle: these controls never read a real clock or measure performance.
+TEST_CASE(worker_phase_clock_disabled_skips_reads_and_recorders) {
+    std::uint32_t reads = 0;
+    std::uint32_t records = 0;
+    flitzzip::WorkerPhaseClock clock{false, WorkerClockReadProbe{reads}};
+    auto nested = clock;
+    for (auto* phase : {&clock, &nested}) {
+        phase->finish([&](auto) { ++records; });
+        phase->finish([&](auto) { ++records; });
+    }
+    REQUIRE_EQ(reads, 0U);
+    REQUIRE_EQ(records, 0U);
+}
+
+TEST_CASE(worker_phase_clock_nested_boundaries_do_not_restart_clock) {
+    std::uint32_t reads = 0;
+    std::vector<std::chrono::steady_clock::rep> intervals;
+    flitzzip::WorkerPhaseClock clock{true, WorkerClockReadProbe{reads}};
+    REQUIRE_EQ(reads, 1U);
+    clock.finish([&](auto elapsed) { intervals.push_back(elapsed.count()); });
+    auto nested = clock;
+    REQUIRE_EQ(reads, 2U);
+    nested.finish([&](auto elapsed) { intervals.push_back(elapsed.count()); });
+    clock.finish([&](auto elapsed) { intervals.push_back(elapsed.count()); });
+    REQUIRE_EQ(reads, 4U);
+    REQUIRE_EQ(intervals, (std::vector<std::chrono::steady_clock::rep>{1, 1, 2}));
+}
+
+TEST_CASE(worker_phase_clock_recorder_failure_preserves_boundary) {
+    std::uint32_t reads = 0;
+    flitzzip::WorkerPhaseClock clock{true, WorkerClockReadProbe{reads}};
+    bool rejected = false;
+    try {
+        clock.finish([](auto) { throw std::runtime_error("phase recorder rejected"); });
+    } catch (const std::runtime_error& error) {
+        if (std::string_view{error.what()} != "phase recorder rejected") {
+            throw;
+        }
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    std::chrono::steady_clock::rep recovered = 0;
+    clock.finish([&](auto elapsed) { recovered = elapsed.count(); });
+    REQUIRE_EQ(reads, 3U);
+    REQUIRE_EQ(recovered, 2);
+}
+
+TEST_CASE(worker_phase_clock_cpu_owned_decode_untracked) {
+    const std::array payload{std::byte{'1'}, std::byte{'2'}, std::byte{'3'}, std::byte{'4'}, std::byte{'5'},
+                             std::byte{'6'}, std::byte{'7'}, std::byte{'8'}, std::byte{'9'}};
+    const flitzzip::BlockDescriptor block{
+        .kind = flitzzip::BlockKind::Raw,
+        .uncompressed_len = 9U,
+        .encoded_len = 9U,
+    };
+    const flitzzip::GpuCodecOptions options{.require_gpu = false, .force_cpu = true};
+    auto decoded = flitzzip::decode_owned_chunk(payload, std::span{&block, 1U}, payload.size(), options);
+    REQUIRE_TRUE(std::ranges::equal(decoded.bytes(), payload));
+    REQUIRE_EQ(decoded.crc32, 0xCBF43926U);
+    REQUIRE_TRUE(!decoded.gpu_used);
+    auto moved = std::move(decoded);
+    REQUIRE_TRUE(decoded.bytes().empty());
+    REQUIRE_TRUE(std::ranges::equal(moved.bytes(), payload));
+}
 
 // Purpose: Isolate unequal GPU capacities instead of charging one adapter's work to another.
 // Inputs: Simulated memory snapshots from two device ordinals; no GPU hardware or allocations are used.

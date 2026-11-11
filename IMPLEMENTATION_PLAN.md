@@ -116,7 +116,7 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 | B00 | HIP failure diagnostics repaired with independent controls; hosted cause remains unconfirmed | Current ROCm qualification and retained failing run | Actionable child-process diagnostics, independent rejection/recovery controls and successful affected hosted qualification; preserve unexplained historical failures |
 | R01 | Current analysis acceptance: quota exhausted | Provider allowance resumes and a current run completes | Successful required analyzers, complete paginated inventory and exact-commit audit; retain the accepted governance baseline |
 | B01 | Probe output invalidation: implemented with canonical regressions and local native/sanitizer qualification | Retain source-bound hosted acceptance | Old behavior detected; unchanged outputs preserve identities and avoid recompilation; changed inputs rebuild consumers |
-| B02 | Counters-only observation: design mapped | Coherent snapshot/aggregation contract | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
+| B02 | Shared optional host phase clock implemented; full counters-only observation remains in design | Coherent snapshot/aggregation and event-ownership contract | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
 | C01 | Complete-size effort progression: scoped review next | Existing nested-search inventory | Independent full-size/decoding regressions for every advertised guarantee; no padding or manufactured low-effort losses |
 | C02 | CPU codec mechanisms: planned | Demonstrated work/ownership problem per codec | Independent read/write oracles and failure/recovery checks; supported capabilities unchanged; no unmeasured speed claim |
 | N01 | Approved entropy integration: private bounded proofs exist | B02 and approved format contract | Integrated device-produced models/streams, independent readback/CRC, malformed-input and lifetime controls |
@@ -177,6 +177,14 @@ Scope: `tests/zstd/RawBlockProbe.cmake`, `HuffmanTableProbe.cmake`,
 
 Scope: telemetry/snapshots, shared dispatch, prefix/dictionary encoders,
 `NeutronStageClock`, child attempts and structured-output consumers.
+
+Host encode and owned-decode phase boundaries now share an operation-local clock.
+Absent phase telemetry, including nested encode trials, requests no clock reads
+or recorder callbacks. Tracked nested phases copy their enclosing boundary;
+recorder failure retains the last successfully recorded boundary. Fixed clock-read
+and tick-sequence fixtures exercise these contracts without reading a real clock.
+This is not an exposed counters-only mode: independent prefix/dictionary event
+owners and the snapshot/aggregation/output contract below still require integration.
 
 Define an immutable operation mode and distinct not-requested, measured and
 failed/incomplete timing states. Specify mixed-mode aggregation before changing
