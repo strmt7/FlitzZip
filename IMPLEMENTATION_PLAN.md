@@ -44,7 +44,7 @@ Completed checkpoint narratives remain in Git history and local review artifacts
 
 ## Current Assessment
 
-Published source reviewed here: `89a1d67da2b575d675927dec2b063311434a6c72`.
+Reference source for the hosted results below: `89a1d67da2b575d675927dec2b063311434a6c72`.
 Its Windows CI, ROCm qualification, component contracts, security, lint, fuzzing
 and Scorecard workflows all completed successfully. The
 [current ROCm run](https://github.com/strmt7/FlitzZip/actions/runs/43016255283)
@@ -58,11 +58,14 @@ its analysis quota is exhausted. Successful Actions do not replace that analysis
 or the exact-commit findings audit. Recheck volatile service state at useful
 publication and final-acceptance boundaries, rather than repeatedly polling it.
 
-An unpublished counters-only observation batch modifies telemetry, HIP event
-owners, dictionary callers, output consumers and their tests. Its corrected
-HIP-enabled Release build and several offline contracts passed; focused new
-native/GPU execution and full affected-consumer acceptance remain outstanding.
-Neither the published workflows nor this local build qualify the complete batch.
+The counters-only observation integration spans telemetry, HIP event owners,
+dictionary callers, output consumers and their tests. Its current HIP-enabled
+Release build, fixed-data host cases, required-HIP readback/cancellation/recovery
+cases and affected offline reporting contracts passed locally. Independent
+compatibility and format-matrix checks cover their recorded binary identities.
+Full native-driver execution remains deferred because that driver invokes
+benchmark consumers prohibited by the active goal. New hosted acceptance, the
+exact-source audit and final candidate qualification remain outstanding.
 The earlier source `dec2dca` has a
 [qualified ZIP/MSI candidate](https://github.com/strmt7/FlitzZip/actions/runs/42993879195);
 those artifacts do not qualify subsequent source changes.
@@ -70,14 +73,14 @@ those artifacts do not qualify subsequent source changes.
 | Area | Verified state | Remaining problem or limit |
 | --- | --- | --- |
 | Product | Windows-native C++20 app, CLI, in-process adapters and HIP compute boundary | Exact methods differ by format; preserve the [capability matrix](docs/archive-format-support.md) |
-| Native tests | Earlier qualification covered seven suites with device and no-device cases; new observation regressions are written | New observation runtime cases have not yet been qualified; old counts cannot qualify changed behavior |
+| Native tests | New observation host and required-HIP cases pass, including independent readback and failure recovery | The broad benchmark-coupled driver remains deferred; bounded cases do not establish full release acceptance |
 | Hosted/package checks | All seven Actions workflows passed on the published source; an earlier ZIP/MSI lifecycle passed | Current unpublished inputs and the eventual final package require their own applicable qualification |
 | GitHub maintenance | Only `main`; no open PRs or Dependabot alerts at assessment | These inventories are live, not permanent guarantees |
 | Analysis acceptance | Exact governance baseline accepted; raw reports retained | DeepSource skipped the current revision because its analysis quota is exhausted; current analyzer results and complete inventory are unavailable |
 | Neutron | GPU-only search remains separate from efforts 1–9; independent readback and real device-work controls exist | Broad size superiority and comparative speed are unproven; approved rANS is inactive in production |
 | Numeric efforts | Nested CPU frame search and GPU entropy selection have scoped contracts | Complete-archive monotonicity is not established across all writers, partitions and resource policies |
 | Build generation | Shared probe output writing preserves unchanged bytes/metadata; actual source/header/bridge dependencies are registered and have canonical regressions | Work-count controls prove eliminated recompilation and targeted rebuilds, not a measured speedup |
-| Observation | Published optional phase-clock guard is qualified; unpublished mode/inheritance/event/output integration builds | Measured work and duration must be recorded together; real counters-only HIP readback, cancellation and recovery still need qualification |
+| Observation | Mode inheritance, optional event ownership, paired recording and structured status have bounded local qualification | Fresh hosted acceptance and the remaining full-driver scope are pending; measured remains the default and no speedup is claimed |
 | Maintainability | Audit identifies large GUI, GPU, test and tooling files | Size is a review lead, not a defect or justification for mechanical splitting |
 | Dependencies/tools | Pinned graphs have provenance and installed-consumer evidence; constrained parents remain explicit | Resolution is not runtime acceptance; universal upstream latestness is not established |
 | Coverage/docs | CPU, HIP host, GUI, tooling and device scopes are separate; user/developer guides have canonical homes | Refresh affected gaps and claims, not a fictional whole-repository percentage; stale checkpoint prose must not drive execution |
@@ -86,15 +89,20 @@ those artifacts do not qualify subsequent source changes.
 
 These are distinct engineering categories, not a list of confirmed vulnerabilities:
 
-- **Incomplete observation contract:** the unpublished counter helper can add
-  measured launches without recording a duration. A later sample could make the
-  aggregate appear measured. Require paired measured recording, reject misuse
-  before mutation and retain an independent regression. This is a source-level
-  contract gap; no observed archive corruption is attributed to it.
-- **Unnecessary profiling work:** published non-null telemetry still owns optional
-  event/query work in several paths. B02 separates counts from profiling while
-  retaining completion, deadlines and cancellation. Its work-count assertions
-  will establish eliminated work, not a measured speedup.
+- **Repaired observation contract:** the preceding count helper accepted measured
+  launches without a duration, allowing a later sample to mask missing coverage.
+  Measured recording now pairs launches with a duration/unavailable sample and
+  rejects count-only misuse before mutation. The regression rejects the old
+  behavior. No observed archive corruption is attributed to this accounting gap.
+- **Profiling separation:** B02's counters-only mode avoids optional events and
+  queries while retaining completion, deadlines and cancellation. Measured
+  remains the default; the new operation contract adds no public mode switch.
+  Fixed provider/work-count controls establish eliminated optional work, not a
+  measured application speedup.
+- **Reporting consistency:** the suite writer now uses the common GPU projection.
+  Transfer-diagnostic admission rejects absent/incomplete timing status and
+  missing actual-work evidence. Fixed-lane tests exercise the real consumer tail;
+  actual timed diagnostic and suite execution remain deferred.
 - **Expensive or conflicting verification entry points:** a broad unit driver
   also invokes benchmark consumers. Under the current restriction it cannot run
   unchanged. Select legitimate correctness consumers now; review separation of
@@ -180,8 +188,8 @@ Do not collapse these into a single misleading done marker.
 
 ## Ordered Work Packages
 
-The immediate priority is **B02**, completing and qualifying the unpublished
-observation boundary before further codec integration. **B00 and B01 are qualified
+The immediate priority is **B02**, finishing publication and outstanding permitted
+qualification of the observation boundary before further codec integration. **B00 and B01 are qualified
 for their published scope.** The ready sequence is **B02 → N01 → C01 → C02 → Q01**.
 D01 interrupts it for a demonstrated dependency vulnerability or incompatibility. T01 addresses
 missing tool portability evidence without repeating valid installation checks. Resume R01 on
@@ -193,7 +201,7 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 | B00 | Qualified diagnostic-loss repair; original failure cause unconfirmed | Preserve accepted evidence unless inputs change | Independent rejection/recovery controls and successful current ROCm qualification; retain historical uncertainty |
 | R01 | Current analysis acceptance: quota exhausted | Provider allowance resumes and a current run completes | Successful required analyzers, complete paginated inventory and exact-commit audit; retain the accepted governance baseline |
 | B01 | Qualified probe invalidation repair with local and hosted evidence | Revalidate only affected changed inputs | Old behavior detected; unchanged outputs preserve identities and avoid recompilation; changed inputs rebuild consumers |
-| B02 | In progress: shared phase clock published; full observation integration unpublished and builds | Pair measured work/duration; qualify all changed consumers | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
+| B02 | Implemented with bounded local host/HIP and reporting qualification; hosted/full-driver acceptance pending | Preserve source-bound results; finish remaining permitted consumers | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
 | C01 | Complete-size effort progression: scoped review next | Existing nested-search inventory | Independent full-size/decoding regressions for every advertised guarantee; no padding or manufactured low-effort losses |
 | C02 | CPU codec mechanisms: planned | Demonstrated work/ownership problem per codec | Independent read/write oracles and failure/recovery checks; supported capabilities unchanged; no unmeasured speed claim |
 | N01 | Approved entropy integration: private bounded proofs exist | B02 and approved format contract | Integrated device-produced models/streams, independent readback/CRC, malformed-input and lifetime controls |
@@ -260,10 +268,18 @@ Absent phase telemetry, including nested encode trials, requests no clock reads
 or recorder callbacks. Tracked nested phases copy their enclosing boundary;
 recorder failure retains the last successfully recorded boundary. Fixed clock-read
 and tick-sequence fixtures exercise these contracts without reading a real clock.
-The unpublished integration now propagates an immutable observation mode through
+The integration propagates an immutable observation mode through
 shared, prefix, sparse and dictionary event owners, child attempts, snapshots,
 aggregation and output consumers. This remains an internal operation contract;
 no new public CLI switch is claimed. A successful build is not runtime acceptance.
+
+Bounded host and real HIP tests now cover mode admission, literal aggregation,
+completion/query failure, independent CPU/upstream readback, optional attempts
+and Neutron cancellation followed by recovery. The paired-recording regression
+fails on the preceding source and passes after repair. Transfer admission also
+has a reproduced old-consumer failure and fixed-provider rejection/projection
+controls. Preserve this evidence; do not describe the deferred broad driver or
+timed consumers as passed.
 
 Define an immutable operation mode and distinct not-requested, measured and
 failed/incomplete timing states. Specify mixed-mode aggregation before changing

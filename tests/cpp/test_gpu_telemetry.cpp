@@ -5,6 +5,9 @@
 #include "gpu/device_memory_budget.hpp"
 #include "gpu/pinned_host_budget.hpp"
 #include "gpu/worker_phase_clock.hpp"
+#include "gpu/kernel_observation.hpp"
+#include "gpu/dictionary_matcher.hpp"
+#include "lz4.h"
 #include "core/checksum.hpp"
 #include "core/decoded_chunk.hpp"
 #include "core/resource_limits.hpp"
@@ -38,7 +41,318 @@ struct WorkerClockReadProbe {
     }
 };
 
+// Independent upstream LZ4 readback accompanies the real HIP reader. All bytes
+// stay in memory, and the requested observation supplies no profiling events.
+void require_unmeasured_dictionary_readback(std::span<const std::byte> input,
+                                            const flitzzip::dictionary::EncodedBatch& encoded) {
+    REQUIRE_TRUE(encoded.gpu_used);
+    REQUIRE_EQ(encoded.observation_mode, flitzzip::GpuObservationMode::CountersOnly);
+    REQUIRE_TRUE(!encoded.index_ms && !encoded.encode_ms && !encoded.compact_ms && !encoded.device_ms);
+    REQUIRE_TRUE(encoded.explicit_kernel_launches > 0U);
+    REQUIRE_EQ(encoded.segments.size(), 1U);
+    const auto& segment = encoded.segments.front();
+    REQUIRE_EQ(segment.input_bytes, input.size());
+    REQUIRE_TRUE(input.size() < static_cast<std::size_t>(std::numeric_limits<int>::max()));
+    REQUIRE_TRUE(segment.payload.size() < static_cast<std::size_t>(std::numeric_limits<int>::max()));
+    std::vector<std::byte> restored(input.size());
+    const auto bytes = LZ4_decompress_safe(reinterpret_cast<const char*>(segment.payload.data()),
+                                           reinterpret_cast<char*>(restored.data()),
+                                           static_cast<int>(segment.payload.size()), static_cast<int>(restored.size()));
+    REQUIRE_EQ(bytes, static_cast<int>(input.size()));
+    REQUIRE_TRUE(std::ranges::equal(restored, input));
+    const auto decoded =
+        flitzzip::dictionary::decode_segments(encoded.segments, flitzzip::GpuObservationMode::CountersOnly);
+    REQUIRE_TRUE(decoded.gpu_used);
+    REQUIRE_EQ(decoded.observation_mode, flitzzip::GpuObservationMode::CountersOnly);
+    REQUIRE_TRUE(!decoded.decode_ms);
+    REQUIRE_TRUE(std::ranges::equal(decoded.bytes, input));
+}
+
 }  // namespace
+
+TEST_CASE(gpu_observation_dictionary_empty_and_invalid_mode_admission) {
+    using Mode = flitzzip::GpuObservationMode;
+    for (const auto mode : {Mode::Measured, Mode::CountersOnly}) {
+        REQUIRE_EQ(flitzzip::dictionary::find_matches({}, 1, mode).observation_mode, mode);
+        REQUIRE_EQ(flitzzip::dictionary::encode_segments({}, 1, mode).observation_mode, mode);
+        REQUIRE_EQ(flitzzip::dictionary::encode_neutron_segments({}, {}, {}, mode).observation_mode, mode);
+        REQUIRE_EQ(flitzzip::dictionary::decode_segments({}, mode).observation_mode, mode);
+    }
+    const auto reject = [](auto action) {
+        bool rejected = false;
+        try {
+            action();
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    };
+    constexpr auto invalid = static_cast<Mode>(255U);
+    reject([&] { (void)flitzzip::dictionary::find_matches({}, 1, invalid); });
+    reject([&] { (void)flitzzip::dictionary::encode_segments({}, 1, invalid); });
+    reject([&] { (void)flitzzip::dictionary::encode_neutron_segments({}, {}, {}, invalid); });
+    reject([&] { (void)flitzzip::dictionary::decode_segments({}, invalid); });
+}
+
+TEST_CASE(gpu_observation_dictionary_counters_only_cached_and_deferred_readback) {
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> input(4096U);
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        input[i] = static_cast<std::byte>((i % 17U) * 13U);
+    }
+    for (const auto level : {1, 9}) {
+        const auto encoded =
+            flitzzip::dictionary::encode_segments(input, level, flitzzip::GpuObservationMode::CountersOnly);
+        require_unmeasured_dictionary_readback(input, encoded);
+    }
+    const auto matches = flitzzip::dictionary::find_matches(input, 1, flitzzip::GpuObservationMode::CountersOnly);
+    REQUIRE_TRUE(matches.gpu_used);
+    REQUIRE_TRUE(!matches.index_ms && !matches.search_ms);
+    REQUIRE_EQ(matches.observation_mode, flitzzip::GpuObservationMode::CountersOnly);
+    REQUIRE_EQ(matches.matches.size(), input.size());
+}
+
+TEST_CASE(gpu_observation_neutron_counters_only_cancellation_and_recovery) {
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> input(4096U);
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        input[i] = static_cast<std::byte>((i % 19U) * 11U);
+    }
+    std::uint32_t checkpoints = 0;
+    bool rejected = false;
+    try {
+        (void)flitzzip::dictionary::encode_neutron_segments(
+            input,
+            [&] {
+                if (++checkpoints == 4U) {
+                    throw std::runtime_error("cancel unmeasured Neutron");
+                }
+            },
+            {}, flitzzip::GpuObservationMode::CountersOnly);
+    } catch (const std::runtime_error& error) {
+        if (std::string_view{error.what()} != "cancel unmeasured Neutron") {
+            throw;
+        }
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(checkpoints, 4U);
+    const auto encoded =
+        flitzzip::dictionary::encode_neutron_segments(input, {}, {}, flitzzip::GpuObservationMode::CountersOnly);
+    require_unmeasured_dictionary_readback(input, encoded);
+}
+
+TEST_CASE(gpu_observation_native_counters_only_required_and_optional_attempts) {
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> input(4096U);
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        input[i] = static_cast<std::byte>((i / 7U + i % 23U) % 26U + 65U);
+    }
+    for (const bool required : {false, true}) {
+        for (const auto mode :
+             {flitzzip::NativeCompressionMode::Standard, flitzzip::NativeCompressionMode::NeutronStar}) {
+            if (!required && mode == flitzzip::NativeCompressionMode::NeutronStar) {
+                continue;
+            }
+            flitzzip::GpuCodecOptions options;
+            options.require_gpu = required;
+            options.block_size = 4096U;
+            options.compression_level = 9;
+            options.compression_mode = mode;
+            options.telemetry = std::make_shared<flitzzip::GpuTelemetry>(flitzzip::GpuObservationMode::CountersOnly);
+            const auto encoded = flitzzip::encode_chunk(input, options);
+            std::vector<std::byte> cpu(input.size());
+            flitzzip::decode_chunk_cpu(encoded.payload, encoded.blocks, cpu, {});
+            REQUIRE_TRUE(std::ranges::equal(cpu, input));
+            std::vector<std::byte> gpu(input.size());
+            REQUIRE_TRUE(flitzzip::decode_chunk(encoded.payload, encoded.blocks, gpu, options));
+            REQUIRE_TRUE(std::ranges::equal(gpu, input));
+            const auto stats = flitzzip::snapshot_gpu_telemetry(*options.telemetry);
+            REQUIRE_EQ(stats.timing_status, flitzzip::GpuTimingStatus::NotRequested);
+            REQUIRE_TRUE(std::isnan(stats.kernel_ms));
+            REQUIRE_TRUE(stats.encode_chunks > 0U && stats.decode_chunks > 0U && stats.kernel_launches > 0U);
+            REQUIRE_TRUE(!options.telemetry->timing_recorded.load());
+        }
+    }
+}
+
+TEST_CASE(gpu_observation_event_provider_is_never_called_for_counters_only) {
+    std::uint32_t calls = 0;
+    const auto create = [&]() -> std::unique_ptr<int> {
+        ++calls;
+        throw std::runtime_error("event provider rejected");
+    };
+    const auto events = flitzzip::make_gpu_observation_events(flitzzip::GpuObservationMode::CountersOnly, create);
+    REQUIRE_TRUE(!events);
+    REQUIRE_EQ(calls, 0U);
+    bool rejected = false;
+    try {
+        (void)flitzzip::make_gpu_observation_events(flitzzip::GpuObservationMode::Measured, create);
+    } catch (const std::runtime_error& error) {
+        if (std::string_view{error.what()} != "event provider rejected") {
+            throw;
+        }
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(calls, 1U);
+    rejected = false;
+    try {
+        (void)flitzzip::make_gpu_observation_events(static_cast<flitzzip::GpuObservationMode>(255U), create);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(calls, 1U);
+}
+
+TEST_CASE(gpu_observation_counters_do_not_fabricate_zero_timing) {
+    flitzzip::GpuTelemetry telemetry{flitzzip::GpuObservationMode::CountersOnly};
+    flitzzip::record_gpu_completed_kernels(&telemetry, 3U);
+    flitzzip::record_gpu_kernel_work(&telemetry, 2U, std::numeric_limits<double>::quiet_NaN());
+    flitzzip::record_gpu_h2d_bytes(&telemetry, 17U);
+    flitzzip::record_gpu_encode_stage_time(&telemetry, flitzzip::GpuEncodeStage::Readiness,
+                                           std::chrono::steady_clock::duration{});
+    const auto stats = flitzzip::snapshot_gpu_telemetry(telemetry);
+    REQUIRE_EQ(stats.kernel_launches, 5U);
+    REQUIRE_EQ(stats.h2d_bytes, 17U);
+    REQUIRE_EQ(stats.timing_status, flitzzip::GpuTimingStatus::NotRequested);
+    REQUIRE_TRUE(std::isnan(stats.kernel_ms));
+    for (const auto value : stats.encode_stage_worker_seconds) {
+        REQUIRE_TRUE(std::isnan(value));
+    }
+    for (const auto value : stats.classification_stage_worker_seconds) {
+        REQUIRE_TRUE(std::isnan(value));
+    }
+    for (const auto value : stats.owned_decode_stage_worker_seconds) {
+        REQUIRE_TRUE(std::isnan(value));
+    }
+    REQUIRE_TRUE(!telemetry.timing_recorded.load());
+    REQUIRE_EQ(telemetry.kernel_microseconds.load(), 0U);
+}
+
+TEST_CASE(gpu_observation_empty_zero_and_failed_samples_are_distinct) {
+    flitzzip::GpuTelemetry telemetry;
+    REQUIRE_EQ(flitzzip::snapshot_gpu_telemetry(telemetry).timing_status, flitzzip::GpuTimingStatus::NoSamples);
+    flitzzip::record_gpu_kernel_launch(&telemetry, 0.0);
+    const auto zero = flitzzip::snapshot_gpu_telemetry(telemetry);
+    REQUIRE_EQ(zero.timing_status, flitzzip::GpuTimingStatus::Measured);
+    REQUIRE_EQ(zero.kernel_ms, 0.0);
+    flitzzip::record_gpu_kernel_launch(&telemetry, std::numeric_limits<double>::quiet_NaN());
+    REQUIRE_EQ(flitzzip::snapshot_gpu_telemetry(telemetry).timing_status, flitzzip::GpuTimingStatus::Unavailable);
+}
+
+TEST_CASE(gpu_observation_measured_work_requires_paired_sample) {
+    for (const bool sampled : {false, true}) {
+        flitzzip::GpuTelemetry telemetry;
+        if (sampled) {
+            flitzzip::record_gpu_kernel_work(&telemetry, 2U, 1.25);
+        }
+        const auto before = flitzzip::snapshot_gpu_telemetry(telemetry);
+        bool rejected = false;
+        try {
+            flitzzip::record_gpu_completed_kernels(&telemetry, 3U);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        const auto after = flitzzip::snapshot_gpu_telemetry(telemetry);
+        REQUIRE_EQ(after.kernel_launches, before.kernel_launches);
+        REQUIRE_EQ(after.kernel_ms, before.kernel_ms);
+        REQUIRE_EQ(after.timing_status, before.timing_status);
+        REQUIRE_EQ(telemetry.timing_recorded.load(), sampled);
+        flitzzip::record_gpu_completed_kernels(&telemetry, 0U);
+        flitzzip::record_gpu_kernel_work(&telemetry, 1U, 0.0);
+        const auto recovered = flitzzip::snapshot_gpu_telemetry(telemetry);
+        REQUIRE_EQ(recovered.kernel_launches, sampled ? 3U : 1U);
+        REQUIRE_EQ(recovered.kernel_ms, sampled ? 1.25 : 0.0);
+        REQUIRE_EQ(recovered.timing_status, flitzzip::GpuTimingStatus::Measured);
+    }
+    flitzzip::record_gpu_completed_kernels(nullptr, 3U);
+}
+
+TEST_CASE(gpu_observation_completion_and_measurement_failures_preserve_actual_work) {
+    for (const auto mode : {flitzzip::GpuObservationMode::Measured, flitzzip::GpuObservationMode::CountersOnly}) {
+        for (const auto failure : {0, 1, 2}) {
+            flitzzip::GpuTelemetry telemetry{mode};
+            const bool measured = mode == flitzzip::GpuObservationMode::Measured;
+            std::uint32_t completions = 0;
+            std::uint32_t queries = 0;
+            bool rejected = false;
+            try {
+                flitzzip::observe_gpu_kernel_work(
+                    &telemetry, 3U,
+                    [&](bool profile) {
+                        REQUIRE_EQ(profile, measured);
+                        ++completions;
+                        if (failure == 1) {
+                            throw std::runtime_error("observation fixture failure");
+                        }
+                    },
+                    [&] {
+                        ++queries;
+                        if (failure == 2) {
+                            throw std::runtime_error("observation fixture failure");
+                        }
+                        return 0.0;
+                    });
+            } catch (const std::runtime_error& error) {
+                if (std::string_view{error.what()} != "observation fixture failure") {
+                    throw;
+                }
+                rejected = true;
+            }
+            REQUIRE_EQ(completions, 1U);
+            REQUIRE_EQ(queries, measured && failure != 1 ? 1U : 0U);
+            REQUIRE_EQ(rejected, failure == 1 || (measured && failure == 2));
+            const auto stats = flitzzip::snapshot_gpu_telemetry(telemetry);
+            REQUIRE_EQ(stats.kernel_launches, failure == 1 ? 0U : 3U);
+            REQUIRE_EQ(stats.timing_status, !measured  ? flitzzip::GpuTimingStatus::NotRequested
+                                            : rejected ? flitzzip::GpuTimingStatus::Unavailable
+                                                       : flitzzip::GpuTimingStatus::Measured);
+        }
+    }
+}
+
+TEST_CASE(gpu_observation_aggregation_retains_missing_and_invalid_coverage) {
+    using Status = flitzzip::GpuTimingStatus;
+    constexpr std::array values{Status::NoSamples, Status::NotRequested, Status::Measured, Status::Incomplete,
+                                Status::Unavailable};
+    constexpr std::array<std::array<Status, 5>, 5> expected{{
+        {Status::NoSamples, Status::NotRequested, Status::Measured, Status::Incomplete, Status::Unavailable},
+        {Status::NotRequested, Status::NotRequested, Status::Incomplete, Status::Incomplete, Status::Incomplete},
+        {Status::Measured, Status::Incomplete, Status::Measured, Status::Incomplete, Status::Unavailable},
+        {Status::Incomplete, Status::Incomplete, Status::Incomplete, Status::Incomplete, Status::Incomplete},
+        {Status::Unavailable, Status::Incomplete, Status::Unavailable, Status::Incomplete, Status::Unavailable},
+    }};
+    for (std::size_t lhs = 0; lhs < values.size(); ++lhs) {
+        for (std::size_t rhs = 0; rhs < values.size(); ++rhs) {
+            REQUIRE_EQ(flitzzip::combine_gpu_timing_status(values[lhs], values[rhs]), expected[lhs][rhs]);
+            for (const auto third : values) {
+                REQUIRE_EQ(flitzzip::combine_gpu_timing_status(expected[lhs][rhs], third),
+                           flitzzip::combine_gpu_timing_status(
+                               values[lhs], flitzzip::combine_gpu_timing_status(values[rhs], third)));
+            }
+        }
+    }
+    REQUIRE_EQ(flitzzip::combine_gpu_timing_status(Status::Incomplete, Status::Unavailable), Status::Incomplete);
+    REQUIRE_EQ(flitzzip::combine_gpu_timing_status(Status::NotRequested, Status::Unavailable), Status::Incomplete);
+    flitzzip::GpuRuntimeStats mixed;
+    mixed.kernel_launches = 7U;
+    mixed.kernel_ms = 1.0;
+    mixed.timing_status = flitzzip::combine_gpu_timing_status(Status::Measured, Status::NotRequested);
+    flitzzip::finalize_gpu_timing_stats(mixed);
+    REQUIRE_EQ(mixed.kernel_launches, 7U);
+    REQUIRE_EQ(mixed.timing_status, Status::Incomplete);
+    REQUIRE_TRUE(std::isnan(mixed.kernel_ms));
+    REQUIRE_TRUE(std::isnan(mixed.encode_stage_worker_seconds.front()));
+}
 
 // Read counts are the oracle: these controls never read a real clock or measure performance.
 TEST_CASE(worker_phase_clock_disabled_skips_reads_and_recorders) {

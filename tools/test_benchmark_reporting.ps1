@@ -822,12 +822,83 @@ foreach ($file in @('gpu_proof.ps1', 'gpu_diagnostic.ps1', 'transfer_diagnostics
 }
 
 $validGpu = @{
+    gpu_timing_status = 'measured'
     gpu_used = 'true'; gpu_kernel_launches = '2'; gpu_kernel_ms = '1.25'
-    gpu_h2d_bytes = '4096'; gpu_device_allocation_bytes = '8192'
+    gpu_h2d_bytes = '4096'; gpu_d2h_bytes = '4096'; gpu_device_allocation_bytes = '8192'
     gpu_pattern_blocks = '1'; gpu_prefix_blocks = '1'; gpu_dictionary_blocks = '1'; gpu_sparse_pattern_blocks = '1'
 }
 Assert-GpuBackendStat -Stats $validGpu -Label 'finite fixture'
 Assert-GpuProofStat -Stats $validGpu -Label 'finite fixture'
+Assert-TransferDiagnosticGpuStat -Stats $validGpu
+
+# Exercise the actual transfer consumer's admission and JSON projection with
+# per-invocation fixed lane providers; no diagnostic or benchmark process runs.
+$transferSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'transfer_diagnostics.ps1') -Raw
+$transferStart = $transferSource.IndexOf('$cpu = Invoke-TransferDiagnosticLane', [StringComparison]::Ordinal)
+if ($transferStart -lt 0) { throw 'Transfer consumer entry point is missing.' }
+$transferConsumer = [scriptblock]::Create($transferSource.Substring($transferStart))
+$invokeFixedTransfer = {
+    param($Consumer, $Fixture)
+    $variables = [Collections.Generic.List[Management.Automation.PSVariable]]::new()
+    $values = @{ WorkloadProfile = 'Mixed'; SizeMiB = 1; CompressionLevel = 5; BlockSizeKiB = 1024; TransferFixture = $Fixture }
+    foreach ($entry in $values.GetEnumerator()) {
+        $variables.Add([Management.Automation.PSVariable]::new($entry.Key, $entry.Value))
+    }
+    $functions = [Collections.Generic.Dictionary[string, scriptblock]]::new()
+    $functions.Add('Invoke-TransferDiagnosticLane', {
+        param($LaneName, $ModeFlag)
+        $expected = switch ($LaneName) {
+            'CPU' { '--force-cpu' }
+            'GPU' { '--require-gpu' }
+            default { throw 'Unexpected transfer lane.' }
+        }
+        if ($ModeFlag -cne $expected) { throw 'Transfer lane lost its backend requirement.' }
+        return $TransferFixture.Clone()
+    })
+    $Consumer.InvokeWithContext($functions, $variables)
+}
+foreach ($status in @('measured', $null, '', 'no_samples', 'not_requested', 'incomplete', 'unavailable', 'unknown')) {
+    $fixture = $validGpu.Clone()
+    $fixture.gpu_timing_status = $status
+    $fixture.input_bytes = '4096'; $fixture.output_bytes = '1024'
+    $fixture.compression_ratio = '0.25'; $fixture.throughput_mib_s = '4'
+    $rejected = $false
+    try { $record = (& $invokeFixedTransfer $transferConsumer $fixture) | ConvertFrom-Json } catch {
+        $failure = $_.Exception
+        while ($null -ne $failure.InnerException) { $failure = $failure.InnerException }
+        if ($failure.Message -ne 'GPU transfer diagnostic requires measured AMD HIP execution.') { throw }
+        $rejected = $true
+    }
+    if ($rejected -ne ($status -cne 'measured')) { throw 'Transfer consumer admitted the wrong profiling state.' }
+    if (-not $rejected -and ($record.gpu_kernel_launches -ne 2 -or $record.gpu_kernel_ms -ne 1.25 -or
+            $record.gpu_timing_status -cne 'measured' -or -not $record.memory_only -or $record.disk_write_bytes -ne 0)) {
+        throw 'Transfer consumer lost actual work, profile identity or RAM-only projection.'
+    }
+}
+foreach ($key in @('gpu_h2d_bytes', 'gpu_d2h_bytes', 'gpu_device_allocation_bytes', 'gpu_kernel_launches', 'gpu_kernel_ms')) {
+    foreach ($value in @($null, '', '0', '-1', 'NaN', 'Infinity')) {
+        $fixture = $validGpu.Clone()
+        if ($null -eq $value) { $fixture.Remove($key) } else { $fixture[$key] = $value }
+        $rejected = $false
+        try { Assert-TransferDiagnosticGpuStat -Stats $fixture } catch { $rejected = $true }
+        if (-not $rejected) { throw "Transfer admission accepted invalid $key." }
+    }
+}
+$fixture = $validGpu.Clone(); $fixture.gpu_used = 'false'
+$rejected = $false
+try { Assert-TransferDiagnosticGpuStat -Stats $fixture } catch { $rejected = $true }
+if (-not $rejected) { throw 'Transfer admission accepted a CPU result.' }
+
+foreach ($status in @($null, '', 'no_samples', 'not_requested', 'incomplete', 'unknown')) {
+    $missing = $validGpu.Clone()
+    $missing.gpu_timing_status = $status
+    foreach ($check in @({ Assert-GpuBackendStat -Stats $missing -Label 'missing timing fixture' },
+                         { Assert-GpuProofStat -Stats $missing -Label 'missing timing fixture' })) {
+        $rejected = $false
+        try { & $check | Out-Null } catch { $rejected = $true }
+        if (-not $rejected) { throw 'GPU evidence accepted missing or incomplete timing coverage.' }
+    }
+}
 $sparseOnly = $validGpu.Clone()
 $sparseOnly.gpu_pattern_blocks = '0'
 $sparseOnly.gpu_prefix_blocks = '0'
@@ -841,6 +912,7 @@ foreach ($invalid in @('NaN', 'nan', 'Infinity', '-Infinity')) {
         throw 'Non-finite timing must remain unavailable.'
     }
     if ($invalid -in @('NaN', 'nan')) {
+        $stats.gpu_timing_status = 'unavailable'
         Assert-GpuBackendStat -Stats $stats -Label 'unavailable event fixture' 3>$null
     }
     $checks = @(

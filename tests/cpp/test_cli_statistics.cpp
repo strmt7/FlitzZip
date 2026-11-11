@@ -19,7 +19,7 @@ constexpr std::string_view kGpuFields =
     " gpu_used=true gpu_encode_chunks=3 gpu_decode_chunks=5 gpu_kernel_launches=7 gpu_kernel_ms=0.125"
     " gpu_h2d_bytes=11 gpu_d2h_bytes=13 gpu_device_allocation_bytes=17 gpu_host_pinned_allocation_bytes=19"
     " gpu_host_pinned_output_bytes=23 gpu_pattern_blocks=29 gpu_prefix_blocks=31 gpu_dictionary_blocks=37"
-    " gpu_sparse_pattern_blocks=41";
+    " gpu_sparse_pattern_blocks=41 gpu_timing_status=measured";
 
 // Purpose: Compare computed finite statistics at a precision tighter than their serialized representation.
 // Inputs: Actual and independently expected values. Outputs: Rejects nonfinite values or material arithmetic drift.
@@ -48,6 +48,7 @@ OperationStats statistics_fixture() {
     gpu.decode_chunks = 5;
     gpu.kernel_launches = 7;
     gpu.kernel_ms = 0.125;
+    gpu.timing_status = GpuTimingStatus::Measured;
     gpu.h2d_bytes = 11;
     gpu.d2h_bytes = 13;
     gpu.device_allocation_bytes = 17;
@@ -164,6 +165,27 @@ TEST_CASE(cli_statistics_gpu_counters_match_independent_literal_order) {
     const auto stats = statistics_fixture();
     write_gpu_runtime_stats(output, stats.gpu_runtime, stats.gpu_used);
     REQUIRE_EQ(output.str(), kGpuFields);
+}
+
+TEST_CASE(cli_statistics_missing_gpu_timing_is_explicit_and_invalid_status_is_rejected) {
+    flitzzip::GpuTelemetry telemetry{flitzzip::GpuObservationMode::CountersOnly};
+    std::ostringstream output;
+    write_gpu_runtime_stats(output, flitzzip::snapshot_gpu_telemetry(telemetry), false);
+    output << '\n';
+    const auto fields = parse_fields(output.str());
+    REQUIRE_EQ(fields.at("gpu_timing_status"), "not_requested");
+    REQUIRE_TRUE(std::isnan(std::stod(fields.at("gpu_kernel_ms"))));
+    std::ostringstream rejected_output;
+    flitzzip::GpuRuntimeStats invalid;
+    invalid.timing_status = static_cast<flitzzip::GpuTimingStatus>(255U);
+    bool rejected = false;
+    try {
+        write_gpu_runtime_stats(rejected_output, invalid, false);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(rejected_output.str().empty());
 }
 
 // Purpose: Preserve the caller's GPU-use identity independently of individual counter values.

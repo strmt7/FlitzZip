@@ -448,6 +448,7 @@ GpuRuntimeStats combine_gpu_runtime_stats(const GpuRuntimeStats& lhs, const GpuR
         .sparse_pattern_blocks = checked_add_u64(lhs.sparse_pattern_blocks, rhs.sparse_pattern_blocks,
                                                  "GPU sparse pattern block counter overflows"),
         .kernel_ms = lhs.kernel_ms + rhs.kernel_ms,
+        .timing_status = combine_gpu_timing_status(lhs.timing_status, rhs.timing_status),
     };
     for (std::size_t index = 0; index < kGpuEncodeStageCount; ++index) {
         combined.encode_stage_worker_seconds[index] =
@@ -461,6 +462,7 @@ GpuRuntimeStats combine_gpu_runtime_stats(const GpuRuntimeStats& lhs, const GpuR
         combined.owned_decode_stage_worker_seconds[index] =
             lhs.owned_decode_stage_worker_seconds[index] + rhs.owned_decode_stage_worker_seconds[index];
     }
+    finalize_gpu_timing_stats(combined);
     return combined;
 }
 

@@ -24,6 +24,10 @@ static_assert(sizeof(DecodeSpan) == 16U);
 // Inputs: Recorded HIP events surrounding ordered work in the per-thread stream.
 // Outputs: Returns valid elapsed milliseconds or nullopt; synchronizes and throws on asynchronous HIP errors.
 std::optional<double> finish_dictionary_stage(const HipEventPair& events) {
+    if (events.start == nullptr && events.stop == nullptr) {
+        check_hip(hipStreamSynchronize(hipStreamPerThread), "synchronize unmeasured dictionary stage");
+        return std::nullopt;
+    }
     check_hip(hipEventSynchronize(events.stop), "synchronize dictionary stage");
     float milliseconds = 0;
     check_hip(hipEventElapsedTime(&milliseconds, events.start, events.stop), "measure dictionary stage");
@@ -36,7 +40,8 @@ std::optional<double> finish_dictionary_stage(const HipEventPair& events) {
 template <typename Consumer>
 // Purpose: Execute the documented index consumer. Inputs: Bounded source/workspace. Outputs: Consumed batch.
 auto with_dictionary_index(std::span<const std::byte> input, std::size_t consumer_bytes, Consumer consume,
-                           const std::byte* borrowed_device_input = nullptr) {
+                           const std::byte* borrowed_device_input = nullptr,
+                           GpuObservationMode observation_mode = GpuObservationMode::Measured) {
     const auto size = static_cast<std::uint32_t>(input.size());
     const auto blocks = (size + kDictionaryKernelThreads - 1U) / kDictionaryKernelThreads;
     const auto key_bytes = checked_multiply_bytes(input.size(), sizeof(std::uint64_t), "dictionary keys");
@@ -68,7 +73,7 @@ auto with_dictionary_index(std::span<const std::byte> input, std::size_t consume
     HipDeviceBuffer<std::uint64_t> sorted_keys(key_bytes, "allocate sorted dictionary keys");
     HipDeviceBuffer<std::uint32_t> previous(previous_bytes, "allocate dictionary links");
     HipDeviceBuffer<std::byte> temporary(scratch_bytes, "allocate dictionary radix workspace");
-    auto events = make_hip_event_pair("create dictionary timing events");
+    auto events = make_codec_event_pair(observation_mode, "create dictionary timing events");
     launch_kernel_with_timing(hip_kernel_api().build_dictionary_keys, blocks, kDictionaryKernelThreads, 0,
                               hipStreamPerThread, events.start, nullptr, "launch dictionary keys", source_device, size,
                               keys.get());
@@ -79,6 +84,7 @@ auto with_dictionary_index(std::span<const std::byte> input, std::size_t consume
                               hipStreamPerThread, nullptr, events.stop, "launch dictionary links", sorted_keys.get(),
                               size, previous.get());
     MatchBatch result;
+    result.observation_mode = observation_mode;
     result.index_ms = finish_dictionary_stage(events);
     result.device_workspace_bytes = required_bytes;
     result.h2d_bytes = owned_bytes;
@@ -101,7 +107,8 @@ auto with_dictionary_index(std::span<const std::byte> input, std::size_t consume
 template <typename Consumer>
 // Purpose: Execute the documented index consumer. Inputs: Bounded source/workspace. Outputs: Consumed batch.
 auto with_periodic_index(std::span<const std::byte> input, std::span<const std::uint16_t> distances,
-                         std::size_t consumer_bytes, Consumer consume, const std::byte* borrowed_device_input) {
+                         std::size_t consumer_bytes, Consumer consume, const std::byte* borrowed_device_input,
+                         GpuObservationMode observation_mode) {
     const auto period_bytes = distances.size() * sizeof(std::uint16_t);
     const auto packed_bytes = distances.size() * kEncodedSegmentCapacity;
     const auto periodic_bytes = checked_add_bytes(period_bytes, packed_bytes, "periodic dictionary workspace");
@@ -117,6 +124,7 @@ auto with_periodic_index(std::span<const std::byte> input, std::span<const std::
     check_hip(copy_on_codec_stream(device_distances, distances.data(), period_bytes, hipMemcpyHostToDevice),
               "upload periodic dictionary distances");
     MatchBatch metadata;
+    metadata.observation_mode = observation_mode;
     metadata.device_workspace_bytes = total_workspace_bytes;
     metadata.h2d_bytes = period_bytes;
     metadata.gpu_used = true;
@@ -131,11 +139,13 @@ auto with_periodic_index(std::span<const std::byte> input, std::span<const std::
 template <typename Consumer>
 // Purpose: Execute the documented index consumer. Inputs: Bounded source/workspace. Outputs: Consumed batch.
 auto with_selected_index(std::span<const std::byte> input, std::size_t consumer_bytes, Consumer consume,
-                         const std::byte* borrowed_device_input, std::span<const std::uint16_t> periodic_distances) {
+                         const std::byte* borrowed_device_input, std::span<const std::uint16_t> periodic_distances,
+                         GpuObservationMode observation_mode) {
     if (!periodic_distances.empty()) {
-        return with_periodic_index(input, periodic_distances, consumer_bytes, consume, borrowed_device_input);
+        return with_periodic_index(input, periodic_distances, consumer_bytes, consume, borrowed_device_input,
+                                   observation_mode);
     }
-    return with_dictionary_index(input, consumer_bytes, consume, borrowed_device_input);
+    return with_dictionary_index(input, consumer_bytes, consume, borrowed_device_input, observation_mode);
 }
 
 // Purpose: Compact validated device segments and preserve exact resource and event telemetry.
@@ -156,16 +166,16 @@ PackedEncodedBatch finish_encoded_dictionary(const std::byte* output, const std:
     if (packed_bytes > packed_capacity) {
         throw GpuError("dictionary packed payload exceeds the reserved device buffer");
     }
-    auto compact_events = make_hip_event_pair("create dictionary compact timing events");
-    launch_measured_kernel(hip_kernel_api().compact_dictionary_segments, static_cast<unsigned int>(host_sizes.size()),
-                           kDictionaryKernelThreads, 0, hipStreamPerThread, compact_events,
-                           "launch dictionary compaction", output, sizes, static_cast<std::uint32_t>(host_sizes.size()),
-                           packed_device);
+    auto compact_events = make_codec_event_pair(metadata.observation_mode, "create dictionary compact timing events");
+    launch_codec_kernel(hip_kernel_api().compact_dictionary_segments, static_cast<unsigned int>(host_sizes.size()),
+                        kDictionaryKernelThreads, 0, hipStreamPerThread, compact_events, "launch dictionary compaction",
+                        output, sizes, static_cast<std::uint32_t>(host_sizes.size()), packed_device);
     const auto compact_ms = finish_dictionary_stage(compact_events);
     std::vector<std::byte> packed(packed_bytes);
     check_hip(copy_on_codec_stream(packed.data(), packed_device, packed_bytes, hipMemcpyDeviceToHost),
               "download packed dictionary blocks");
     PackedEncodedBatch result;
+    result.telemetry.observation_mode = metadata.observation_mode;
     result.telemetry.device_workspace_bytes = metadata.device_workspace_bytes;
     result.telemetry.h2d_bytes = metadata.h2d_bytes;
     result.telemetry.d2h_bytes = downloaded_size_bytes + packed_bytes;
@@ -187,7 +197,8 @@ PackedEncodedBatch finish_encoded_dictionary(const std::byte* output, const std:
 // Purpose: Download diagnostic matches from the shared HIP dictionary search.
 // Inputs: A validated immutable batch and bounded effort.
 // Outputs: Returns exact match records and resource telemetry; no encoded payload is produced.
-MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effort) {
+MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effort,
+                            GpuObservationMode observation_mode) {
     const auto match_bytes = checked_multiply_bytes(input.size(), sizeof(Match), "dictionary matches");
     return with_dictionary_index(
         input, match_bytes,
@@ -196,10 +207,11 @@ MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effo
             HipDeviceBuffer<Match> matches(match_bytes, "allocate dictionary diagnostic matches");
             const auto size = static_cast<std::uint32_t>(input.size());
             const auto blocks = (size + kDictionaryKernelThreads - 1U) / kDictionaryKernelThreads;
-            const auto events = make_hip_event_pair("create dictionary search timing events");
-            launch_measured_kernel(hip_kernel_api().search_dictionary_matches, blocks, kDictionaryKernelThreads, 0,
-                                   hipStreamPerThread, events, "launch dictionary search", device_input, size, previous,
-                                   effort, matches.get());
+            const auto events =
+                make_codec_event_pair(metadata.observation_mode, "create dictionary search timing events");
+            launch_codec_kernel(hip_kernel_api().search_dictionary_matches, blocks, kDictionaryKernelThreads, 0,
+                                hipStreamPerThread, events, "launch dictionary search", device_input, size, previous,
+                                effort, matches.get());
             metadata.search_ms = finish_dictionary_stage(events);
             metadata.matches.resize(input.size());
             metadata.d2h_bytes = match_bytes;
@@ -208,7 +220,8 @@ MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effo
                 "download dictionary matches");
             matches.reset_checked("free dictionary diagnostic matches");
             return metadata;
-        });
+        },
+        nullptr, observation_mode);
 }
 
 // Purpose: Encode with demand-filled tiled search and download only used bytes plus bounded sizes.
@@ -216,7 +229,8 @@ MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effo
 // Outputs: Returns contiguous encoded segments and resource counters, or throws before exposing incomplete output.
 PackedEncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Effort& effort,
                                             const std::byte* borrowed_device_input,
-                                            std::span<const std::uint16_t> periodic_distances) {
+                                            std::span<const std::uint16_t> periodic_distances,
+                                            GpuObservationMode observation_mode) {
     const auto segment_count = (input.size() + kSegmentBytes - 1U) / kSegmentBytes;
     const auto output_bytes = segment_count * kEncodedSegmentCapacity;
     const auto sizes_bytes = segment_count * sizeof(std::uint32_t);
@@ -230,7 +244,8 @@ PackedEncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, co
             auto* sizes = reinterpret_cast<std::uint32_t*>(encode_buffers.get());
             auto* output = encode_buffers.get() + sizes_bytes;
             const auto size = static_cast<std::uint32_t>(input.size());
-            auto encode_events = make_hip_event_pair("create dictionary encode timing events");
+            auto encode_events =
+                make_codec_event_pair(metadata.observation_mode, "create dictionary encode timing events");
             // Longer periodic searches run only at selected positions, not at every tile byte.
             if (distances != nullptr) {
                 auto periodic_effort = effort;
@@ -238,20 +253,20 @@ PackedEncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, co
                     effort.max_byte_comparisons >= kDictionaryMaxPeriodicMatchBytes / kDictionaryPeriodicComparisonScale
                         ? kDictionaryMaxPeriodicMatchBytes
                         : effort.max_byte_comparisons * kDictionaryPeriodicComparisonScale;
-                launch_measured_kernel(hip_kernel_api().encode_dictionary_periodic,
-                                       static_cast<unsigned int>(segment_count), kDictionaryKernelThreads, 0,
-                                       hipStreamPerThread, encode_events, "launch periodic dictionary encoder",
-                                       device_input, size, previous, distances, periodic_effort, output, sizes);
+                launch_codec_kernel(hip_kernel_api().encode_dictionary_periodic,
+                                    static_cast<unsigned int>(segment_count), kDictionaryKernelThreads, 0,
+                                    hipStreamPerThread, encode_events, "launch periodic dictionary encoder",
+                                    device_input, size, previous, distances, periodic_effort, output, sizes);
             } else if (effort.max_candidates <= 4U) {
-                launch_measured_kernel(hip_kernel_api().encode_dictionary_cached,
-                                       static_cast<unsigned int>(segment_count), kDictionaryKernelThreads, 0,
-                                       hipStreamPerThread, encode_events, "launch cached dictionary encoder",
-                                       device_input, size, previous, distances, effort, output, sizes);
+                launch_codec_kernel(hip_kernel_api().encode_dictionary_cached, static_cast<unsigned int>(segment_count),
+                                    kDictionaryKernelThreads, 0, hipStreamPerThread, encode_events,
+                                    "launch cached dictionary encoder", device_input, size, previous, distances, effort,
+                                    output, sizes);
             } else {
-                launch_measured_kernel(hip_kernel_api().encode_dictionary_deferred,
-                                       static_cast<unsigned int>(segment_count), kDictionaryKernelThreads, 0,
-                                       hipStreamPerThread, encode_events, "launch deferred dictionary encoder",
-                                       device_input, size, previous, distances, effort, output, sizes);
+                launch_codec_kernel(hip_kernel_api().encode_dictionary_deferred,
+                                    static_cast<unsigned int>(segment_count), kDictionaryKernelThreads, 0,
+                                    hipStreamPerThread, encode_events, "launch deferred dictionary encoder",
+                                    device_input, size, previous, distances, effort, output, sizes);
             }
             const auto encode_ms = finish_dictionary_stage(encode_events);
             std::vector<std::uint32_t> host_sizes(segment_count);
@@ -262,7 +277,7 @@ PackedEncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, co
             encode_buffers.reset_checked("free dictionary encoded buffers");
             return result;
         },
-        borrowed_device_input, periodic_distances);
+        borrowed_device_input, periodic_distances, observation_mode);
 }
 
 struct NeutronShape {
@@ -342,7 +357,10 @@ struct NeutronWorkspace {
 };
 
 struct NeutronRun {
-    NeutronStageClock<HipEventPair> clock{make_hip_event_pair("create Neutron operation events")};
+    explicit NeutronRun(GpuObservationMode mode)
+        : clock(make_codec_event_pair(mode, "create Neutron operation events")) {}
+
+    NeutronStageClock<HipEventPair> clock;
     std::size_t downloaded_size_bytes = 0U;
     std::uint32_t active_segment_mask = 0U;
     std::uint32_t parse_launches = 0U;
@@ -351,9 +369,9 @@ struct NeutronRun {
 };
 
 template <typename Kernel, typename... Args>
-// Purpose: Bound cancellation latency to one measured launch and preserve unavailable event timing.
+// Purpose: Bound cancellation latency to one completed launch and preserve optional timing state.
 // Inputs: Admitted kernel/arguments, an operation-owned event pair/accumulator and an optional throwing checkpoint.
-// Outputs: Synchronizes and reads timing before reusing events; counts only completed kernels.
+// Outputs: Synchronizes before reuse, queries only requested timing and counts only completed kernels.
 void run_neutron_stage(NeutronRun& run, const EncodeCheckpoint& checkpoint, Kernel kernel, unsigned int blocks,
                        Args... args) {
     if (checkpoint) {
@@ -364,8 +382,8 @@ void run_neutron_stage(NeutronRun& run, const EncodeCheckpoint& checkpoint, Kern
     // Outputs: Submits ordered HIP work or throws before the clock permits another dispatch.
     run.clock.measure(
         [&](const HipEventPair& events) {
-            launch_measured_kernel(kernel, blocks, kDictionaryKernelThreads, 0, hipStreamPerThread, events,
-                                   "launch Neutron stage", args...);
+            launch_codec_kernel(kernel, blocks, kDictionaryKernelThreads, 0, hipStreamPerThread, events,
+                                "launch Neutron stage", args...);
         },
         finish_dictionary_stage);
 }
@@ -521,14 +539,15 @@ std::vector<std::uint32_t> run_neutron_encoder(const std::byte* source, const st
 PackedEncodedBatch encode_neutron_segments_hip_impl(std::span<const std::byte> input,
                                                     const std::byte* borrowed_device_input,
                                                     const EncodeCheckpoint& checkpoint,
-                                                    std::span<const NeutronParseBudget> budgets) {
+                                                    std::span<const NeutronParseBudget> budgets,
+                                                    GpuObservationMode observation_mode) {
     const auto shape = neutron_shape(input.size());
     return with_dictionary_index(
         input, shape.total_bytes,
         [&](const std::byte* source, const std::uint32_t* previous, const std::uint16_t*, std::byte* packed,
             std::size_t packed_capacity, const MatchBatch& metadata) {
             NeutronWorkspace workspace(shape, input.size());
-            NeutronRun run;
+            NeutronRun run{metadata.observation_mode};
             const auto sizes = run_neutron_encoder(source, previous, static_cast<std::uint32_t>(input.size()), shape,
                                                    workspace, run, checkpoint, budgets);
             if (checkpoint) {
@@ -544,7 +563,7 @@ PackedEncodedBatch encode_neutron_segments_hip_impl(std::span<const std::byte> i
             workspace.release_checked();
             return result;
         },
-        borrowed_device_input);
+        borrowed_device_input, observation_mode);
 }
 
 // Purpose: Expose contiguous downloaded dictionary payloads as independent diagnostic segments.
@@ -570,16 +589,19 @@ EncodedBatch unpack_dictionary_batch(std::span<const std::byte> input, PackedEnc
 // Purpose: Preserve the ordinary standalone dictionary encoder's owned-upload contract.
 // Inputs: Validated source and effort.
 // Outputs: Returns independent LZ4 blocks with one owned host-to-device source upload.
-EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort) {
-    return unpack_dictionary_batch(input, encode_segments_hip_impl(input, effort, nullptr, {}));
+EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort,
+                                 GpuObservationMode observation_mode) {
+    return unpack_dictionary_batch(input, encode_segments_hip_impl(input, effort, nullptr, {}, observation_mode));
 }
 
 // Purpose: Expose the bounded minimum-byte encoder through the same independent-segment diagnostic contract.
 // Inputs: Admitted source, throwing checkpoint and complete optional group limits.
 // Outputs: Returns complete GPU segments with one owned upload and no CPU parse.
 EncodedBatch encode_neutron_segments_hip(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint,
-                                         std::span<const NeutronParseBudget> budgets) {
-    return unpack_dictionary_batch(input, encode_neutron_segments_hip_impl(input, nullptr, checkpoint, budgets));
+                                         std::span<const NeutronParseBudget> budgets,
+                                         GpuObservationMode observation_mode) {
+    return unpack_dictionary_batch(
+        input, encode_neutron_segments_hip_impl(input, nullptr, checkpoint, budgets, observation_mode));
 }
 
 // Purpose: Admit the production borrowed-input boundary before any stronger search or parse allocation.
@@ -588,7 +610,9 @@ EncodedBatch encode_neutron_segments_hip(std::span<const std::byte> input, const
 PackedEncodedBatch encode_neutron_segments_from_device_hip(std::span<const std::byte> input,
                                                            const std::byte* device_input,
                                                            const EncodeCheckpoint& checkpoint,
-                                                           std::span<const NeutronParseBudget> budgets) {
+                                                           std::span<const NeutronParseBudget> budgets,
+                                                           GpuObservationMode observation_mode) {
+    (void)validate_gpu_observation_mode(observation_mode);
     if (input.empty() || input.size() > kMaxNeutronBatchBytes || device_input == nullptr) {
         throw GpuError("Neutron dictionary device encoding request is invalid");
     }
@@ -596,7 +620,7 @@ PackedEncodedBatch encode_neutron_segments_from_device_hip(std::span<const std::
     if (checkpoint) {
         checkpoint();
     }
-    return encode_neutron_segments_hip_impl(input, device_input, checkpoint, budgets);
+    return encode_neutron_segments_hip_impl(input, device_input, checkpoint, budgets, observation_mode);
 }
 
 // Purpose: Encode a production candidate from bytes already uploaded by the native HIP pipeline.
@@ -604,7 +628,9 @@ PackedEncodedBatch encode_neutron_segments_from_device_hip(std::span<const std::
 // Outputs: Returns contiguous independent LZ4 blocks without another source upload.
 PackedEncodedBatch encode_segments_from_device_hip(std::span<const std::byte> input, const std::byte* device_input,
                                                    const Effort& effort,
-                                                   std::span<const std::uint16_t> periodic_distances) {
+                                                   std::span<const std::uint16_t> periodic_distances,
+                                                   GpuObservationMode observation_mode) {
+    (void)validate_gpu_observation_mode(observation_mode);
     const auto maximum_bytes = periodic_distances.empty() ? kMaxBatchBytes : kMaxPeriodicBatchBytes;
     if (input.empty() || input.size() > maximum_bytes || device_input == nullptr) {
         throw GpuError("dictionary device encoding request is invalid");
@@ -621,7 +647,7 @@ PackedEncodedBatch encode_segments_from_device_hip(std::span<const std::byte> in
             }
         }
     }
-    return encode_segments_hip_impl(input, effort, device_input, periodic_distances);
+    return encode_segments_hip_impl(input, effort, device_input, periodic_distances, observation_mode);
 }
 
 // Purpose: Decode validated archive segments in existing device buffers with bounded transient workspace.
@@ -659,7 +685,8 @@ void decode_segments_device(const std::byte* encoded, std::span<const Dictionary
 // Purpose: Upload bounded dictionary input and reuse production dispatch, validation, and timing before publication.
 // Inputs: Host-admitted nonempty segments and their summed decoded extent, at most 4 MiB.
 // Outputs: Returns exact bytes and resource/timing evidence; releases all HIP resources on success or failure.
-DecodedBatch decode_segments_hip(std::span<const EncodedSegment> segments, std::size_t decoded_bytes) {
+DecodedBatch decode_segments_hip(std::span<const EncodedSegment> segments, std::size_t decoded_bytes,
+                                 GpuObservationMode observation_mode) {
     std::vector<DecodeSpan> spans;
     std::vector<std::byte> encoded;
     std::size_t encoded_bytes = 0;
@@ -681,13 +708,14 @@ DecodedBatch decode_segments_hip(std::span<const EncodedSegment> segments, std::
     HipDeviceMemoryReservation reservation(encoded.size() + decoded_bytes, "dictionary decoder");
     HipDeviceBuffer<std::byte> input(encoded.size(), "allocate dictionary decode input");
     HipDeviceBuffer<std::byte> output(decoded_bytes, "allocate dictionary decode output");
-    GpuTelemetry telemetry;
+    GpuTelemetry telemetry{observation_mode};
     record_gpu_device_allocation_bytes(&telemetry, encoded.size() + decoded_bytes);
     check_hip(copy_on_codec_stream(input.get(), encoded.data(), encoded.size(), hipMemcpyHostToDevice),
               "upload dictionary blocks");
     record_gpu_h2d_bytes(&telemetry, encoded.size());
     decode_segments_device(input.get(), spans, output.get(), &telemetry);
     DecodedBatch result;
+    result.observation_mode = observation_mode;
     result.bytes.resize(decoded_bytes);
     check_hip(copy_on_codec_stream(result.bytes.data(), output.get(), decoded_bytes, hipMemcpyDeviceToHost),
               "download dictionary decoded bytes");

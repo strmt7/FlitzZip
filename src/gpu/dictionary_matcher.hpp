@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/archive_block_types.hpp"
+#include "gpu/observation_mode.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -73,6 +74,7 @@ struct MatchBatch {
     std::optional<double> search_ms;
     std::uint32_t primitive_version = 0;
     bool gpu_used = false;
+    GpuObservationMode observation_mode = GpuObservationMode::Measured;
 };
 
 // One independent LZ4-format block, without a frame or archive-container header.
@@ -97,6 +99,7 @@ struct EncodedBatch {
     std::uint32_t neutron_pruned_segment_mask = 0;
     std::uint32_t neutron_budget_kernel_launches = 0;
     bool gpu_used = false;
+    GpuObservationMode observation_mode = GpuObservationMode::Measured;
 };
 
 // Verified concatenated segment bytes, with bounded decoder workspace and transfer evidence.
@@ -107,6 +110,7 @@ struct DecodedBatch {
     std::uint64_t d2h_bytes = 0;
     std::optional<double> decode_ms;
     bool gpu_used = false;
+    GpuObservationMode observation_mode = GpuObservationMode::Measured;
 };
 
 // Purpose: Map all nine compression efforts to strictly increasing, bounded dictionary-search work.
@@ -123,13 +127,15 @@ std::optional<double> validated_stage_milliseconds(double milliseconds);
 // Inputs: At most 4 MiB of borrowed immutable bytes and effort level 1..9; no references cross 64 KiB segments.
 // Outputs: Returns one match per input byte and stage telemetry; throws on unavailable HIP or resource limits.
 // Inputs shorter than four bytes need no search and return zero matches with gpu_used=false. No CPU search fallback.
-MatchBatch find_matches(std::span<const std::byte> input, int level);
+MatchBatch find_matches(std::span<const std::byte> input, int level,
+                        GpuObservationMode observation_mode = GpuObservationMode::Measured);
 
 // Purpose: Encode independent dictionary blocks entirely on HIP without downloading the match table.
 // Inputs: At most 4 MiB of source and effort 1..9; each block covers at most 64 KiB.
 // Outputs: Returns bounded LZ4-format block payloads and resource counts; throws if HIP is unavailable.
 // Empty input produces no blocks and needs no GPU work. No frame or FLZIP metadata is emitted.
-EncodedBatch encode_segments(std::span<const std::byte> input, int level);
+EncodedBatch encode_segments(std::span<const std::byte> input, int level,
+                             GpuObservationMode observation_mode = GpuObservationMode::Measured);
 
 // Purpose: Minimize complete LZ4 segment byte cost over a deeper verified HIP match search.
 // Inputs: At most 1 MiB of source, throwing checkpoint and optional exclusive group payload limits.
@@ -137,12 +143,14 @@ EncodedBatch encode_segments(std::span<const std::byte> input, int level);
 // A group is noncompetitive only when its verified match graph proves that no permitted parse can win.
 // Empty input needs no GPU; this primitive does not emit archive metadata or claim a universal minimum encoding.
 EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint = {},
-                                     std::span<const NeutronParseBudget> budgets = {});
+                                     std::span<const NeutronParseBudget> budgets = {},
+                                     GpuObservationMode observation_mode = GpuObservationMode::Measured);
 
 // Purpose: Decode independent dictionary segments on HIP without CPU materialization or fallback.
 // Inputs: At most 64 blocks, each declaring 1..65536 decoded bytes and a bounded nonempty payload.
 // Outputs: Returns exact concatenated bytes only after every block validates; throws on invalid input or missing HIP.
 // Empty input produces an empty GPU-free result; native archives use the device-span decoder directly.
-DecodedBatch decode_segments(std::span<const EncodedSegment> segments);
+DecodedBatch decode_segments(std::span<const EncodedSegment> segments,
+                             GpuObservationMode observation_mode = GpuObservationMode::Measured);
 
 }  // namespace flitzzip::dictionary

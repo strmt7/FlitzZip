@@ -490,21 +490,21 @@ void launch_entropy_length_batch(const std::byte* input, const EntropyLengthSegm
                                  const AdaptiveEncodeTable* tables, std::uint32_t* lengths, std::uint32_t segments,
                                  std::uint32_t candidates, const HipEventPair& events) {
     if (candidates <= 2U) {
-        launch_measured_kernel(hip_kernel_api().entropy_lengths_2, segments, kGpuPrefixSegmentThreads, 0,
-                               hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables,
-                               lengths, segments);
+        launch_codec_kernel(hip_kernel_api().entropy_lengths_2, segments, kGpuPrefixSegmentThreads, 0,
+                            hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables, lengths,
+                            segments);
     } else if (candidates <= 4U) {
-        launch_measured_kernel(hip_kernel_api().entropy_lengths_4, segments, kGpuPrefixSegmentThreads, 0,
-                               hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables,
-                               lengths, segments);
+        launch_codec_kernel(hip_kernel_api().entropy_lengths_4, segments, kGpuPrefixSegmentThreads, 0,
+                            hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables, lengths,
+                            segments);
     } else if (candidates <= 8U) {
-        launch_measured_kernel(hip_kernel_api().entropy_lengths_8, segments, kGpuPrefixSegmentThreads, 0,
-                               hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables,
-                               lengths, segments);
+        launch_codec_kernel(hip_kernel_api().entropy_lengths_8, segments, kGpuPrefixSegmentThreads, 0,
+                            hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables, lengths,
+                            segments);
     } else {
-        launch_measured_kernel(hip_kernel_api().entropy_lengths_16, segments, kGpuPrefixSegmentThreads, 0,
-                               hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables,
-                               lengths, segments);
+        launch_codec_kernel(hip_kernel_api().entropy_lengths_16, segments, kGpuPrefixSegmentThreads, 0,
+                            hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables, lengths,
+                            segments);
     }
 }
 
@@ -551,7 +551,7 @@ std::vector<std::uint32_t> compute_adaptive_prefix_lengths_batch_device(
     }
     launch_entropy_length_batch(device_input, device_plans.get(), device_tables.get(), device_lengths.get(),
                                 static_cast<std::uint32_t>(segment_plans.size()), maximum_candidates, events);
-    finish_measured_kernel(telemetry, events, "synchronize entropy segment lengths");
+    finish_codec_kernel(telemetry, events, "synchronize entropy segment lengths");
     check_hip(copy_on_codec_stream(segment_lengths.data(), device_lengths.get(), length_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy adaptive prefix segment lengths");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(length_bytes));
@@ -694,12 +694,12 @@ std::vector<std::byte> pack_adaptive_prefix_segments_batch_device(const std::byt
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes + table_bytes + offset_bytes));
     check_hip(hipMemsetAsync(device_encoded.get(), 0, bitstream.size(), hipStreamPerThread),
               "hipMemset adaptive prefix payload");
-    launch_measured_kernel(hip_kernel_api().adaptive_prefix_pack_segments_batch_kernel,
-                           static_cast<unsigned int>(selection.pack_plans.size()), kGpuPrefixSegmentThreads, 0,
-                           hipStreamPerThread, events, "launch adaptive_prefix_pack_segments_batch_kernel",
-                           device_input, device_plans.get(), device_tables.get(), device_offsets.get(),
-                           device_encoded.get(), static_cast<std::uint32_t>(selection.pack_plans.size()));
-    finish_measured_kernel(telemetry, events, "synchronize adaptive_prefix_pack_segments_batch_kernel");
+    launch_codec_kernel(hip_kernel_api().adaptive_prefix_pack_segments_batch_kernel,
+                        static_cast<unsigned int>(selection.pack_plans.size()), kGpuPrefixSegmentThreads, 0,
+                        hipStreamPerThread, events, "launch adaptive_prefix_pack_segments_batch_kernel", device_input,
+                        device_plans.get(), device_tables.get(), device_offsets.get(), device_encoded.get(),
+                        static_cast<std::uint32_t>(selection.pack_plans.size()));
+    finish_codec_kernel(telemetry, events, "synchronize adaptive_prefix_pack_segments_batch_kernel");
     check_hip(copy_on_codec_stream(bitstream.data(), device_encoded.get(), bitstream.size(), hipMemcpyDeviceToHost),
               "hipMemcpy adaptive prefix payload");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(bitstream.size()));
@@ -759,7 +759,7 @@ auto encode_entropy_prefix_chunk_device(const std::byte* device_input, std::span
     if (length_plans.empty()) {
         return std::nullopt;
     }
-    const auto events = make_hip_event_pair("create entropy prefix encode events");
+    const auto events = make_codec_event_pair(telemetry, "create entropy prefix encode events");
     const auto segment_lengths =
         compute_adaptive_prefix_lengths_batch_device(device_input, length_plans, code_tables, telemetry, events);
     auto selection = select_adaptive_blocks_for_batch(block_plans, segment_lengths, code_tables);

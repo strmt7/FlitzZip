@@ -71,12 +71,11 @@ std::vector<std::uint32_t> verify_encode_analysis_candidates_device(const std::b
     if (grid64 > std::numeric_limits<unsigned int>::max()) {
         throw GpuError("encode candidate segment count exceeds HIP launch limits");
     }
-    auto events = make_hip_event_pair("create verify_analysis_candidates_kernel events");
-    launch_measured_kernel(hip_kernel_api().verify_analysis_candidates_kernel, static_cast<unsigned int>(grid64), 256,
-                           0, hipStreamPerThread, events, "launch verify_analysis_candidates_kernel", device_input,
-                           input_len, device_candidates.get(), device_mismatches.get(), block_count,
-                           segments_per_block);
-    finish_measured_kernel(telemetry, events, "synchronize verify_analysis_candidates_kernel");
+    auto events = make_codec_event_pair(telemetry, "create verify_analysis_candidates_kernel events");
+    launch_codec_kernel(hip_kernel_api().verify_analysis_candidates_kernel, static_cast<unsigned int>(grid64), 256, 0,
+                        hipStreamPerThread, events, "launch verify_analysis_candidates_kernel", device_input, input_len,
+                        device_candidates.get(), device_mismatches.get(), block_count, segments_per_block);
+    finish_codec_kernel(telemetry, events, "synchronize verify_analysis_candidates_kernel");
     check_hip(
         copy_on_codec_stream(mismatches.data(), device_mismatches.get(), mismatch_table_bytes, hipMemcpyDeviceToHost),
         "hipMemcpy encode mismatches");
@@ -499,19 +498,21 @@ GpuDiagnosticResult run_gpu_diagnostic_hip(const GpuDiagnosticOptions& options) 
         const auto started = std::chrono::steady_clock::now();
         std::uint32_t seed = 0xA5A5A5A5U;
         while (std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() < options.seconds) {
-            auto events = make_hip_event_pair("create diagnostic_compute_kernel events");
-            launch_measured_kernel(hip_kernel_api().diagnostic_compute_kernel, blocks, threads, 0, hipStreamPerThread,
-                                   events, "launch diagnostic_compute_kernel", device_data.get(), words, seed,
-                                   options.inner_iterations);
-            finish_measured_kernel(&timing, events, "synchronize diagnostic_compute_kernel");
+            auto events =
+                make_codec_event_pair(GpuObservationMode::Measured, "create diagnostic_compute_kernel events");
+            launch_codec_kernel(hip_kernel_api().diagnostic_compute_kernel, blocks, threads, 0, hipStreamPerThread,
+                                events, "launch diagnostic_compute_kernel", device_data.get(), words, seed,
+                                options.inner_iterations);
+            finish_codec_kernel(&timing, events, "synchronize diagnostic_compute_kernel");
             seed += 0x9E3779B9U;
         }
 
-        auto checksum_events = make_hip_event_pair("create diagnostic_checksum_kernel events");
-        launch_measured_kernel(hip_kernel_api().diagnostic_checksum_kernel, blocks, threads,
-                               threads * sizeof(unsigned long long), hipStreamPerThread, checksum_events,
-                               "launch diagnostic_checksum_kernel", device_data.get(), words, device_partials.get());
-        finish_measured_kernel(&timing, checksum_events, "synchronize diagnostic_checksum_kernel");
+        auto checksum_events =
+            make_codec_event_pair(GpuObservationMode::Measured, "create diagnostic_checksum_kernel events");
+        launch_codec_kernel(hip_kernel_api().diagnostic_checksum_kernel, blocks, threads,
+                            threads * sizeof(unsigned long long), hipStreamPerThread, checksum_events,
+                            "launch diagnostic_checksum_kernel", device_data.get(), words, device_partials.get());
+        finish_codec_kernel(&timing, checksum_events, "synchronize diagnostic_checksum_kernel");
         const auto timing_stats = snapshot_gpu_telemetry(timing);
         result.kernel_ms = timing_stats.kernel_ms;
         result.kernel_launches = timing_stats.kernel_launches;
@@ -835,7 +836,7 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
     const bool source_selection = role == HipEncodeRole::Source;
     auto* phase_telemetry = source_selection ? telemetry : nullptr;
     // Nested trial work contributes device counters; its enclosing source publication owns the phase duration.
-    WorkerPhaseClock phase_started{phase_telemetry != nullptr};
+    WorkerPhaseClock phase_started{gpu_timing_requested(phase_telemetry)};
     record_gpu_encode_chunk(telemetry);
     require_hip_kernel_device_support();
     record_encode_phase(phase_telemetry, GpuEncodeStage::Readiness, phase_started);

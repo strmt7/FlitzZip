@@ -24,6 +24,7 @@ inline double compression_ratio(std::uint64_t input_bytes, std::uint64_t output_
 // Inputs: Borrowed output stream, completed counters and actual GPU-use flag. Outputs: Leading-space fields only;
 // no newline or timing claim is added, and the caller's stream error/exception policy remains in force.
 inline void write_gpu_runtime_stats(std::ostream& output, const GpuRuntimeStats& stats, bool used) {
+    const auto timing_status = gpu_timing_status_name(stats.timing_status);
     output << " gpu_used=" << (used ? "true" : "false") << " gpu_encode_chunks=" << stats.encode_chunks
            << " gpu_decode_chunks=" << stats.decode_chunks << " gpu_kernel_launches=" << stats.kernel_launches
            << " gpu_kernel_ms=" << stats.kernel_ms << " gpu_h2d_bytes=" << stats.h2d_bytes
@@ -32,7 +33,7 @@ inline void write_gpu_runtime_stats(std::ostream& output, const GpuRuntimeStats&
            << " gpu_host_pinned_output_bytes=" << stats.host_pinned_output_bytes
            << " gpu_pattern_blocks=" << stats.pattern_blocks << " gpu_prefix_blocks=" << stats.prefix_blocks
            << " gpu_dictionary_blocks=" << stats.dictionary_blocks
-           << " gpu_sparse_pattern_blocks=" << stats.sparse_pattern_blocks;
+           << " gpu_sparse_pattern_blocks=" << stats.sparse_pattern_blocks << " gpu_timing_status=" << timing_status;
 }
 
 // Purpose: Write the stable ordinary archive-operation record through the same counters as RAM benchmarks.

@@ -458,6 +458,10 @@ function Assert-GpuBackendStat {
     if ($Stats["gpu_used"] -ne "true") {
         throw "$Label did not report gpu_used=true in the required-GPU lane."
     }
+    $timingStatus = [string]$Stats['gpu_timing_status']
+    if ($timingStatus -cnotin @('measured', 'unavailable')) {
+        throw "$Label lacks a completed measured GPU observation; missing or partial timing is not a measurement."
+    }
     $kernelLaunches = Get-StatsNumber -Stats $Stats -Key "gpu_kernel_launches"
     $kernelMs = Get-StatsNumber -Stats $Stats -Key "gpu_kernel_ms"
     $h2dBytes = Get-StatsNumber -Stats $Stats -Key "gpu_h2d_bytes"
@@ -466,11 +470,13 @@ function Assert-GpuBackendStat {
         throw "$Label reported no AMD HIP kernel launches in the required-GPU lane."
     }
     if ($null -eq $kernelMs) {
-        if (-not $Stats.ContainsKey("gpu_kernel_ms") -or
+        if ($timingStatus -cne 'unavailable' -or -not $Stats.ContainsKey("gpu_kernel_ms") -or
             [string]$Stats["gpu_kernel_ms"] -notmatch '^(?i:nan)$') {
             throw "$Label reported missing or invalid AMD HIP event time in the required-GPU lane."
         }
         Write-Warning "${Label}: HIP event time is unavailable; use wall time, and do not infer a device-time speedup."
+    } elseif ($timingStatus -cne 'measured') {
+        throw "$Label reported inconsistent GPU timing availability in the required-GPU lane."
     } elseif ($kernelMs -le 0) {
         throw "$Label reported non-positive AMD HIP event time in the required-GPU lane."
     }

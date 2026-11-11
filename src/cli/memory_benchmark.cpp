@@ -467,17 +467,9 @@ void print_benchmark_suite_case(const BenchmarkSuiteCase& candidate) {
         << " gpu_compression_ratio=" << compression_ratio(candidate.gpu.stats.input_bytes, candidate.gpu.archive_bytes)
         << " compression_ratio=" << candidate.compression_ratio
         << " cpu_compress_mib_s=" << mib_per_second(candidate.cpu.stats.input_bytes, candidate.cpu.compress_seconds)
-        << " gpu_compress_mib_s=" << mib_per_second(candidate.gpu.stats.input_bytes, candidate.gpu.compress_seconds)
-        << " gpu_encode_chunks=" << candidate.gpu.stats.gpu_runtime.encode_chunks
-        << " gpu_decode_chunks=" << candidate.gpu.stats.gpu_runtime.decode_chunks
-        << " gpu_kernel_launches=" << candidate.gpu.stats.gpu_runtime.kernel_launches
-        << " gpu_kernel_ms=" << candidate.gpu.stats.gpu_runtime.kernel_ms
-        << " gpu_pattern_blocks=" << candidate.gpu.stats.gpu_runtime.pattern_blocks
-        << " gpu_prefix_blocks=" << candidate.gpu.stats.gpu_runtime.prefix_blocks
-        << " gpu_dictionary_blocks=" << candidate.gpu.stats.gpu_runtime.dictionary_blocks
-        << " gpu_sparse_pattern_blocks=" << candidate.gpu.stats.gpu_runtime.sparse_pattern_blocks << " memory_only=true"
-        << " disk_write_bytes=0"
-        << "\n";
+        << " gpu_compress_mib_s=" << mib_per_second(candidate.gpu.stats.input_bytes, candidate.gpu.compress_seconds);
+    write_gpu_runtime_stats(std::cout, candidate.gpu.stats.gpu_runtime, candidate.gpu.stats.gpu_used);
+    std::cout << " memory_only=true disk_write_bytes=0\n";
 }
 
 // Purpose: Select the best autotune candidate without silently degrading compression below the balanced baseline.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gpu/kernel_observation.hpp"
+
 #include "gpu/gpu_codec.hpp"
 #include "gpu/hip_device.hpp"
 #include "gpu/device_memory_budget.hpp"
@@ -137,25 +139,35 @@ inline hipError_t copy_on_codec_stream(void* destination, const void* source, st
     return hipMemcpyWithStream(destination, source, bytes, direction, hipStreamPerThread);
 }
 
-// Purpose: Create a start/stop HIP event pair for measuring device-side kernel time.
-// Inputs: `action` labels diagnostics if event creation fails.
-// Outputs: Returns owned HIP events that are destroyed automatically.
-inline HipEventPair make_hip_event_pair(const char* action) {
-    HipEventPair events;
-    check_hip(hipEventCreate(&events.start), action);
-    check_hip(hipEventCreate(&events.stop), action);
-    return events;
+// Profiling is operation-owned. Unrequested observations own no events; stream
+// completion remains mandatory before buffers can be read or released.
+inline HipEventPair make_codec_event_pair(GpuObservationMode mode, const char* action) {
+    return make_gpu_observation_events(mode, [&] {
+        HipEventPair events;
+        check_hip(hipEventCreate(&events.start), action);
+        check_hip(hipEventCreate(&events.stop), action);
+        return events;
+    });
 }
 
-// Purpose: Finish a measured HIP kernel interval and record telemetry.
-// Inputs: `telemetry` is optional operation-owned counters, `events` contains recorded start/stop events, and `action`
-// labels diagnostics. Outputs: Synchronizes the stop event, records one launch plus elapsed device milliseconds, and
-// throws on HIP errors.
-inline void finish_measured_kernel(GpuTelemetry* telemetry, const HipEventPair& events, const char* action) {
-    check_hip(hipEventSynchronize(events.stop), action);
-    float milliseconds = 0.0F;
-    check_hip(hipEventElapsedTime(&milliseconds, events.start, events.stop), action);
-    record_gpu_kernel_launch(telemetry, static_cast<double>(milliseconds));
+inline HipEventPair make_codec_event_pair(const GpuTelemetry* telemetry, const char* action) {
+    return make_codec_event_pair(gpu_observation_mode(telemetry), action);
+}
+
+// Complete real work before counting it. Measured operations retain event
+// failures; an elapsed-query error still records the completed launch and marks
+// its timing unavailable. Counters-only operations never query timing events.
+inline void finish_codec_kernel(GpuTelemetry* telemetry, const HipEventPair& events, const char* action) {
+    observe_gpu_kernel_work(
+        telemetry, 1U,
+        [&](bool measured) {
+            check_hip(measured ? hipEventSynchronize(events.stop) : hipStreamSynchronize(hipStreamPerThread), action);
+        },
+        [&] {
+            float milliseconds = 0.0F;
+            check_hip(hipEventElapsedTime(&milliseconds, events.start, events.stop), action);
+            return static_cast<double>(milliseconds);
+        });
 }
 
 // Purpose: Bind optional stage-boundary events directly to an ordered kernel dispatch.
@@ -171,28 +183,24 @@ inline void launch_kernel_with_timing(void (*kernel)(Args...), dim3 grid, dim3 b
               action);
 }
 
-// Purpose: Measure one complete kernel using dispatch-bound start and stop timestamps.
-// Inputs: Typed launch arguments and an operation-owned event pair that outlives completion.
-// Outputs: Submits asynchronously or throws GpuError; caller synchronizes and records the elapsed measurement.
+// Submit with optional dispatch-bound timestamps. The operation owns either a
+// complete measured pair or an empty counters-only pair through completion.
+// The caller must still synchronize before reading or releasing borrowed buffers.
 template <typename... Args>
-inline void launch_measured_kernel(void (*kernel)(Args...), dim3 grid, dim3 block, std::size_t shared_bytes,
-                                   hipStream_t stream, const HipEventPair& events, const char* action,
-                                   std::type_identity_t<Args>... args) {
+inline void launch_codec_kernel(void (*kernel)(Args...), dim3 grid, dim3 block, std::size_t shared_bytes,
+                                hipStream_t stream, const HipEventPair& events, const char* action,
+                                std::type_identity_t<Args>... args) {
     launch_kernel_with_timing(kernel, grid, block, shared_bytes, stream, events.start, events.stop, action, args...);
 }
 
 // Complete a codec dispatch on the calling thread's stream before its caller reads or releases
-// borrowed buffers. Allocate timing events only for a caller that requested telemetry.
+// borrowed buffers. Allocate timing events only for a caller that requested profiling.
 template <typename... Args>
 inline void dispatch_codec_kernel(GpuTelemetry* telemetry, void (*kernel)(Args...), dim3 grid, dim3 block,
                                   const char* action, std::type_identity_t<Args>... args) {
-    const auto events = telemetry != nullptr ? make_hip_event_pair("create HIP codec events") : HipEventPair{};
+    const auto events = make_codec_event_pair(telemetry, "create HIP codec events");
     launch_kernel_with_timing(kernel, grid, block, 0, hipStreamPerThread, events.start, events.stop, action, args...);
-    if (telemetry != nullptr) {
-        finish_measured_kernel(telemetry, events, action);
-    } else {
-        check_hip(hipStreamSynchronize(hipStreamPerThread), action);
-    }
+    finish_codec_kernel(telemetry, events, action);
 }
 
 // Purpose: Add two allocation byte counts with overflow detection.

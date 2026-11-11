@@ -72,11 +72,11 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
               "hipMemcpy sparse candidates");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(candidate_bytes));
     check_hip(hipMemsetAsync(device_counts.get(), 0, count_bytes, hipStreamPerThread), "hipMemset sparse counts");
-    const auto events = make_hip_event_pair("create sparse collection events");
-    launch_measured_kernel(hip_kernel_api().count_sparse_positions_kernel, grid, kSparseKernelThreads, 0,
-                           hipStreamPerThread, events, "launch sparse count kernel", device_input,
-                           device_candidates.get(), device_counts.get());
-    finish_measured_kernel(telemetry, events, "synchronize sparse count kernel");
+    const auto events = make_codec_event_pair(telemetry, "create sparse collection events");
+    launch_codec_kernel(hip_kernel_api().count_sparse_positions_kernel, grid, kSparseKernelThreads, 0,
+                        hipStreamPerThread, events, "launch sparse count kernel", device_input, device_candidates.get(),
+                        device_counts.get());
+    finish_codec_kernel(telemetry, events, "synchronize sparse count kernel");
 
     std::vector<std::uint32_t> counts(candidates.size());
     check_hip(copy_on_codec_stream(counts.data(), device_counts.get(), count_bytes, hipMemcpyDeviceToHost),
@@ -115,10 +115,10 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
               "hipMemcpy admitted sparse candidates");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(candidate_bytes));
     check_hip(hipMemsetAsync(device_cursors.get(), 0, count_bytes, hipStreamPerThread), "hipMemset sparse cursors");
-    launch_measured_kernel(hip_kernel_api().gather_sparse_positions_kernel, grid, kSparseKernelThreads, 0,
-                           hipStreamPerThread, events, "launch sparse gather kernel", device_input,
-                           device_candidates.get(), device_cursors.get(), device_positions.get());
-    finish_measured_kernel(telemetry, events, "synchronize sparse gather kernel");
+    launch_codec_kernel(hip_kernel_api().gather_sparse_positions_kernel, grid, kSparseKernelThreads, 0,
+                        hipStreamPerThread, events, "launch sparse gather kernel", device_input,
+                        device_candidates.get(), device_cursors.get(), device_positions.get());
+    finish_codec_kernel(telemetry, events, "synchronize sparse gather kernel");
 
     std::vector<std::uint32_t> cursors(candidates.size());
     check_hip(copy_on_codec_stream(cursors.data(), device_cursors.get(), count_bytes, hipMemcpyDeviceToHost),

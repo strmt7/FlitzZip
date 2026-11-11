@@ -105,3 +105,20 @@ The mode searches additional GPU candidates and retains the smallest complete
 representation found. Efforts 1–9 remain separate. Read the
 [mode description](neutron-star-mode-research.md) and
 [measured results](neutron-public-corpus-benchmark.md) for its current scope.
+
+## GPU statistics
+
+Machine-readable operation records include `gpu_used`, completed-work counters
+and `gpu_timing_status`. Interpret timing status before using `gpu_kernel_ms`:
+
+| Status | Meaning |
+| --- | --- |
+| `no_samples` | No timing samples were recorded; legacy numeric zero is not a measured duration. |
+| `measured` | Requested timing observations are available, including genuine zero values. |
+| `not_requested` | Profiling was unrequested; duration fields are NaN while execution counters remain usable. |
+| `incomplete` | Observations with different profiling coverage were combined; no complete duration is available. |
+| `unavailable` | At least one timing observation was invalid or failed; partial fields do not establish a complete profile. |
+
+Do not replace absent or invalid timing with zero or infer device-time speedups
+from it. GPU execution and timing availability are separate: inspect `gpu_used`
+and actual work counters independently. These fields do not change archive bytes.

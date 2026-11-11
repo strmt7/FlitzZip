@@ -132,6 +132,9 @@ void append_segment_offset(std::vector<std::byte>& payload, std::uint32_t offset
 // Inputs: Validated telemetry, borrowed source bytes and optional operation counters.
 // Outputs: Accumulates actual transfers, owned workspace, launches and HIP event time, including discarded trials.
 void record_dictionary_work(const EncodedBatch& encoded, std::size_t input_bytes, GpuTelemetry* telemetry) {
+    if (encoded.observation_mode != gpu_observation_mode(telemetry)) {
+        throw ArchiveError("dictionary encoder changed the operation observation mode");
+    }
     record_gpu_h2d_bytes(telemetry, encoded.h2d_bytes);
     record_gpu_d2h_bytes(telemetry, encoded.d2h_bytes);
     record_gpu_device_allocation_bytes(telemetry, encoded.device_workspace_bytes - input_bytes);
@@ -242,7 +245,7 @@ std::vector<std::byte> encode_neutron_candidate(std::span<const std::byte> input
         const auto limits =
             remaining <= bytes ? std::span<const NeutronParseBudget>(budget) : std::span<const NeutronParseBudget>{};
         auto encoded = encode_neutron_segments_from_device_hip(input.subspan(offset, bytes), device_input + offset,
-                                                               checkpoint, limits);
+                                                               checkpoint, limits, gpu_observation_mode(telemetry));
         record_neutron_batch(encoded, bytes, telemetry);
         if (encoded.payload.size() >= baseline_bytes - table_bytes - packed.size()) {
             return {};
@@ -281,7 +284,8 @@ void encode_neutron_group(std::span<const std::byte> input, const std::byte* dev
         const auto table_bytes = (bytes / kSegmentBytes + 1U) * sizeof(std::uint32_t);
         budgets.push_back({bytes, static_cast<std::uint32_t>(baseline - table_bytes)});
     }
-    const auto encoded = encode_neutron_segments_from_device_hip(input, device_input, checkpoint, budgets);
+    const auto encoded = encode_neutron_segments_from_device_hip(input, device_input, checkpoint, budgets,
+                                                                 gpu_observation_mode(telemetry));
     record_neutron_batch(encoded, input.size(), telemetry);
     if (encoded.segment_sizes.size() != input.size() / kSegmentBytes) {
         throw GpuError("Neutron group segment count differs from its source extent");
@@ -359,7 +363,8 @@ std::vector<std::byte> encode_dictionary_candidate(std::span<const std::byte> in
         if (distances.empty()) {
             distances = sampled_batch_distances(batch);
         }
-        auto encoded = encode_segments_from_device_hip(batch, device_input + offset, effort, distances);
+        auto encoded = encode_segments_from_device_hip(batch, device_input + offset, effort, distances,
+                                                       gpu_observation_mode(telemetry));
         record_dictionary_batch(encoded, bytes, telemetry);
         segment_sizes.insert(segment_sizes.end(), encoded.segment_sizes.begin(), encoded.segment_sizes.end());
         packed_payload.insert(packed_payload.end(), encoded.payload.begin(), encoded.payload.end());
@@ -381,7 +386,8 @@ void encode_dictionary_group(std::span<const std::byte> input, const std::byte* 
     if (blocks.size() != replacements.size()) {
         throw GpuError("dictionary group descriptor count differs from replacement slots");
     }
-    const auto encoded = encode_segments_from_device_hip(input, device_input, effort, distances);
+    const auto encoded =
+        encode_segments_from_device_hip(input, device_input, effort, distances, gpu_observation_mode(telemetry));
     record_dictionary_batch(encoded, input.size(), telemetry);
     std::size_t segment_offset = 0U;
     std::size_t payload_offset = 0U;

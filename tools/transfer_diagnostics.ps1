@@ -88,16 +88,24 @@ function Invoke-TransferDiagnosticLane {
     return $stats
 }
 
+# Purpose: Admit actual required-HIP work with a complete requested timing profile.
+# Inputs: Parsed GPU lane fields. Outputs: Rejects missing/invalid profiling or non-positive work/transfer evidence.
+function Assert-TransferDiagnosticGpuStat {
+    param([Parameter(Mandatory = $true)][hashtable]$Stats)
+
+    if ($Stats['gpu_timing_status'] -cne 'measured' -or $Stats['gpu_used'] -cne 'true') {
+        throw 'GPU transfer diagnostic requires measured AMD HIP execution.'
+    }
+    foreach ($key in @('gpu_h2d_bytes', 'gpu_d2h_bytes', 'gpu_device_allocation_bytes', 'gpu_kernel_launches', 'gpu_kernel_ms')) {
+        if ((Get-FlitzZipStatNumber -Stats $Stats -Name $key) -le 0.0) {
+            throw "GPU transfer diagnostic reported non-positive $key."
+        }
+    }
+}
+
 $cpu = Invoke-TransferDiagnosticLane -LaneName "CPU" -ModeFlag "--force-cpu"
 $gpu = Invoke-TransferDiagnosticLane -LaneName "GPU" -ModeFlag "--require-gpu"
-if ($gpu["gpu_used"] -ne "true") {
-    throw "GPU transfer diagnostic did not execute the required AMD HIP lane."
-}
-if ((Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_h2d_bytes") -le 0.0 -or
-    (Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_d2h_bytes") -le 0.0 -or
-    (Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_device_allocation_bytes") -le 0.0) {
-    throw "GPU transfer diagnostic did not report nonzero H2D, D2H, and device allocation counters."
-}
+Assert-TransferDiagnosticGpuStat -Stats $gpu
 
 $summary = [ordered]@{
     profile = $WorkloadProfile
@@ -117,6 +125,7 @@ $summary = [ordered]@{
     gpu_device_allocation_bytes = [uint64](Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_device_allocation_bytes")
     gpu_kernel_launches = [uint64](Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_kernel_launches")
     gpu_kernel_ms = Get-FlitzZipStatNumber -Stats $gpu -Name "gpu_kernel_ms"
+    gpu_timing_status = $gpu['gpu_timing_status']
     memory_only = $true
     disk_write_bytes = 0
 }

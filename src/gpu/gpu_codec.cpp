@@ -153,6 +153,12 @@ void merge_gpu_counter(std::atomic<std::uint64_t>& counter, std::uint64_t value)
 // Inputs: `target` is the caller-visible telemetry; `source` is an attempt-local telemetry set.
 // Outputs: Adds only successful HIP execution counters to final operation statistics.
 void merge_successful_gpu_attempt(GpuTelemetry& target, const GpuTelemetry& source) {
+    if (target.observation_mode != source.observation_mode) {
+        throw ArchiveError("isolated HIP attempt changed the operation observation mode");
+    }
+    if (source.timing_recorded.load(std::memory_order_relaxed)) {
+        target.timing_recorded.store(true, std::memory_order_relaxed);
+    }
     merge_gpu_counter(target.encode_chunks, source.encode_chunks.load(std::memory_order_relaxed));
     merge_gpu_counter(target.decode_chunks, source.decode_chunks.load(std::memory_order_relaxed));
     merge_gpu_counter(target.kernel_launches, source.kernel_launches.load(std::memory_order_relaxed));
@@ -191,7 +197,7 @@ GpuCodecOptions gpu_attempt_options(const GpuCodecOptions& options, std::shared_
     if (options.require_gpu || !options.telemetry) {
         return options;
     }
-    attempt_telemetry = std::make_shared<GpuTelemetry>();
+    attempt_telemetry = std::make_shared<GpuTelemetry>(options.telemetry->observation_mode);
     GpuCodecOptions attempt = options;
     attempt.telemetry = attempt_telemetry;
     return attempt;
@@ -287,9 +293,16 @@ GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry) {
         .prefix_blocks = telemetry.prefix_blocks.load(std::memory_order_relaxed),
         .dictionary_blocks = telemetry.dictionary_blocks.load(std::memory_order_relaxed),
         .sparse_pattern_blocks = telemetry.sparse_pattern_blocks.load(std::memory_order_relaxed),
-        .kernel_ms = microseconds == kUnavailableKernelTime ? std::numeric_limits<double>::quiet_NaN()
-                                                            : static_cast<double>(microseconds) / 1000.0,
+        .timing_status = telemetry.timing_recorded.load(std::memory_order_relaxed) ? GpuTimingStatus::Measured
+                                                                                   : GpuTimingStatus::NoSamples,
     };
+    if (telemetry.observation_mode == GpuObservationMode::CountersOnly) {
+        stats.timing_status = GpuTimingStatus::NotRequested;
+        finalize_gpu_timing_stats(stats);
+        return stats;
+    }
+    stats.kernel_ms = microseconds == kUnavailableKernelTime ? std::numeric_limits<double>::quiet_NaN()
+                                                             : static_cast<double>(microseconds) / 1000.0;
     for (std::size_t index = 0; index < kGpuEncodeStageCount; ++index) {
         const auto stage_time = telemetry.encode_stage_worker_microseconds[index].load(std::memory_order_relaxed);
         stats.encode_stage_worker_seconds[index] = stage_time == kUnavailableKernelTime
@@ -309,7 +322,25 @@ GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry) {
                                                                ? std::numeric_limits<double>::quiet_NaN()
                                                                : static_cast<double>(stage_time) / 1'000'000.0;
     }
+    finalize_gpu_timing_stats(stats);
     return stats;
+}
+
+void finalize_gpu_timing_stats(GpuRuntimeStats& stats) {
+    (void)gpu_timing_status_name(stats.timing_status);
+    if (stats.timing_status == GpuTimingStatus::NotRequested || stats.timing_status == GpuTimingStatus::Incomplete) {
+        stats.kernel_ms = std::numeric_limits<double>::quiet_NaN();
+        stats.encode_stage_worker_seconds.fill(stats.kernel_ms);
+        stats.classification_stage_worker_seconds.fill(stats.kernel_ms);
+        stats.owned_decode_stage_worker_seconds.fill(stats.kernel_ms);
+        return;
+    }
+    const auto invalid_stage = [](double value) { return !std::isfinite(value); };
+    if (invalid_stage(stats.kernel_ms) || std::ranges::any_of(stats.encode_stage_worker_seconds, invalid_stage) ||
+        std::ranges::any_of(stats.classification_stage_worker_seconds, invalid_stage) ||
+        std::ranges::any_of(stats.owned_decode_stage_worker_seconds, invalid_stage)) {
+        stats.timing_status = GpuTimingStatus::Unavailable;
+    }
 }
 
 // Purpose: Count one completed GPU encode in operation telemetry.
@@ -423,7 +454,13 @@ void record_gpu_kernel_launch(GpuTelemetry* telemetry, double milliseconds) {
 // Outputs: Updates launch/time counters; rocPRIM internal dispatches are intentionally not estimated.
 void record_gpu_kernel_work(GpuTelemetry* telemetry, std::uint32_t launches, double milliseconds) {
     if (telemetry) {
-        telemetry->kernel_launches.fetch_add(launches, std::memory_order_relaxed);
+        if (launches != 0U) {
+            telemetry->kernel_launches.fetch_add(launches, std::memory_order_relaxed);
+        }
+        if (!gpu_timing_requested(telemetry)) {
+            return;
+        }
+        telemetry->timing_recorded.store(true, std::memory_order_relaxed);
         const auto rounded = (milliseconds * 1000.0) + 0.5;
         // UINT64_MAX rounds up to 2^64 as a double; use that exclusive bound before converting.
         const auto microseconds = !std::isfinite(milliseconds) || milliseconds < 0.0 || !std::isfinite(rounded) ||
@@ -434,14 +471,26 @@ void record_gpu_kernel_work(GpuTelemetry* telemetry, std::uint32_t launches, dou
     }
 }
 
+void record_gpu_completed_kernels(GpuTelemetry* telemetry, std::uint32_t launches) {
+    if (telemetry && launches != 0U) {
+        if (gpu_timing_requested(telemetry)) {
+            throw ArchiveError("measured GPU work requires a paired timing sample");
+        }
+        telemetry->kernel_launches.fetch_add(launches, std::memory_order_relaxed);
+    }
+}
+
 // Purpose: Record host-observed work for one named HIP encode stage.
 // Inputs: Optional operation telemetry, the phase identifier, and its measured steady-clock interval.
 // Outputs: Atomically adds positive whole microseconds for a valid stage.
 void record_gpu_encode_stage_time(GpuTelemetry* telemetry, GpuEncodeStage stage,
                                   std::chrono::steady_clock::duration elapsed) {
     const auto index = static_cast<std::size_t>(stage);
-    if (!telemetry || index >= kGpuEncodeStageCount) {
+    if (!gpu_timing_requested(telemetry) || index >= kGpuEncodeStageCount) {
         return;
+    }
+    if (elapsed >= std::chrono::steady_clock::duration::zero()) {
+        telemetry->timing_recorded.store(true, std::memory_order_relaxed);
     }
     record_worker_duration(telemetry->encode_stage_worker_microseconds[index], elapsed);
 }
@@ -452,8 +501,11 @@ void record_gpu_encode_stage_time(GpuTelemetry* telemetry, GpuEncodeStage stage,
 void record_gpu_classification_stage_time(GpuTelemetry* telemetry, GpuClassificationStage stage,
                                           std::chrono::steady_clock::duration elapsed) {
     const auto index = static_cast<std::size_t>(stage);
-    if (!telemetry || index >= kGpuClassificationStageCount) {
+    if (!gpu_timing_requested(telemetry) || index >= kGpuClassificationStageCount) {
         return;
+    }
+    if (elapsed >= std::chrono::steady_clock::duration::zero()) {
+        telemetry->timing_recorded.store(true, std::memory_order_relaxed);
     }
     record_worker_duration(telemetry->classification_stage_worker_microseconds[index], elapsed);
 }
@@ -464,8 +516,11 @@ void record_gpu_classification_stage_time(GpuTelemetry* telemetry, GpuClassifica
 void record_owned_decode_stage_time(GpuTelemetry* telemetry, OwnedDecodeStage stage,
                                     std::chrono::steady_clock::duration elapsed) {
     const auto index = static_cast<std::size_t>(stage);
-    if (!telemetry || index >= kOwnedDecodeStageCount) {
+    if (!gpu_timing_requested(telemetry) || index >= kOwnedDecodeStageCount) {
         return;
+    }
+    if (elapsed >= std::chrono::steady_clock::duration::zero()) {
+        telemetry->timing_recorded.store(true, std::memory_order_relaxed);
     }
     record_worker_duration(telemetry->owned_decode_stage_worker_microseconds[index], elapsed);
 }

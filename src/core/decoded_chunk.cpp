@@ -98,7 +98,7 @@ DecodedChunk decode_owned_chunk(std::span<const std::byte> payload, std::span<co
         return {};
     }
     auto* telemetry = options.telemetry.get();
-    WorkerPhaseClock phase_clock{telemetry != nullptr};
+    WorkerPhaseClock phase_clock{gpu_timing_requested(telemetry)};
     auto storage = allocate_decoded_storage(decoded_size, blocks, options);
     const std::span<std::byte> output(storage.get(), decoded_size);
     phase_clock.finish(

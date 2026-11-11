@@ -94,6 +94,9 @@ function Assert-GpuProofStat {
         [Parameter(Mandatory = $true)][string]$Label,
         [bool]$RequireNativeCompressedBlocks = $false
     )
+    if ($Stats['gpu_timing_status'] -cne 'measured') {
+        throw "$Label requires complete measured GPU timing evidence."
+    }
     if ($Stats["gpu_used"] -ne "true") {
         throw "$Label did not report gpu_used=true."
     }

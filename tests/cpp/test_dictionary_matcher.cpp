@@ -779,7 +779,7 @@ void require_dictionary_device_index(std::span<const std::byte> input, std::span
     check_hip(copy_on_codec_stream(source.get(), input.data(), input.size(), hipMemcpyHostToDevice),
               "upload index oracle source");
     check_hip(hipMemsetAsync(previous.get(), 0xA5, previous_bytes, hipStreamPerThread), "guard index oracle links");
-    auto events = make_hip_event_pair("create index oracle events");
+    auto events = make_codec_event_pair(flitzzip::GpuObservationMode::Measured, "create index oracle events");
     launch_kernel_with_timing(api.build_dictionary_keys, grid, kDictionaryKernelThreads, 0U, hipStreamPerThread,
                               events.start, nullptr, "build index oracle keys", source.get(), size, keys.get());
     check_hip(
@@ -823,11 +823,11 @@ void require_dictionary_encoder_from_oracle(std::span<const std::byte> input, st
               "upload encoder oracle links");
     check_hip(hipMemsetAsync(output.get(), 0xA5, output_bytes, hipStreamPerThread), "guard encoder oracle output");
     check_hip(hipMemsetAsync(sizes.get(), 0xA5, sizes_bytes, hipStreamPerThread), "guard encoder oracle sizes");
-    auto events = make_hip_event_pair("create encoder oracle events");
+    auto events = make_codec_event_pair(flitzzip::GpuObservationMode::Measured, "create encoder oracle events");
     const auto kernel = level <= 3 ? api.encode_dictionary_cached : api.encode_dictionary_deferred;
-    launch_measured_kernel(kernel, static_cast<unsigned>(count), kDictionaryKernelThreads, 0U, hipStreamPerThread,
-                           events, "encode from oracle links", source.get(), static_cast<std::uint32_t>(input.size()),
-                           previous.get(), nullptr, effort_for_level(level), output.get(), sizes.get());
+    launch_codec_kernel(kernel, static_cast<unsigned>(count), kDictionaryKernelThreads, 0U, hipStreamPerThread, events,
+                        "encode from oracle links", source.get(), static_cast<std::uint32_t>(input.size()),
+                        previous.get(), nullptr, effort_for_level(level), output.get(), sizes.get());
     check_hip(hipEventSynchronize(events.stop), "complete encoder oracle kernel");
     std::vector<std::byte> payload(output_bytes);
     std::vector<std::uint32_t> lengths(count + 1U);

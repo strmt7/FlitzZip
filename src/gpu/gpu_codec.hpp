@@ -2,6 +2,7 @@
 
 #include "core/archive_blocks.hpp"
 #include "gpu/hip_allocation_policy.hpp"
+#include "gpu/observation_mode.hpp"
 
 #include <array>
 #include <atomic>
@@ -90,16 +91,27 @@ struct GpuRuntimeStats {
     std::uint64_t prefix_blocks = 0;
     std::uint64_t dictionary_blocks = 0;
     std::uint64_t sparse_pattern_blocks = 0;
-    double kernel_ms = 0.0;  // NaN means at least one event time or its accumulated total was invalid.
+    double kernel_ms = 0.0;  // Timing status distinguishes measured zero from absent or unavailable observations.
     // Summed concurrent worker time, not elapsed wall time or HIP device time.
     std::array<double, kGpuEncodeStageCount> encode_stage_worker_seconds{};
     // Nested within DeviceClassification; do not add these to the top-level stage total.
     std::array<double, kGpuClassificationStageCount> classification_stage_worker_seconds{};
     // CPU or GPU owned decoding; summed worker intervals, not device or elapsed operation time.
     std::array<double, kOwnedDecodeStageCount> owned_decode_stage_worker_seconds{};
+    GpuTimingStatus timing_status = GpuTimingStatus::NoSamples;
 };
 
+// Missing or mixed coverage has no complete duration. Preserve finite partial
+// fields when a measured observation fails, but mark the complete set unavailable.
+void finalize_gpu_timing_stats(GpuRuntimeStats& stats);
+
 struct GpuTelemetry {
+    // One immutable policy for this operation and all isolated child attempts.
+    explicit GpuTelemetry(GpuObservationMode mode = GpuObservationMode::Measured)
+        : observation_mode(validate_gpu_observation_mode(mode)) {}
+
+    const GpuObservationMode observation_mode;
+    std::atomic<bool> timing_recorded{false};
     std::atomic<std::uint64_t> encode_chunks{0};
     std::atomic<std::uint64_t> decode_chunks{0};
     std::atomic<std::uint64_t> kernel_launches{0};
@@ -117,6 +129,14 @@ struct GpuTelemetry {
     std::array<std::atomic<std::uint64_t>, kGpuClassificationStageCount> classification_stage_worker_microseconds{};
     std::array<std::atomic<std::uint64_t>, kOwnedDecodeStageCount> owned_decode_stage_worker_microseconds{};
 };
+
+[[nodiscard]] inline bool gpu_timing_requested(const GpuTelemetry* telemetry) noexcept {
+    return telemetry != nullptr && telemetry->observation_mode == GpuObservationMode::Measured;
+}
+
+[[nodiscard]] inline GpuObservationMode gpu_observation_mode(const GpuTelemetry* telemetry) noexcept {
+    return telemetry != nullptr ? telemetry->observation_mode : GpuObservationMode::CountersOnly;
+}
 
 enum class NativeCompressionMode : std::uint8_t {
     Standard,
@@ -228,6 +248,11 @@ void record_gpu_sparse_pattern_blocks(GpuTelemetry* telemetry, std::uint64_t cou
 // Outputs: Counts the launch even if timing is invalid; negative/non-finite/overflowing times mark the total
 // unavailable.
 void record_gpu_kernel_launch(GpuTelemetry* telemetry, double milliseconds);
+
+// Count explicit FlitzZip kernels after successful counters-only completion.
+// Nonempty measured work is rejected before mutation: use the paired sample API.
+// Null telemetry and zero launches are no-ops; library dispatches are not estimated.
+void record_gpu_completed_kernels(GpuTelemetry* telemetry, std::uint32_t launches);
 
 // Purpose: Account for a measured multi-kernel HIP stage without inventing timings for each launch.
 // Inputs: Optional operation telemetry, explicit FlitzZip launch count, and complete device-stage milliseconds.

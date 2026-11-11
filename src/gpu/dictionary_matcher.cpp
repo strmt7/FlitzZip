@@ -12,23 +12,27 @@ namespace flitzzip::dictionary {
 // Purpose: Execute the bounded HIP dictionary implementation after host-side admission checks.
 // Inputs: A validated batch of at least four bytes and a validated effort budget.
 // Outputs: Returns deterministic match records and measured HIP stage/resource statistics.
-MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effort);
+MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effort,
+                            GpuObservationMode observation_mode);
 
 // Purpose: Encode validated input using GPU-resident dictionary matches.
 // Inputs: A nonempty bounded batch, validated effort, and explicit search strategy.
 // Outputs: Returns encoded blocks, or throws on HIP/resource failure.
-EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort);
+EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort,
+                                 GpuObservationMode observation_mode);
 
 // Purpose: Execute admitted deeper search and minimum-byte segment parsing on HIP.
 // Inputs: Nonempty bounded source, cancellation checkpoint and admitted group limits.
 // Outputs: Returns GPU-encoded segments; propagates resource/runtime/cancellation failures.
 EncodedBatch encode_neutron_segments_hip(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint,
-                                         std::span<const NeutronParseBudget> budgets);
+                                         std::span<const NeutronParseBudget> budgets,
+                                         GpuObservationMode observation_mode);
 
 // Purpose: Execute HIP decoding after host-side segment-size admission.
 // Inputs: Nonempty bounded segments and their exact total decoded byte count.
 // Outputs: Returns complete decoded bytes or throws before exposing partial output.
-DecodedBatch decode_segments_hip(std::span<const EncodedSegment> segments, std::size_t decoded_bytes);
+DecodedBatch decode_segments_hip(std::span<const EncodedSegment> segments, std::size_t decoded_bytes,
+                                 GpuObservationMode observation_mode);
 #endif
 
 // Purpose: Resolve increasing dictionary search budgets without unchecked shift counts.
@@ -57,13 +61,15 @@ std::optional<double> validated_stage_milliseconds(double milliseconds) {
 // Purpose: Admit bounded dictionary searches and enforce the HIP-only computation boundary.
 // Inputs: Borrowed source bytes and requested effort.
 // Outputs: Returns literal-only short-input records or HIP matches; throws on invalid limits or unavailable HIP.
-MatchBatch find_matches(std::span<const std::byte> input, int level) {
+MatchBatch find_matches(std::span<const std::byte> input, int level, GpuObservationMode observation_mode) {
+    (void)validate_gpu_observation_mode(observation_mode);
     const auto effort = effort_for_level(level);
     if (input.size() > kMaxBatchBytes) {
         throw ArchiveError("dictionary batch exceeds the bounded GPU workspace input limit");
     }
     if (input.size() < kMinMatchBytes) {
         MatchBatch result;
+        result.observation_mode = observation_mode;
         result.matches.resize(input.size());
         return result;
     }
@@ -72,7 +78,7 @@ MatchBatch find_matches(std::span<const std::byte> input, int level) {
     if (!info.available) {
         throw GpuError(info.status);
     }
-    return find_matches_hip(input, effort);
+    return find_matches_hip(input, effort, observation_mode);
 #else
     (void)effort;
     throw GpuError("AMD HIP dictionary search is not compiled into this build");
@@ -82,20 +88,21 @@ MatchBatch find_matches(std::span<const std::byte> input, int level) {
 // Purpose: Validate dictionary encoding requests and enforce required-HIP execution.
 // Inputs: Borrowed bytes and requested effort level.
 // Outputs: Returns empty output for empty input or GPU-encoded blocks; rejects invalid limits and missing HIP.
-EncodedBatch encode_segments(std::span<const std::byte> input, int level) {
+EncodedBatch encode_segments(std::span<const std::byte> input, int level, GpuObservationMode observation_mode) {
+    (void)validate_gpu_observation_mode(observation_mode);
     const auto effort = effort_for_level(level);
     if (input.size() > kMaxBatchBytes) {
         throw ArchiveError("dictionary batch exceeds the bounded GPU workspace input limit");
     }
     if (input.empty()) {
-        return {};
+        return {.observation_mode = observation_mode};
     }
 #if FLITZZIP_ENABLE_HIP
     const auto info = query_gpu_info();
     if (!info.available) {
         throw GpuError(info.status);
     }
-    return encode_segments_hip(input, effort);
+    return encode_segments_hip(input, effort, observation_mode);
 #else
     (void)effort;
     throw GpuError("AMD HIP dictionary encoding is not compiled into this build");
@@ -132,7 +139,8 @@ void validate_neutron_budgets(std::size_t input_bytes, std::span<const NeutronPa
 // Inputs: Immutable source, throwing cancellation checkpoint and optional complete group limits.
 // Outputs: Returns empty input unchanged or verified GPU segments; throws on invalid size or unavailable HIP.
 EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint,
-                                     std::span<const NeutronParseBudget> budgets) {
+                                     std::span<const NeutronParseBudget> budgets, GpuObservationMode observation_mode) {
+    (void)validate_gpu_observation_mode(observation_mode);
     if (input.size() > kMaxNeutronBatchBytes) {
         throw ArchiveError("Neutron dictionary batch exceeds its bounded input limit");
     }
@@ -141,14 +149,14 @@ EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const Enc
         checkpoint();
     }
     if (input.empty()) {
-        return {};
+        return {.observation_mode = observation_mode};
     }
 #if FLITZZIP_ENABLE_HIP
     const auto info = query_gpu_info();
     if (!info.available) {
         throw GpuError(info.status);
     }
-    return encode_neutron_segments_hip(input, checkpoint, budgets);
+    return encode_neutron_segments_hip(input, checkpoint, budgets, observation_mode);
 #else
     throw GpuError("AMD HIP Neutron dictionary encoding is not compiled into this build");
 #endif
@@ -157,7 +165,8 @@ EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const Enc
 // Purpose: Validate dictionary block extents before uploading encoded data or allocating GPU output.
 // Inputs: Borrowed independent blocks whose size fields are not trusted.
 // Outputs: Returns empty output or fully validated HIP decoding; rejects resource violations and unavailable HIP.
-DecodedBatch decode_segments(std::span<const EncodedSegment> segments) {
+DecodedBatch decode_segments(std::span<const EncodedSegment> segments, GpuObservationMode observation_mode) {
+    (void)validate_gpu_observation_mode(observation_mode);
     if (segments.size() > kMaxBatchBytes / kSegmentBytes) {
         throw ArchiveError("dictionary decode batch exceeds the segment limit");
     }
@@ -170,14 +179,14 @@ DecodedBatch decode_segments(std::span<const EncodedSegment> segments) {
         decoded_bytes += segment.input_bytes;
     }
     if (segments.empty()) {
-        return {};
+        return {.observation_mode = observation_mode};
     }
 #if FLITZZIP_ENABLE_HIP
     const auto info = query_gpu_info();
     if (!info.available) {
         throw GpuError(info.status);
     }
-    return decode_segments_hip(segments, decoded_bytes);
+    return decode_segments_hip(segments, decoded_bytes, observation_mode);
 #else
     (void)decoded_bytes;
     throw GpuError("AMD HIP dictionary decoding is not compiled into this build");

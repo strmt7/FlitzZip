@@ -419,10 +419,10 @@ def run_process(
                     pool.shutdown(wait=True, cancel_futures=True)
 
 
-# Purpose: Bind measured telemetry to the exact natural input and required-HIP Neutron execution.
+# Purpose: Parse retained corpus identity, byte coverage and required-HIP work without inventing metadata.
 # Inputs: Bounded native protocol bytes and the expected member's byte/hash identity.
-# Outputs: Original complete protocol fields; invalid identity, CPU substitution or output writes fail closed.
-def parse_stats(payload: bytes, member: dict) -> dict:
+# Outputs: Original fields, including legacy records; this does not admit a fresh timing observation.
+def parse_corpus_identity(payload: bytes, member: dict) -> dict[str, str]:
     pairs = [item.split("=", 1) for item in payload.decode("ascii").strip().split()]
     if any(len(pair) != 2 for pair in pairs) or len({pair[0] for pair in pairs}) != len(pairs):
         raise ValueError("malformed or duplicate native telemetry field")
@@ -449,6 +449,16 @@ def parse_stats(payload: bytes, member: dict) -> dict:
     seconds = float(fields.get("compress_seconds", "nan"))
     if not math.isfinite(seconds) or seconds < 0:
         raise ValueError("Neutron corpus telemetry lacks a finite compression duration")
+    return fields
+
+
+# Fresh controller results require the explicit observation contract. Historical
+# records retain their original fields through the identity parser above; they
+# never inherit an invented measured status or bypass this admission boundary.
+def parse_stats(payload: bytes, member: dict) -> dict[str, str]:
+    fields = parse_corpus_identity(payload, member)
+    if fields.get("gpu_timing_status") != "measured":
+        raise ValueError("Neutron corpus telemetry lacks complete measured GPU observation")
     return fields
 
 

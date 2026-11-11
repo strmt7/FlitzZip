@@ -154,6 +154,47 @@ kernels before advertising capability. Missing, changed or unsupported HIP
 payloads reject required-GPU work. The supported-target build matrix establishes
 compilation; each architecture needs its own runtime evidence.
 
+## Operation Observation Contract
+
+`GpuTelemetry` fixes its observation mode at construction. Measured operation
+remains the default; counters-only operation retains actual work, transfer and
+allocation counters without optional host phase clocks or device profiling.
+Isolated HIP attempts inherit that mode. A mode mismatch is a contract error,
+not a reason to retry the operation on CPU. Neutron still requires HIP.
+
+Create profiling events through `make_codec_event_pair` with explicit telemetry
+or mode. Its factory acquires no handles when profiling is unrequested. Codec
+completion remains synchronous at every existing ownership boundary: measured
+work completes its recorded event, while counters-only work completes the same
+per-thread stream. Count only known completed FlitzZip launches; do not invent
+rocPRIM-internal counts. A completed launch remains counted if a subsequent
+timing query fails, and the error still propagates. Neutron's stage clock keeps
+its failed-completion reuse prohibition in either mode.
+
+Standalone dictionary APIs default to measured diagnostics. Integrated callers
+must pass the operation mode explicitly, including borrowed-input and nested
+Neutron batches. Returned metadata identifies the requested mode; absent stage
+timings are not zero measurements. Worker phase clocks, snapshots, aggregation
+and the common CLI projection share this observation policy. Join workers before
+taking final snapshots.
+
+`GpuTimingStatus` distinguishes an empty accumulator, unrequested profiling,
+measured values, incomplete mixed coverage and unavailable observations. Empty
+accumulation is neutral; neither unavailable nor mixed coverage becomes measured. Mixed or
+unrequested profiles have NaN duration fields. Legacy empty numeric fields may
+remain zero, but their `no_samples` status does not establish a measured zero.
+Timing consumers must inspect status before treating numeric fields as evidence.
+The required-GPU benchmark/proof contracts reject unrequested or incomplete
+profiles; the wall-time benchmark's existing explicit unavailable-event handling
+does not establish a device-time speedup.
+
+This policy controls optional profiling. Preserve cancellation, resource admission,
+completion waits, capability cache policy and safety deadlines. Explicit GPU
+diagnostics retain their duration controls. The mode changes neither archive
+representation nor compression effort, and does not justify unmeasured performance
+claims. Fixed clock/provider controls and bounded real-HIP readback qualify
+correctness separately from representative size and timing studies.
+
 ## Evaluation Sequence
 
 1. Identify a measured bottleneck or complete-size limitation using current

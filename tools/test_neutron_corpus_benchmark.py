@@ -229,10 +229,12 @@ class CorpusContracts(unittest.TestCase):
                     for row in selected:
                         fields = row["stats"]
                         payload = " ".join(f"{key}={value}" for key, value in fields.items()).encode("ascii")
-                        parsed = corpus.parse_stats(
+                        parsed = corpus.parse_corpus_identity(
                             payload, {"sha256": fields["source_sha256"], "bytes": int(fields["input_bytes"])}
                         )
                         self.assertEqual(parsed, fields)
+                        if "gpu_timing_status" in fields:
+                            self.assertEqual(fields["gpu_timing_status"], "measured")
                         self.assertEqual(int(fields["block_size_bytes"]), record["block_size_kib"] * 1024)
                         identities.append((row["name"], fields["source_sha256"], fields["archive_bytes"]))
                     for field in ("input_bytes", "archive_bytes"):
@@ -455,6 +457,7 @@ class CorpusContracts(unittest.TestCase):
             "measurement_protocol": "bytewise-corpus-v1",
             "data_source": "preloaded",
             "gpu_used": "true",
+            "gpu_timing_status": "measured",
             "gpu_encode_chunks": "1",
             "gpu_decode_chunks": "1",
             "gpu_kernel_launches": "1",
@@ -469,6 +472,10 @@ class CorpusContracts(unittest.TestCase):
             return " ".join(f"{key}={value}" for key, value in values.items()).encode()
 
         self.assertEqual(corpus.parse_stats(encode(fields), member), fields)
+        legacy = {key: value for key, value in fields.items() if key != "gpu_timing_status"}
+        self.assertEqual(corpus.parse_corpus_identity(encode(legacy), member), legacy)
+        with self.assertRaises(ValueError):
+            corpus.parse_stats(encode(legacy), member)
         expanded = {**fields, "output_bytes": "8"}
         self.assertEqual(corpus.parse_stats(encode(expanded), member), expanded)
         for key, value in (
@@ -479,6 +486,10 @@ class CorpusContracts(unittest.TestCase):
             ("disk_write_bytes", "1"),
             ("memory_only", "false"),
             ("gpu_used", "false"),
+            ("gpu_timing_status", "not_requested"),
+            ("gpu_timing_status", "no_samples"),
+            ("gpu_timing_status", "incomplete"),
+            ("gpu_timing_status", "unavailable"),
             ("gpu_decode_chunks", "0"),
             ("archive_bytes", "0"),
             ("output_bytes", "0"),
@@ -583,7 +594,8 @@ def protocol_fixture(data: bytes) -> bytes:
         f"input_bytes={len(data)} validated_bytes={len(data)} output_bytes={len(data)} "
         f"source_sha256={hashlib.sha256(data).hexdigest()} compression_mode=neutron_star "
         "memory_only=true disk_write_bytes=0 measurement_protocol=bytewise-corpus-v1 data_source=preloaded "
-        f"gpu_used=true gpu_encode_chunks=1 gpu_decode_chunks=1 gpu_kernel_launches=1 archive_bytes={len(data) + 109} "
+        f"gpu_used=true gpu_timing_status=measured gpu_encode_chunks=1 gpu_decode_chunks=1 "
+        f"gpu_kernel_launches=1 archive_bytes={len(data) + 109} "
         "compress_seconds=0.125"
     ).encode("ascii")
 
