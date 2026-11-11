@@ -44,15 +44,17 @@ interpreter before running the following PowerShell example from the repository
 root. On Windows it may be `py -3`; other hosts can use their selected `python3`.
 The example uses `python` for that selected interpreter.
 
-Build the exact reviewed Semgrep wheel into a new owned directory before
-resolving its local distribution version. The builder verifies both upstream
-and derived artifact identities and refuses an existing output directory.
+Build both reviewed Semgrep artifacts into new owned directories before
+resolving its local distribution version. The builder verifies upstream and
+derived artifact identities and refuses an existing output directory.
 
 ```powershell
 $semgrepWheelDirectory = Join-Path (Get-Location).Path (
     'out/semgrep-lock-' + [Guid]::NewGuid().ToString('N'))
-python -B -m tools.semgrep_distribution --target linux --output $semgrepWheelDirectory
-if ($LASTEXITCODE -ne 0) { throw 'Semgrep artifact admission failed.' }
+foreach ($target in 'linux', 'windows') {
+    python -B -m tools.semgrep_distribution --target $target --output (Join-Path $semgrepWheelDirectory $target)
+    if ($LASTEXITCODE -ne 0) { throw "Semgrep artifact admission failed: $target" }
+}
 
 foreach ($lane in 'semgrep', 'gvm-tools', 'zizmor', 'lint') {
     $platform = 'x86_64-manylinux_2_39'
@@ -70,12 +72,24 @@ foreach ($lane in 'semgrep', 'gvm-tools', 'zizmor', 'lint') {
         '--generate-hashes', '--emit-index-url', '--emit-build-options',
         '--no-annotate', '--no-header', '--no-python-downloads')
     if ($lane -eq 'semgrep') {
-        $resolverArguments += @('--find-links', $semgrepWheelDirectory)
+        $resolverArguments += @('--find-links', (Join-Path $semgrepWheelDirectory 'linux'),
+            '--find-links', (Join-Path $semgrepWheelDirectory 'windows'))
     }
     uv @resolverArguments
     if ($LASTEXITCODE -ne 0) { throw "Resolution failed: $lane" }
+    if ($lane -eq 'semgrep') {
+        python -B -m tools.semgrep_lock
+        if ($LASTEXITCODE -ne 0) { throw 'Semgrep artifact binding failed.' }
+    }
 }
 ```
+
+Target-specific resolution can emit only the compatible wheel's hash. The
+finalizer binds the Semgrep stanza to every reviewed artifact in the manifest,
+including the other platform. It rejects foreign hashes, version drift and
+malformed locks, preserves other requirements and publishes the complete file
+atomically. `python -B -m tools.semgrep_lock --check` validates the binding
+without changing source. Keep the existing installation and provenance gates.
 
 For a targeted update, add `--upgrade-package <package>` to the affected
 resolution. A broader `--upgrade` refresh needs compatibility review for every

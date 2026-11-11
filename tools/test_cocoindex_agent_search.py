@@ -19,6 +19,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from tools import atomic_file
 from tools import cocoindex_agent_search as agent_search
 from tools.cocoindex_agent_search import (
     CONFIG_DIGEST,
@@ -402,20 +403,20 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
                     if failure == "write":
                         pending = stack.enter_context(tempfile.NamedTemporaryFile(dir=root, delete=False))
                         stack.enter_context(
-                            patch.object(agent_search.tempfile, "NamedTemporaryFile", return_value=pending)
+                            patch.object(atomic_file.tempfile, "NamedTemporaryFile", return_value=pending)
                         )
                         stack.enter_context(
                             patch.object(pending, "write", side_effect=OSError("controlled write failure"))
                         )
                     else:
                         stack.enter_context(
-                            patch.object(agent_search.os, "replace", side_effect=OSError("controlled replace failure"))
+                            patch.object(atomic_file.os, "replace", side_effect=OSError("controlled replace failure"))
                         )
                     with self.assertRaisesRegex(OSError, "controlled"):
-                        agent_search._write_atomic(target, b"replacement state")
+                        agent_search.atomic_write_bytes(target, b"replacement state")
                 self.assertEqual(target.read_bytes(), b"previous complete state")
                 self.assertEqual(list(root.iterdir()), [target])
-            agent_search._write_atomic(target, b"replacement state")
+            agent_search.atomic_write_bytes(target, b"replacement state")
             self.assertEqual(target.read_bytes(), b"replacement state")
             self.assertEqual(list(root.iterdir()), [target])
 

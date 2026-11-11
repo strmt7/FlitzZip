@@ -17,16 +17,17 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path, PurePosixPath
 
 if __package__:
     from .agent_context import relative_source_path, safe_path
+    from .atomic_file import atomic_write_bytes
     from .executable_path import executable_path
 else:
     from agent_context import relative_source_path, safe_path
+    from atomic_file import atomic_write_bytes
     from executable_path import executable_path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -168,22 +169,8 @@ def install(base: Path) -> None:
     version = _run([str(command), "version"], timeout=30).stdout.strip()
     if version != VERSION:
         raise RuntimeError(f"CocoIndex version verification failed: {version}")
-    _write_atomic(completion, (DEPENDENCY_DIGEST + "\n").encode("utf-8"))
+    atomic_write_bytes(completion, (DEPENDENCY_DIGEST + "\n").encode("utf-8"))
     print(f"Installed CocoIndex Code {version} in {venv}")
-
-
-def _write_atomic(target: Path, content: bytes) -> None:
-    """Publish complete cache state, preserving old bytes and removing temporary files on failure."""
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".state-", delete=False) as output:
-            temporary = Path(output.name)
-            output.write(content)
-        os.replace(temporary, target)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
 
 
 def tracked_files(repo: Path) -> list[tuple[str, Path]]:
@@ -306,7 +293,7 @@ def index(base: Path, repo: Path = ROOT) -> None:
     if match is None or int(match.group(1)) != 0 or source_digest(tracked_files(repo)) != digest:
         raise RuntimeError("index errors or source changed during indexing; no active marker written")
     marker = base / "active" / (mirror.name + ".json")
-    _write_atomic(
+    atomic_write_bytes(
         marker,
         (
             json.dumps(
@@ -340,7 +327,7 @@ def record_search_use(base: Path, repo: Path, digest: str, query: str, hit_count
         "hit_count": hit_count,
         "completed_at": datetime.now(UTC).isoformat(),
     }
-    _write_atomic(target, (json.dumps(receipt) + "\n").encode("utf-8"))
+    atomic_write_bytes(target, (json.dumps(receipt) + "\n").encode("utf-8"))
 
 
 def validate_search_results(payload: object, maximum: int) -> list[dict]:

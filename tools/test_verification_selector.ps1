@@ -482,10 +482,18 @@ foreach ($path in @("tools/devskim_report.py", "tools/test_devskim_report.py")) 
     Assert-Selector (-not (Test-RequiredCommand -Plan $reportPlan -Id "release-build")) "scanner report changes alone must not rebuild the product: $path"
 }
 
-foreach ($path in @("tools/test_semgrep_installation.py", "tools/test_semgrep_runtime.py", "tools/semgrep_distribution.py", "tools/test_semgrep_distribution.py", "tools/scanner_requirements.py", "tools/scanner_dependency_snapshot.py", "tools/test_scanner_dependency_snapshot.py", ".github/requirements/semgrep-distribution.json", ".github/requirements/requirements-semgrep-linux.in", ".github/requirements/requirements-semgrep-linux.txt", ".github/workflows/security-code-scanning.yml")) {
+foreach ($path in @("tools/test_semgrep_installation.py", "tools/test_semgrep_runtime.py", "tools/semgrep_distribution.py", "tools/test_semgrep_distribution.py", "tools/atomic_file.py", "tools/test_atomic_file.py", "tools/semgrep_lock.py", "tools/test_semgrep_lock.py", "tools/scanner_requirements.py", "tools/scanner_dependency_snapshot.py", "tools/test_scanner_dependency_snapshot.py", ".github/requirements/semgrep-distribution.json", ".github/requirements/requirements-semgrep-linux.in", ".github/requirements/requirements-semgrep-linux.txt", ".github/workflows/security-code-scanning.yml")) {
     $scannerPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path)
     Assert-Selector (Test-RequiredCommand -Plan $scannerPlan -Id "scanner-installation-tests") "scanner changes require official pin, hash and production-install regressions: $path"
     Assert-Selector (Test-Workflow -Plan $scannerPlan -Name "security") "scanner changes require Linux runtime checks in the hosted security workflow: $path"
+}
+
+foreach ($path in @('tools/atomic_file.py', 'tools/test_atomic_file.py', 'tools/semgrep_lock.py', 'tools/test_semgrep_lock.py')) {
+    $bindingPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $bindingPlan -Id 'semgrep-lock-contracts') "artifact publication changes require binding and atomic failure controls: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $bindingPlan -Id 'release-build')) "tool artifact publication must not rebuild the product: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $bindingPlan -Id 'unit-tests')) "tool artifact publication must retain its offline consumer scope: $path"
+    Assert-Selector (-not $bindingPlan.scope.fullEscalationRequired) "new publication helpers must have explicit scope: $path"
 }
 
 foreach ($path in @("tools/redact_trufflehog.py", "tools/test_redact_trufflehog.py", "tools/scan_trufflehog.sh",
@@ -620,7 +628,7 @@ Assert-Selector (Test-RequiredCommand -Plan $packagingPlan -Id "package-smoke") 
 Assert-Selector (Test-Workflow -Plan $packagingPlan -Name "windows-ci") "packaging changes must wait for windows-ci"
 
 $mcpPlan = Get-FlitzZipVerificationPlan -ChangedPath @("mcp/flitzzip_mcp.py")
-foreach ($agentToolPath in @("tools/agent_context.py", "tools/test_agent_context.py", "tools/cocoindex_agent_search.py", "tools/test_cocoindex_agent_search.py", "tools/requirements/cocoindex-code.in", "tools/requirements/cocoindex-code.txt", "tools/requirements/requirements-cocoindex-code.in", "tools/requirements/requirements-cocoindex-code.txt")) {
+foreach ($agentToolPath in @("tools/agent_context.py", "tools/test_agent_context.py", "tools/atomic_file.py", "tools/test_atomic_file.py", "tools/cocoindex_agent_search.py", "tools/test_cocoindex_agent_search.py", "tools/requirements/cocoindex-code.in", "tools/requirements/cocoindex-code.txt", "tools/requirements/requirements-cocoindex-code.in", "tools/requirements/requirements-cocoindex-code.txt")) {
     $agentToolPlan = Get-FlitzZipVerificationPlan -ChangedPath @($agentToolPath)
     Assert-Selector (-not $agentToolPlan.scope.fullEscalationRequired) "agent context and routing changes require their own contracts"
     Assert-Selector (Test-RequiredCommand -Plan $agentToolPlan -Id "agent-context-contracts") "agent tool changes must exercise real context and search receipt contracts"
