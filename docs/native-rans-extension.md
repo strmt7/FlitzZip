@@ -179,6 +179,50 @@ reaches the available budget. A trial that survives the bound must still
 finish and beat the previous winner after all framing is counted. Equal sizes
 retain the previous representation and its minimum archive version.
 
+## Production integration boundaries
+
+Integrate through the existing archive and HIP owners rather than retaining a
+second product codec copied from the development probes.
+
+| Boundary | Integration contract |
+| --- | --- |
+| `core/archive_block_types.hpp`, `core/archive_index.*` | Register the new plain kind and readable version together. Preserve the existing descriptor-only minimum and unknown-kind rejection. |
+| `core/archive_block_version.hpp`, `core/archive.cpp` | Reuse payload-aware writer minima and fixed-header reader preflight for every advertised child. Keep recovered compound payload admission separate from its outer header. |
+| `core/archive_blocks.cpp` | Connect the independent portable decoder through normal bounded decode ownership; it must not become a Neutron encoder or required-HIP retry. |
+| `gpu/hip_kernel_api.*`, `gpu/hip_kernel_module.cpp` | Advance the private ABI/export, layout checks, component binding and complete device-entry validation together. Admit the checksum-bound module before exposing any new kernel. |
+| `gpu/hip_codec.cpp`, `gpu/hip_crc.cpp` | Share synchronous borrowed device windows between materialization, inverse transforms and CRC. Keep model, descriptor, status and source owners alive through their actual completion. |
+| `core/host_memory_budget.*`, GPU reservations | Account for models, corrected counts, offsets, retained streams and simultaneous decoder workers as well as payload buffers. A generous payload allowance alone is not a workspace proof. |
+
+Statistics belong to an immutable stage's owner. A reusable allocation address
+and equal byte count do not identify its contents: a transform can overwrite
+the same window for a different width or plane. Reuse statistics only while the
+matching source and stage remain immutable and owned. Recompute them after a
+stage replacement, including replacements with the same size.
+
+Before joining the entropy path, make decode observation and device consumption
+coherent. Kernel/transfer counters must be usable without requesting elapsed
+times; disabled timing must remain distinguishable from a measured zero. Apply
+that policy to all decode dispatch helpers, including dictionary and sparse
+materialization, rather than only the new rANS kernel.
+
+Composed CRC verification must consume final decoded device bytes directly.
+Byte-plane frames can pass their materialized device window through the inverse
+transform and then CRC, without copying the final payload to host memory.
+Compound frames still require admission of the recovered original encoding;
+retain that bounded intermediate until its actual consumer completes. Do not
+replace admission with an unchecked device pointer or CPU checksum. Plain blocks
+inside a mixed chunk should reuse the existing plain CRC path. Combine each
+block's CRC in original decoded order.
+
+Qualify these boundaries in coherent steps: observation and lifetime contracts,
+shared composed decode/CRC, sparse entropy admission and readers, then the
+Neutron-only writer portfolio and version propagation. Use independent framed
+bytes, CRC oracles, malformed-stage rejection, cleanup/reuse controls and actual
+device dispatch. Challenge transfer-counter assertions with the preceding
+implementation. Correctness fixtures and exact transfer counts do not establish
+throughput or representative compression gains; the adoption criteria below
+remain required.
+
 ## Adoption criteria
 
 The isolated reference, independent public-domain

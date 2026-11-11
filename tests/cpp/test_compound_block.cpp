@@ -59,10 +59,11 @@ flitzzip::BlockDescriptor compound_descriptor(std::span<const std::byte> payload
 
 }  // namespace
 
-// Purpose: Independently exercise both-stage CPU/HIP decoding and GPU integrity for every admitted fixture.
-// Inputs: Handcrafted fill/pattern/LZ4 compositions plus mixed raw/fill layouts and actual device availability.
-// Outputs: Requires byte-exact CPU output, real HIP telemetry and equal GPU CRC when HIP is present.
-TEST_CASE(flzip_compound_independent_readers_and_gpu_crc) {
+namespace {
+
+// Exercise identical independent frames with requested or absent optional telemetry.
+// GPU availability, decoded bytes and CRC remain required in either observation mode.
+void require_independent_compound_readers(bool collect_telemetry) {
     for (const auto inner :
          {flitzzip::BlockKind::Fill, flitzzip::BlockKind::Pattern, flitzzip::BlockKind::GpuDictionary}) {
         auto payload = compound_fixture(inner);
@@ -89,18 +90,32 @@ TEST_CASE(flzip_compound_independent_readers_and_gpu_crc) {
             if (hip && !flitzzip::query_gpu_info().available) {
                 continue;
             }
-            flitzzip::GpuCodecOptions options{
-                .require_gpu = hip, .force_cpu = !hip, .telemetry = std::make_shared<flitzzip::GpuTelemetry>()};
+            flitzzip::GpuCodecOptions options{.require_gpu = hip, .force_cpu = !hip};
+            if (collect_telemetry) {
+                options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+            }
             std::vector<std::byte> decoded(expected.size());
             REQUIRE_EQ(flitzzip::decode_chunk(payload, blocks, decoded, options), hip);
             REQUIRE_EQ(decoded, expected);
             const auto verified = flitzzip::crc_decoded_chunk(payload, blocks, expected.size(), options);
             REQUIRE_EQ(verified.crc32, flitzzip::crc32(expected));
             REQUIRE_EQ(verified.gpu_used, hip);
-            const auto stats = flitzzip::snapshot_gpu_telemetry(*options.telemetry);
-            REQUIRE_EQ(stats.kernel_launches > 0U, hip);
+            if (collect_telemetry) {
+                const auto stats = flitzzip::snapshot_gpu_telemetry(*options.telemetry);
+                REQUIRE_EQ(stats.kernel_launches > 0U, hip);
+            }
         }
     }
+}
+
+}  // namespace
+
+TEST_CASE(flzip_compound_independent_readers_and_gpu_crc) {
+    require_independent_compound_readers(true);
+}
+
+TEST_CASE(flzip_compound_readers_and_gpu_crc_without_telemetry) {
+    require_independent_compound_readers(false);
 }
 
 // Purpose: Reject recursive/CPU/unknown stages, bad extents and noncanonical headers before HIP dispatch.

@@ -337,11 +337,9 @@ void materialize_non_prefix_segments_device(const std::byte* device_payload, con
     if (segments > std::numeric_limits<unsigned int>::max()) {
         throw GpuError("decode materialize segment count exceeds HIP launch limits");
     }
-    auto events = make_hip_event_pair("create materialize_segments_kernel events");
-    launch_measured_kernel(hip_kernel_api().materialize_segments_kernel, static_cast<unsigned int>(segments), threads,
-                           0, hipStreamPerThread, events, "launch materialize_segments_kernel", device_payload,
-                           device_blocks, static_cast<std::uint32_t>(host_blocks.size()), device_output, output_len);
-    finish_measured_kernel(telemetry, events, "synchronize materialize_segments_kernel");
+    dispatch_codec_kernel(telemetry, hip_kernel_api().materialize_segments_kernel, static_cast<unsigned int>(segments),
+                          threads, "materialize_segments_kernel", device_payload, device_blocks,
+                          static_cast<std::uint32_t>(host_blocks.size()), device_output, output_len);
 }
 
 // Purpose: Finish sparse blocks after every independent motif segment has been materialized.
@@ -358,11 +356,9 @@ void materialize_sparse_patches_device(const std::byte* device_payload, const De
     if (host_blocks.size() > std::numeric_limits<std::uint32_t>::max()) {
         throw GpuError("sparse decode block count exceeds HIP launch limits");
     }
-    auto events = make_hip_event_pair("create sparse patch events");
-    launch_measured_kernel(hip_kernel_api().apply_sparse_patches_kernel, static_cast<unsigned int>(host_blocks.size()),
-                           256, 0, hipStreamPerThread, events, "launch sparse patch kernel", device_payload,
-                           device_blocks, device_output, static_cast<std::uint32_t>(host_blocks.size()));
-    finish_measured_kernel(telemetry, events, "synchronize sparse patch kernel");
+    dispatch_codec_kernel(telemetry, hip_kernel_api().apply_sparse_patches_kernel,
+                          static_cast<unsigned int>(host_blocks.size()), 256, "sparse patch kernel", device_payload,
+                          device_blocks, device_output, static_cast<std::uint32_t>(host_blocks.size()));
 }
 
 // Purpose: Launch GPU prefix materialization for the prefix-coded portions of one decoded chunk.
@@ -386,15 +382,13 @@ void materialize_prefix_segments_device(const std::byte* device_payload, std::by
     check_hip(copy_on_codec_stream(device_plans.get(), plans.data(), plan_bytes, hipMemcpyHostToDevice),
               "hipMemcpy prefix decode plans");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes));
-    auto events = make_hip_event_pair("create materialize_prefix_segments_kernel events");
     // Two lanes reduced gfx1201 decode time; 32- and 64-lane launches regressed on the measured workload.
     constexpr unsigned int kDecodeThreads = 2U;
     const auto decode_blocks = (plans.size() + kDecodeThreads - 1U) / kDecodeThreads;
-    launch_measured_kernel(hip_kernel_api().materialize_prefix_segments_kernel,
-                           static_cast<unsigned int>(decode_blocks), kDecodeThreads, 0, hipStreamPerThread, events,
-                           "launch materialize_prefix_segments_kernel", device_payload, device_plans.get(),
-                           static_cast<std::uint32_t>(plans.size()), device_output, device_errors.get());
-    finish_measured_kernel(telemetry, events, "synchronize materialize_prefix_segments_kernel");
+    dispatch_codec_kernel(telemetry, hip_kernel_api().materialize_prefix_segments_kernel,
+                          static_cast<unsigned int>(decode_blocks), kDecodeThreads,
+                          "materialize_prefix_segments_kernel", device_payload, device_plans.get(),
+                          static_cast<std::uint32_t>(plans.size()), device_output, device_errors.get());
     std::vector<std::uint32_t> errors(plans.size());
     check_hip(copy_on_codec_stream(errors.data(), device_errors.get(), error_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy prefix decode errors");

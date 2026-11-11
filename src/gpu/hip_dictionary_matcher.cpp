@@ -642,11 +642,9 @@ void decode_segments_device(const std::byte* encoded, std::span<const Dictionary
     check_hip(copy_on_codec_stream(device_spans.get(), spans.data(), span_bytes, hipMemcpyHostToDevice),
               "upload dictionary decode spans");
     record_gpu_h2d_bytes(telemetry, span_bytes);
-    auto events = make_hip_event_pair("create dictionary archive decode events");
-    launch_measured_kernel(hip_kernel_api().decode_dictionary_segments, static_cast<unsigned int>(spans.size()),
-                           kDictionaryKernelThreads, 0, hipStreamPerThread, events, "launch dictionary archive decoder",
-                           encoded, device_spans.get(), decoded, statuses.get());
-    finish_measured_kernel(telemetry, events, "synchronize dictionary archive decoder");
+    dispatch_codec_kernel(telemetry, hip_kernel_api().decode_dictionary_segments,
+                          static_cast<unsigned int>(spans.size()), kDictionaryKernelThreads,
+                          "dictionary archive decoder", encoded, device_spans.get(), decoded, statuses.get());
     std::vector<std::uint32_t> host_statuses(spans.size());
     check_hip(copy_on_codec_stream(host_statuses.data(), statuses.get(), status_bytes, hipMemcpyDeviceToHost),
               "download dictionary archive decode statuses");

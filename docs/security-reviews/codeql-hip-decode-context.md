@@ -25,6 +25,14 @@ helper completes the calling thread's stream before a consumer reads or frees
 its buffers. With telemetry it retains the existing event completion path;
 without telemetry it synchronizes the same stream directly.
 
+Plain, sparse and prefix materialization and archive dictionary decoding now
+use that same dispatch helper. Their kernels, launch geometry, arguments and
+status validation are retained. Absent telemetry no longer creates events or
+computes an unused elapsed interval in those callers. The compound reader's
+independent fill, pattern and dictionary fixtures exercise both requested and
+absent telemetry through the same decoded-byte and CRC assertions. This
+completion change does not make a profiling result evidence of device coverage.
+
 These changes neither remove the device reads nor turn the qualifier into a
 host variable. Removing the table would break integrity checking. Independent
 bitwise CRC and guarded production-kernel tests exercise these consumers;
