@@ -61,3 +61,13 @@ responses, wrong digest and corrupted cache contents; the real published
 source and repaired-wheel build were separately qualified. Neither users nor
 webpage content control the URL. The reported local-file-scheme concern does
 not apply to this pinned acquisition path.
+
+The crawler's browser dependency now pins Playwright 1.65.0. The lock change
+replaces only that package version and its wheel hashes. Source acquisition,
+recipe validation, bounded reads, digest verification and wheel construction
+finish before browser provisioning. They use the same standard-library
+`urllib` transport and immutable recipe, independently of Playwright. The
+download regression and installed-consumer checks retain those boundaries.
+The scanner-asset transport in alert 8446 has unchanged source, pins, callers
+and tests. These two existing decisions retain their reported sources,
+locations, rules and scanner identities.
