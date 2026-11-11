@@ -1,24 +1,24 @@
 {
   "schema": 1,
-  "upstream_version": "1.184.0",
-  "version": "1.184.0+flitzzip.security1",
+  "upstream_version": "1.185.0",
+  "version": "1.185.0+flitzzip.security1",
   "mcp_before": "1.29.0",
   "mcp_after": "1.30.0",
   "advisory": "https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv",
   "wheels": {
     "linux": {
-      "filename": "semgrep-1.184.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-manylinux_2_34_x86_64.whl",
-      "url": "https://files.pythonhosted.org/packages/3f/32/d5f5f37bbfa8fee1527c749a7bfc5a1ab57f4316f98e91783721b340a35d/semgrep-1.184.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-manylinux_2_34_x86_64.whl",
-      "bytes": 72254465,
-      "sha256": "d847abb8fb6fdde77d9e30a6bc869dbfcb68eff4142dcd77897c52635a7600d9",
-      "derived_sha256": "4c1ea3fde08d5417064e3b8f882a880b3b3d4465f92707291ad5bec371b5d89e"
+      "filename": "semgrep-1.185.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-manylinux_2_34_x86_64.whl",
+      "url": "https://files.pythonhosted.org/packages/f2/13/0d4dc8d124794105f300082c46e3d8ad45eac7af63113b57a5966629b5a3/semgrep-1.185.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-manylinux_2_34_x86_64.whl",
+      "bytes": 72302138,
+      "sha256": "0eb6aaadad5b957af96d1300487e10af1dc8016e8ef53072effb48cd4906c02b",
+      "derived_sha256": "1fc1b677d03d3c14d29140beea3d65adc75028d507b315b0064ef84cc3eb61ab"
     },
     "windows": {
-      "filename": "semgrep-1.184.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-win_amd64.whl",
-      "url": "https://files.pythonhosted.org/packages/9b/9b/71a620f72bc6203286a4a6c031d53186863acf7d1af4f27c697ef176cbdf/semgrep-1.184.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-win_amd64.whl",
-      "bytes": 59524393,
-      "sha256": "3c86b2961b4663d1338fb965de038c7869571661971b78e18e9346ab57e1e20a",
-      "derived_sha256": "45b6d2edb4e67d3501a3e9397a241486a78eb2e1260c248cc3f94827bf291e70"
+      "filename": "semgrep-1.185.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/8e/8e/c8d5135ff77a60e825c08b68272a924572e59841d01beba29be7041d2c75/semgrep-1.185.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-win_amd64.whl",
+      "bytes": 59558677,
+      "sha256": "91812ac0856cfe5b6135a4dffde3052a04c36a46e4e82e78793e3a07e51d7894",
+      "derived_sha256": "1a9ded19c7b1eba5d7180cfa7b4c6506cf083b418521b62ebe7685328625f680"
     }
   }
 }

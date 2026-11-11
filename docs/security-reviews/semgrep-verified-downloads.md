@@ -1,6 +1,6 @@
 # Semgrep Verified Download Reviews
 
-These are two individually reviewed reports from Semgrep OSS 1.184.0. Their
+These are two individually reviewed reports from Semgrep OSS 1.185.0. Their
 exact source, scanner, location, callers, provenance and tests are bound in the
 current review ledger. Raw reports remain available. Changed identities require
 a new review; these decisions do not admit any other URL finding.
@@ -9,7 +9,7 @@ a new review; these decisions do not admit any other URL finding.
 
 Both reported downloader sources, callers' URL restrictions, byte budgets and
 integrity checks are unchanged. The current scanner uses the reviewed Semgrep
-1.184.0 packaging revision and its normally resolved MCP/OpenTelemetry cohort.
+1.185.0 packaging revision and its normally resolved MCP/OpenTelemetry cohort.
 Original scanner source, native executables, permissions and notices remain
 byte-identical to that upstream release.
 
@@ -24,6 +24,15 @@ Their source hashes and complete JSON/SARIF finding identities agree. Direct
 download regressions retain malformed-URL, size, digest, redirected-cache and
 failure-cleanup controls. Each decision binds the scanner recipe, lock, workflow,
 runtime qualification, acquisition callers and their relevant tests.
+
+The rebase preserves the exact MCP 1.30.0 repair and updates the coordinated
+OpenTelemetry API/SDK/OTLP and instrumentation requirements to 1.45.2/0.66b2.
+The ordinary Linux installation passes dependency consistency and the actual
+MCP, JWT, hostile-header, telemetry-export and scanner-control regressions.
+Neither downloader's source, URL admission, pinned inputs or callers change.
+The full new scan retains the same parser/matcher diagnostic paths and counts
+for tracked source as the preceding scanner. Those diagnostics are limitations,
+not successful parsing; they remain in the raw and coverage artifacts.
 
 The Git-backed review reader admits bounded regular blobs, checked Git queries
 and complete source hashes. Its executable resolver rejects relative command

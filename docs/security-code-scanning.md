@@ -336,7 +336,8 @@ scanner retains `--error`: its finding-only exit status is accepted only after
 `tools/semgrep_findings.py` compares both complete outputs with the committed
 individual review ledger and the live source, callers, tests and scanner recipe.
 Every unmatched, changed, duplicated or malformed finding still fails the job;
-scanner errors also fail. Raw SARIF is uploaded even when this gate rejects a
+fatal scanner exits also fail. Nonfatal parser and matcher diagnostics remain
+in the coverage evidence and require separate review. Raw SARIF is uploaded even when this gate rejects a
 finding. This implements Semgrep's documented [finding exit-code contract](https://docs.semgrep.dev/cli-reference/#exit-codes)
 without disabling a rule or dropping a report.
 
@@ -530,10 +531,10 @@ resolution followed by `pip check`, actual consumer regressions, and the full
 scanner with its tracked coverage audit.
 
 [The MCP session-retention advisory](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv)
-is fixed in official MCP 1.30.0. Semgrep 1.184.0 still requires exactly MCP
+is fixed in official MCP 1.30.0. Semgrep 1.185.0 still requires exactly MCP
 1.29.0, so those official distributions cannot be installed together normally.
 The repository identifies its narrow downstream packaging revision as
-`semgrep==1.184.0+flitzzip.security1`. This is not an official Semgrep release.
+`semgrep==1.185.0+flitzzip.security1`. This is not an official Semgrep release.
 The pinned artifact manifest records the original and derived Linux/Windows
 x64 wheels. `tools/semgrep_distribution.py` validates the complete original
 wheel and RECORD, then changes only the distribution version and the exact reviewed
@@ -542,11 +543,13 @@ and notices remain unchanged. The version displayed by scanner code continues
 to identify its upstream source; installed distribution metadata identifies the
 downstream packaging revision.
 
-The rebase to [Semgrep 1.184.0](https://github.com/semgrep/semgrep/releases/tag/v1.184.0)
-includes upstream proxy-credential and source-snippet logging fixes. The targeted
-lock update retains the existing dependency versions and adds the new upstream
-`structlog` requirement. This does not qualify other dependency upgrades or change
-scanner coverage.
+The current rebase uses [Semgrep 1.185.0](https://github.com/semgrep/semgrep/releases/tag/v1.185.0)
+and retains the existing packaging repair. Its resolved Linux dependency cohort
+is qualified through a normal hash-checked installation, installed-consumer tests
+and a complete source scan. The native scanner and Python package must report the
+same upstream version. Package resolution alone does not establish compatibility.
+The upstream release also restricts Windows subprocess lookup to fully qualified
+`PATH` directories, preventing implicit execution from the scanned directory.
 
 Activate the scanner environment before invoking its CLI and retain that
 environment's executable directory first in `PATH` for later workflow steps.
@@ -559,11 +562,11 @@ metadata and the fixture finding counts appear correct. This follows the normal
 [virtual-environment activation contract](https://docs.python.org/3.14/library/venv.html#how-venvs-work).
 
 The OpenTelemetry tracestate parsing advisory GHSA-xcq7-p3pf-p88h is fixed in
-official API 1.45.1. Semgrep 1.184.0 still pins the affected 1.37 family.
+official API 1.45.1. Semgrep 1.185.0 still pins the affected 1.37 family.
 The same explicitly authorized packaging exception now installs the coordinated
-official API/SDK/OTLP 1.45.1 and requests/threading instrumentation 0.66b1 cohort.
+official API/SDK/OTLP 1.45.2 and requests/threading instrumentation 0.66b2 cohort.
 This is an exact reviewed change, not a general resolver override. The complete
-lock retains unrelated package versions. Runtime qualification exercises a
+lock records the complete reviewed resolved cohort. Runtime qualification exercises a
 bounded hostile-header parser regression, the scanner's real resource/exporter
 consumers with an intercepted HTTP transport, and the existing scanner/MCP/JWT
 controls. Linux execution remains required on the pushed revision.

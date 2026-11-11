@@ -1,9 +1,9 @@
 --index-url https://pypi.org/simple
 --only-binary=:all:
-semgrep==1.184.0+flitzzip.security1
+semgrep==1.185.0+flitzzip.security1
 pyjwt[crypto]==2.15.1
 # Advisory floors still apply to the complete resolved graph.
 certifi>=2026.10.19
 cryptography>=50.0.2
 mcp>=1.30.0
-opentelemetry-api>=1.45.1
+opentelemetry-api>=1.45.2
