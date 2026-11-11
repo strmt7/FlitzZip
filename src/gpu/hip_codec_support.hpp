@@ -267,6 +267,25 @@ class HipDeviceMemoryReservation {
         return *this;
     }
 
+    // Retain only the still-live part of this plan after its other buffers have completed and been freed.
+    // This cannot grow or reacquire a reservation, query HIP, or change the original device. Invalid growth or
+    // inconsistent accounting throws without changing this owner; remaining buffers stay charged through cleanup.
+    void reduce_to(std::size_t remaining_bytes) {
+        if (remaining_bytes > bytes_) {
+            throw GpuError("cannot grow a HIP device memory reservation");
+        }
+        if (remaining_bytes == bytes_) {
+            return;
+        }
+        if (!hip_device_reservation_state().release(device_, bytes_ - remaining_bytes)) {
+            throw GpuError("cannot reduce inconsistent HIP device memory accounting");
+        }
+        bytes_ = remaining_bytes;
+        if (bytes_ == 0U) {
+            device_ = -1;
+        }
+    }
+
     // Purpose: Release planned device bytes from process-wide admission accounting.
     // Inputs: Uses the reservation acquired by the constructor.
     // Outputs: Decrements aggregate accounting without throwing.

@@ -16,9 +16,11 @@ device reads in contiguous, independent-range and decoded-block CRC kernels.
 The [device review](codeql-hip-device-semantics.md#alert-703) records the original
 source interpretation and its limits.
 
-The shared materialization helper retains the validated payload, descriptor
-table, output buffer and device-memory reservation until its synchronous
-consumer returns. Extraction copies the completed output; verification calls
+The shared materialization helper retains the validated payload and descriptor
+table through synchronous decoding and status validation, then checks their
+release before reducing the reservation. The output buffer and its remaining
+reservation survive until the synchronous consumer returns. Extraction copies
+the completed output; verification calls
 the same contiguous CRC kernel on that output and downloads CRC metadata only.
 The decoder sequence and kernel binding are unchanged. The shared dispatch
 helper completes the calling thread's stream before a consumer reads or frees
@@ -41,6 +43,13 @@ for its final stage. Mixed plain blocks retain their existing CRC specialization
 and combine in decoded order. Independent frames test CRC equality, transfer
 bounds below a decoded block, cancellation at both inverse-transform boundaries
 and successful reuse; both observation modes remain exercised.
+
+The reservation can only decrease after completed scratch buffers are freed;
+it cannot grow or reacquire capacity. The independent ownership regression
+checks exact live accounting at both inverse boundaries, cancellation and
+immediate reuse. Additional owner tests cover rejected growth, repeated
+reductions, moves, independent siblings, zeroing and exception unwinding.
+These checks observe logical admission accounting, not physical VRAM usage.
 
 These changes neither remove the device reads nor turn the qualifier into a
 host variable. Removing the table would break integrity checking. Independent

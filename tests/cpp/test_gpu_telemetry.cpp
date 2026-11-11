@@ -18,6 +18,7 @@
 #include <cmath>
 #include <future>
 #include <limits>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -567,6 +568,136 @@ TEST_CASE(gpu_kernel_admission_preserves_thread_device_selection) {
     std::async(std::launch::async, check).get();
 #else
     REQUIRE_TRUE(!flitzzip::hip_device_available());
+#endif
+}
+
+// Observe logical reservations at both inverse-transform boundaries without exhausting physical VRAM.
+// Independent full/context frames, cancellation and reuse require only decoded bytes to remain owned.
+TEST_CASE(gpu_composed_crc_releases_decode_scratch_before_consumer) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    int device = -1;
+    REQUIRE_EQ(hipGetDevice(&device), hipSuccess);
+    auto& budget = flitzzip::hip_detail::hip_device_reservation_state();
+    const auto baseline = budget.reserved_bytes(device);
+    constexpr std::uint32_t bytes = 4099U;
+    for (const bool contexts : {false, true}) {
+        const std::vector<std::byte> frame =
+            contexts ? std::vector<std::byte>{std::byte{2}, std::byte{0},   std::byte{0}, std::byte{0},
+                                              std::byte{1}, std::byte{'A'}, std::byte{0}, std::byte{0},
+                                              std::byte{0}, std::byte{0},   std::byte{1}, std::byte{'B'},
+                                              std::byte{0}, std::byte{0},   std::byte{0}, std::byte{0}}
+                     : std::vector<std::byte>{std::byte{4}, std::byte{3},   std::byte{0},
+                                              std::byte{0}, std::byte{'A'}, std::byte{'B'}};
+        const flitzzip::BlockDescriptor block{.kind = contexts ? flitzzip::BlockKind::GpuBytePlaneContexts
+                                                               : flitzzip::BlockKind::GpuBytePlane,
+                                              .uncompressed_len = bytes,
+                                              .encoded_len = static_cast<std::uint32_t>(frame.size())};
+        std::vector<std::byte> expected(bytes);
+        for (std::size_t index = 0U; index < expected.size(); ++index) {
+            const auto transformed = index < 4096U ? (index % 4U) * 1024U + index / 4U : index;
+            expected[index] = contexts ? (index == bytes - 1U || index % 2U ? std::byte{'B'} : std::byte{'A'})
+                                       : (transformed % 2U ? std::byte{'B'} : std::byte{'A'});
+        }
+        for (const unsigned int cancellation : {0U, 1U, 2U}) {
+            unsigned int checkpoints = 0U;
+            flitzzip::GpuCodecOptions options{.require_gpu = true};
+            options.encode_checkpoint = [&] {
+                ++checkpoints;
+                const auto outputs = checkpoints == 1U ? 1U : 2U;
+                REQUIRE_EQ(budget.reserved_bytes(device), baseline + outputs * bytes);
+                if (checkpoints == cancellation) {
+                    throw flitzzip::ArchiveError("independent scratch-lifetime cancellation");
+                }
+            };
+            bool cancelled = false;
+            try {
+                const auto verified = flitzzip::crc_decoded_chunk(frame, std::span(&block, 1U), bytes, options);
+                REQUIRE_TRUE(verified.gpu_used);
+                REQUIRE_EQ(verified.crc32, flitzzip::crc32(expected));
+            } catch (const flitzzip::ArchiveError& error) {
+                if (!cancellation || std::string_view(error.what()) != "independent scratch-lifetime cancellation") {
+                    throw;
+                }
+                cancelled = true;
+            }
+            REQUIRE_EQ(cancelled, cancellation != 0U);
+            REQUIRE_EQ(checkpoints, cancellation ? cancellation : 2U);
+            REQUIRE_EQ(budget.reserved_bytes(device), baseline);
+            options.encode_checkpoint = {};
+            const auto recovered = flitzzip::crc_decoded_chunk(frame, std::span(&block, 1U), bytes, options);
+            REQUIRE_TRUE(recovered.gpu_used);
+            REQUIRE_EQ(recovered.crc32, flitzzip::crc32(expected));
+            REQUIRE_EQ(budget.reserved_bytes(device), baseline);
+        }
+    }
+#endif
+}
+
+// Exercise monotonic accounting without allocating large buffers or simulating host-wide memory pressure.
+// Independent owners, empty/moved states, rejected growth and exception unwinding must preserve exact totals.
+TEST_CASE(gpu_device_reservation_reduction_preserves_owners_and_unwinding) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    int device = -1;
+    REQUIRE_EQ(hipGetDevice(&device), hipSuccess);
+    auto& budget = flitzzip::hip_detail::hip_device_reservation_state();
+    const auto baseline = budget.reserved_bytes(device);
+    {
+        flitzzip::hip_detail::HipDeviceMemoryReservation first(64U, "independent reservation fixture");
+        flitzzip::hip_detail::HipDeviceMemoryReservation sibling(32U, "independent sibling fixture");
+        REQUIRE_EQ(budget.reserved_bytes(device), baseline + 96U);
+        first.reduce_to(16U);
+        first.reduce_to(16U);
+        REQUIRE_EQ(budget.reserved_bytes(device), baseline + 48U);
+        bool rejected = false;
+        try {
+            first.reduce_to(17U);
+        } catch (const flitzzip::GpuError& error) {
+            rejected = std::string_view(error.what()) == "cannot grow a HIP device memory reservation";
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(budget.reserved_bytes(device), baseline + 48U);
+        flitzzip::hip_detail::HipDeviceMemoryReservation moved(std::move(first));
+        first.reduce_to(0U);
+        flitzzip::hip_detail::HipDeviceMemoryReservation replacement(8U, "independent replacement fixture");
+        REQUIRE_EQ(budget.reserved_bytes(device), baseline + 56U);
+        replacement = std::move(moved);
+        moved.reduce_to(0U);
+        REQUIRE_EQ(budget.reserved_bytes(device), baseline + 48U);
+        replacement.reduce_to(0U);
+        sibling.reduce_to(0U);
+        REQUIRE_EQ(budget.reserved_bytes(device), baseline);
+        rejected = false;
+        try {
+            replacement.reduce_to(1U);
+        } catch (const flitzzip::GpuError& error) {
+            rejected = std::string_view(error.what()) == "cannot grow a HIP device memory reservation";
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(budget.reserved_bytes(device), baseline);
+    }
+    bool unwound = false;
+    try {
+        flitzzip::hip_detail::HipDeviceMemoryReservation owner(64U, "independent unwind fixture");
+        owner.reduce_to(16U);
+        REQUIRE_EQ(budget.reserved_bytes(device), baseline + 16U);
+        throw flitzzip::ArchiveError("independent reservation unwind");
+    } catch (const flitzzip::ArchiveError& error) {
+        if (std::string_view(error.what()) != "independent reservation unwind") {
+            throw;
+        }
+        unwound = true;
+    }
+    REQUIRE_TRUE(unwound);
+    REQUIRE_EQ(budget.reserved_bytes(device), baseline);
+    int after = -1;
+    REQUIRE_EQ(hipGetDevice(&after), hipSuccess);
+    REQUIRE_EQ(after, device);
 #endif
 }
 

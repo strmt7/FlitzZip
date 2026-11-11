@@ -401,8 +401,8 @@ void materialize_prefix_segments_device(const std::byte* device_payload, std::by
 }
 
 // Materialize one validated, nonempty chunk before exposing its device output to a synchronous consumer.
-// The consumer must finish using the borrowed pointer before it returns. This scope owns all allocations
-// and their reservation through consumption, including when a decoder or the consumer throws.
+// The consumer must finish using the borrowed pointer before it returns. Decode-only inputs are freed after
+// synchronous materialization/status checks; the output and its reservation survive consumption and exceptions.
 template <typename Consumer>
 void with_materialized_chunk_device(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                                     std::size_t output_size, GpuTelemetry* telemetry, Consumer consume) {
@@ -433,10 +433,11 @@ void with_materialized_chunk_device(std::span<const std::byte> payload, std::spa
                                       telemetry);
     materialize_prefix_segments_device(device_payload.get(), device_output.get(), prefix_plans, telemetry);
     dictionary::decode_segments_device(device_payload.get(), dictionary_plans, device_output.get(), telemetry);
-    consume(device_output.get());
     device_payload.reset_checked("hipFree decode payload");
-    device_output.reset_checked("hipFree decode output");
     device_blocks.reset_checked("hipFree decode blocks");
+    reservation.reduce_to(output_size);
+    consume(device_output.get());
+    device_output.reset_checked("hipFree decode output");
 }
 
 // Purpose: Mark a sequential HIP encode phase boundary using host steady-clock time.
