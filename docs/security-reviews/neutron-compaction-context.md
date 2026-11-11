@@ -7,6 +7,12 @@ added tests exercise compaction directly with private in-memory data. They
 preserve the existing test registrations and fixture bodies. The reported
 source bytes, locations, scanner versions and categories are unchanged.
 
+The additional byte-plane integrity regression calls the bounded HIP CRC API
+with independent frames and instance-local cancellation checkpoints. It changes
+no existing test body, allocator definition, LHA callback, TAR helper call or
+GDI loop. Transfer assertions reject decoded-payload host round trips, while
+CRC equality and reuse controls retain the real successful device path.
+
 ## Individual decisions
 
 ### Alert 703
@@ -34,8 +40,9 @@ same miniz operation.
 
 ### Alert 632
 
-The native tests only construct FlitzZip chunk descriptors and byte vectors.
-They neither install nor retain an LHA callback. The reported stream,
+The added native tests construct FlitzZip chunk descriptors and byte vectors,
+call HIP integrity and use instance-local checkpoints. They neither install nor
+retain an LHA callback. The reported stream,
 adapter, reader and borrowed context retain their reviewed lifetimes.
 See the [ownership review](lha-callback-lifetime.md#alert-632).
 

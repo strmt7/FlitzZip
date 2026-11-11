@@ -33,6 +33,15 @@ independent fill, pattern and dictionary fixtures exercise both requested and
 absent telemetry through the same decoded-byte and CRC assertions. This
 completion change does not make a profiling result evidence of device coverage.
 
+Composed integrity now consumes the completed inverse byte-plane window directly
+on device. Its source, output and workspace reservations survive through the
+inverse transform and CRC. Compound verification still decodes and admits the
+bounded recovered encoding in host RAM, then uses the ordinary HIP CRC route
+for its final stage. Mixed plain blocks retain their existing CRC specialization
+and combine in decoded order. Independent frames test CRC equality, transfer
+bounds below a decoded block, cancellation at both inverse-transform boundaries
+and successful reuse; both observation modes remain exercised.
+
 These changes neither remove the device reads nor turn the qualifier into a
 host variable. Removing the table would break integrity checking. Independent
 bitwise CRC and guarded production-kernel tests exercise these consumers;

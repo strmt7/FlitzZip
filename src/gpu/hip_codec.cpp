@@ -1055,34 +1055,8 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
     }
 }
 
-// Purpose: Verify mixed composed archives with GPU decoding and GPU CRC over bounded single-block buffers.
-// Inputs: A fully validated layout, output byte count and HIP telemetry configuration.
-// Outputs: Returns ordered combined source CRC without any CPU codec or checksum substitution.
 static std::uint32_t crc_compound_chunk_hip(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
-                                            const GpuCodecOptions& options) {
-    std::uint32_t crc = 0U;
-    for (auto block : blocks) {
-        (void)resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), block.uncompressed_len);
-        std::vector<std::byte> decoded(block.uncompressed_len);
-        const auto encoded = block.kind == BlockKind::Fill
-                                 ? std::span<const std::byte>{}
-                                 : payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len);
-        block.encoded_offset = 0U;
-        decode_chunk_hip(encoded, std::span(&block, 1U), decoded, options);
-        HipDeviceMemoryReservation reservation(decoded.size(), "compound CRC input");
-        HipDeviceBuffer<std::byte> device_input(decoded.size(), "hipMalloc compound CRC input");
-        auto* telemetry = options.telemetry.get();
-        record_gpu_device_allocation_bytes(telemetry, decoded.size());
-        check_hip(copy_on_codec_stream(device_input.get(), decoded.data(), decoded.size(), hipMemcpyHostToDevice),
-                  "hipMemcpy compound CRC input");
-        record_gpu_h2d_bytes(telemetry, decoded.size());
-        const auto block_crc =
-            compute_crc32_device(device_input.get(), decoded.size(), telemetry, "compound CRC workspace");
-        crc = crc32_combine(crc, block_crc, block.uncompressed_len);
-        device_input.reset_checked("hipFree compound CRC input");
-    }
-    return crc;
-}
+                                            const GpuCodecOptions& options);
 
 // Purpose: Verify a decoded chunk by checksumming GPU-supported block metadata directly in VRAM.
 // Inputs: `payload`/`blocks` describe encoded bytes, `output_size` is decoded byte count, and `options` supplies
@@ -1167,6 +1141,67 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
                                                   telemetry, "decoded CRC device memory");
     device_payload.reset_checked("hipFree CRC payload");
     device_blocks.reset_checked("hipFree CRC decode blocks");
+    return crc;
+}
+
+// A compound's recovered encoding needs host admission, but its final decoded bytes do not.
+// The bounded intermediate remains owned until the ordinary GPU CRC consumer has completed.
+static std::uint32_t crc_compound_block_hip(std::span<const std::byte> encoded, const BlockDescriptor& block,
+                                            const GpuCodecOptions& options) {
+    const auto stages = parse_gpu_compound_block(encoded, block);
+    (void)resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), stages.inner.uncompressed_len);
+    std::vector<std::byte> intermediate(stages.inner.uncompressed_len);
+    decode_plain_chunk_hip(stages.inner_payload, std::span(&stages.inner, 1U), intermediate, options);
+    return crc_decoded_chunk_hip(intermediate, std::span(&stages.original, 1U), block.uncompressed_len, options);
+}
+
+// Keep both transformed and inverse device windows reserved through synchronous CRC consumption.
+// Admit the closed child layout before materialization; preserve transform cancellation boundaries.
+static std::uint32_t crc_byte_plane_block_hip(std::span<const std::byte> encoded, const BlockDescriptor& block,
+                                              const GpuCodecOptions& options) {
+    const auto stages = parse_gpu_byte_plane_stages(encoded, block);
+    const auto children = std::span(stages.blocks).first(stages.count);
+    validate_decode_layout(stages.payload, children, block.uncompressed_len,
+                           std::max<std::uint32_t>(1U, options.block_size));
+    auto* telemetry = options.telemetry.get();
+    record_gpu_decode_chunk(telemetry);
+    std::uint32_t crc = 0U;
+    with_materialized_chunk_device(
+        stages.payload, children, block.uncompressed_len, telemetry, [&](const std::byte* transformed) {
+            if (options.encode_checkpoint) {
+                options.encode_checkpoint();
+            }
+            HipDeviceMemoryReservation reservation(block.uncompressed_len, "byte-plane CRC inverse");
+            HipDeviceBuffer<std::byte> original(block.uncompressed_len, "hipMalloc byte-plane CRC inverse");
+            record_gpu_device_allocation_bytes(telemetry, block.uncompressed_len);
+            transform_byte_planes_device(transformed, original.get(), block.uncompressed_len, stages.width, true,
+                                         telemetry);
+            if (options.encode_checkpoint) {
+                options.encode_checkpoint();
+            }
+            crc = compute_crc32_device(original.get(), block.uncompressed_len, telemetry, "byte-plane CRC workspace");
+            original.reset_checked("hipFree byte-plane CRC inverse");
+        });
+    return crc;
+}
+
+// Verify each admitted closed composition on HIP and combine CRCs in original decoded order.
+// Only a compound's recovered encoding crosses to host RAM; plain blocks retain their ordinary CRC path.
+static std::uint32_t crc_compound_chunk_hip(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
+                                            const GpuCodecOptions& options) {
+    std::uint32_t crc = 0U;
+    for (auto block : blocks) {
+        const auto encoded = block.kind == BlockKind::Fill
+                                 ? std::span<const std::byte>{}
+                                 : payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len);
+        block.encoded_offset = 0U;
+        const auto block_crc =
+            block.kind == BlockKind::GpuCompound ? crc_compound_block_hip(encoded, block, options)
+            : is_gpu_byte_plane_kind(block.kind)
+                ? crc_byte_plane_block_hip(encoded, block, options)
+                : crc_decoded_chunk_hip(encoded, std::span(&block, 1U), block.uncompressed_len, options);
+        crc = crc32_combine(crc, block_crc, block.uncompressed_len);
+    }
     return crc;
 }
 

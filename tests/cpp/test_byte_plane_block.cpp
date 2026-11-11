@@ -508,6 +508,61 @@ TEST_CASE(flzip_byte_plane_independent_readers_tails_and_gpu_crc) {
     }
 }
 
+// Independently framed full/context stages retain inverse bytes on device through CRC.
+// Cancellation at either transform boundary must unwind nested reservations and allow immediate reuse.
+TEST_CASE(flzip_byte_plane_crc_device_residency_cancellation_and_reuse) {
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    constexpr std::uint32_t bytes = 4099U;
+    for (const std::uint8_t width : {2U, 4U, 8U}) {
+        for (const bool contexts : {false, true}) {
+            const auto [frame, expected] =
+                contexts ? context_plane_fixture(width, bytes)
+                         : std::pair{byte_plane_fixture(width), expected_byte_plane_fixture(width, bytes)};
+            const flitzzip::BlockDescriptor block{.kind = contexts ? flitzzip::BlockKind::GpuBytePlaneContexts
+                                                                   : flitzzip::BlockKind::GpuBytePlane,
+                                                  .uncompressed_len = bytes,
+                                                  .encoded_len = static_cast<std::uint32_t>(frame.size())};
+            for (const bool collect_telemetry : {false, true}) {
+                flitzzip::GpuCodecOptions options{.require_gpu = true};
+                if (collect_telemetry) {
+                    options.telemetry = std::make_shared<flitzzip::GpuTelemetry>();
+                }
+                const auto verified = flitzzip::crc_decoded_chunk(frame, std::span(&block, 1U), bytes, options);
+                REQUIRE_TRUE(verified.gpu_used);
+                REQUIRE_EQ(verified.crc32, flitzzip::crc32(expected));
+                if (options.telemetry) {
+                    const auto stats = flitzzip::snapshot_gpu_telemetry(*options.telemetry);
+                    REQUIRE_TRUE(stats.kernel_launches > 0U);
+                    REQUIRE_TRUE(stats.h2d_bytes < bytes);
+                    REQUIRE_TRUE(stats.d2h_bytes < bytes);
+                }
+                for (const unsigned int boundary : {1U, 2U}) {
+                    unsigned int checkpoints = 0U;
+                    options.encode_checkpoint = [&] {
+                        if (++checkpoints == boundary) {
+                            throw flitzzip::ArchiveError("independent byte-plane CRC cancellation");
+                        }
+                    };
+                    bool cancelled = false;
+                    try {
+                        (void)flitzzip::crc_decoded_chunk(frame, std::span(&block, 1U), bytes, options);
+                    } catch (const flitzzip::ArchiveError& error) {
+                        cancelled = std::string_view(error.what()) == "independent byte-plane CRC cancellation";
+                    }
+                    REQUIRE_TRUE(cancelled);
+                    REQUIRE_EQ(checkpoints, boundary);
+                    options.encode_checkpoint = {};
+                    const auto recovered = flitzzip::crc_decoded_chunk(frame, std::span(&block, 1U), bytes, options);
+                    REQUIRE_TRUE(recovered.gpu_used);
+                    REQUIRE_EQ(recovered.crc32, flitzzip::crc32(expected));
+                }
+            }
+        }
+    }
+}
+
 // Purpose: Reject malformed and recursive frames without letting serialization become an allocation request.
 // Inputs: Every byte value at each header position, truncations, nonimproving sizes and invalid outer metadata.
 // Outputs: Requires CPU/HIP decode and integrity rejection before any kernel launch.

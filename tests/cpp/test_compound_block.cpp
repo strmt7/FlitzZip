@@ -97,12 +97,19 @@ void require_independent_compound_readers(bool collect_telemetry) {
             std::vector<std::byte> decoded(expected.size());
             REQUIRE_EQ(flitzzip::decode_chunk(payload, blocks, decoded, options), hip);
             REQUIRE_EQ(decoded, expected);
+            const auto before_crc =
+                options.telemetry ? flitzzip::snapshot_gpu_telemetry(*options.telemetry) : flitzzip::GpuRuntimeStats{};
             const auto verified = flitzzip::crc_decoded_chunk(payload, blocks, expected.size(), options);
             REQUIRE_EQ(verified.crc32, flitzzip::crc32(expected));
             REQUIRE_EQ(verified.gpu_used, hip);
             if (collect_telemetry) {
                 const auto stats = flitzzip::snapshot_gpu_telemetry(*options.telemetry);
                 REQUIRE_EQ(stats.kernel_launches > 0U, hip);
+                if (hip) {
+                    // The recovered 1024-byte encoding is allowed; the 4096-byte decoded block is not transferred.
+                    REQUIRE_TRUE(stats.h2d_bytes - before_crc.h2d_bytes < compound.uncompressed_len);
+                    REQUIRE_TRUE(stats.d2h_bytes - before_crc.d2h_bytes < compound.uncompressed_len);
+                }
             }
         }
     }
