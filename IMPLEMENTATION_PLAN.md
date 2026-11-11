@@ -44,11 +44,15 @@ Completed checkpoint narratives remain in Git history and local review artifacts
 
 ## Current Assessment
 
-Reference source for the hosted results below: `3706eae43b1f447a11512c6141bd782caa43d843`.
-Its Windows CI, ROCm qualification, component contracts, security, lint, fuzzing
-and Scorecard workflows, plus benchmark-graph, all completed successfully. The
-[current ROCm run](https://github.com/strmt7/FlitzZip/actions/runs/43034932616)
-qualifies the configuration-diagnostic repair. The original
+Assessment source: published `main` at
+`c2fd539a204df65745befad59d6991b75f7c7fc8`, with a matching clean development
+checkout. At the assessment boundary, component contracts, lint, Scorecard,
+Zstandard sanitizers and fuzzing passed; Windows CI, ROCm qualification and security
+were still running. Their pending state is not a failure or a pass. The preceding
+source `3706eae43b1f447a11512c6141bd782caa43d843` passed all eight of its Actions
+workflows, including benchmark-graph. Its
+[ROCm run](https://github.com/strmt7/FlitzZip/actions/runs/43034932616)
+qualifies the configuration-diagnostic repair for that source. The original
 [configuration failure](https://github.com/strmt7/FlitzZip/actions/runs/43010070857)
 still has no established cause; a later pass does not explain it.
 
@@ -66,10 +70,14 @@ compatibility and format-matrix checks cover their recorded binary identities.
 Full native-driver execution remains deferred because that driver invokes
 benchmark consumers prohibited by the active goal. Hosted checks cover the
 published observation batch; the exact-source audit and final candidate
-qualification remain outstanding. The subsequent sparse-reader component has
-bounded caller-owned workspace, independent fixed-payload and malformed-input
-tests, and differential/fault-control evidence. Its archive admission and GPU
-integration remain closed; changed source still needs fresh hosted acceptance.
+qualification remain outstanding. The published sparse-reader component has
+bounded caller-owned workspace, eleven registered native tests, independent
+fixed-payload and malformed-input controls, and differential/fault-control
+evidence. Its differential control checked 2,073 cases: 1,222 admitted frames
+decoded byte-exactly and 851 nonimproving frames were rejected. These results
+qualify the reader's recorded scope, not the connected GPU entropy pipeline.
+Its archive admission and GPU integration remain closed; current hosted
+acceptance remains pending.
 The earlier source `dec2dca` has a
 [qualified ZIP/MSI candidate](https://github.com/strmt7/FlitzZip/actions/runs/42993879195);
 those artifacts do not qualify subsequent source changes.
@@ -78,16 +86,22 @@ those artifacts do not qualify subsequent source changes.
 | --- | --- | --- |
 | Product | Windows-native C++20 app, CLI, in-process adapters and HIP compute boundary | Exact methods differ by format; preserve the [capability matrix](docs/archive-format-support.md) |
 | Native tests | New observation host and required-HIP cases pass, including independent readback and failure recovery | The broad benchmark-coupled driver remains deferred; bounded cases do not establish full release acceptance |
-| Hosted/package checks | All eight Actions workflows passed on the published source; an earlier ZIP/MSI lifecycle passed | Current unpublished inputs and the eventual final package require their own applicable qualification |
+| Hosted/package checks | Five Actions workflows passed and three were pending on the assessment source; all eight passed on its predecessor | Final exact-source workflows, audit and ZIP/MSI lifecycle remain required; earlier packages do not qualify changed linked bytes |
 | GitHub maintenance | Only `main`; no open PRs or Dependabot alerts at assessment | These inventories are live, not permanent guarantees |
 | Analysis acceptance | Exact governance baseline accepted; raw reports retained | DeepSource skipped the current revision because its analysis quota is exhausted; current analyzer results and complete inventory are unavailable |
 | Neutron | GPU-only search remains separate from efforts 1–9; independent readback and real device-work controls exist | Broad size superiority and comparative speed are unproven; approved rANS is inactive in production |
 | Numeric efforts | Nested CPU frame search and GPU entropy selection have scoped contracts | Complete-archive monotonicity is not established across all writers, partitions and resource policies |
 | Build generation | Shared probe output writing preserves unchanged bytes/metadata; actual source/header/bridge dependencies are registered and have canonical regressions | Work-count controls prove eliminated recompilation and targeted rebuilds, not a measured speedup |
-| Observation | Mode inheritance, optional event ownership, paired recording and structured status have bounded local qualification | Fresh hosted acceptance and the remaining full-driver scope are pending; measured remains the default and no speedup is claimed |
+| Observation | Published mode inheritance, optional event ownership, paired recording and structured status have local qualification and successful predecessor hosted checks | The broad local driver and final exact-source audit remain outstanding; measured remains the default and no speedup is claimed |
 | Maintainability | Audit identifies large GUI, GPU, test and tooling files | Size is a review lead, not a defect or justification for mechanical splitting |
 | Dependencies/tools | Pinned graphs have provenance and installed-consumer evidence; constrained parents remain explicit | Resolution is not runtime acceptance; universal upstream latestness is not established |
 | Coverage/docs | CPU, HIP host, GUI, tooling and device scopes are separate; user/developer guides have canonical homes | Refresh affected gaps and claims, not a fictional whole-repository percentage; stale checkpoint prose must not drive execution |
+
+This is an engineering assessment of inspected contracts and retained matching
+evidence, not an exhaustive audit of every code line, dependency release or
+document. Unreviewed behavior remains unreviewed. No new production defect is
+established merely by listing an integration gap or an optimization opportunity.
+The repository is not yet release-qualified.
 
 ### Problems, Inefficiencies And Uncertainty
 
@@ -116,6 +130,12 @@ These are distinct engineering categories, not a list of confirmed vulnerabiliti
   snapshots can disagree. Use the actual `main` checkout, matching source/tool/
   output identities and one current local continuation. Do not repeatedly rescan
   unchanged inputs or treat an old successful build as current.
+- **Overbroad evidence invalidation:** the dependency sanitizer receipt includes
+  the whole native input projection. A late unrelated native-test edit therefore
+  required another sanitizer qualification. Batch test edits before broad gates
+  now. A future narrower projection needs demonstrated transitive completeness,
+  mutation controls and a reviewed proposal before any mandatory gate changes;
+  it must not be introduced as an exception to source freshness.
 - **Compression opportunities:** integrated compact entropy coding, complete-size
   effort progression, duplicate candidate work, allocation and stream ownership
   merit investigation. Their presence on the queue is not proof of a defect or
@@ -127,6 +147,23 @@ These are distinct engineering categories, not a list of confirmed vulnerabiliti
   cause; the unreproduced corruption incident has the maintainer's documented
   nonblocking disposition. Fresh mismatches or hangs reopen the affected gate.
   Broad Neutron size superiority and GPU speedup remain unproven.
+
+### Priority And Decision Boundaries
+
+| Priority | Work class | Decision |
+| --- | --- | --- |
+| Immediate | Any newly reproduced corruption, unsafe publication, hang, lifetime defect or incompatible dependency | Stop the affected path, preserve the first reproducer, repair its shared boundary and qualify recovery before continuing that path |
+| Next ready | Correctness/benchmark orchestration separation and N01 GPU integration | Remove avoidable verification coupling without losing consumers; integrate bounded stages with independent oracles |
+| Following | C01 complete-size progression, C02 CPU work reduction, Q01 critical gaps | Select demonstrated accounting, ownership or duplicated-work problems; do not undertake speculative blanket rewrites |
+| External hold | R01 current DeepSource analysis | Resume on actual provider availability; no support request, payment, account move or analyzer reduction |
+| Measurement hold | N02 representative size and CPU/GPU comparisons | No local corpus campaign or performance timing under the active goal; no new superiority claim or entropy-writer activation |
+| Final candidate | Exact-source audit, applicable coverage review, package and installer lifecycle | Complete every applicable gate before requesting release approval; inactive research is not itself a defect in existing formats |
+
+Dependency freshness is a separate inventory, not a conclusion from an empty
+Dependabot list. Review runtime libraries, build tools, Actions and agent-provider
+graphs independently. Preserve compatible pins until their replacements pass
+actual consumers. Newly discovered fixes interrupt the queue according to their
+impact; speculative opportunities do not continually reopen accepted work.
 
 ## Execution With The Active Goal
 
@@ -190,13 +227,24 @@ Package status means: **implemented** is source present; **qualified** adds the
 required matching acceptance evidence; **held** names a specific unmet dependency.
 Do not collapse these into a single misleading done marker.
 
+For each active batch, the existing local continuation records: package/substep,
+invariant and affected paths; source/tool/output identities; independent oracle;
+observed failures and their disposition; terminal or still-owned job state;
+completed, pending and deferred commands; published SHA and next concrete action.
+Keep raw logs in ignored evidence directories. This plan owns durable scope and
+decisions; skills own reusable instructions. Do not duplicate volatile evidence
+into skills or install another harness, scheduler or background agent.
+
 ## Ordered Work Packages
 
-The immediate priority is **N01**, qualifying the canonical sparse-reader
-component and connecting the approved GPU pipeline. **B00 and B01 are qualified
+The next bounded tooling slice is **T01 correctness orchestration separation**,
+followed by **N01**, connecting the qualified sparse-reader component to the
+approved GPU pipeline. **B00 and B01 are qualified
 for their published scope; B02 is published with successful hosted checks.**
 Its local broad-driver deferral and final audit remain visible. The ready sequence
-is **N01 → C01 → C02 → Q01**.
+is **T01 correctness separation → N01 → C01 → C02 → Q01**. If the tooling
+separation cannot yet prove complete consumer retention, keep the broad driver
+deferred and continue independent N01 work; do not weaken verification to unblock it.
 D01 interrupts it for a demonstrated dependency vulnerability or incompatibility. T01 addresses
 missing tool portability evidence without repeating valid installation checks. Resume R01 on
 a provider state change; do not let that external blocker stall independent work.
@@ -213,7 +261,7 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 | N01 | In progress: canonical sparse parser/model workspace/CPU reader and independent controls; archive/GPU admission closed | B02 and approved format contract | Integrated device-produced models/streams, independent readback/CRC, malformed-input and lifetime controls |
 | N02 | Representative Neutron effectiveness: deferred | N01 and lifted benchmark restriction | Complete-size evidence on licensed independent workloads, including losses and all model/framing bytes, before production adoption |
 | D01 | Dependency lifecycle: alerts clear at assessment | Official metadata, compatible graph and provenance | Reproducible pins plus fresh/update installed-consumer tests; explicit unsupported/constrained platforms |
-| T01 | Development-tool portability: retain qualified consumers and close evidence gaps | Supported provider/host/checkout contracts | Fresh/update/recovery consumers, actual index/crawl receipts and owned-process cleanup; no user-specific repository configuration |
+| T01 | Development tools: separate correctness orchestration first; retain qualified portable consumers | Complete existing command/consumer inventory and supported provider/host/checkout contracts | No benchmark reachable through the explicit correctness-only path; all existing consumers retained in ordinary/final selection; fresh/update/recovery and owned-process cleanup evidence |
 | Q01 | Critical gaps and complexity: ongoing | Actual risk and source-bound gap inventory | Meaningful success/rejection/recovery assertions and repaired root causes; explicit residual behavior/measurement gaps |
 | U01 | User experience, upgrades and docs: maintain affected contracts | Changed product/settings/package behavior | Migration and failure/recovery tests, disposable-host installer qualification, affected GUI/figure review and accurate docs |
 
@@ -414,6 +462,22 @@ Routine repairs and already-approved work proceed within their existing contract
 
 ### T01 — Portable Development Tools
 
+First trace the canonical `unit-tests` descriptor in
+`tools/flitzzip_verification.psm1` to its actual native driver and every child
+command. Inventory correctness cases, interoperability, fuzz controls, benchmark
+campaigns and measurement consumers before changing orchestration. Reuse the
+existing runner and verifier rather than introducing a parallel test framework.
+
+Add an explicit correctness-only execution contract only if the inventory proves
+which commands it must retain and which benchmark producers it must decline.
+Unknown or mixed-role commands must fail classification rather than run silently.
+Use synthetic command recording to prove no benchmark can start, required
+correctness consumers remain present, failed children fail the invocation, and
+cancellation leaves no owned child alive. Default and final qualification must
+retain every existing required consumer; the restricted path never implies that
+held measurement gates passed. Qualify the real permitted correctness invocation
+after the offline controls, using current source-bound binaries and no timing.
+
 Qualify Caveman instruction delivery, source-bound CocoIndex search, Crawl4AI
 extraction and affected MCP/verification consumers through their canonical launchers.
 Cover fresh and existing installations, absent/stale providers, moved checkouts,
@@ -493,6 +557,24 @@ correctness and worthwhile complete-size evidence from representative workloads.
 The shared-host restriction on local benchmarks remains in effect.
 
 ### N01 — Integrated Correctness Before Adoption
+
+Execute these implementation batches in order. Keep public archive admission and
+writer activation separate from private component qualification.
+
+| Batch | Production boundary | Independent acceptance |
+| --- | --- | --- |
+| N01-A | Private HIP ABI/export/layout, component binding and complete device-entry admission; bounded GPU decoder consuming the canonical admitted payload/model views | Independent framed bytes, actual required-HIP dispatch and byte/CRC equality; absent or incompatible module rejection; malformed states, capacities, cancellation, failure cleanup and immediate recovery |
+| N01-B | GPU transition counts, segment corrections and context projection bound to immutable stage bytes | Direct independent counts across all approved contexts/shifts and dispatch tails; disappearing contexts, zero predecessors, overflow/underflow and omitted/corrupted correction controls; reject partial statistics |
+| N01-C | Normalization, full-width model construction and stream encoding consuming actual preceding GPU outputs | Exact positive model mass, singleton 65,536, deterministic ties, canonical model order, state/stream bounds and portable decoding of emitted streams; compare raw counts so normalization cannot hide an upstream error |
+| N01-D | Archive/version/composition readers, resource admission, shared materialization and CRC; direct malformed-payload fuzz entry before public admission | Versions 1–11 preserved; kind 14/version 12 checked at every advertised and recovered inner stage; exact workspace/multiworker accounting, independent readback, interoperability and affected parser/fuzz qualification |
+| N01-E | Neutron-only candidate portfolio, complete-frame lower bounds, winner ownership and payload-aware minimum-version propagation | Losing/tied trials preserve the previous winner and version; all model/framing/workspace bytes counted; efforts 1–9 unchanged; emission remains inactive until N02 qualifies adoption |
+
+The reader component is already published; do not rebuild it as a second product
+parser or treat private prototype successes as integrated device-model evidence.
+Each batch qualifies its real connected consumers before the next stage relies
+on them. A failed stage cannot publish statistics, advertise an admitted kernel
+or silently retry CPU compression. Implementation of a writer is distinct from
+permission to activate it.
 
 1. Reuse the canonical `GpuRansBlockView` component and its registered native
    tests; do not introduce a second payload parser or portable decoder. Its
