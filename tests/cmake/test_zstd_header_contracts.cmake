@@ -49,6 +49,10 @@ execute_process(
 if(NOT result STREQUAL "0")
   message(FATAL_ERROR "Header-contract compilation failed: ${output}${error}")
 endif()
+include("${REPO_ROOT}/tests/cmake/test_zstd_probe_outputs.cmake")
+check_zstd_probe_configuration(
+  "${REPO_ROOT}/tests/zstd" "${SCRATCH}/zstd-1.5.7/lib"
+  "${SCRATCH}/probe-graph")
 file(SHA256 "${ARCHIVE}" after)
 if(NOT before STREQUAL after)
   message(FATAL_ERROR "Header-contract fixture changed upstream provenance")

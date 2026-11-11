@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/ProbeOutput.cmake")
+
 # Purpose: Compile exact private merger source with a bounded test bridge.
 # Inputs: source is the generated product zdict.c; output is a test-owned C
 # file. Outputs: Writes the original type and complete helper/merger region
@@ -36,13 +38,16 @@ function(flitzzip_generate_zstd_dictionary_probe source output)
   string(JOIN "\n" bounds_definitions ${bounds_macros})
   file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/dictionary_merge_probe.c"
        bridge)
+  flitzzip_register_probe_inputs(
+    "${source}" "${builder_directory}/../common/zstd_internal.h"
+    "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/dictionary_merge_probe.c")
   string(CONCAT probe "#include \"common/mem.h\"\n${bounds_definitions}\n"
                 "${item_type}\n${merge_body}\n${bridge}")
-  file(WRITE "${output}" "${probe}")
+  flitzzip_write_probe_if_changed("${output}" "${probe}")
   string(SHA256 region_hash "${item_type}\n${merge_body}")
   string(SHA256 arithmetic_hash "${bounds_definitions}")
   string(CONCAT identity "source_sha256=${source_hash}\n"
                 "region_sha256=${region_hash}\n"
                 "arithmetic_sha256=${arithmetic_hash}\n")
-  file(WRITE "${output}.source-identity" "${identity}")
+  flitzzip_write_probe_if_changed("${output}.source-identity" "${identity}")
 endfunction()

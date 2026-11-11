@@ -58,7 +58,7 @@ later revision. This is a source-backed baseline, not a claim of a flawless app.
 | Analysis acceptance | Exact governance baseline accepted; raw reports retained | DeepSource is queued and its API returned `Run does not exist.`; current analyzer results and complete inventory are unavailable |
 | Neutron | GPU-only search remains separate from efforts 1–9; independent readback and real device-work controls exist | Broad size superiority and comparative speed are unproven; approved rANS is inactive in production |
 | Numeric efforts | Nested CPU frame search and GPU entropy selection have scoped contracts | Complete-archive monotonicity is not established across all writers, partitions and resource policies |
-| Build generation | Three probe producers rewrite unchanged C inputs and provenance; an isolated replacement preserved bytes and metadata | Canonical adoption and recurrence tests are unfinished |
+| Build generation | Shared probe output writing preserves unchanged bytes/metadata; actual source/header/bridge dependencies are registered and have canonical regressions | Work-count controls prove eliminated recompilation and targeted rebuilds, not a measured speedup |
 | Observation | Null-telemetry decode avoids optional timing events; device-resident CRC and checked scratch release are qualified | Non-null counters remain coupled to profiling events and clocks |
 | Maintainability | Audit identifies large GUI, GPU, test and tooling files | Size is a review lead, not a defect or justification for mechanical splitting |
 | Dependencies/tools | Pinned graphs have provenance and installed-consumer evidence; constrained parents remain explicit | Resolution is not runtime acceptance; universal upstream latestness is not established |
@@ -101,7 +101,7 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 | ID | Work and current state | Dependency | Required completion evidence |
 | --- | --- | --- | --- |
 | R01 | Current analysis acceptance: externally unavailable | DeepSource creates/completes the current run | Successful required analyzers, complete paginated inventory and exact-commit audit; retain the accepted governance baseline |
-| B01 | Probe output invalidation: ready, isolated candidate exists | Canonical regression integration | Old behavior detected; unchanged outputs preserve identities and avoid recompilation; changed inputs rebuild consumers |
+| B01 | Probe output invalidation: implemented with canonical regressions and local native/sanitizer qualification | Retain source-bound hosted acceptance | Old behavior detected; unchanged outputs preserve identities and avoid recompilation; changed inputs rebuild consumers |
 | B02 | Counters-only observation: design mapped | Coherent snapshot/aggregation contract | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
 | C01 | Complete-size effort progression: scoped review next | Existing nested-search inventory | Independent full-size/decoding regressions for every advertised guarantee; no padding or manufactured low-effort losses |
 | C02 | CPU codec mechanisms: planned | Demonstrated work/ownership problem per codec | Independent read/write oracles and failure/recovery checks; supported capabilities unchanged; no unmeasured speed claim |

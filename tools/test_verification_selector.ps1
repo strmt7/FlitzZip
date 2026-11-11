@@ -24,6 +24,15 @@ function Get-RequiredCommandId {
     return @($Plan.requiredLocalCommands | ForEach-Object { $_.id })
 }
 
+# Every owned CMake input accepted by lint routing must actually select that lane,
+# including tests and newly introduced modules outside the top-level cmake folder.
+foreach ($cmakePath in @('tests/cmake/test_zstd_probe_outputs.cmake',
+        'tests/zstd/ProbeOutput.cmake', 'tools/fixture.cmake',
+        'tests/fixture/CMakeLists.txt')) {
+    $cmakeLintPlan = Get-FlitzZipVerificationPlan -ChangedPath @($cmakePath)
+    Assert-Selector ('language-lint' -in (Get-RequiredCommandId $cmakeLintPlan)) "owned CMake input requires lint: $cmakePath"
+}
+
 # Purpose: Read the shared push/PR path filter from the two owned workflow fixtures.
 # Inputs: Repository-relative workflow name and a candidate changed path.
 # Outputs: Returns whether its anchored positive globs admit the path; rejects missing/shared-filter drift.

@@ -94,6 +94,7 @@ execute_process(
     "${CMAKE_COMMAND}" -E tar xf "${ARCHIVE}" --
     "zstd-1.5.7/lib/legacy/zstd_v05.c" "zstd-1.5.7/lib/legacy/zstd_legacy.h"
     "zstd-1.5.7/lib/common/allocations.h" "zstd-1.5.7/lib/dictBuilder/cover.h"
+    "zstd-1.5.7/lib/common/zstd_internal.h"
     "zstd-1.5.7/lib/compress/hist.h" "zstd-1.5.7/lib/legacy/zstd_v04.c"
     "zstd-1.5.7/lib/compress/zstdmt_compress.c"
     "zstd-1.5.7/lib/dictBuilder/cover.c"
@@ -243,6 +244,8 @@ check_zstd_product_identity("${fresh}" "${SCRATCH}")
 foreach(component_name IN ITEMS owner sequence literals continue block one_shot)
   unset(${component_name})
 endforeach()
+include("${REPO_ROOT}/tests/cmake/test_zstd_probe_outputs.cmake")
+check_zstd_probe_outputs("${fresh}/lib" "${SCRATCH}")
 
 prepare_fixture(previous-literals previous_literals)
 prepare_historical_decoder_stage("${previous_literals}" "literals")

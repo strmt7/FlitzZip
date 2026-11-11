@@ -266,7 +266,8 @@ function Get-FlitzZipVerificationPathPolicy {
             '^(?!third_party/).*\.md$',
             '^mcp/.*\.py$',
             '^tools/.*\.(ps1|psm1|py)$',
-            '^CMakeLists\.txt$',
+            '^(?!third_party/)(?:.*/)?CMakeLists\.txt$',
+            '^(?!third_party/).*\.cmake$',
             '^cmake/',
             '^(src|tests|fuzz|tools)/.*\.(c|cc|cpp|h|hpp)$'
         )

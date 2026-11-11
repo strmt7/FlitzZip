@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/ProbeOutput.cmake")
+
 # Purpose: Compile the canonical raw writer without importing unrelated codec
 # state. Inputs: source is the verified generated compression header; output
 # belongs to the test build. Outputs: Preserves the complete writer and exact
@@ -30,10 +32,13 @@ function(flitzzip_generate_zstd_raw_block_probe source output)
   endif()
   string(JOIN "\n" definitions ${declarations})
   file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/raw_block_probe.c" bridge)
+  flitzzip_register_probe_inputs(
+    "${source}" "${compress_directory}/../common/zstd_internal.h"
+    "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/raw_block_probe.c")
   string(CONCAT probe "#include \"common/mem.h\"\n"
                 "#include \"common/error_private.h\"\n${definitions}\n"
                 "${writer}\n${bridge}")
-  file(WRITE "${output}" "${probe}")
+  flitzzip_write_probe_if_changed("${output}" "${probe}")
   string(SHA256 region_hash "${writer}")
   string(SHA256 declarations_hash "${definitions}")
   string(SHA256 bridge_hash "${bridge}")
@@ -43,5 +48,5 @@ function(flitzzip_generate_zstd_raw_block_probe source output)
            "region_sha256=${region_hash}\n"
            "declarations_sha256=${declarations_hash}\n"
            "bridge_sha256=${bridge_hash}\n")
-  file(WRITE "${output}.source-identity" "${identity}")
+  flitzzip_write_probe_if_changed("${output}.source-identity" "${identity}")
 endfunction()

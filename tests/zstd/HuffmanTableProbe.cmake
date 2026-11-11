@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/ProbeOutput.cmake")
+
 # Purpose: Compile the exact generated typed Huffman fill without a second
 # implementation. Inputs: Verified complete decoder and test output path.
 # Outputs: A private bridge with full-source and imported-region identity
@@ -17,6 +19,8 @@ function(flitzzip_generate_zstd_huffman_probe source output)
   math(EXPR length "${end} - ${begin}")
   string(SUBSTRING "${content}" ${begin} ${length} helper)
   file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/huffman_table_probe.c" bridge)
+  flitzzip_register_probe_inputs(
+    "${source}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/huffman_table_probe.c")
   string(
     CONCAT
       probe
@@ -25,10 +29,11 @@ function(flitzzip_generate_zstd_huffman_probe source output)
       "#include \"common/huf.h\"\n"
       "typedef struct { BYTE nbBits; BYTE byte; } HUF_DEltX1;\n"
       "${helper}\n${bridge}")
-  file(WRITE "${output}" "${probe}")
+  flitzzip_write_probe_if_changed("${output}" "${probe}")
   string(SHA256 region_hash "${helper}")
   string(SHA256 bridge_hash "${bridge}")
   string(CONCAT _zstd_emission_0 "source_sha256=${actual}\nregion_sha256="
                 "${region_hash}\nbridge_sha256=${bridge_hash}" "\n")
-  file(WRITE "${output}.source-identity" "${_zstd_emission_0}")
+  flitzzip_write_probe_if_changed("${output}.source-identity"
+                                  "${_zstd_emission_0}")
 endfunction()
