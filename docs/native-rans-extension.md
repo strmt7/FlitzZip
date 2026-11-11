@@ -223,6 +223,33 @@ implementation. Correctness fixtures and exact transfer counts do not establish
 throughput or representative compression gains; the adoption criteria below
 remain required.
 
+### Sparse reader component
+
+The canonical [sparse reader](../src/core/rans_block.hpp) supplies the admitted
+payload view, model preparation and independent CPU decoding component.
+`GpuRansBlockView` retains immutable borrowed bytes and validates canonical
+model mass, complete offset coverage and per-segment stream bounds before
+exposing a usable view. Callers obtain the exact model workspace word count,
+charge that storage to their operation budget and retain it through consumption.
+Successful preparation and decoding allocate no internal buffers.
+
+The model workspace contains a context-indexed table of workspace-relative row
+offsets followed by full-width 257-entry cumulative distributions. Missing contexts retain offset zero; they
+are rejected when used, rather than replaced by another model. Singleton mass
+65,536 remains representable. Only the used scratch extent must be disjoint from
+the immutable payload and decoded output, so callers can reuse an otherwise
+unused allocation tail. Decode errors may modify scratch/output; independent
+decoded CRC and publication admission remain mandatory.
+Payload and decoded output are also disjoint.
+
+Native tests retain fixed independent payloads, all-option singleton invariants,
+model/state/extent rejection and live-alias/recovery guards. Retained differential
+and isolated final-state-omission controls qualify their actual source identities.
+The component does not yet change public archive admission. Kernel ABI, real GPU
+model/stream consumption, resource accounting, archive reader dispatch and a direct
+malformed-input fuzz entry still require integration before public kind/version
+support. Neutron compression remains GPU-only; no CPU encoder is supplied.
+
 ## Adoption criteria
 
 The isolated reference, independent public-domain

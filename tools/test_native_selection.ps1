@@ -21,6 +21,25 @@ function Assert-NativeSelectionRejected {
 }
 
 $entropyPaths = @('src/gpu/hip_codec_static_prefix.hip.cpp', 'src/gpu/hip_codec_adaptive_prefix.hip.cpp')
+$ransExpected = @('gpu_rans_reader_independent_payloads_and_segment_resets',
+    'gpu_rans_reader_full_width_singleton_and_complete_sparse_cdf',
+    'gpu_rans_reader_all_options_preserve_exact_singleton_state',
+    'gpu_rans_reader_maximum_context_inventory_has_bounded_caller_scratch',
+    'gpu_rans_reader_non_singleton_maximum_u16_frequency_is_full_width',
+    'gpu_rans_reader_rejects_every_truncated_prefix_and_invalid_extent',
+    'gpu_rans_reader_rejects_noncanonical_models_and_offsets',
+    'gpu_rans_reader_rejects_coded_state_and_missing_context_without_fallback',
+    'gpu_rans_reader_rejects_truncated_renormalization_with_valid_framing',
+    'gpu_rans_reader_admits_capacity_before_mutation_and_preserves_guards',
+    'gpu_rans_reader_rejects_live_aliases_but_allows_unused_scratch_reuse')
+foreach ($source in @('src/core/rans_block.cpp', 'src/core/rans_block.hpp', 'tests/cpp/rans_fixtures.hpp')) {
+    $rans = Get-FlitzZipNativeTestSelection -Paths @($source)
+    Assert-NativeSelection ($rans.mode -ceq 'component' -and -not $rans.requireHip -and
+        'rans-reader' -in $rans.components -and (($rans.tests | Sort-Object) -join '|') -ceq
+        (($ransExpected | Sort-Object) -join '|')) 'exact allocation-bounded CPU reader consumers'
+}
+$ransBroad = Get-FlitzZipNativeTestSelection -Paths @('src/core/rans_block.cpp', 'CMakeLists.txt')
+Assert-NativeSelection ($ransBroad.mode -ceq 'full') 'new reader mapping must not narrow CMake qualification'
 foreach ($inputPaths in @(@('tests/cpp/test_dictionary_block.cpp'), $entropyPaths)) {
     $pathJson = ConvertTo-Json -InputObject $inputPaths -Compress
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($pathJson))

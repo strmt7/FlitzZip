@@ -84,6 +84,9 @@ function Get-FlitzZipNativeTestSelection {
     $broad = [pscustomobject]@{ mode = 'full'; components = @(); tests = @(); requireHip = $false }
     if ($Full.IsPresent) { return $broad }
     $definitions = @(
+        @{ id = 'rans-reader'; requireHip = $false; paths = @(
+               'src/core/rans_block.cpp', 'src/core/rans_block.hpp', 'tests/cpp/rans_fixtures.hpp')
+           rules = @(@{ source = 'tests/cpp/test_rans_block.cpp'; pattern = '^gpu_rans_reader_' }) },
         @{ id = 'folder-size-cache'; requireHip = $false; paths = @('src/app/folder_size_cache.hpp')
            rules = @(@{ source = 'tests/cpp/test_folder_size_cache.cpp'; pattern = '^' }) },
         @{ id = 'gui-monitor'; requireHip = $false; paths = @(

@@ -409,6 +409,7 @@ add_library(
   src/core/archive_encode_batch.cpp
   src/core/archive_format.cpp
   src/core/archive_blocks.cpp
+  src/core/rans_block.cpp
   src/core/archive_index.cpp
   src/core/defender_scan.cpp
   src/core/file_manifest.cpp
@@ -976,6 +977,7 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_compression_streams.cpp
     tests/cpp/test_entropy_sampling.cpp
     tests/cpp/test_huffman_decode.cpp
+    tests/cpp/test_rans_block.cpp
     tests/cpp/test_gzip_headers.cpp
     tests/cpp/test_stream_corruption.cpp
     tests/cpp/test_gpu_telemetry.cpp
