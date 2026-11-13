@@ -288,6 +288,16 @@ The caller keeps decoded storage alive through the existing device CRC consumer.
 Archive worker/resource admission, publication and malformed-input fuzz integration
 remain required before opening public kind/version admission.
 
+The next private statistics component uses the canonical block limit, one full
+previous-byte table, disposable segment-start removals and a projected table.
+It retains the prototype's 16 KiB shared context buckets and limits a dispatch to
+16 source tiles of 4 KiB. Tile predecessors are read at absolute source offsets;
+dispatch boundaries do not reset context. Projection checks subtraction and
+bounded mass before writing each output count. Per-batch statuses remain
+non-success until the corresponding work completes. These kernels and their
+independent raw-count controls require current-device qualification; a complete
+operation owner and model/stream consumer remain separate integration work.
+
 ## Adoption criteria
 
 The isolated reference, independent public-domain

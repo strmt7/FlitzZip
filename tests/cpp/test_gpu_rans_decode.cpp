@@ -134,7 +134,7 @@ TEST_CASE(gpu_rans_kernel_independent_frames_and_full_width_models) {
     if (!query_gpu_info().available) {
         return;
     }
-    REQUIRE_EQ(hip_kernel_api().abi_version, 2U);
+    REQUIRE_EQ(hip_kernel_api().abi_version, HipKernelApi{}.abi_version);
     REQUIRE_EQ(hip_kernel_api().abi_bytes, sizeof(HipKernelApi));
     require_rans_success(make_rans_kernel_fixture(flitzzip_test::kRansZero16, 32U), 0U);
     require_rans_success(make_rans_kernel_fixture(flitzzip_test::kRansBinary8, 128U), 1U);

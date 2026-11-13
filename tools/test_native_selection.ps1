@@ -61,6 +61,17 @@ foreach ($source in @('src/gpu/hip_rans.cpp', 'src/gpu/hip_rans.hpp',
 }
 $ransBroad = Get-FlitzZipNativeTestSelection -Paths @('src/core/rans_block.cpp', 'CMakeLists.txt')
 Assert-NativeSelection ($ransBroad.mode -ceq 'full') 'new reader mapping must not narrow CMake qualification'
+$countsExpected = @('gpu_rans_counts_match_raw_adjacency_and_every_segment_context',
+    'gpu_rans_counts_zero_predecessors_and_disappearing_contexts_reject_omitted_work',
+    'gpu_rans_counts_projection_rejects_underflow_and_mass_overflow_then_recovers',
+    'gpu_rans_counts_maximum_source_stays_bounded_and_preserves_all_bytes',
+    'gpu_rans_counts_invalid_ranges_preserve_tables_and_inactive_guards')
+foreach ($source in @('src/gpu/hip_rans_counts.hip.cpp', 'src/gpu/rans_count_plan.hpp',
+        'tests/cpp/test_gpu_rans_counts.cpp')) {
+    $counts = Get-FlitzZipNativeTestSelection -Paths @($source)
+    Assert-NativeSelection ($counts.mode -ceq 'component' -and $counts.requireHip -and
+        (($counts.tests | Sort-Object) -join '|') -ceq (($countsExpected | Sort-Object) -join '|')) 'count inputs retain every exact raw-statistics and fault consumer'
+}
 foreach ($inputPaths in @(@('tests/cpp/test_dictionary_block.cpp'), $entropyPaths)) {
     $pathJson = ConvertTo-Json -InputObject $inputPaths -Compress
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($pathJson))

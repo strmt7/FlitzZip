@@ -13,10 +13,10 @@ The current binding retains every executable source, caller, test, build and
 scanner path, together with this current evidence. Historical narrative edits
 cannot change the referenced predecessor's evidence or current source identity.
 
-The kernel module now uses private ABI version 2, with its new export, exact
+The kernel module now uses private ABI version 3, with its new export, exact
 layout and complete device-entry inventory changed together. Existing component
 binders and entrypoints remain present. The additional translation unit owns
-only a bounded rANS segment decoder and its binder. It declares no allocator,
+the bounded rANS decoder and private statistics kernels. They declare no allocator,
 LHA callback, TAR helper or GDI state. Existing compiler definitions, source
 membership and test registration remain unchanged; independent test sources are
 added. The new tests use admitted immutable models and independently specified
@@ -69,6 +69,27 @@ the broad driver. This strengthens qualification routing; it changes no allocato
 callback, registration macro, kernel body, scanner configuration or individual
 decision below. The originally retained selector failure remains a failed record.
 
+## Private Statistics Context
+
+The statistics extension changes the private export, layout and complete device
+entry inventory together. It retains all preceding entries and binders. The new
+translation unit accumulates bounded source tiles, records actual predecessors
+at later segment starts, and projects exact integer counts. Shared-memory
+barriers have block-uniform admission and participation; independent projection
+lanes check subtraction and sums before writing. Its accumulating buffers and
+source are separately owned by the caller and remain live through completion.
+The new shader is also in the canonical device-coverage source inventory.
+
+These changes do not alter any individually reported source, highlighted
+location or its existing direct caller. The allocator branch, LHA destruction
+order, TAR registration, GDI induction and existing device reads remain as
+described below. New independent raw-count tests are qualification requirements,
+not evidence of execution until they pass against current HIP binaries. Neither
+histogram construction nor ABI extension opens archive admission or changes
+numeric efforts. Every prior source, scanner and executable context path remains
+retained; the new statistics source and controls are additional context for the
+device reports, not replacements for their existing callers.
+
 ## Individual Decisions
 
 ### Alert 8348
@@ -106,7 +127,7 @@ are unchanged. The [loop review](https://github.com/strmt7/FlitzZip/blob/2ee2e91
 
 `__constant__` still qualifies the device CRC table; its five device reads
 remain in the unchanged source. The codec binder and all CRC entries remain
-in the version-2 table and complete device-support inventory. The preceding
+in the version-3 table and complete device-support inventory. The preceding
 [device review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/gpu-observation-context.md#alert-703) still applies.
 
 ### Alert 8452
@@ -119,7 +140,7 @@ kernel remains bound and admitted. See the
 ### Alert 8453
 
 Static-prefix `word_count` still bounds the following scratch-word loop.
-Its source, dimensions and binder remain unchanged in ABI version 2. See the
+Its source, dimensions and binder remain unchanged in ABI version 3. See the
 [device review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/gpu-observation-context.md#alert-8453).
 
 ### Alert 8454

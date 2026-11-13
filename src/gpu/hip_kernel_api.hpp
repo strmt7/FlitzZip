@@ -3,6 +3,7 @@
 #include "gpu/hip_codec_support.hpp"
 #include "gpu/hip_dictionary_optimal_state.hpp"
 #include "gpu/rans_decode_plan.hpp"
+#include "gpu/rans_count_plan.hpp"
 #include "gpu/sparse_pattern_device.hpp"
 
 #include <type_traits>
@@ -65,7 +66,7 @@ namespace flitzzip {
 // Inputs: Every pointer refers to one registered kernel or a bounded rocPRIM operation in the admitted module.
 // Outputs: Immutable process-lifetime dispatch metadata; host code retains all allocation and error ownership.
 struct HipKernelApi {
-    std::uint32_t abi_version = 2U;
+    std::uint32_t abi_version = 3U;
     std::uint32_t abi_bytes = sizeof(HipKernelApi);
     void (*materialize_prefix_segments_kernel)(const std::byte*, const hip_detail::PrefixDecodeSegment*, std::uint32_t,
                                                std::byte*, std::uint32_t*) = nullptr;
@@ -136,10 +137,17 @@ struct HipKernelApi {
     void (*decode_rans_segments)(const std::byte*, std::uint32_t, const std::uint32_t*, std::uint32_t,
                                  const hip_detail::RansDecodeSegment*, std::uint32_t, std::uint32_t, std::uint32_t,
                                  std::byte*, std::uint32_t, hip_detail::RansDecodeStatus*) = nullptr;
+    void (*count_rans_transitions)(const std::byte*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t*,
+                                   std::uint32_t, hip_detail::RansCountStatus*, std::uint32_t) = nullptr;
+    void (*count_rans_boundaries)(const std::byte*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t,
+                                  std::uint32_t*, std::uint32_t, hip_detail::RansCountStatus*, std::uint32_t) = nullptr;
+    void (*project_rans_counts)(const std::uint32_t*, std::uint32_t, const std::uint32_t*, std::uint32_t, std::uint32_t,
+                                std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t*, std::uint32_t,
+                                hip_detail::RansCountStatus*, std::uint32_t) = nullptr;
 };
 
 static_assert(std::is_standard_layout_v<HipKernelApi> && std::is_trivially_copyable_v<HipKernelApi>);
-static_assert(sizeof(HipKernelApi) == 312U && alignof(HipKernelApi) == alignof(void*));
+static_assert(sizeof(HipKernelApi) == 336U && alignof(HipKernelApi) == alignof(void*));
 static_assert(std::is_trivially_copyable_v<hip_detail::PrefixDecodeSegment> &&
               sizeof(hip_detail::PrefixDecodeSegment) == 48U);
 static_assert(std::is_trivially_copyable_v<hip_detail::CrcInputRange> && sizeof(hip_detail::CrcInputRange) == 16U);
