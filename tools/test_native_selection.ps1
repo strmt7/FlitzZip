@@ -82,6 +82,15 @@ function Assert-NativeHeaderConsumersSelected {
 
 $entropyPaths = @('src/gpu/hip_codec_static_prefix.hip.cpp', 'src/gpu/hip_codec_adaptive_prefix.hip.cpp')
 $encoderExpected = @('gpu_rans_encoder_workspace_counts_padding_all_models_and_returned_payload',
+    'gpu_rans_encoder_runtime_constructor_failures_release_acquired_storage',
+    'gpu_rans_encoder_runtime_copy_failures_discard_partial_trials_and_recover',
+    'gpu_rans_encoder_runtime_clear_failures_discard_partial_trials_and_recover',
+    'gpu_rans_encoder_runtime_launch_failures_discard_partial_trials_and_recover',
+    'gpu_rans_encoder_runtime_completion_failures_discard_partial_trials_and_recover',
+    'gpu_rans_encoder_runtime_failed_child_drain_preserves_error_and_prohibits_reuse',
+    'gpu_rans_encoder_runtime_checked_free_failures_retain_ownership_and_budget',
+    'gpu_rans_encoder_runtime_buffer_snapshots_allocator_pair_before_acquisition',
+    'gpu_rans_encoder_runtime_incomplete_dispatch_is_rejected_before_acquisition',
     'gpu_rans_encoder_actual_counts_models_and_streams_cover_all_options',
     'gpu_rans_encoder_singleton_bytes_strict_ties_and_unconditional_model_reuse',
     'gpu_rans_encoder_invalid_options_preserve_caches_and_minimum_bound_avoids_work',

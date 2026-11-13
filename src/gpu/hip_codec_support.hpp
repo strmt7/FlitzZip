@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gpu/kernel_observation.hpp"
+#include "gpu/hip_runtime_calls.hpp"
 
 #include "gpu/gpu_codec.hpp"
 #include "gpu/hip_device.hpp"
@@ -130,13 +131,18 @@ inline void check_hip(hipError_t status, const char* action) {
     }
 }
 
-// Purpose: Complete a codec transfer on the same per-thread stream as its kernels.
-// Inputs: Borrowed source/destination buffers, byte count, and matching HIP direction;
-// both buffers must remain valid until this synchronous call returns.
-// Outputs: Returns the HIP status after stream completion; owns no buffers or extra staging memory.
+// Order a transfer on the codec's per-thread stream. Ordinary host transfers
+// complete before return; HIP may enqueue device-to-device copies without a
+// host wait. Keep both owners through actual completion and subsequent consumers.
+// A failed call does not establish that preceding stream work has completed.
+inline hipError_t copy_on_codec_stream(const HipRuntimeCalls& calls, void* destination, const void* source,
+                                       std::size_t bytes, hipMemcpyKind direction) {
+    return calls.copy(calls.context, destination, source, bytes, direction, hipStreamPerThread);
+}
+
 inline hipError_t copy_on_codec_stream(void* destination, const void* source, std::size_t bytes,
                                        hipMemcpyKind direction) {
-    return hipMemcpyWithStream(destination, source, bytes, direction, hipStreamPerThread);
+    return copy_on_codec_stream(HipRuntimeCalls{}, destination, source, bytes, direction);
 }
 
 // Profiling is operation-owned. Unrequested observations own no events; stream
@@ -157,11 +163,14 @@ inline HipEventPair make_codec_event_pair(const GpuTelemetry* telemetry, const c
 // Complete real work before counting it. Measured operations retain event
 // failures; an elapsed-query error still records the completed launch and marks
 // its timing unavailable. Counters-only operations never query timing events.
-inline void finish_codec_kernel(GpuTelemetry* telemetry, const HipEventPair& events, const char* action) {
+inline void finish_codec_kernel(const HipRuntimeCalls& calls, GpuTelemetry* telemetry, const HipEventPair& events,
+                                const char* action) {
     observe_gpu_kernel_work(
         telemetry, 1U,
         [&](bool measured) {
-            check_hip(measured ? hipEventSynchronize(events.stop) : hipStreamSynchronize(hipStreamPerThread), action);
+            check_hip(measured ? hipEventSynchronize(events.stop)
+                               : calls.synchronize(calls.context, hipStreamPerThread),
+                      action);
         },
         [&] {
             float milliseconds = 0.0F;
@@ -170,17 +179,29 @@ inline void finish_codec_kernel(GpuTelemetry* telemetry, const HipEventPair& eve
         });
 }
 
+inline void finish_codec_kernel(GpuTelemetry* telemetry, const HipEventPair& events, const char* action) {
+    finish_codec_kernel(HipRuntimeCalls{}, telemetry, events, action);
+}
+
 // Purpose: Bind optional stage-boundary events directly to an ordered kernel dispatch.
 // Inputs: Typed kernel arguments, launch dimensions, stream, and borrowed start/stop handles; either may be null.
 // Outputs: Submits asynchronously or throws GpuError; event owners and buffers must survive stream completion.
 template <typename... Args>
+inline void launch_kernel_with_timing(const HipRuntimeCalls& calls, void (*kernel)(Args...), dim3 grid, dim3 block,
+                                      std::size_t shared_bytes, hipStream_t stream, hipEvent_t start, hipEvent_t stop,
+                                      const char* action, std::type_identity_t<Args>... args) {
+    std::array<void*, sizeof...(Args)> arguments{static_cast<void*>(&args)...};
+    check_hip(calls.launch(calls.context, reinterpret_cast<const void*>(kernel), grid, block, arguments.data(),
+                           shared_bytes, stream, start, stop),
+              action);
+}
+
+template <typename... Args>
 inline void launch_kernel_with_timing(void (*kernel)(Args...), dim3 grid, dim3 block, std::size_t shared_bytes,
                                       hipStream_t stream, hipEvent_t start, hipEvent_t stop, const char* action,
                                       std::type_identity_t<Args>... args) {
-    std::array<void*, sizeof...(Args)> arguments{static_cast<void*>(&args)...};
-    check_hip(hipExtLaunchKernel(reinterpret_cast<const void*>(kernel), grid, block, arguments.data(), shared_bytes,
-                                 stream, start, stop, 0),
-              action);
+    launch_kernel_with_timing(HipRuntimeCalls{}, kernel, grid, block, shared_bytes, stream, start, stop, action,
+                              args...);
 }
 
 // Submit with optional dispatch-bound timestamps. The operation owns either a
@@ -196,11 +217,18 @@ inline void launch_codec_kernel(void (*kernel)(Args...), dim3 grid, dim3 block, 
 // Complete a codec dispatch on the calling thread's stream before its caller reads or releases
 // borrowed buffers. Allocate timing events only for a caller that requested profiling.
 template <typename... Args>
+inline void dispatch_codec_kernel(const HipRuntimeCalls& calls, GpuTelemetry* telemetry, void (*kernel)(Args...),
+                                  dim3 grid, dim3 block, const char* action, std::type_identity_t<Args>... args) {
+    const auto events = make_codec_event_pair(telemetry, "create HIP codec events");
+    launch_kernel_with_timing(calls, kernel, grid, block, 0, hipStreamPerThread, events.start, events.stop, action,
+                              args...);
+    finish_codec_kernel(calls, telemetry, events, action);
+}
+
+template <typename... Args>
 inline void dispatch_codec_kernel(GpuTelemetry* telemetry, void (*kernel)(Args...), dim3 grid, dim3 block,
                                   const char* action, std::type_identity_t<Args>... args) {
-    const auto events = make_codec_event_pair(telemetry, "create HIP codec events");
-    launch_kernel_with_timing(kernel, grid, block, 0, hipStreamPerThread, events.start, events.stop, action, args...);
-    finish_codec_kernel(telemetry, events, action);
+    dispatch_codec_kernel(HipRuntimeCalls{}, telemetry, kernel, grid, block, action, args...);
 }
 
 // Purpose: Add two allocation byte counts with overflow detection.
@@ -323,9 +351,10 @@ template <typename T> class HipDeviceBuffer {
     HipDeviceBuffer() = default;
 
     // Purpose: Allocate one thread-affine HIP buffer without transferring ownership between worker streams.
-    // Inputs: `bytes` is the allocation size and `action` labels errors; the calling codec owns its lifetime.
+    // Inputs: `bytes` is the allocation size and `action` labels errors. The optional callback pair is copied;
+    // its borrowed state stays live through destruction. The calling codec owns the buffer's lifetime.
     // Outputs: Owns the device pointer or throws without replacing another allocation.
-    HipDeviceBuffer(std::size_t bytes, const char* action) {
+    HipDeviceBuffer(std::size_t bytes, const char* action, HipMemoryCalls memory = {}) : memory_(memory) {
         allocate_checked(bytes, action);
     }
 
@@ -333,15 +362,21 @@ template <typename T> class HipDeviceBuffer {
     // Inputs: `bytes` is the size and `action` labels errors; this owner must be empty.
     // Outputs: Acquires ownership, accepts an empty region, or throws without replacing an existing allocation.
     void allocate_checked(std::size_t bytes, const char* action) {
+        if (memory_.allocate == nullptr || memory_.release == nullptr) {
+            throw GpuError("HIP allocation call interface is incomplete");
+        }
         if (pointer_ != nullptr) {
             throw GpuError(std::string(action) + ": device buffer already owns an allocation");
         }
         if (bytes == 0U) {
             return;
         }
-        T* pointer = nullptr;
-        check_hip(hipMalloc(reinterpret_cast<void**>(&pointer), bytes), action);
-        pointer_ = pointer;
+        void* pointer = nullptr;
+        check_hip(memory_.allocate(memory_.context, &pointer, bytes), action);
+        if (pointer == nullptr) {
+            throw GpuError(std::string(action) + ": successful nonempty allocation returned no storage");
+        }
+        pointer_ = static_cast<T*>(pointer);
     }
 
     HipDeviceBuffer(const HipDeviceBuffer&) = delete;
@@ -370,7 +405,7 @@ template <typename T> class HipDeviceBuffer {
         if (pointer_ == nullptr) {
             return;
         }
-        check_hip(hipFree(pointer_), action);
+        check_hip(memory_.release(memory_.context, pointer_), action);
         pointer_ = nullptr;
     }
 
@@ -380,11 +415,12 @@ template <typename T> class HipDeviceBuffer {
     // Outputs: Requests HIP cleanup and clears local ownership; never throws.
     void reset_noexcept() noexcept {
         if (pointer_ != nullptr) {
-            (void)hipFree(pointer_);
+            (void)memory_.release(memory_.context, pointer_);
             pointer_ = nullptr;
         }
     }
 
+    const HipMemoryCalls memory_{};
     T* pointer_ = nullptr;
 };
 

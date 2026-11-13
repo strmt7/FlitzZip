@@ -8,6 +8,7 @@
 #if FLITZZIP_ENABLE_HIP
 #include "rans_gpu_fixtures.hpp"
 #include "rans_fixtures.hpp"
+#include "hip_runtime_fixture.hpp"
 #include "gpu/hip_crc.hpp"
 #include "gpu/hip_rans.hpp"
 #include "gpu/hip_rans_encoder.hpp"
@@ -101,6 +102,279 @@ TEST_CASE(gpu_rans_encoder_workspace_counts_padding_all_models_and_returned_payl
                                                        std::numeric_limits<std::size_t>::max()}) {
         require_encoder_error<ArchiveError>([&] { (void)rans_encode_workspace_requirements(bytes); });
     }
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+#if FLITZZIP_ENABLE_HIP
+namespace {
+
+class EncoderFaultInput {
+  public:
+    explicit EncoderFaultInput(std::uint32_t bytes)
+        : source(bytes, std::byte{0xFF}), reservation(bytes + 2U, "rANS runtime fault input"), input(bytes) {
+        input.reset(source);
+    }
+    std::span<const std::byte> resident() const {
+        return {input.data(), source.size()};
+    }
+    std::vector<std::byte> source;
+    HipDeviceMemoryReservation reservation;
+    CountDeviceBuffer<std::byte> input;
+};
+
+void require_fault_candidate(RansEncoder& encoder, const EncoderFaultInput& input) {
+    const auto payload = encoder.encode(16U, 8U, 8U, input.source.size());
+    REQUIRE_TRUE(payload.has_value());
+    REQUIRE_EQ(*payload, rans_singleton_payload(static_cast<std::uint32_t>(input.source.size()), 16U, 8U, 8U, 255U));
+    require_encoder_readback(*payload, input.source, false);
+}
+
+std::array<std::size_t, kHipCallKinds> successful_trial_calls(const EncoderFaultInput& input) {
+    HipFaultRuntime runtime;
+    RansEncoder encoder(input.resident(), nullptr, {}, runtime.calls());
+    const auto before = runtime.counts;
+    require_fault_candidate(encoder, input);
+    auto counts = runtime.counts;
+    for (std::size_t i = 0U; i < counts.size(); ++i) {
+        counts[i] -= before[i];
+    }
+    encoder.close_checked();
+    REQUIRE_TRUE(runtime.valid);
+    REQUIRE_EQ(runtime.live_count(), 0U);
+    return counts;
+}
+
+void require_trial_runtime_failures(HipCall kind) {
+    EncoderFaultInput input(33025U);
+    const auto baseline = encoder_reserved_bytes();
+    const auto counts = successful_trial_calls(input);
+    const auto total = counts[static_cast<std::size_t>(kind)];
+    REQUIRE_TRUE(total > 0U && total < 256U);
+    for (std::size_t ordinal = 1U; ordinal <= total; ++ordinal) {
+        HipFaultRuntime runtime;
+        {
+            RansEncoder encoder(input.resident(), nullptr, {}, runtime.calls());
+            runtime.fail(kind, ordinal);
+            require_encoder_error<GpuError>([&] { (void)encoder.encode(16U, 8U, 8U, input.source.size()); });
+            REQUIRE_EQ(runtime.injected, 1U);
+            REQUIRE_EQ(runtime.live_count(), 2U);
+            require_fault_candidate(encoder, input);
+            encoder.close_checked();
+        }
+        REQUIRE_TRUE(runtime.valid);
+        REQUIRE_EQ(runtime.live_count(), 0U);
+        REQUIRE_EQ(encoder_reserved_bytes(), baseline);
+    }
+    REQUIRE_EQ(input.input.read(static_cast<std::uint32_t>(input.source.size())), input.source);
+    input.input.release_checked();
+}
+
+}  // namespace
+#endif
+
+TEST_CASE(gpu_rans_encoder_runtime_constructor_failures_release_acquired_storage) {
+#if FLITZZIP_ENABLE_HIP
+    if (!query_gpu_info().available) {
+        return;
+    }
+    EncoderFaultInput input(513U);
+    const auto baseline = encoder_reserved_bytes();
+    std::array<std::size_t, kHipCallKinds> counts{};
+    {
+        HipFaultRuntime runtime;
+        RansEncoder encoder(input.resident(), nullptr, {}, runtime.calls());
+        counts = runtime.counts;
+        encoder.close_checked();
+        REQUIRE_TRUE(runtime.valid);
+        REQUIRE_EQ(runtime.live_count(), 0U);
+    }
+    for (const auto kind :
+         std::array{HipCall::allocate, HipCall::copy, HipCall::clear, HipCall::launch, HipCall::synchronize}) {
+        const auto total = counts[static_cast<std::size_t>(kind)];
+        REQUIRE_TRUE(total > 0U && total < 32U);
+        for (std::size_t ordinal = 1U; ordinal <= total; ++ordinal) {
+            HipFaultRuntime runtime;
+            runtime.fail(kind, ordinal);
+            require_encoder_error<GpuError>(
+                [&] { RansEncoder encoder(input.resident(), nullptr, {}, runtime.calls()); });
+            REQUIRE_EQ(runtime.injected, 1U);
+            REQUIRE_EQ(runtime.live_count(), 0U);
+            REQUIRE_EQ(encoder_reserved_bytes(), baseline);
+            {
+                RansEncoder recovered(input.resident(), nullptr, {}, runtime.calls());
+                require_fault_candidate(recovered, input);
+                recovered.close_checked();
+            }
+            REQUIRE_TRUE(runtime.valid);
+            REQUIRE_EQ(runtime.live_count(), 0U);
+            REQUIRE_EQ(encoder_reserved_bytes(), baseline);
+        }
+    }
+    input.input.release_checked();
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_runtime_copy_failures_discard_partial_trials_and_recover) {
+#if FLITZZIP_ENABLE_HIP
+    if (query_gpu_info().available) {
+        require_trial_runtime_failures(HipCall::copy);
+    }
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_runtime_clear_failures_discard_partial_trials_and_recover) {
+#if FLITZZIP_ENABLE_HIP
+    if (query_gpu_info().available) {
+        require_trial_runtime_failures(HipCall::clear);
+    }
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_runtime_launch_failures_discard_partial_trials_and_recover) {
+#if FLITZZIP_ENABLE_HIP
+    if (query_gpu_info().available) {
+        require_trial_runtime_failures(HipCall::launch);
+    }
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_runtime_completion_failures_discard_partial_trials_and_recover) {
+#if FLITZZIP_ENABLE_HIP
+    if (query_gpu_info().available) {
+        require_trial_runtime_failures(HipCall::synchronize);
+    }
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_runtime_failed_child_drain_preserves_error_and_prohibits_reuse) {
+#if FLITZZIP_ENABLE_HIP
+    if (!query_gpu_info().available) {
+        return;
+    }
+    EncoderFaultInput input(33025U);
+    const auto baseline = encoder_reserved_bytes();
+    HipFaultRuntime runtime;
+    {
+        RansEncoder encoder(input.resident(), nullptr, {}, runtime.calls());
+        runtime.fail(HipCall::launch, 1U);
+        runtime.fail_drain_after_primary = true;
+        std::string message;
+        try {
+            (void)encoder.encode(16U, 8U, 8U, input.source.size());
+        } catch (const GpuError& error) {
+            message = error.what();
+        }
+        REQUIRE_TRUE(message.find("count rANS segment boundaries") != std::string::npos);
+        REQUIRE_EQ(runtime.injected, 2U);
+        const auto stopped = runtime.counts;
+        // Even an immediately pruned trial must reject a terminal child state.
+        require_encoder_error<GpuError>([&] { (void)encoder.encode(16U, 8U, 8U, 0U); });
+        REQUIRE_EQ(runtime.counts, stopped);
+        encoder.close_checked();
+    }
+    REQUIRE_TRUE(runtime.valid);
+    REQUIRE_EQ(runtime.live_count(), 0U);
+    REQUIRE_EQ(encoder_reserved_bytes(), baseline);
+    input.input.release_checked();
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_runtime_checked_free_failures_retain_ownership_and_budget) {
+#if FLITZZIP_ENABLE_HIP
+    if (!query_gpu_info().available) {
+        return;
+    }
+    EncoderFaultInput input(513U);
+    const auto baseline = encoder_reserved_bytes();
+    const auto plan = rans_encode_workspace_requirements(input.source.size());
+    for (const auto ordinal : std::array{1U, 2U}) {
+        HipFaultRuntime runtime;
+        {
+            RansEncoder encoder(input.resident(), nullptr, {}, runtime.calls());
+            require_fault_candidate(encoder, input);
+            runtime.fail(HipCall::release, ordinal);
+            require_encoder_error<GpuError>([&] { encoder.close_checked(); });
+            REQUIRE_EQ(runtime.injected, 1U);
+            REQUIRE_EQ(runtime.live_count(), ordinal == 1U ? 2U : 1U);
+            const auto retained =
+                ordinal == 1U ? plan.device_bytes : rans_statistics_workspace_requirements().device_bytes;
+            REQUIRE_EQ(encoder_reserved_bytes(), baseline + retained);
+            require_encoder_error<GpuError>([&] { (void)encoder.encode(16U, 8U, 8U, input.source.size()); });
+            encoder.close_checked();
+        }
+        REQUIRE_TRUE(runtime.valid);
+        REQUIRE_EQ(runtime.live_count(), 0U);
+        REQUIRE_EQ(encoder_reserved_bytes(), baseline);
+    }
+    input.input.release_checked();
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_runtime_buffer_snapshots_allocator_pair_before_acquisition) {
+#if FLITZZIP_ENABLE_HIP
+    if (!query_gpu_info().available) {
+        return;
+    }
+    HipFaultRuntime runtime;
+    auto memory = runtime.calls().memory;
+    HipDeviceMemoryReservation reservation(256U, "runtime allocator snapshot fixture");
+    HipDeviceBuffer<std::uint32_t> storage(256U, "runtime allocator snapshot", memory);
+    const auto pointer = storage.get();
+    REQUIRE_TRUE(pointer != nullptr);
+    memory = {nullptr, nullptr, nullptr};
+    require_encoder_error<GpuError>([&] { storage.allocate_checked(256U, "reject live-owner replacement"); });
+    REQUIRE_EQ(runtime.counts[static_cast<std::size_t>(HipCall::allocate)], 1U);
+    REQUIRE_EQ(storage.get(), pointer);
+    storage.reset_checked("free copied allocator pair");
+    REQUIRE_EQ(runtime.live_count(), 0U);
+    REQUIRE_TRUE(runtime.valid);
+    require_encoder_error<GpuError>([&] { HipDeviceBuffer<std::byte> invalid(1U, "invalid allocator pair", memory); });
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_runtime_incomplete_dispatch_is_rejected_before_acquisition) {
+#if FLITZZIP_ENABLE_HIP
+    if (!query_gpu_info().available) {
+        return;
+    }
+    EncoderFaultInput input(513U);
+    const auto baseline = encoder_reserved_bytes();
+    using Damage = void (*)(HipRuntimeCalls&);
+    const std::array<Damage, 6U> damage{[](HipRuntimeCalls& calls) { calls.memory.allocate = nullptr; },
+                                        [](HipRuntimeCalls& calls) { calls.memory.release = nullptr; },
+                                        [](HipRuntimeCalls& calls) { calls.copy = nullptr; },
+                                        [](HipRuntimeCalls& calls) { calls.clear = nullptr; },
+                                        [](HipRuntimeCalls& calls) { calls.launch = nullptr; },
+                                        [](HipRuntimeCalls& calls) { calls.synchronize = nullptr; }};
+    for (const auto invalidate : damage) {
+        HipFaultRuntime runtime;
+        auto calls = runtime.calls();
+        invalidate(calls);
+        require_encoder_error<GpuError>([&] { RansEncoder encoder(input.resident(), nullptr, {}, calls); });
+        REQUIRE_EQ(runtime.counts, (std::array<std::size_t, kHipCallKinds>{}));
+        REQUIRE_EQ(runtime.live_count(), 0U);
+        REQUIRE_EQ(encoder_reserved_bytes(), baseline);
+        REQUIRE_TRUE(runtime.valid);
+    }
+    input.input.release_checked();
 #else
     REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
 #endif

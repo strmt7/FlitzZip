@@ -36,15 +36,23 @@ struct RansStatisticsWorkspaceRequirements {
 // option rejection leaves completed caches intact. A failed drain permanently
 // prohibits reuse. Normal callers check close_checked(); destructors
 // retain the existing best-effort HIP buffer cleanup contract on exceptional exit.
+// Runtime descriptors are copied; borrowed callback state must outlive this owner.
+// Default descriptors perform native HIP calls without process-wide hooks.
 class RansStatistics {
   public:
     explicit RansStatistics(std::span<const std::byte> device_source, GpuTelemetry* telemetry,
-                            const std::function<void()>& checkpoint = {});
+                            const std::function<void()>& checkpoint = {}, HipRuntimeCalls runtime = {});
     RansStatistics(const RansStatistics&) = delete;
     RansStatistics& operator=(const RansStatistics&) = delete;
 
     [[nodiscard]] std::span<const std::uint32_t> project(std::uint32_t context_bits, std::uint32_t segment_shift,
                                                          const std::function<void()>& checkpoint = {});
+
+    // Logical admission only; callers must still validate the owning device.
+    // A parent operation cannot become reusable after this child becomes terminal.
+    [[nodiscard]] bool is_reusable() const noexcept {
+        return reusable_;
+    }
 
     // Invalidate views before checked release. A free failure retains ownership
     // and its reservation for a cleanup retry or destructor; no further use is admitted.
@@ -60,6 +68,7 @@ class RansStatistics {
 
     const std::span<const std::byte> source_;
     GpuTelemetry* const telemetry_;
+    const HipRuntimeCalls runtime_;
     HipDeviceMemoryReservation reservation_;
     HipDeviceBuffer<std::uint32_t> storage_;
     std::uint32_t* base_;

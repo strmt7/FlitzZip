@@ -87,8 +87,13 @@ Public archive admission remains closed. The private HIP reader, statistics,
 normalization, model construction and stream kernels have independent device
 correctness controls. The host encoder now connects actual GPU-produced counts,
 models and streams under one bounded owner, with independent readback,
-cancellation/recovery and complete-frame loss controls. External runtime failure
-injection, public archive integration and representative adoption remain open.
+cancellation/recovery and complete-frame loss controls. Per-instance runtime
+fault controls now exercise actual HIP acquisitions, copies, submissions,
+completion and checked release. A reproduced child-drain failure now preserves
+the parent's terminal state, including trials pruned before device work. The
+affected correctness registry and separate correctness CTest suites passed;
+measurement consumers remain deferred. Public archive integration and
+representative adoption remain open.
 Each subsequent batch still requires its own applicable hosted acceptance.
 The earlier source `dec2dca` has a
 [qualified ZIP/MSI candidate](https://github.com/strmt7/FlitzZip/actions/runs/42993879195);
@@ -270,7 +275,7 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 | B02 | Published with bounded local host/HIP, reporting and successful hosted workflows; local broad driver deferred | Preserve source-bound results and final audit requirements | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
 | C01 | Complete-size effort progression: scoped review next | Existing nested-search inventory | Independent full-size/decoding regressions for every advertised guarantee; no padding or manufactured low-effort losses |
 | C02 | CPU codec mechanisms: planned | Demonstrated work/ownership problem per codec | Independent read/write oracles and failure/recovery checks; supported capabilities unchanged; no unmeasured speed claim |
-| N01 | In progress: private GPU reader, statistics, model/stream kernels and bounded host encoder; public archive admission closed | B02 and approved format contract | Finish external runtime-failure qualification, archive/version/composition integration and Neutron portfolio ownership; retain independent readback/CRC and malformed-input/lifetime controls |
+| N01 | In progress: private GPU reader, statistics, model/stream kernels and bounded host encoder with real-HIP runtime-failure controls; public archive admission closed | B02 and approved format contract | Complete current hosted acceptance, archive/version/composition integration and Neutron portfolio ownership; retain independent readback/CRC and malformed-input/lifetime controls |
 | N02 | Representative Neutron effectiveness: deferred | N01 and lifted benchmark restriction | Complete-size evidence on licensed independent workloads, including losses and all model/framing bytes, before production adoption |
 | D01 | Dependency lifecycle: alerts clear at assessment | Official metadata, compatible graph and provenance | Reproducible pins plus fresh/update installed-consumer tests; explicit unsupported/constrained platforms |
 | T01 | Correctness separation locally qualified: typed native roles, complete CTest role admission, real HIP correctness and isolated mutation/failure controls | Finish affected pushed-source hosted qualification and remaining portability consumers | No benchmark reachable through the explicit correctness-only path; all existing consumers retained in ordinary/final selection; fresh/update/recovery and owned-process cleanup evidence |

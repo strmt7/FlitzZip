@@ -39,15 +39,18 @@ struct RansEncodeWorkspaceRequirements {
 // Checkpoints run before work and after actual completion, including losing and
 // cached trials. They may throw, but must not reenter, change devices or mutate
 // borrowed storage. Failed admitted work invalidates prepared models; failed
-// drain prohibits reuse. Invalid options do not invalidate completed caches.
+// drain in this owner or its statistics child prohibits reuse. Invalid options
+// do not invalidate completed caches.
 // Checked close reports release failure and retains ownership for retry;
 // destruction keeps the existing best-effort HIP buffer cleanup contract.
+// Runtime descriptors are copied; borrowed callback state must outlive this owner.
+// Default descriptors retain native HIP execution and hardware admission.
 // This component does not activate a public archive kind or replace normal
 // archive version admission, decoded CRC verification or adoption qualification.
 class RansEncoder {
   public:
     explicit RansEncoder(std::span<const std::byte> device_source, GpuTelemetry* telemetry,
-                         const std::function<void()>& checkpoint = {});
+                         const std::function<void()>& checkpoint = {}, HipRuntimeCalls runtime = {});
     RansEncoder(const RansEncoder&) = delete;
     RansEncoder& operator=(const RansEncoder&) = delete;
 
@@ -71,6 +74,7 @@ class RansEncoder {
 
     const std::span<const std::byte> source_;
     GpuTelemetry* const telemetry_;
+    const HipRuntimeCalls runtime_;
     const RansEncodeWorkspaceRequirements required_;
     HipDeviceMemoryReservation reservation_;
     RansStatistics statistics_;

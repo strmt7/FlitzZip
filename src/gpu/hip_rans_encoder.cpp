@@ -88,11 +88,12 @@ RansEncodeWorkspaceRequirements rans_encode_workspace_requirements(std::size_t s
 }
 
 RansEncoder::RansEncoder(std::span<const std::byte> device_source, GpuTelemetry* telemetry,
-                         const std::function<void()>& checkpoint)
-    : source_(admit_encoder_source(device_source)), telemetry_(telemetry),
+                         const std::function<void()>& checkpoint, HipRuntimeCalls runtime)
+    : source_(admit_encoder_source(device_source)), telemetry_(telemetry), runtime_(checked_hip_runtime_calls(runtime)),
       required_(rans_encode_workspace_requirements(source_.size())),
-      reservation_(required_.scratch_bytes, "rANS encoder scratch"), statistics_(source_, telemetry, checkpoint),
-      storage_(required_.scratch_bytes, "allocate rANS encoder scratch"), frequencies_(65536U),
+      reservation_(required_.scratch_bytes, "rANS encoder scratch"),
+      statistics_(source_, telemetry, checkpoint, runtime_),
+      storage_(required_.scratch_bytes, "allocate rANS encoder scratch", runtime_.memory), frequencies_(65536U),
       offsets_(required_.max_segments + 1U) {
     check_hip(hipGetDevice(&device_), "get rANS encoder device");
     record_gpu_device_allocation_bytes(telemetry_, required_.scratch_bytes);
@@ -127,15 +128,17 @@ void RansEncoder::require_current_device() const {
 void RansEncoder::initialize_statuses(std::uint32_t count) {
     auto active = std::span(statuses_).first(count);
     std::ranges::fill(active, RansModelStatus::invalid_plan);
-    check_hip(copy_on_codec_stream(device_statuses_, active.data(), active.size_bytes(), hipMemcpyHostToDevice),
-              "initialize rANS encoder statuses");
+    check_hip(
+        copy_on_codec_stream(runtime_, device_statuses_, active.data(), active.size_bytes(), hipMemcpyHostToDevice),
+        "initialize rANS encoder statuses");
     record_gpu_h2d_bytes(telemetry_, active.size_bytes());
 }
 
 void RansEncoder::require_statuses(std::uint32_t count) {
     auto active = std::span(statuses_).first(count);
-    check_hip(copy_on_codec_stream(active.data(), device_statuses_, active.size_bytes(), hipMemcpyDeviceToHost),
-              "read rANS encoder statuses");
+    check_hip(
+        copy_on_codec_stream(runtime_, active.data(), device_statuses_, active.size_bytes(), hipMemcpyDeviceToHost),
+        "read rANS encoder statuses");
     record_gpu_d2h_bytes(telemetry_, active.size_bytes());
     if (std::ranges::any_of(active, [](auto status) { return status != RansModelStatus::success; })) {
         throw ArchiveError("rANS encoder failed GPU model or stream validation");
@@ -155,14 +158,14 @@ void RansEncoder::prepare_rows(std::uint32_t bits, std::uint32_t shift, const st
     const auto contexts = 1U << bits;
     auto rows = std::span(rows_).first(contexts);
     std::ranges::fill(rows, RansModelRow{0U, 0U, RansModelStatus::invalid_plan});
-    check_hip(copy_on_codec_stream(device_rows_, rows.data(), rows.size_bytes(), hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(runtime_, device_rows_, rows.data(), rows.size_bytes(), hipMemcpyHostToDevice),
               "initialize rANS model rows");
     record_gpu_h2d_bytes(telemetry_, rows.size_bytes());
     const auto words = contexts * 256U;
-    dispatch_codec_kernel(telemetry_, hip_kernel_api().prepare_rans_models, contexts, 256U, "prepare rANS models",
-                          counts_.data(), words, static_cast<std::uint32_t>(source_.size()), order_, words,
-                          device_rows_, contexts);
-    check_hip(copy_on_codec_stream(rows.data(), device_rows_, rows.size_bytes(), hipMemcpyDeviceToHost),
+    dispatch_codec_kernel(runtime_, telemetry_, hip_kernel_api().prepare_rans_models, contexts, 256U,
+                          "prepare rANS models", counts_.data(), words, static_cast<std::uint32_t>(source_.size()),
+                          order_, words, device_rows_, contexts);
+    check_hip(copy_on_codec_stream(runtime_, rows.data(), device_rows_, rows.size_bytes(), hipMemcpyDeviceToHost),
               "read rANS model rows");
     record_gpu_d2h_bytes(telemetry_, rows.size_bytes());
     if (!rans_model_rows_admitted(rows, static_cast<std::uint32_t>(source_.size()), bits)) {
@@ -188,19 +191,19 @@ void RansEncoder::prepare_model(std::uint32_t precision, const std::function<voi
     const auto words = contexts * 256U;
     initialize_statuses(contexts);
     dispatch_codec_kernel(
-        telemetry_, hip_kernel_api().normalize_rans_models, contexts, 256U, "normalize rANS encoder models",
+        runtime_, telemetry_, hip_kernel_api().normalize_rans_models, contexts, 256U, "normalize rANS encoder models",
         counts_.data(), words, static_cast<const std::uint8_t*>(order_), words,
         static_cast<const RansModelRow*>(device_rows_), contexts, static_cast<std::uint32_t>(source_.size()), precision,
         device_frequencies_, words, device_statuses_, contexts);
     require_statuses(contexts);
     encoder_checkpoint(checkpoint);
     initialize_statuses(contexts);
-    dispatch_codec_kernel(telemetry_, hip_kernel_api().build_rans_models, contexts, 256U, "build rANS encoder models",
-                          static_cast<const std::uint32_t*>(device_frequencies_), words,
+    dispatch_codec_kernel(runtime_, telemetry_, hip_kernel_api().build_rans_models, contexts, 256U,
+                          "build rANS encoder models", static_cast<const std::uint32_t*>(device_frequencies_), words,
                           static_cast<const RansModelRow*>(device_rows_), contexts, precision, models_, contexts * 258U,
                           reciprocals_, words, device_statuses_, contexts);
     require_statuses(contexts);
-    check_hip(copy_on_codec_stream(frequencies_.data(), device_frequencies_, words * sizeof(std::uint32_t),
+    check_hip(copy_on_codec_stream(runtime_, frequencies_.data(), device_frequencies_, words * sizeof(std::uint32_t),
                                    hipMemcpyDeviceToHost),
               "read rANS encoder frequencies");
     record_gpu_d2h_bytes(telemetry_, words * sizeof(std::uint32_t));
@@ -213,7 +216,8 @@ void RansEncoder::prepare_model(std::uint32_t precision, const std::function<voi
 
 void RansEncoder::admit_stream_batch(std::uint32_t first, std::uint32_t count, std::uint32_t shift) {
     auto active = std::span(results_).first(count);
-    check_hip(copy_on_codec_stream(active.data(), device_results_ + first, active.size_bytes(), hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(runtime_, active.data(), device_results_ + first, active.size_bytes(),
+                                   hipMemcpyDeviceToHost),
               "read rANS encoded extents");
     record_gpu_d2h_bytes(telemetry_, active.size_bytes());
     for (std::uint32_t i = 0U; i < count; ++i) {
@@ -242,11 +246,11 @@ bool RansEncoder::encode_streams(std::uint32_t shift, std::size_t frame_header_b
         const auto count = std::min(kRansEncodeBatchSegments, segments - first);
         auto active = std::span(results_).first(count);
         std::ranges::fill(active, RansEncodeResult{0U, 0U, RansModelStatus::invalid_plan});
-        check_hip(
-            copy_on_codec_stream(device_results_ + first, active.data(), active.size_bytes(), hipMemcpyHostToDevice),
-            "initialize rANS encoded extents");
+        check_hip(copy_on_codec_stream(runtime_, device_results_ + first, active.data(), active.size_bytes(),
+                                       hipMemcpyHostToDevice),
+                  "initialize rANS encoded extents");
         record_gpu_h2d_bytes(telemetry_, active.size_bytes());
-        dispatch_codec_kernel(telemetry_, hip_kernel_api().encode_rans_segments, (count + 63U) / 64U, 64U,
+        dispatch_codec_kernel(runtime_, telemetry_, hip_kernel_api().encode_rans_segments, (count + 63U) / 64U, 64U,
                               "encode rANS streams", source_.data(), static_cast<std::uint32_t>(source_.size()),
                               static_cast<const std::uint32_t*>(models_), contexts * 258U,
                               static_cast<const std::uint32_t*>(reciprocals_), contexts * 256U, precision_, bits_,
@@ -264,14 +268,15 @@ bool RansEncoder::encode_streams(std::uint32_t shift, std::size_t frame_header_b
 void RansEncoder::compact_streams(std::uint32_t shift, const std::function<void()>& checkpoint) {
     const auto segments = encoder_segments(source_.size(), shift);
     const auto offsets = std::span(offsets_).first(segments + 1U);
-    check_hip(copy_on_codec_stream(device_offsets_, offsets.data(), offsets.size_bytes(), hipMemcpyHostToDevice),
-              "upload rANS dense offsets");
+    check_hip(
+        copy_on_codec_stream(runtime_, device_offsets_, offsets.data(), offsets.size_bytes(), hipMemcpyHostToDevice),
+        "upload rANS dense offsets");
     record_gpu_h2d_bytes(telemetry_, offsets.size_bytes());
     const auto slots = static_cast<std::uint32_t>(2U * source_.size() + 4U * segments);
     for (std::uint32_t first = 0U; first < segments;) {
         const auto count = std::min(kRansEncodeBatchSegments, segments - first);
         initialize_statuses(count);
-        dispatch_codec_kernel(telemetry_, hip_kernel_api().compact_rans_segments, count + 1U, 256U,
+        dispatch_codec_kernel(runtime_, telemetry_, hip_kernel_api().compact_rans_segments, count + 1U, 256U,
                               "compact rANS streams", static_cast<const std::byte*>(slots_), slots,
                               static_cast<std::uint32_t>(source_.size()), shift,
                               static_cast<const RansEncodeResult*>(device_results_), segments,
@@ -304,9 +309,9 @@ std::vector<std::byte> RansEncoder::serialize(std::uint32_t shift, std::size_t f
         throw ArchiveError("rANS sparse frame extent is inconsistent");
     }
     payload.resize(frame_header_bytes + offsets_[segments]);
-    check_hip(
-        copy_on_codec_stream(payload.data() + frame_header_bytes, output_, offsets_[segments], hipMemcpyDeviceToHost),
-        "read complete rANS payload");
+    check_hip(copy_on_codec_stream(runtime_, payload.data() + frame_header_bytes, output_, offsets_[segments],
+                                   hipMemcpyDeviceToHost),
+              "read complete rANS payload");
     record_gpu_d2h_bytes(telemetry_, offsets_[segments]);
     (void)GpuRansBlockView(payload, static_cast<std::uint32_t>(source_.size()));
     return payload;
@@ -345,7 +350,8 @@ std::optional<std::vector<std::byte>> RansEncoder::encode(std::uint32_t precisio
         bits_ = 9U;
         precision_ = 0U;
         counts_ = {};
-        reusable_ = hipStreamSynchronize(hipStreamPerThread) == hipSuccess;
+        const bool drained = runtime_.synchronize(runtime_.context, hipStreamPerThread) == hipSuccess;
+        reusable_ = drained && statistics_.is_reusable();
         throw;
     }
 }
