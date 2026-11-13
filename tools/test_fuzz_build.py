@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = ("path_safety", "file_manifest", "file_publish", "progress")
 TARGETS = {
     "archive_index": (),
+    "rans_block": (),
     "path_safety": ("path_safety",),
     "iso": CORE,
     "cab_header": ("path_safety",),
@@ -113,6 +114,12 @@ class FuzzBuildTests(unittest.TestCase):
                     self.assertEqual(sum("-Ithird_party/miniz" in args for args in instances), 1, name)
                 links = {Path(args[args.index("-o") + 1]).name: args for args in commands if "-c" not in args}
                 self.assertEqual(set(links), {f"flitzzip_{name}_fuzzer" for name in TARGETS})
+                rans = links["flitzzip_rans_block_fuzzer"]
+                self.assertIn("fuzz/rans_block_fuzzer.cpp", rans)
+                self.assertIn("src/core/rans_block.cpp", rans)
+                with zipfile.ZipFile(Path(temporary) / "output/flitzzip_rans_block_fuzzer_seed_corpus.zip") as seeds:
+                    self.assertEqual(len(seeds.namelist()), 9)
+                    self.assertEqual(seeds.read("binary-balanced")[:8], bytes((0, 1, 0, 0, 8, 0, 8, 0)))
                 with zipfile.ZipFile(Path(temporary) / "output/flitzzip_ar_fuzzer_seed_corpus.zip") as seeds:
                     self.assertEqual(set(seeds.namelist()), {"empty.ar", "ordinary.ar", "gnu.ar", "bsd.ar"})
                     self.assertEqual(seeds.read("empty.ar"), b"!<arch>\n")
@@ -147,6 +154,15 @@ class FuzzBuildTests(unittest.TestCase):
                     if sanitizer == "undefined":
                         self.assertIn("-fsanitize=alignment", args)
                         self.assertIn("-fno-sanitize-recover=alignment", args)
+
+    def test_rans_parser_compile_failure_stops_its_target_and_later_links(self):
+        with tempfile.TemporaryDirectory(prefix="fuzz rans failure ") as temporary:
+            directory = Path(temporary)
+            result, commands = self.run_plan(directory, "address", fail_source="src/core/rans_block.cpp")
+            self.assertEqual(result.returncode, 7, result.stderr)
+            self.assertTrue(any("src/core/rans_block.cpp" in arguments for arguments in commands))
+            self.assertFalse((directory / "output/flitzzip_rans_block_fuzzer").exists())
+            self.assertFalse((directory / "output/flitzzip_path_safety_fuzzer").exists())
 
     # Purpose: Stop on a failed shared compilation rather than linking incomplete or cached targets.
     # Inputs: One injected compiler failure in a shared C++ source. Outputs: Nonzero status and no target links.

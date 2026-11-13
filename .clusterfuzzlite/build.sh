@@ -158,6 +158,11 @@ PATH_SAFETY_OBJECT="${CORE_OBJECTS[0]}"
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
+  fuzz/rans_block_fuzzer.cpp src/core/rans_block.cpp \
+  -o "$OUT/flitzzip_rans_block_fuzzer" \
+  "$LIB_FUZZING_ENGINE"
+
+"$CXX" "${CXX_FLAGS[@]}" "${COMMON_FLAGS[@]}" \
   fuzz/path_safety_fuzzer.cpp \
   "$PATH_SAFETY_OBJECT" \
   -o "$OUT/flitzzip_path_safety_fuzzer" \
@@ -289,6 +294,7 @@ mapfile -t MINIZ_CORE_OBJECTS < "$OUT/miniz-core-objects.list"
   "$LIB_FUZZING_ENGINE"
 
 cp fuzz/flitzzip.dict "$OUT/flitzzip_archive_index_fuzzer.dict"
+cp fuzz/flitzzip_rans_block_fuzzer.dict "$OUT/flitzzip_rans_block_fuzzer.dict"
 cp fuzz/flitzzip.dict "$OUT/flitzzip_path_safety_fuzzer.dict"
 cp fuzz/flitzzip.dict "$OUT/flitzzip_cpio_fuzzer.dict"
 cp fuzz/flitzzip.dict "$OUT/flitzzip_ar_fuzzer.dict"
@@ -304,6 +310,7 @@ cp fuzz/flitzzip.dict "$OUT/flitzzip_arj_fuzzer.dict"
 cp fuzz/flitzzip.dict "$OUT/flitzzip_arc_fuzzer.dict"
 cp fuzz/flitzzip.dict "$OUT/flitzzip_macbinary_fuzzer.dict"
 cp fuzz/*.options "$OUT/"
+python3 tools/rans_fuzz_corpus.py "$OUT/flitzzip_rans_block_fuzzer_seed_corpus.zip"
 
 # Independent valid framing ensures a new target reaches member parsing immediately, including hosted runs.
 python3 - "$OUT/flitzzip_ar_fuzzer_seed_corpus.zip" <<'PY'
@@ -331,6 +338,7 @@ PY
 
 for target in \
   flitzzip_archive_index_fuzzer \
+  flitzzip_rans_block_fuzzer \
   flitzzip_path_safety_fuzzer \
   flitzzip_cpio_fuzzer \
   flitzzip_ar_fuzzer \

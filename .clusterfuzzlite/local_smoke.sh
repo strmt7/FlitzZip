@@ -6,7 +6,7 @@ set -euo pipefail
 runs="${1:?Missing fuzz run count}"
 [[ $runs =~ ^[0-9]+$ ]]
 python3 tools/fuzz_memory.py verify --budget-mib "${FLITZZIP_FUZZ_MEMORY_MIB:?Missing fuzz RAM budget}"
-python3 -m unittest tools.test_fuzz_build
+python3 -m unittest tools.test_fuzz_build tools.test_rans_fuzz_corpus
 mkdir -p /out
 # Direct base-image invocation does not perform ClusterFuzzLite's compiler flag setup.
 sanitizer_flags="-fsanitize=address,undefined,fuzzer-no-link -fno-sanitize-recover=all"
@@ -22,6 +22,8 @@ done
 rm -rf /out/corpus
 mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/cpio /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lzma /out/corpus/lzip /out/corpus/arj /out/corpus/arc /out/corpus/macbinary /out/corpus/lha /out/corpus/xar
 python3 -m zipfile -e /out/flitzzip_ar_fuzzer_seed_corpus.zip /out/corpus/ar
+mkdir -p /out/corpus/rans_block
+python3 -m zipfile -e /out/flitzzip_rans_block_fuzzer_seed_corpus.zip /out/corpus/rans_block
 printf 'SUZP\001\000\000\000\000\000\000\000' > /out/corpus/archive_index/empty-index
 printf '\000\020\000\000\001\003A\000\000\004\000\000' > /out/corpus/archive_index/compound-fill-pattern
 printf '\003\020\000\000\004\003\000\000AB' > /out/corpus/archive_index/byte-plane-pattern-tail
@@ -145,6 +147,7 @@ run_fuzzer() {
 
 if [ "$runs" -gt 0 ]; then
   run_fuzzer flitzzip_archive_index_fuzzer /out/corpus/archive_index 1048576
+  run_fuzzer flitzzip_rans_block_fuzzer /out/corpus/rans_block 1048576
   run_fuzzer flitzzip_path_safety_fuzzer /out/corpus/path_safety 4096
   run_fuzzer flitzzip_cpio_fuzzer /out/corpus/cpio 1048576
   run_fuzzer flitzzip_ar_fuzzer /out/corpus/ar 1048576

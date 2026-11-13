@@ -1137,6 +1137,16 @@ if(FLITZZIP_BUILD_FUZZERS)
   target_compile_definitions(flitzzip_archive_index_fuzzer
                              PRIVATE FLITZZIP_ENABLE_HIP=0)
 
+  add_executable(flitzzip_rans_block_fuzzer fuzz/rans_block_fuzzer.cpp
+                                            src/core/rans_block.cpp)
+  target_include_directories(flitzzip_rans_block_fuzzer PRIVATE src)
+  target_compile_definitions(flitzzip_rans_block_fuzzer
+                             PRIVATE FLITZZIP_ENABLE_HIP=0)
+  target_compile_options(flitzzip_rans_block_fuzzer
+                         PRIVATE -fsanitize=fuzzer,address,undefined)
+  target_link_options(flitzzip_rans_block_fuzzer
+                      PRIVATE -fsanitize=fuzzer,address,undefined)
+
   add_executable(flitzzip_path_safety_fuzzer fuzz/path_safety_fuzzer.cpp
                                              src/core/path_safety.cpp)
   target_include_directories(flitzzip_path_safety_fuzzer PRIVATE src)
