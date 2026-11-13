@@ -121,8 +121,17 @@ function Get-FlitzZipNativeTestSelection {
     if ($Full.IsPresent) { return $broad }
     $definitions = @(
         @{ id = 'rans-reader'; requireHip = $false; paths = @(
-               'src/core/rans_block.cpp', 'src/core/rans_block.hpp', 'tests/cpp/rans_fixtures.hpp')
+               'src/core/rans_block.cpp', 'src/core/rans_block.hpp', 'src/core/byte_region.hpp', 'tests/cpp/rans_fixtures.hpp')
            rules = @(@{ source = 'tests/cpp/test_rans_block.cpp'; pattern = '^gpu_rans_reader_' }) },
+        @{ id = 'rans-device'; requireHip = $true; paths = @(
+               'src/core/rans_block.cpp', 'src/core/rans_block.hpp', 'src/core/byte_region.hpp',
+               'tests/cpp/rans_fixtures.hpp', 'src/gpu/hip_rans.cpp', 'src/gpu/hip_rans.hpp',
+               'src/gpu/hip_rans.hip.cpp', 'src/gpu/rans_decode_plan.hpp')
+           rules = @(
+               @{ source = 'tests/cpp/test_gpu_rans_decode.cpp'; pattern = '^gpu_rans_kernel_' },
+               @{ source = 'tests/cpp/test_gpu_rans_operation.cpp'; pattern = '^gpu_rans_operation_' }) },
+        @{ id = 'byte-region'; requireHip = $false; paths = @('src/core/byte_region.hpp')
+           rules = @(@{ source = 'tests/cpp/test_byte_region.cpp'; pattern = '^byte_region_' }) },
         @{ id = 'folder-size-cache'; requireHip = $false; paths = @('src/app/folder_size_cache.hpp')
            rules = @(@{ source = 'tests/cpp/test_folder_size_cache.cpp'; pattern = '^' }) },
         @{ id = 'gui-monitor'; requireHip = $false; paths = @(

@@ -1,5 +1,6 @@
 #include "core/rans_block.hpp"
 
+#include "core/byte_region.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
@@ -11,17 +12,6 @@ namespace {
 constexpr std::uint32_t kRansLower = 1U << 23U;
 constexpr std::uint32_t kRansStateLimit = 1U << 31U;
 constexpr std::size_t kRansCdfWords = 257U;
-
-// Compare start-address differences, avoiding overflow and unrelated-pointer
-// ordering. Empty regions cannot overlap; no end pointer is formed.
-bool regions_overlap(std::span<const std::byte> lhs, std::span<const std::byte> rhs) noexcept {
-    if (lhs.empty() || rhs.empty()) {
-        return false;
-    }
-    const auto a = reinterpret_cast<std::uintptr_t>(lhs.data());
-    const auto b = reinterpret_cast<std::uintptr_t>(rhs.data());
-    return a <= b ? b - a < lhs.size() : a - b < rhs.size();
-}
 
 // Reads only an admitted four-byte little-endian word; callers first prove its
 // complete extent or obtain it from the bounded cursor.
@@ -156,7 +146,7 @@ std::span<std::uint32_t> GpuRansBlockView::admit_workspace(std::span<std::uint32
         throw ArchiveError("GPU rANS model workspace is too small");
     }
     const auto used = workspace.first(model_workspace_words());
-    if (regions_overlap(payload_, std::as_bytes(used))) {
+    if (byte_regions_overlap(payload_, std::as_bytes(used))) {
         throw ArchiveError("GPU rANS workspace overlaps its payload");
     }
     return used;
@@ -198,8 +188,8 @@ std::span<const std::byte> GpuRansBlockView::stream(std::uint32_t segment) const
 
 void GpuRansBlockView::decode(std::span<std::byte> output, std::span<std::uint32_t> workspace) const {
     const auto models = admit_workspace(workspace);
-    if (output.size() != decoded_size_ || regions_overlap(payload_, output) ||
-        regions_overlap(output, std::as_bytes(models))) {
+    if (output.size() != decoded_size_ || byte_regions_overlap(payload_, output) ||
+        byte_regions_overlap(output, std::as_bytes(models))) {
         throw ArchiveError("GPU rANS output extent or ownership is invalid");
     }
     prepare_models(models);

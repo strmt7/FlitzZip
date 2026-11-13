@@ -61,6 +61,13 @@ std::vector<std::byte> rans_unused_row_fixture(bool all_contexts) {
 
 }  // namespace
 
+TEST_CASE(gpu_rans_reader_shared_singleton_fixture_matches_independent_wire) {
+    REQUIRE_TRUE(
+        std::ranges::equal(flitzzip_test::rans_singleton_payload(32U, 16U, 0U, 8U), flitzzip_test::kRansZero16));
+    REQUIRE_TRUE(std::ranges::equal(flitzzip_test::rans_singleton_payload(513U, 8U, 8U, 8U, 255U),
+                                    flitzzip_test::kRansSingleton8));
+}
+
 TEST_CASE(gpu_rans_reader_independent_payloads_and_segment_resets) {
     struct Fixture {
         std::span<const std::byte> payload;
@@ -129,25 +136,8 @@ TEST_CASE(gpu_rans_reader_all_options_preserve_exact_singleton_state) {
         for (unsigned int context_bits = 0U; context_bits <= 8U; ++context_bits) {
             for (unsigned int shift = 8U; shift <= 12U; ++shift) {
                 constexpr std::uint32_t decoded = 513U;
-                const auto segment_bytes = 1U << shift;
-                const auto segments = (decoded + segment_bytes - 1U) / segment_bytes;
-                std::vector<std::byte> payload{static_cast<std::byte>(precision),
-                                               static_cast<std::byte>(context_bits),
-                                               static_cast<std::byte>(shift),
-                                               static_cast<std::byte>(context_bits == 0U ? 0U : 1U),
-                                               std::byte{0},
-                                               std::byte{0},
-                                               std::byte{255}};
-                if (context_bits != 0U) {
-                    payload.insert(payload.end(),
-                                   {static_cast<std::byte>((1U << context_bits) - 1U), std::byte{0}, std::byte{255}});
-                }
-                for (unsigned int i = 0U; i <= segments; ++i) {
-                    append_rans_word(payload, 4U * i);
-                }
-                for (unsigned int i = 0U; i < segments; ++i) {
-                    append_rans_word(payload, 1U << 23U);
-                }
+                const auto payload =
+                    flitzzip_test::rans_singleton_payload(decoded, precision, context_bits, shift, 255U);
                 const flitzzip::GpuRansBlockView view(payload, decoded);
                 std::vector<std::uint32_t> workspace(view.model_workspace_words());
                 std::vector<std::byte> output(decoded, std::byte{90});

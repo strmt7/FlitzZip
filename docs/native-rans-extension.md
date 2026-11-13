@@ -272,7 +272,20 @@ full-width singleton mass, missing models, malformed states and streams, invalid
 plans, inactive lanes, complete allocation guards and immediate valid reuse.
 These tests pass host-admitted models to the device reader; they do not establish
 an integrated GPU model producer or a measured size or speed improvement.
-Operation-owned dispatch, cancellation and resource-accounted archive integration
+The [host reader](../src/gpu/hip_rans.hpp) now owns one charged scratch allocation
+for models, reusable plans and statuses. It borrows exact disjoint resident
+windows, accepts caller-accounted host model storage, and processes at most 128
+independent segments per dispatch. This scheduling bound preserves the full
+supported block size. Statuses are reset before reuse; callbacks observe only
+completed batches. Normal release is checked, and exceptions propagate after an
+attempted stream drain. No CPU decode or fallback occurs in this component.
+
+Copies use the codec's per-thread stream and synchronous `hipMemcpyWithStream`;
+dispatch completion precedes status inspection, checkpoints and release. These
+contracts follow AMD's [memory API](https://rocm.docs.amd.com/projects/HIP/en/docs-10.1.0/reference/hip_runtime_api/modules/memory_management.html)
+and [stream API](https://rocm.docs.amd.com/projects/HIP/en/docs-10.1.0/reference/hip_runtime_api/modules/stream_management.html).
+The caller keeps decoded storage alive through the existing device CRC consumer.
+Archive worker/resource admission, publication and malformed-input fuzz integration
 remain required before opening public kind/version admission.
 
 ## Adoption criteria

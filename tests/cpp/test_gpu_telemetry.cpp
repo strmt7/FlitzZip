@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cmath>
+#include <bit>
 #include <future>
 #include <limits>
 #include <stdexcept>
@@ -243,7 +244,7 @@ TEST_CASE(gpu_observation_empty_zero_and_failed_samples_are_distinct) {
     flitzzip::record_gpu_kernel_launch(&telemetry, 0.0);
     const auto zero = flitzzip::snapshot_gpu_telemetry(telemetry);
     REQUIRE_EQ(zero.timing_status, flitzzip::GpuTimingStatus::Measured);
-    REQUIRE_EQ(zero.kernel_ms, 0.0);
+    REQUIRE_EQ(std::fpclassify(zero.kernel_ms), FP_ZERO);
     flitzzip::record_gpu_kernel_launch(&telemetry, std::numeric_limits<double>::quiet_NaN());
     REQUIRE_EQ(flitzzip::snapshot_gpu_telemetry(telemetry).timing_status, flitzzip::GpuTimingStatus::Unavailable);
 }
@@ -264,14 +265,20 @@ TEST_CASE(gpu_observation_measured_work_requires_paired_sample) {
         REQUIRE_TRUE(rejected);
         const auto after = flitzzip::snapshot_gpu_telemetry(telemetry);
         REQUIRE_EQ(after.kernel_launches, before.kernel_launches);
-        REQUIRE_EQ(after.kernel_ms, before.kernel_ms);
+        // Rejection preserves the representation as well as numeric state,
+        // including signed zero and any future unavailable-sample NaN payload.
+        REQUIRE_EQ(std::bit_cast<std::uint64_t>(after.kernel_ms), std::bit_cast<std::uint64_t>(before.kernel_ms));
         REQUIRE_EQ(after.timing_status, before.timing_status);
         REQUIRE_EQ(telemetry.timing_recorded.load(), sampled);
         flitzzip::record_gpu_completed_kernels(&telemetry, 0U);
         flitzzip::record_gpu_kernel_work(&telemetry, 1U, 0.0);
         const auto recovered = flitzzip::snapshot_gpu_telemetry(telemetry);
         REQUIRE_EQ(recovered.kernel_launches, sampled ? 3U : 1U);
-        REQUIRE_EQ(recovered.kernel_ms, sampled ? 1.25 : 0.0);
+        // Storage has exact microsecond units; its public double conversion
+        // permits only rounding noise, far below one stored tick.
+        REQUIRE_EQ(telemetry.kernel_microseconds.load(), sampled ? 1250U : 0U);
+        REQUIRE_TRUE(std::abs(recovered.kernel_ms - (sampled ? 1.25 : 0.0)) <=
+                     2.0 * std::numeric_limits<double>::epsilon());
         REQUIRE_EQ(recovered.timing_status, flitzzip::GpuTimingStatus::Measured);
     }
     flitzzip::record_gpu_completed_kernels(nullptr, 3U);

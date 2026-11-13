@@ -22,6 +22,7 @@ function Assert-NativeSelectionRejected {
 
 $entropyPaths = @('src/gpu/hip_codec_static_prefix.hip.cpp', 'src/gpu/hip_codec_adaptive_prefix.hip.cpp')
 $ransExpected = @('gpu_rans_reader_independent_payloads_and_segment_resets',
+    'gpu_rans_reader_shared_singleton_fixture_matches_independent_wire',
     'gpu_rans_reader_full_width_singleton_and_complete_sparse_cdf',
     'gpu_rans_reader_all_options_preserve_exact_singleton_state',
     'gpu_rans_reader_maximum_context_inventory_has_bounded_caller_scratch',
@@ -32,11 +33,31 @@ $ransExpected = @('gpu_rans_reader_independent_payloads_and_segment_resets',
     'gpu_rans_reader_rejects_truncated_renormalization_with_valid_framing',
     'gpu_rans_reader_admits_capacity_before_mutation_and_preserves_guards',
     'gpu_rans_reader_rejects_live_aliases_but_allows_unused_scratch_reuse')
-foreach ($source in @('src/core/rans_block.cpp', 'src/core/rans_block.hpp', 'tests/cpp/rans_fixtures.hpp')) {
+$ransDeviceExpected = @('gpu_rans_kernel_independent_frames_and_full_width_models',
+    'gpu_rans_kernel_all_options_and_maximum_segment_work',
+    'gpu_rans_kernel_rejects_uncontained_and_unbounded_plans',
+    'gpu_rans_kernel_rejects_model_state_and_stream_faults_then_recovers',
+    'gpu_rans_operation_workspace_contract_is_exact_and_bounded',
+    'gpu_rans_operation_independent_bytes_device_crc_and_dispatch_boundaries',
+    'gpu_rans_operation_checkpoints_see_completed_windows_and_recover',
+    'gpu_rans_operation_rejects_later_corruption_without_publishing_or_retaining_scratch',
+    'gpu_rans_operation_rejects_extent_alias_and_scratch_errors_before_device_work')
+foreach ($source in @('src/core/rans_block.cpp', 'src/core/rans_block.hpp', 'tests/cpp/rans_fixtures.hpp',
+        'src/core/byte_region.hpp')) {
     $rans = Get-FlitzZipNativeTestSelection -Paths @($source)
-    Assert-NativeSelection ($rans.mode -ceq 'component' -and -not $rans.requireHip -and
-        'rans-reader' -in $rans.components -and (($rans.tests | Sort-Object) -join '|') -ceq
-        (($ransExpected | Sort-Object) -join '|')) 'exact allocation-bounded CPU reader consumers'
+    $expected = @($ransExpected + $ransDeviceExpected)
+    if ($source -ceq 'src/core/byte_region.hpp') {
+        $expected += 'byte_region_alias_admission_matches_independent_byte_membership'
+    }
+    Assert-NativeSelection ($rans.mode -ceq 'component' -and $rans.requireHip -and
+        'rans-reader' -in $rans.components -and 'rans-device' -in $rans.components -and
+        (($rans.tests | Sort-Object) -join '|') -ceq (($expected | Sort-Object) -join '|')) 'shared reader and fixture changes retain every CPU and required-HIP consumer'
+}
+foreach ($source in @('src/gpu/hip_rans.cpp', 'src/gpu/hip_rans.hpp',
+        'src/gpu/hip_rans.hip.cpp', 'src/gpu/rans_decode_plan.hpp')) {
+    $rans = Get-FlitzZipNativeTestSelection -Paths @($source)
+    Assert-NativeSelection ($rans.mode -ceq 'component' -and $rans.requireHip -and
+        (($rans.tests | Sort-Object) -join '|') -ceq (($ransDeviceExpected | Sort-Object) -join '|')) 'device reader inputs retain exact real-HIP kernel and operation consumers'
 }
 $ransBroad = Get-FlitzZipNativeTestSelection -Paths @('src/core/rans_block.cpp', 'CMakeLists.txt')
 Assert-NativeSelection ($ransBroad.mode -ceq 'full') 'new reader mapping must not narrow CMake qualification'

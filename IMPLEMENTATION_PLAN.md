@@ -267,7 +267,7 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 | B02 | Published with bounded local host/HIP, reporting and successful hosted workflows; local broad driver deferred | Preserve source-bound results and final audit requirements | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
 | C01 | Complete-size effort progression: scoped review next | Existing nested-search inventory | Independent full-size/decoding regressions for every advertised guarantee; no padding or manufactured low-effort losses |
 | C02 | CPU codec mechanisms: planned | Demonstrated work/ownership problem per codec | Independent read/write oracles and failure/recovery checks; supported capabilities unchanged; no unmeasured speed claim |
-| N01 | In progress: canonical sparse reader and private HIP segment decoder; public archive admission closed | B02 and approved format contract | Integrated device-produced models/streams, independent readback/CRC, malformed-input and lifetime controls |
+| N01 | In progress: canonical sparse reader and bounded private HIP host/device reader; public archive admission closed | B02 and approved format contract | Integrated device-produced models/streams, independent readback/CRC, malformed-input and lifetime controls |
 | N02 | Representative Neutron effectiveness: deferred | N01 and lifted benchmark restriction | Complete-size evidence on licensed independent workloads, including losses and all model/framing bytes, before production adoption |
 | D01 | Dependency lifecycle: alerts clear at assessment | Official metadata, compatible graph and provenance | Reproducible pins plus fresh/update installed-consumer tests; explicit unsupported/constrained platforms |
 | T01 | Correctness separation locally qualified: typed native roles, complete CTest role admission, real HIP correctness and isolated mutation/failure controls | Finish affected pushed-source hosted qualification and remaining portability consumers | No benchmark reachable through the explicit correctness-only path; all existing consumers retained in ordinary/final selection; fresh/update/recovery and owned-process cleanup evidence |
@@ -590,10 +590,12 @@ writer activation separate from private component qualification.
 The reader component is already published; do not rebuild it as a second product
 parser or treat private prototype successes as integrated device-model evidence.
 The private ABI and segment kernel have live-HIP fixed-payload, malformed-input,
-guard-byte and recovery controls. Complete N01-A's operation-owned dispatch,
-resource accounting, cancellation and dispatch-boundary coverage next; direct
-kernel tests alone do not qualify that host integration. Reuse the existing
-composed materialization and CRC path instead of implementing it again.
+guard-byte and recovery controls. The host operation adds bounded scratch and
+dispatch, cancellation, logical-span admission and existing device CRC consumers.
+Qualify its complete connected path, including allocation/copy/launch/release
+failure controls; direct kernel tests alone do not qualify that host integration.
+Reuse the existing composed materialization and CRC path instead of implementing
+it again.
 Each batch qualifies its real connected consumers before the next stage relies
 on them. A failed stage cannot publish statistics, advertise an admitted kernel
 or silently retry CPU compression. Implementation of a writer is distinct from

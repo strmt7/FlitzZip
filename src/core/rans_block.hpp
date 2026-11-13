@@ -17,6 +17,12 @@ class GpuRansBlockView {
     // retaining views. Decoded size is nonzero, bounded and greater than payload.
     GpuRansBlockView(std::span<const std::byte> payload, std::uint32_t decoded_size);
 
+    // Borrow the exact admitted bytes for a resident device mirror. The owner
+    // and immutability requirements of this view apply to every returned span.
+    [[nodiscard]] std::span<const std::byte> payload() const noexcept {
+        return payload_;
+    }
+
     [[nodiscard]] std::uint32_t decoded_size() const noexcept {
         return decoded_size_;
     }

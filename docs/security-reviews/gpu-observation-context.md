@@ -34,60 +34,70 @@ static review is not a declaration that either passed. Raw reports remain retain
 
 `__constant__` still qualifies `kDeviceCrc32Table` at the unchanged device
 declaration; it is not a variable name. The five device CRC reads remain present.
-The [decode review](codeql-hip-decode-context.md#alert-703) records its consumers.
+The [decode review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/codeql-hip-decode-context.md#alert-703) records its consumers.
 Optional host observation changes no CRC input, bound, dispatch or buffer lifetime.
 
 ### Alert 8452
 
 `block_end` still bounds the fill, raw and periodic decoded-CRC loops at the
 reported site. Each branch reads it before moving to the next descriptor. The
-[decode review](codeql-hip-decode-context.md#alert-8452) remains applicable to
+[decode review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/codeql-hip-decode-context.md#alert-8452) remains applicable to
 the unchanged device source; observation changes no decoded extent or loop.
 
 ### Alert 8453
 
 Static-prefix `word_count` remains the bound of the immediately following
 scratch-word loop. Host event selection changes neither the segment plan nor
-this read. See the [device review](codeql-hip-device-semantics.md#alert-8453).
+this read. See the [device review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/codeql-hip-device-semantics.md#alert-8453).
 
 ### Alert 8454
 
 Static-prefix `word_base` is still read by the immediately following `atomicOr`
 destination expression. No packing address or allocation geometry changed.
-See the [device review](codeql-hip-device-semantics.md#alert-8454).
+See the [device review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/codeql-hip-device-semantics.md#alert-8454).
 
 ### Alert 8455
 
 `__global__` remains the function qualifier of `count_sparse_positions_kernel`.
 Its binding and typed launch remain present. Count and gather complete on the
 same stream before their buffers are consumed. See the
-[device review](codeql-hip-device-semantics.md#alert-8455).
+[device review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/codeql-hip-device-semantics.md#alert-8455).
 
 ### Alert 8456
 
 Adaptive-prefix `word_count` remains the explicit scratch-word loop bound.
 Optional timestamps change no symbol width, segment span or scratch extent.
-See the [device review](codeql-hip-device-semantics.md#alert-8456).
+See the [device review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/codeql-hip-device-semantics.md#alert-8456).
 
 ### Alert 8457
 
 Adaptive-prefix `word_base` remains part of the `atomicOr` destination. The
 address expression and its validated segment geometry are unchanged. See the
-[device review](codeql-hip-device-semantics.md#alert-8457).
+[device review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/codeql-hip-device-semantics.md#alert-8457).
 
 ### Alert 8458
 
 Adaptive-prefix `code` still supplies the bits shifted and masked by the
 immediately following packing loop. Profiling does not alter the code table.
-See the [device review](codeql-hip-device-semantics.md#alert-8458).
+See the [device review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/codeql-hip-device-semantics.md#alert-8458).
 
 ### Alert 8459
 
 Adaptive-prefix `width` still bounds that packing loop. The read determines how
 many encoded bits are emitted, independently of observation. See the
-[device review](codeql-hip-device-semantics.md#alert-8459).
+[device review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/codeql-hip-device-semantics.md#alert-8459).
 
 ## LZ4 Reports
+
+The synthetic telemetry tests now classify exact zero, compare representation
+bits for rejected-operation immutability, and check exact stored microseconds
+alongside a rounding allowance for converted doubles. This changes no LZ4 input,
+copy extent, debug format, allocator, dictionary caller or ownership boundary.
+The six LZ4 decisions below were individually rechecked against the unchanged
+import and callers. Their historical rationale is referenced through the
+[immutable predecessor ledger](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/.github/scanner-false-positive-reviews.csv);
+all executable, caller, test, build and scanner bindings remain in the current
+records with this current review evidence.
 
 The imported raw-block implementation remains unchanged. The dictionary caller
 now passes observation mode and checks returned mode identity; it retains the
@@ -98,34 +108,34 @@ reader. No frame, ring-buffer or deprecated unsafe decoder was introduced.
 
 The `LZ4_memmove` fallback remains required for overlap within admitted regions.
 Observation mode changes no copy extent or aliasing relationship. See the
-[individual copy review](lz4-current-validation.md#alert-846).
+[individual copy review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/lz4-current-validation.md#alert-846).
 
 ### Alert 847
 
 The standard `LZ4_memcpy` fallback still does not select its extent. Bounded
 producer and reader checks remain in place; the observation change adds no copy.
-See the [individual primitive review](lz4-current-validation.md#alert-847).
+See the [individual primitive review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/lz4-current-validation.md#alert-847).
 
 ### Alert 848
 
 The debug newline output remains a constant literal behind `LZ4_DEBUG >= 2`.
 Neither its format nor build admission changed. See the
-[individual debug review](lz4-current-validation.md#alert-848).
+[individual debug review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/lz4-current-validation.md#alert-848).
 
 ### Alert 849
 
 The variadic debug formatter and its literal-format callers are unchanged.
 Observation metadata is not used as a format string. See the
-[individual format review](lz4-current-validation.md#alert-849).
+[individual format review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/lz4-current-validation.md#alert-849).
 
 ### Alert 850
 
 The source/line debug output still uses its constant format with `__FILE__` and
 `__LINE__`; no input-selected format is introduced. See the
-[individual debug review](lz4-current-validation.md#alert-850).
+[individual debug review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/lz4-current-validation.md#alert-850).
 
 ### Alert 851
 
 The allocation macro, fixed stream/state extents and matching free family are
 unchanged. Observation objects do not cross this allocator boundary. See the
-[individual allocator review](lz4-current-validation.md#alert-851).
+[individual allocator review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/lz4-current-validation.md#alert-851).

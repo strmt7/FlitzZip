@@ -676,6 +676,7 @@ if(FLITZZIP_ENABLE_HIP)
             src/gpu/hip_codec_adaptive_prefix.cpp
             src/gpu/hip_dictionary_matcher.cpp
             src/gpu/hip_sparse_pattern.cpp
+            src/gpu/hip_rans.cpp
             src/gpu/hip_kernel_api.cpp)
   target_compile_definitions(flitzzip_core PUBLIC FLITZZIP_ENABLE_HIP=1)
 else()
@@ -953,7 +954,9 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_entropy_sampling.cpp
     tests/cpp/test_huffman_decode.cpp
     tests/cpp/test_rans_block.cpp
+    tests/cpp/test_byte_region.cpp
     tests/cpp/test_gpu_rans_decode.cpp
+    tests/cpp/test_gpu_rans_operation.cpp
     tests/cpp/test_gzip_headers.cpp
     tests/cpp/test_stream_corruption.cpp
     tests/cpp/test_gpu_telemetry.cpp
