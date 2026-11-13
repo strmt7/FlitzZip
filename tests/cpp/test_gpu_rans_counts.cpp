@@ -8,10 +8,12 @@
 #include <cstdint>
 #include <numeric>
 #include <span>
+#include <string_view>
 #include <vector>
 
 #if FLITZZIP_ENABLE_HIP
 #include "gpu/hip_kernel_api.hpp"
+#include "gpu/hip_rans_statistics.hpp"
 
 namespace {
 using namespace flitzzip;
@@ -197,6 +199,40 @@ std::vector<std::byte> count_source_fixture(std::uint32_t size) {
         byte = static_cast<std::byte>(state >> 24U);
     }
     return bytes;
+}
+
+std::size_t statistics_reserved_bytes() {
+    int device = -1;
+    REQUIRE_EQ(hipGetDevice(&device), hipSuccess);
+    return hip_device_reservation_state().reserved_bytes(device);
+}
+
+// The oracle walks the original segmented bytes, never production base tables
+// or correction arithmetic. Reading the returned resident view is test-only.
+void require_statistics_projection(RansStatistics& statistics, const CountFixture& fixture, std::uint32_t bits,
+                                   std::uint32_t shift) {
+    const auto view = statistics.project(bits, shift);
+    REQUIRE_EQ(view.size(), std::size_t{256U} << bits);
+    std::vector<std::uint32_t> actual(view.size());
+    REQUIRE_EQ(copy_on_codec_stream(actual.data(), view.data(), view.size_bytes(), hipMemcpyDeviceToHost), hipSuccess);
+    REQUIRE_EQ(actual, direct_segment_counts(fixture.source, bits, shift));
+    REQUIRE_EQ(std::accumulate(actual.begin(), actual.end(), std::uint64_t{0}), fixture.source.size());
+}
+
+struct StatisticsCancellation {
+    unsigned int phase;
+};
+
+template <typename Error, typename Operation>
+void require_statistics_error(Operation&& operation, std::string_view diagnostic) {
+    bool rejected = false;
+    try {
+        operation();
+    } catch (const Error& error) {
+        REQUIRE_TRUE(std::string_view(error.what()).find(diagnostic) != std::string_view::npos);
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
 }
 }  // namespace
 #endif
@@ -392,6 +428,194 @@ TEST_CASE(gpu_rans_counts_invalid_ranges_preserve_tables_and_inactive_guards) {
     collect_boundaries(fixture, 8U);
     REQUIRE_EQ(project_counts(fixture, 8U), direct_segment_counts(source, 8U, 8U));
     fixture.release_checked();
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_counts_operation_reuses_complete_statistics_across_all_projections) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    for (const std::uint32_t size : {1U, 257U, 65537U, 131073U}) {
+        CountFixture fixture(count_source_fixture(size));
+        const auto reserved = statistics_reserved_bytes();
+        GpuTelemetry telemetry{GpuObservationMode::CountersOnly};
+        RansStatistics statistics({fixture.input.data(), size}, &telemetry);
+        const auto required = rans_statistics_workspace_requirements();
+        REQUIRE_EQ(required.host_bytes, sizeof(RansStatistics));
+        REQUIRE_EQ(statistics_reserved_bytes(), reserved + required.device_bytes);
+        std::uint64_t expected = (std::uint64_t{size} + 65535U) / 65536U;
+        REQUIRE_EQ(snapshot_gpu_telemetry(telemetry).kernel_launches, expected);
+        for (std::uint32_t shift = 8U; shift <= 12U; ++shift) {
+            expected += (((std::uint64_t{size} - 1U) >> shift) + 255U) / 256U;
+            for (std::uint32_t bits = 0U; bits <= 8U; ++bits) {
+                require_statistics_projection(statistics, fixture, bits, shift);
+                expected += ((std::uint64_t{256U} << bits) + 4095U) / 4096U;
+                const auto completed = snapshot_gpu_telemetry(telemetry);
+                REQUIRE_EQ(completed.kernel_launches, expected);
+                unsigned int checkpoint_calls = 0U;
+                (void)statistics.project(bits, shift, [&] { ++checkpoint_calls; });
+                const auto reused = snapshot_gpu_telemetry(telemetry);
+                REQUIRE_EQ(checkpoint_calls, 1U);
+                REQUIRE_EQ(reused.kernel_launches, completed.kernel_launches);
+                REQUIRE_EQ(reused.h2d_bytes, completed.h2d_bytes);
+                REQUIRE_EQ(reused.d2h_bytes, completed.d2h_bytes);
+                REQUIRE_EQ(reused.device_allocation_bytes, required.device_bytes);
+            }
+        }
+        // Returning to a prior shift must rebuild its correction, rather than
+        // mistaking the most recent completed projection for this request.
+        require_statistics_projection(statistics, fixture, 8U, 8U);
+        statistics.close_checked();
+        REQUIRE_EQ(statistics_reserved_bytes(), reserved);
+        statistics.close_checked();
+        require_statistics_error<GpuError>([&] { (void)statistics.project(0U, 8U); }, "closed");
+        fixture.release_checked();
+    }
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_counts_operation_cancellation_invalidates_partial_caches_and_recovers) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    CountFixture fixture(count_source_fixture(131073U));
+    const auto reserved = statistics_reserved_bytes();
+    for (const unsigned int phase : {1U, 2U, 3U, 4U}) {
+        unsigned int calls = 0U;
+        bool cancelled = false;
+        try {
+            RansStatistics statistics({fixture.input.data(), fixture.bytes()}, nullptr, [&] {
+                if (++calls == phase) {
+                    throw StatisticsCancellation{calls};
+                }
+            });
+        } catch (const StatisticsCancellation& error) {
+            REQUIRE_EQ(error.phase, phase);
+            cancelled = true;
+        }
+        REQUIRE_TRUE(cancelled);
+        REQUIRE_EQ(calls, phase);
+        REQUIRE_EQ(statistics_reserved_bytes(), reserved);
+    }
+    GpuTelemetry telemetry{GpuObservationMode::CountersOnly};
+    RansStatistics statistics({fixture.input.data(), fixture.bytes()}, &telemetry);
+    const auto live = statistics_reserved_bytes();
+    for (const unsigned int phase : {1U, 2U, 3U, 4U, 19U}) {
+        // Each trial starts with the other width cached. At shift 8 there are
+        // two correction batches and sixteen projection batches after entry.
+        require_statistics_projection(statistics, fixture, 0U, 12U);
+        unsigned int calls = 0U;
+        bool cancelled = false;
+        try {
+            (void)statistics.project(8U, 8U, [&] {
+                if (++calls == phase) {
+                    throw StatisticsCancellation{calls};
+                }
+            });
+        } catch (const StatisticsCancellation& error) {
+            REQUIRE_EQ(error.phase, phase);
+            cancelled = true;
+        }
+        REQUIRE_TRUE(cancelled);
+        REQUIRE_EQ(calls, phase);
+        REQUIRE_EQ(statistics_reserved_bytes(), live);
+        const auto before = snapshot_gpu_telemetry(telemetry).kernel_launches;
+        require_statistics_projection(statistics, fixture, 8U, 8U);
+        REQUIRE_EQ(snapshot_gpu_telemetry(telemetry).kernel_launches - before, 18U);
+    }
+    // A throwing checkpoint on a cache hit also invalidates its admission.
+    bool cancelled_hit = false;
+    try {
+        (void)statistics.project(8U, 8U, [] { throw StatisticsCancellation{1U}; });
+    } catch (const StatisticsCancellation& error) {
+        REQUIRE_EQ(error.phase, 1U);
+        cancelled_hit = true;
+    }
+    REQUIRE_TRUE(cancelled_hit);
+    const auto before = snapshot_gpu_telemetry(telemetry).kernel_launches;
+    require_statistics_projection(statistics, fixture, 8U, 8U);
+    REQUIRE_EQ(snapshot_gpu_telemetry(telemetry).kernel_launches - before, 18U);
+    statistics.close_checked();
+    REQUIRE_EQ(statistics_reserved_bytes(), reserved);
+    fixture.release_checked();
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_counts_operation_rejects_options_without_poisoning_completed_cache) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    CountFixture fixture(count_source_fixture(513U));
+    GpuTelemetry telemetry{GpuObservationMode::CountersOnly};
+    const auto reserved = statistics_reserved_bytes();
+    require_statistics_error<ArchiveError>([&] { RansStatistics statistics({}, &telemetry); }, "source extent");
+    {
+        const std::vector<std::byte> oversized(kRansCountMaxBytes + 1U);
+        // Valid host storage is deliberately never passed to a HIP API:
+        // extent rejection must precede capability queries and allocation.
+        require_statistics_error<ArchiveError>([&] { RansStatistics statistics(oversized, &telemetry); },
+                                               "source extent");
+    }
+    REQUIRE_EQ(statistics_reserved_bytes(), reserved);
+    REQUIRE_EQ(snapshot_gpu_telemetry(telemetry).device_allocation_bytes, 0U);
+    RansStatistics statistics({fixture.input.data(), fixture.bytes()}, &telemetry);
+    require_statistics_projection(statistics, fixture, 8U, 8U);
+    const auto before = snapshot_gpu_telemetry(telemetry);
+    for (const auto options :
+         {std::array{9U, 8U}, std::array{0U, 7U}, std::array{0U, 13U}, std::array{0xFFFFFFFFU, 0xFFFFFFFFU}}) {
+        require_statistics_error<ArchiveError>([&] { (void)statistics.project(options[0], options[1]); },
+                                               "projection options");
+    }
+    require_statistics_projection(statistics, fixture, 8U, 8U);
+    const auto after = snapshot_gpu_telemetry(telemetry);
+    REQUIRE_EQ(after.kernel_launches, before.kernel_launches);
+    REQUIRE_EQ(after.device_allocation_bytes, before.device_allocation_bytes);
+    REQUIRE_EQ(after.h2d_bytes, before.h2d_bytes);
+    REQUIRE_EQ(after.d2h_bytes, before.d2h_bytes);
+    statistics.close_checked();
+    REQUIRE_EQ(statistics_reserved_bytes(), reserved);
+    fixture.release_checked();
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_counts_operation_maximum_source_and_independent_lifetimes) {
+#if FLITZZIP_ENABLE_HIP
+    if (!flitzzip::query_gpu_info().available) {
+        return;
+    }
+    CountFixture first(count_source_fixture(kRansCountMaxBytes));
+    CountFixture second(std::vector<std::byte>(513U, std::byte{0xFF}));
+    const auto reserved = statistics_reserved_bytes();
+    const auto scratch = rans_statistics_workspace_requirements().device_bytes;
+    {
+        RansStatistics full({first.input.data(), first.bytes()}, nullptr);
+        {
+            RansStatistics small({second.input.data(), second.bytes()}, nullptr);
+            REQUIRE_EQ(statistics_reserved_bytes(), reserved + 2U * scratch);
+            require_statistics_projection(full, first, 0U, 8U);
+            require_statistics_projection(small, second, 8U, 8U);
+            require_statistics_projection(full, first, 8U, 12U);
+            require_statistics_projection(small, second, 0U, 12U);
+            // Deliberately exercise normal RAII destruction of completed work.
+        }
+        REQUIRE_EQ(statistics_reserved_bytes(), reserved + scratch);
+        require_statistics_projection(full, first, 8U, 12U);
+        full.close_checked();
+    }
+    REQUIRE_EQ(statistics_reserved_bytes(), reserved);
+    second.release_checked();
+    first.release_checked();
 #else
     REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
 #endif

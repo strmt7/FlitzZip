@@ -90,6 +90,26 @@ numeric efforts. Every prior source, scanner and executable context path remains
 retained; the new statistics source and controls are additional context for the
 device reports, not replacements for their existing callers.
 
+## Statistics Operation Context
+
+The added host operation calls the existing statistics entries on the same
+per-thread stream. It owns a separately charged scratch allocation, borrows
+immutable source storage, resets statuses before reuse and inspects them only
+after dispatch completion. Completed base counts and boundary corrections can
+be reused; cancellation invalidates the correction and projection caches.
+These ownership and cache contracts require their own real-device qualification.
+They do not certify full model mass or open public archive admission.
+
+The CMake change adds only this host translation unit. All reported device
+functions, their definitions and reads, module binders, allocation definitions,
+LHA callback owners, TAR registration and GDI test bodies remain byte-identical.
+The count test source retains its preceding cases and adds independent operation
+and cancellation controls. The selector adds those direct consumers and preserves
+the broad CMake path. For each individual decision below, these context changes
+alter neither its highlighted expression nor the reason for its classification.
+All prior context paths, source locations, rules and producer identities remain
+bound. This review does not admit other findings or runtime memory-safety claims.
+
 ## Individual Decisions
 
 ### Alert 8348

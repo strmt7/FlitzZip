@@ -260,8 +260,9 @@ cross-lane dependency exists. Every active segment receives an explicit status;
 success requires exact stream consumption and terminal state `L`. Partial output
 and successful entropy decoding alone never authorize archive publication.
 
-The checksum-bound private module uses ABI version 2. Its export, 312-byte POD
-table, component binder and complete device-entry admission change together.
+The checksum-bound private module uses the versioned POD table declared in
+`HipKernelApi`. Its export, table size, component binder and complete device-entry
+admission change together.
 Existing kernel entrypoints remain bound. The build rejects an undefined, empty
 or relative object output before generating its compiler command, and the device
 coverage inventory must contain every canonical HIP compilation input.
@@ -295,8 +296,23 @@ It retains the prototype's 16 KiB shared context buckets and limits a dispatch t
 dispatch boundaries do not reset context. Projection checks subtraction and
 bounded mass before writing each output count. Per-batch statuses remain
 non-success until the corresponding work completes. These kernels and their
-independent raw-count controls require current-device qualification; a complete
-operation owner and model/stream consumer remain separate integration work.
+independent raw-count controls require current-device qualification.
+
+The private [statistics operation](../src/gpu/hip_rans_statistics.hpp) borrows
+one immutable resident source and owns one charged allocation for base counts,
+boundary corrections, projected counts and reusable statuses. It counts the
+source once, reuses completed corrections across context choices, and reuses
+an identical completed projection without repeating device work. Device views
+expire at the next projection, closure or destruction. Checkpoints observe
+completed work; failure invalidates both caches, and a failed stream drain
+prohibits reuse. Checked closure retains the reservation until the allocation
+has actually been freed. Host workspace and source storage remain caller charges.
+
+These statistics are not admitted normalized models. The connected GPU model
+consumer must validate row masses and their complete source sum before encoding.
+GPU model/stream production, runtime failure injection and public archive
+integration remain separate work. Neither cache reuse nor fixed-fixture
+correctness establishes a compression-size or measured speed improvement.
 
 ## Adoption criteria
 

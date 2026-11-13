@@ -125,8 +125,13 @@ $countsExpected = @('gpu_rans_counts_match_raw_adjacency_and_every_segment_conte
     'gpu_rans_counts_zero_predecessors_and_disappearing_contexts_reject_omitted_work',
     'gpu_rans_counts_projection_rejects_underflow_and_mass_overflow_then_recovers',
     'gpu_rans_counts_maximum_source_stays_bounded_and_preserves_all_bytes',
-    'gpu_rans_counts_invalid_ranges_preserve_tables_and_inactive_guards')
+    'gpu_rans_counts_invalid_ranges_preserve_tables_and_inactive_guards',
+    'gpu_rans_counts_operation_reuses_complete_statistics_across_all_projections',
+    'gpu_rans_counts_operation_cancellation_invalidates_partial_caches_and_recovers',
+    'gpu_rans_counts_operation_rejects_options_without_poisoning_completed_cache',
+    'gpu_rans_counts_operation_maximum_source_and_independent_lifetimes')
 foreach ($source in @('src/gpu/hip_rans_counts.hip.cpp', 'src/gpu/rans_count_plan.hpp',
+        'src/gpu/hip_rans_statistics.cpp', 'src/gpu/hip_rans_statistics.hpp',
         'tests/cpp/test_gpu_rans_counts.cpp')) {
     $counts = Get-FlitzZipNativeTestSelection -Paths @($source)
     Assert-NativeSelection ($counts.mode -ceq 'component' -and $counts.requireHip -and

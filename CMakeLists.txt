@@ -683,6 +683,7 @@ if(FLITZZIP_ENABLE_HIP)
             src/gpu/hip_dictionary_matcher.cpp
             src/gpu/hip_sparse_pattern.cpp
             src/gpu/hip_rans.cpp
+            src/gpu/hip_rans_statistics.cpp
             src/gpu/hip_kernel_api.cpp)
   target_compile_definitions(flitzzip_core PUBLIC FLITZZIP_ENABLE_HIP=1)
 else()

@@ -133,7 +133,8 @@ function Get-FlitzZipNativeTestSelection {
         @{ id = 'byte-region'; requireHip = $false; paths = @('src/core/byte_region.hpp')
            rules = @(@{ source = 'tests/cpp/test_byte_region.cpp'; pattern = '^byte_region_' }) },
         @{ id = 'rans-counts'; requireHip = $true; paths = @(
-               'src/gpu/hip_rans_counts.hip.cpp', 'src/gpu/rans_count_plan.hpp')
+               'src/gpu/hip_rans_counts.hip.cpp', 'src/gpu/rans_count_plan.hpp',
+               'src/gpu/hip_rans_statistics.cpp', 'src/gpu/hip_rans_statistics.hpp')
            rules = @(@{ source = 'tests/cpp/test_gpu_rans_counts.cpp'; pattern = '^gpu_rans_counts_' }) },
         @{ id = 'folder-size-cache'; requireHip = $false; paths = @('src/app/folder_size_cache.hpp')
            rules = @(@{ source = 'tests/cpp/test_folder_size_cache.cpp'; pattern = '^' }) },
