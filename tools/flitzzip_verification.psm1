@@ -258,6 +258,7 @@ function Get-FlitzZipVerificationPathPolicy {
         )
         lint = @(
             '^\.clang-format$',
+            '^\.github/requirements/requirements-lint-windows\.(in|txt)$',
             '^\.github/.*\.ya?ml$',
             '^\.github/workflows/lint\.yml$',
             '^\.pymarkdown\.json$',

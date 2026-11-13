@@ -33,6 +33,16 @@ foreach ($cmakePath in @('tests/cmake/test_zstd_probe_outputs.cmake',
     Assert-Selector ('language-lint' -in (Get-RequiredCommandId $cmakeLintPlan)) "owned CMake input requires lint: $cmakePath"
 }
 
+foreach ($lintInput in @('.github/requirements/requirements-lint-windows.in',
+        '.github/requirements/requirements-lint-windows.txt')) {
+    $lintInputPlan = Get-FlitzZipVerificationPlan -ChangedPath @($lintInput)
+    Assert-Selector ($lintInputPlan.scope.touchesLintSurface -and
+        'language-lint' -in (Get-RequiredCommandId $lintInputPlan)) "lint dependency input must execute its local consumer: $lintInput"
+    Assert-Selector (@($lintInputPlan.requiredLocalCommands | Where-Object {
+        $_.id -in @('release-build', 'unit-tests', 'gui-smoke', 'package-smoke')
+    }).Count -eq 0) "lint dependency input must not rebuild or execute unrelated native products: $lintInput"
+}
+
 # Purpose: Read the shared push/PR path filter from the two owned workflow fixtures.
 # Inputs: Repository-relative workflow name and a candidate changed path.
 # Outputs: Returns whether its anchored positive globs admit the path; rejects missing/shared-filter drift.
