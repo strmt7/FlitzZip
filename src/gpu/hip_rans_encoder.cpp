@@ -102,25 +102,18 @@ RansEncoder::RansEncoder(std::span<const std::byte> device_source, GpuTelemetry*
 void RansEncoder::bind_storage() {
     static_assert(alignof(RansModelRow) <= alignof(std::uint32_t));
     static_assert(alignof(RansEncodeResult) <= alignof(std::uint32_t));
-    auto* next = storage_.get();
-    device_rows_ = reinterpret_cast<RansModelRow*>(next);
-    next += 256U * sizeof(RansModelRow);
-    order_ = reinterpret_cast<std::uint8_t*>(next);
-    next += 65536U;
-    device_frequencies_ = reinterpret_cast<std::uint32_t*>(next);
-    next += 65536U * sizeof(std::uint32_t);
-    models_ = reinterpret_cast<std::uint32_t*>(next);
-    next += 66048U * sizeof(std::uint32_t);
-    reciprocals_ = reinterpret_cast<std::uint32_t*>(next);
-    next += 65536U * sizeof(std::uint32_t);
-    device_statuses_ = reinterpret_cast<RansModelStatus*>(next);
-    next += 256U * sizeof(RansModelStatus);
-    slots_ = next;
-    next += aligned_slot_bytes(required_.slot_bytes);
-    device_results_ = reinterpret_cast<RansEncodeResult*>(next);
-    next += required_.max_segments * sizeof(RansEncodeResult);
-    device_offsets_ = reinterpret_cast<std::uint32_t*>(next);
-    output_ = next + (required_.max_segments + 1U) * sizeof(std::uint32_t);
+    // Advance through typed array ends. Only the padded byte slots use a byte
+    // extent, so element counts cannot accidentally be scaled a second time.
+    device_rows_ = reinterpret_cast<RansModelRow*>(storage_.get());
+    order_ = reinterpret_cast<std::uint8_t*>(device_rows_ + 256U);
+    device_frequencies_ = reinterpret_cast<std::uint32_t*>(order_ + 65536U);
+    models_ = device_frequencies_ + 65536U;
+    reciprocals_ = models_ + 66048U;
+    device_statuses_ = reinterpret_cast<RansModelStatus*>(reciprocals_ + 65536U);
+    slots_ = reinterpret_cast<std::byte*>(device_statuses_ + 256U);
+    device_results_ = reinterpret_cast<RansEncodeResult*>(slots_ + aligned_slot_bytes(required_.slot_bytes));
+    device_offsets_ = reinterpret_cast<std::uint32_t*>(device_results_ + required_.max_segments);
+    output_ = reinterpret_cast<std::byte*>(device_offsets_ + required_.max_segments + 1U);
 }
 
 void RansEncoder::require_current_device() const {

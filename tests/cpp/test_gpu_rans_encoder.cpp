@@ -301,7 +301,7 @@ TEST_CASE(gpu_rans_encoder_maximum_source_and_odd_alignment_preserve_independent
     if (!query_gpu_info().available) {
         return;
     }
-    for (const auto bytes : std::array{257U, 4097U, kRansCountMaxBytes}) {
+    for (const auto bytes : std::array{257U, 4096U, 4097U, 4098U, 4099U, kRansCountMaxBytes}) {
         const std::vector<std::byte> source(bytes, std::byte{0xFF});
         HipDeviceMemoryReservation input_reservation(source.size() + 2U, "rANS maximum encoder input");
         CountDeviceBuffer<std::byte> input(bytes);
