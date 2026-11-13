@@ -2,6 +2,7 @@
 
 #include "gpu/hip_codec_support.hpp"
 #include "gpu/hip_dictionary_optimal_state.hpp"
+#include "gpu/rans_decode_plan.hpp"
 #include "gpu/sparse_pattern_device.hpp"
 
 #include <type_traits>
@@ -64,7 +65,7 @@ namespace flitzzip {
 // Inputs: Every pointer refers to one registered kernel or a bounded rocPRIM operation in the admitted module.
 // Outputs: Immutable process-lifetime dispatch metadata; host code retains all allocation and error ownership.
 struct HipKernelApi {
-    std::uint32_t abi_version = 1U;
+    std::uint32_t abi_version = 2U;
     std::uint32_t abi_bytes = sizeof(HipKernelApi);
     void (*materialize_prefix_segments_kernel)(const std::byte*, const hip_detail::PrefixDecodeSegment*, std::uint32_t,
                                                std::byte*, std::uint32_t*) = nullptr;
@@ -132,10 +133,13 @@ struct HipKernelApi {
     void (*byte_plane_transform)(const std::byte*, std::byte*, std::uint32_t, std::uint32_t, bool) = nullptr;
     hipError_t (*sort_dictionary_keys)(void*, std::size_t*, const std::uint64_t*, std::uint64_t*, std::uint32_t,
                                        hipStream_t) noexcept = nullptr;
+    void (*decode_rans_segments)(const std::byte*, std::uint32_t, const std::uint32_t*, std::uint32_t,
+                                 const hip_detail::RansDecodeSegment*, std::uint32_t, std::uint32_t, std::uint32_t,
+                                 std::byte*, std::uint32_t, hip_detail::RansDecodeStatus*) = nullptr;
 };
 
 static_assert(std::is_standard_layout_v<HipKernelApi> && std::is_trivially_copyable_v<HipKernelApi>);
-static_assert(sizeof(HipKernelApi) == 304U && alignof(HipKernelApi) == alignof(void*));
+static_assert(sizeof(HipKernelApi) == 312U && alignof(HipKernelApi) == alignof(void*));
 static_assert(std::is_trivially_copyable_v<hip_detail::PrefixDecodeSegment> &&
               sizeof(hip_detail::PrefixDecodeSegment) == 48U);
 static_assert(std::is_trivially_copyable_v<hip_detail::CrcInputRange> && sizeof(hip_detail::CrcInputRange) == 16U);

@@ -17,6 +17,7 @@ SOURCES = (
     "src/gpu/hip_codec_adaptive_prefix.hip.cpp",
     "src/gpu/hip_dictionary_matcher.hip.cpp",
     "src/gpu/hip_sparse_pattern.hip.cpp",
+    "src/gpu/hip_rans.hip.cpp",
 )
 SCOPE = "development-hip-object-coverage-v1"
 MAX_METADATA = 8 * 1024**2

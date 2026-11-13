@@ -9,6 +9,8 @@ namespace hip_detail {
 void bind_static_prefix_kernels(HipKernelApi& api) noexcept;
 // Purpose: Bind adaptive prefix kernels. Inputs: Module-owned table. Outputs: Component entrypoints.
 void bind_adaptive_prefix_kernels(HipKernelApi& api) noexcept;
+// Bind the bounded private rANS decoder; no public archive admission is implied.
+void bind_rans_kernels(HipKernelApi& api) noexcept;
 }  // namespace hip_detail
 namespace dictionary {
 // Purpose: Bind dictionary kernels. Inputs: Module-owned table. Outputs: Component entrypoints.
@@ -23,12 +25,13 @@ void bind_sparse_kernels(HipKernelApi& api) noexcept;
 // Purpose: Expose one versioned, immutable POD ABI after the module's HIP registration has completed.
 // Inputs: None; the caller has admitted the exact module and trusted HIP runtime.
 // Outputs: Returns process-lifetime typed kernel metadata; transfers no heap owner or C++ exception.
-extern "C" __declspec(dllexport) const flitzzip::HipKernelApi* flitzzip_hip_kernel_api_v1() noexcept {
+extern "C" __declspec(dllexport) const flitzzip::HipKernelApi* flitzzip_hip_kernel_api_v2() noexcept {
     static const flitzzip::HipKernelApi api = []() noexcept {
         flitzzip::HipKernelApi value;
         flitzzip::bind_codec_kernels(value);
         flitzzip::hip_detail::bind_static_prefix_kernels(value);
         flitzzip::hip_detail::bind_adaptive_prefix_kernels(value);
+        flitzzip::hip_detail::bind_rans_kernels(value);
         flitzzip::dictionary::bind_dictionary_kernels(value);
         flitzzip::sparse_pattern::bind_sparse_kernels(value);
         return value;

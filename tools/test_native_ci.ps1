@@ -80,7 +80,8 @@ function Test-NativeCiWorkflowPath {
 }
 
 foreach ($path in @('src/gpu/hip_codec.hip.cpp', 'src/gpu/hip_codec_static_prefix.hip.cpp',
-        'src/gpu/hip_codec_adaptive_prefix.hip.cpp', 'src/gpu/hip_dictionary_matcher.hip.cpp', 'src/gpu/hip_sparse_pattern.hip.cpp')) {
+        'src/gpu/hip_codec_adaptive_prefix.hip.cpp', 'src/gpu/hip_dictionary_matcher.hip.cpp',
+        'src/gpu/hip_sparse_pattern.hip.cpp', 'src/gpu/hip_rans.hip.cpp')) {
     $selection = Get-FlitzZipHostedWorkflowSelection -Paths @($path, 'docs/design.md')
     Assert-NativeCi (-not $selection.windows -and $selection.rocm) "HIP implementation requires actual HIP compilation: $path"
 }

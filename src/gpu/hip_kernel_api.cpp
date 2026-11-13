@@ -100,15 +100,16 @@ auto device_kernel_entries(const HipKernelApi& api) {
                                     api.neutron_parse_tile,
                                     api.neutron_initialize_writers,
                                     api.neutron_emit_tile,
-                                    api.byte_plane_transform};
-    static_assert(std::tuple_size_v<decltype(entries)> == 36U);
+                                    api.byte_plane_transform,
+                                    api.decode_rans_segments};
+    static_assert(std::tuple_size_v<decltype(entries)> == 37U);
     return entries;
 }
 
 // Purpose: Reject an incomplete or incompatible private kernel ABI before retaining any dispatch entrypoint.
 // Inputs: The table returned by the exact checksum-verified module. Outputs: Returns on completeness or throws.
 void validate_kernel_api(const HipKernelApi* api) {
-    if (api == nullptr || api->abi_version != 1U || api->abi_bytes != sizeof(HipKernelApi)) {
+    if (api == nullptr || api->abi_version != 2U || api->abi_bytes != sizeof(HipKernelApi)) {
         throw GpuError("AMD HIP kernel module ABI does not match this application");
     }
     if (api->sort_dictionary_keys == nullptr ||
@@ -130,7 +131,7 @@ const KernelModule& admitted_kernel_module() {
                 throw GpuError(std::string("AMD HIP kernel admission failed: ") + error.what());
             }
         }();
-        const auto entry = GetProcAddress(static_cast<HMODULE>(owner.native_handle()), "flitzzip_hip_kernel_api_v1");
+        const auto entry = GetProcAddress(static_cast<HMODULE>(owner.native_handle()), "flitzzip_hip_kernel_api_v2");
         if (entry == nullptr) {
             throw GpuError("AMD HIP kernel module is missing its required ABI export");
         }

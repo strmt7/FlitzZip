@@ -3,6 +3,7 @@
 import copy
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -316,6 +317,17 @@ class ProductCoverageTests(unittest.TestCase):
         ):
             product.build(self.qualification, output)
         self.assertFalse((output / "product-objects.json").exists())
+
+
+class ProductSourceInventoryTests(unittest.TestCase):
+    def test_every_production_hip_object_has_a_coverage_role(self):
+        """Compare with canonical compilation inputs, independently of the manifest's own list."""
+        root = Path(__file__).resolve().parents[1]
+        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+        compiled = re.findall(r"\bflitzzip_compile_hip_object\(\s*(src/gpu/[\w/.-]+\.hip\.cpp)\s", cmake)
+        self.assertTrue(compiled, "Production HIP compilation inventory must not be empty")
+        self.assertEqual(len(compiled), len(set(compiled)), "Each device source must compile exactly once")
+        self.assertEqual(set(product.SOURCES), set(compiled))
 
 
 if __name__ == "__main__":

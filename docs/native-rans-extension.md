@@ -245,10 +245,35 @@ Payload and decoded output are also disjoint.
 Native tests retain fixed independent payloads, all-option singleton invariants,
 model/state/extent rejection and live-alias/recovery guards. Retained differential
 and isolated final-state-omission controls qualify their actual source identities.
-The component does not yet change public archive admission. Kernel ABI, real GPU
-model/stream consumption, resource accounting, archive reader dispatch and a direct
+The component does not yet change public archive admission. Integrated GPU
+model/stream production, resource accounting, archive reader dispatch and a direct
 malformed-input fuzz entry still require integration before public kind/version
 support. Neutron compression remains GPU-only; no CPU encoder is supplied.
+
+### Private device reader component
+
+The [HIP segment decoder](../src/gpu/hip_rans.hip.cpp) consumes the admitted
+view's full-width cumulative models and bounded stream plans. Each lane owns
+one independent segment of at most 4,096 symbols, with bounded binary search
+and at most two renormalization reads per symbol. No barrier, polling loop or
+cross-lane dependency exists. Every active segment receives an explicit status;
+success requires exact stream consumption and terminal state `L`. Partial output
+and successful entropy decoding alone never authorize archive publication.
+
+The checksum-bound private module uses ABI version 2. Its export, 312-byte POD
+table, component binder and complete device-entry admission change together.
+Existing kernel entrypoints remain bound. The build rejects an undefined, empty
+or relative object output before generating its compiler command, and the device
+coverage inventory must contain every canonical HIP compilation input.
+
+Native correctness cases pass exact independently specified payload bytes through
+the real admitted module, including all precision/context/segment-width options,
+full-width singleton mass, missing models, malformed states and streams, invalid
+plans, inactive lanes, complete allocation guards and immediate valid reuse.
+These tests pass host-admitted models to the device reader; they do not establish
+an integrated GPU model producer or a measured size or speed improvement.
+Operation-owned dispatch, cancellation and resource-accounted archive integration
+remain required before opening public kind/version admission.
 
 ## Adoption criteria
 

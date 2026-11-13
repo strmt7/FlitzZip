@@ -73,16 +73,20 @@ The default full native driver remains deferred because it invokes prohibited
 measurement consumers. The correctness-role batch now has a successful HIP
 Release build, complete classified correctness registry, separate CTest suites,
 dependency sanitizer controls, affected offline contracts and GUI smoke with
-capture review. Measurement deferrals remain explicit. These local results do
-not qualify the batch's future pushed revision or replace the exact-source audit
-and final candidate qualification. The published sparse-reader component has
+capture review. Measurement deferrals remain explicit. The published role batch's
+[Windows](https://github.com/strmt7/FlitzZip/actions/runs/43333941927),
+[ROCm](https://github.com/strmt7/FlitzZip/actions/runs/43333941960) and
+[security](https://github.com/strmt7/FlitzZip/actions/runs/43333942376) workflows
+passed. These results do not replace the exact-source audit or final candidate
+qualification. The published sparse-reader component has
 bounded caller-owned workspace, eleven registered native tests, independent
 fixed-payload and malformed-input controls, and differential/fault-control
 evidence. Its differential control checked 2,073 cases: 1,222 admitted frames
 decoded byte-exactly and 851 nonimproving frames were rejected. These results
 qualify the reader's recorded scope, not the connected GPU entropy pipeline.
-Its archive admission and GPU integration remain closed. The later role batch
-still needs fresh hosted acceptance for its changed inputs.
+Public archive admission remains closed. The private HIP reader now has scoped
+device correctness controls; connected GPU model production remains unfinished.
+Each subsequent batch still requires its own applicable hosted acceptance.
 The earlier source `dec2dca` has a
 [qualified ZIP/MSI candidate](https://github.com/strmt7/FlitzZip/actions/runs/42993879195);
 those artifacts do not qualify subsequent source changes.
@@ -91,7 +95,7 @@ those artifacts do not qualify subsequent source changes.
 | --- | --- | --- |
 | Product | Windows-native C++20 app, CLI, in-process adapters and HIP compute boundary | Exact methods differ by format; preserve the [capability matrix](docs/archive-format-support.md) |
 | Native tests | The explicit correctness path passes the complete admitted registry and classified CTest suites with current HIP binaries; measurement cases remain registered in the default suite | Full measurement qualification stays deferred; this is not full release acceptance |
-| Hosted/package checks | Published native checks and succeeding CPU/HIP-host security analyses passed; the local role batch passes packaging and sanitizer contracts | The role batch still needs its own hosted acceptance; final exact-source audit and ZIP/MSI lifecycle remain required |
+| Hosted/package checks | Published role-batch native and CPU/HIP-host security checks passed; local packaging and sanitizer contracts qualify their recorded inputs | Later decoder changes require fresh hosted acceptance; final exact-source audit and ZIP/MSI lifecycle remain required |
 | GitHub maintenance | Only `main`; no open PRs or Dependabot alerts at assessment | These inventories are live, not permanent guarantees |
 | Analysis acceptance | Exact governance baseline accepted; raw reports retained | DeepSource skipped the current revision because its analysis quota is exhausted; current analyzer results and complete inventory are unavailable |
 | Neutron | GPU-only search remains separate from efforts 1–9; independent readback and real device-work controls exist | Broad size superiority and comparative speed are unproven; approved rANS is inactive in production |
@@ -242,14 +246,13 @@ into skills or install another harness, scheduler or background agent.
 
 ## Ordered Work Packages
 
-The **T01 correctness orchestration separation** has local consumer qualification;
-its pushed-source hosted acceptance remains required. Continue with **N01**,
+The **T01 correctness orchestration separation** has local and published-source
+hosted qualification. Continue with **N01**,
 connecting the qualified sparse-reader component to the
 approved GPU pipeline. **B00 and B01 are qualified
 for their published scope; B02 is published with successful hosted checks.**
 Its local broad-driver deferral and final audit remain visible. The ready sequence
-is **N01 → C01 → C02 → Q01**, with T01 hosted results retained at the next
-useful boundary. The default full measurement driver remains deferred; do not
+is **N01 → C01 → C02 → Q01**. The default full measurement driver remains deferred; do not
 weaken verification or describe restricted execution as that driver's pass.
 D01 interrupts it for a demonstrated dependency vulnerability or incompatibility. T01 addresses
 missing tool portability evidence without repeating valid installation checks. Resume R01 on
@@ -264,7 +267,7 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 | B02 | Published with bounded local host/HIP, reporting and successful hosted workflows; local broad driver deferred | Preserve source-bound results and final audit requirements | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
 | C01 | Complete-size effort progression: scoped review next | Existing nested-search inventory | Independent full-size/decoding regressions for every advertised guarantee; no padding or manufactured low-effort losses |
 | C02 | CPU codec mechanisms: planned | Demonstrated work/ownership problem per codec | Independent read/write oracles and failure/recovery checks; supported capabilities unchanged; no unmeasured speed claim |
-| N01 | In progress: canonical sparse parser/model workspace/CPU reader and independent controls; archive/GPU admission closed | B02 and approved format contract | Integrated device-produced models/streams, independent readback/CRC, malformed-input and lifetime controls |
+| N01 | In progress: canonical sparse reader and private HIP segment decoder; public archive admission closed | B02 and approved format contract | Integrated device-produced models/streams, independent readback/CRC, malformed-input and lifetime controls |
 | N02 | Representative Neutron effectiveness: deferred | N01 and lifted benchmark restriction | Complete-size evidence on licensed independent workloads, including losses and all model/framing bytes, before production adoption |
 | D01 | Dependency lifecycle: alerts clear at assessment | Official metadata, compatible graph and provenance | Reproducible pins plus fresh/update installed-consumer tests; explicit unsupported/constrained platforms |
 | T01 | Correctness separation locally qualified: typed native roles, complete CTest role admission, real HIP correctness and isolated mutation/failure controls | Finish affected pushed-source hosted qualification and remaining portability consumers | No benchmark reachable through the explicit correctness-only path; all existing consumers retained in ordinary/final selection; fresh/update/recovery and owned-process cleanup evidence |
@@ -586,6 +589,11 @@ writer activation separate from private component qualification.
 
 The reader component is already published; do not rebuild it as a second product
 parser or treat private prototype successes as integrated device-model evidence.
+The private ABI and segment kernel have live-HIP fixed-payload, malformed-input,
+guard-byte and recovery controls. Complete N01-A's operation-owned dispatch,
+resource accounting, cancellation and dispatch-boundary coverage next; direct
+kernel tests alone do not qualify that host integration. Reuse the existing
+composed materialization and CRC path instead of implementing it again.
 Each batch qualifies its real connected consumers before the next stage relies
 on them. A failed stage cannot publish statistics, advertise an admitted kernel
 or silently retry CPU compression. Implementation of a writer is distinct from

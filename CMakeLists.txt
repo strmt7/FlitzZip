@@ -559,6 +559,8 @@ if(FLITZZIP_ENABLE_HIP)
       "${CMAKE_CURRENT_BINARY_DIR}/flitzzip_hip_dictionary_matcher.obj")
   set(FLITZZIP_HIP_SPARSE_OBJECT
       "${CMAKE_CURRENT_BINARY_DIR}/flitzzip_hip_sparse_pattern.obj")
+  set(FLITZZIP_HIP_RANS_OBJECT
+      "${CMAKE_CURRENT_BINARY_DIR}/flitzzip_hip_rans.obj")
   if(FLITZZIP_HIP_COVERAGE_MANIFEST)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set(_coverage_admit_args
@@ -589,40 +591,7 @@ if(FLITZZIP_ENABLE_HIP)
       COMMENT "Admitting exact development HIP coverage objects"
       VERBATIM)
   endif()
-  # Purpose: Prepare one HIP translation unit with the pinned Windows HIP path.
-  # Inputs: source is repo-relative, output_variable selects its object path,
-  # and comment is the build status text. Outputs: Produces an object and a
-  # compiler dependency file, tracking the headers consumed by this translation
-  # unit.
-  function(flitzzip_compile_hip_object source output_variable comment)
-    if(FLITZZIP_HIP_COVERAGE_MANIFEST)
-      string(JSON _coverage_object GET "${_coverage_metadata}" objects
-             "${source}")
-      set(${output_variable}
-          "${_coverage_object}"
-          PARENT_SCOPE)
-      return()
-    endif()
-    set(output "${${output_variable}}")
-    add_custom_command(
-      OUTPUT "${output}"
-      DEPFILE "${output}.d"
-      COMMAND
-        powershell -NoProfile -ExecutionPolicy Bypass -File
-        "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1" -Source
-        "${CMAKE_CURRENT_SOURCE_DIR}/${source}" -Output "${output}" -RepoRoot
-        "${CMAKE_CURRENT_SOURCE_DIR}" -Arch "${FLITZZIP_HIP_ARCH}" -HipPath
-        "${FLITZZIP_HIP_PATH}" -VcvarsVersion "${FLITZZIP_VCVARS_VERSION}"
-        -DependencyFile "${output}.d"
-      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${source}"
-              "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1"
-              "${CMAKE_CURRENT_SOURCE_DIR}/tools/hip_architecture.ps1"
-              "${CMAKE_CURRENT_SOURCE_DIR}/tools/rocm_toolchain.ps1"
-              "${CMAKE_CURRENT_SOURCE_DIR}/tools/process_environment.ps1"
-              "${CMAKE_CURRENT_SOURCE_DIR}/tools/rocm-sdk-lock.json"
-      COMMENT "${comment}"
-      VERBATIM)
-  endfunction()
+  include(cmake/HipKernelObjects.cmake)
 
   flitzzip_compile_hip_object(
     src/gpu/hip_codec.hip.cpp FLITZZIP_HIP_CODEC_OBJECT
@@ -640,10 +609,16 @@ if(FLITZZIP_ENABLE_HIP)
   flitzzip_compile_hip_object(
     src/gpu/hip_sparse_pattern.hip.cpp FLITZZIP_HIP_SPARSE_OBJECT
     "Compiling AMD HIP sparse-pattern codec object")
+  flitzzip_compile_hip_object(
+    src/gpu/hip_rans.hip.cpp FLITZZIP_HIP_RANS_OBJECT
+    "Compiling AMD HIP compact entropy decoder object")
   set(FLITZZIP_HIP_OBJECTS
-      "${FLITZZIP_HIP_CODEC_OBJECT}" "${FLITZZIP_HIP_STATIC_PREFIX_OBJECT}"
+      "${FLITZZIP_HIP_CODEC_OBJECT}"
+      "${FLITZZIP_HIP_STATIC_PREFIX_OBJECT}"
       "${FLITZZIP_HIP_ADAPTIVE_PREFIX_OBJECT}"
-      "${FLITZZIP_HIP_DICTIONARY_OBJECT}" "${FLITZZIP_HIP_SPARSE_OBJECT}")
+      "${FLITZZIP_HIP_DICTIONARY_OBJECT}"
+      "${FLITZZIP_HIP_SPARSE_OBJECT}"
+      "${FLITZZIP_HIP_RANS_OBJECT}")
   add_custom_target(
     flitzzip_hip_object
     DEPENDS ${FLITZZIP_HIP_OBJECTS}
@@ -978,6 +953,7 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_entropy_sampling.cpp
     tests/cpp/test_huffman_decode.cpp
     tests/cpp/test_rans_block.cpp
+    tests/cpp/test_gpu_rans_decode.cpp
     tests/cpp/test_gzip_headers.cpp
     tests/cpp/test_stream_corruption.cpp
     tests/cpp/test_gpu_telemetry.cpp
@@ -1055,19 +1031,20 @@ if(FLITZZIP_BUILD_TESTS)
                    PRIVATE tests/cpp/test_compression_stream_io.cpp)
   endif()
   if(TARGET flitzzip_gui)
-    target_sources(flitzzip_test_objects
-                   PRIVATE tests/cpp/test_main_window_lifecycle.cpp
-                           tests/cpp/test_main_window_settings.cpp
-                           tests/cpp/test_main_window_extraction.cpp
-                           tests/cpp/test_main_window_licenses.cpp
-                           tests/cpp/test_main_window_queue_controls.cpp
-                           tests/cpp/test_main_window_history_controls.cpp
-                           tests/cpp/test_main_window_history_scrollbars.cpp
-                           tests/cpp/test_main_window_job_presentation.cpp
-                           tests/cpp/test_main_window_logging_preferences.cpp
-                           tests/cpp/test_settings_dropdown_draft.cpp
-                           tests/cpp/test_main_window_compression_controls.cpp
-                           tests/cpp/test_native_window_readiness.cpp)
+    target_sources(
+      flitzzip_test_objects
+      PRIVATE tests/cpp/test_main_window_lifecycle.cpp
+              tests/cpp/test_main_window_settings.cpp
+              tests/cpp/test_main_window_extraction.cpp
+              tests/cpp/test_main_window_licenses.cpp
+              tests/cpp/test_main_window_queue_controls.cpp
+              tests/cpp/test_main_window_history_controls.cpp
+              tests/cpp/test_main_window_history_scrollbars.cpp
+              tests/cpp/test_main_window_job_presentation.cpp
+              tests/cpp/test_main_window_logging_preferences.cpp
+              tests/cpp/test_settings_dropdown_draft.cpp
+              tests/cpp/test_main_window_compression_controls.cpp
+              tests/cpp/test_native_window_readiness.cpp)
     target_link_libraries(flitzzip_test_objects PRIVATE flitzzip_gui)
   else()
     target_sources(
@@ -1100,6 +1077,14 @@ if(FLITZZIP_BUILD_TESTS)
   endif()
   add_test(NAME flitzzip_tests COMMAND flitzzip_tests)
   set_tests_properties(flitzzip_tests PROPERTIES LABELS mixed-native)
+  add_test(
+    NAME flitzzip_hip_object_output_contracts
+    COMMAND
+      "${CMAKE_COMMAND}" "-DREPO_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+      "-DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/hip-object-output" -P
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_hip_object_output.cmake")
+  set_tests_properties(flitzzip_hip_object_output_contracts
+                       PROPERTIES TIMEOUT 250 LABELS correctness)
   add_test(
     NAME flitzzip_runtime_manifest_contracts
     COMMAND
