@@ -81,6 +81,18 @@ function Assert-NativeHeaderConsumersSelected {
 }
 
 $entropyPaths = @('src/gpu/hip_codec_static_prefix.hip.cpp', 'src/gpu/hip_codec_adaptive_prefix.hip.cpp')
+$encoderExpected = @('gpu_rans_encoder_workspace_counts_padding_all_models_and_returned_payload',
+    'gpu_rans_encoder_actual_counts_models_and_streams_cover_all_options',
+    'gpu_rans_encoder_singleton_bytes_strict_ties_and_unconditional_model_reuse',
+    'gpu_rans_encoder_invalid_options_preserve_caches_and_minimum_bound_avoids_work',
+    'gpu_rans_encoder_losing_stream_bound_stops_before_later_batches_and_reuses_models',
+    'gpu_rans_encoder_completed_checkpoints_cancel_discard_and_recover',
+    'gpu_rans_encoder_maximum_source_and_odd_alignment_preserve_independent_readback')
+foreach ($source in @('src/gpu/hip_rans_encoder.cpp', 'src/gpu/hip_rans_encoder.hpp', 'tests/cpp/test_gpu_rans_encoder.cpp')) {
+    $encoder = Get-FlitzZipNativeTestSelection -Paths @($source)
+    Assert-NativeSelection ($encoder.mode -ceq 'component' -and $encoder.requireHip -and
+        (($encoder.tests | Sort-Object) -join '|') -ceq (($encoderExpected | Sort-Object) -join '|')) 'host encoder inputs require every exact GPU, budget, cancellation and independent readback consumer'
+}
 $ransExpected = @('gpu_rans_reader_independent_payloads_and_segment_resets',
     'gpu_rans_reader_shared_singleton_fixture_matches_independent_wire',
     'gpu_rans_reader_full_width_singleton_and_complete_sparse_cdf',
@@ -105,7 +117,7 @@ $ransDeviceExpected = @('gpu_rans_kernel_independent_frames_and_full_width_model
 foreach ($source in @('src/core/rans_block.cpp', 'src/core/rans_block.hpp', 'tests/cpp/rans_fixtures.hpp',
         'src/core/byte_region.hpp')) {
     $rans = Get-FlitzZipNativeTestSelection -Paths @($source)
-    $expected = @($ransExpected + $ransDeviceExpected)
+    $expected = @($ransExpected + $ransDeviceExpected + $encoderExpected)
     if ($source -ceq 'src/core/byte_region.hpp') {
         $expected += 'byte_region_alias_admission_matches_independent_byte_membership'
     }
@@ -117,7 +129,7 @@ foreach ($source in @('src/gpu/hip_rans.cpp', 'src/gpu/hip_rans.hpp',
         'src/gpu/hip_rans.hip.cpp', 'src/gpu/rans_decode_plan.hpp')) {
     $rans = Get-FlitzZipNativeTestSelection -Paths @($source)
     Assert-NativeSelection ($rans.mode -ceq 'component' -and $rans.requireHip -and
-        (($rans.tests | Sort-Object) -join '|') -ceq (($ransDeviceExpected | Sort-Object) -join '|')) 'device reader inputs retain exact real-HIP kernel and operation consumers'
+        (($rans.tests | Sort-Object) -join '|') -ceq ((@($ransDeviceExpected + $encoderExpected) | Sort-Object) -join '|')) 'device reader inputs retain exact real-HIP kernel and operation consumers'
 }
 $ransBroad = Get-FlitzZipNativeTestSelection -Paths @('src/core/rans_block.cpp', 'CMakeLists.txt')
 Assert-NativeSelection ($ransBroad.mode -ceq 'full') 'new reader mapping must not narrow CMake qualification'
@@ -134,8 +146,10 @@ foreach ($source in @('src/gpu/hip_rans_counts.hip.cpp', 'src/gpu/rans_count_pla
         'src/gpu/hip_rans_statistics.cpp', 'src/gpu/hip_rans_statistics.hpp',
         'tests/cpp/test_gpu_rans_counts.cpp')) {
     $counts = Get-FlitzZipNativeTestSelection -Paths @($source)
+    $expected = @($countsExpected)
+    if ($source.StartsWith('src/')) { $expected += $encoderExpected }
     Assert-NativeSelection ($counts.mode -ceq 'component' -and $counts.requireHip -and
-        (($counts.tests | Sort-Object) -join '|') -ceq (($countsExpected | Sort-Object) -join '|')) 'count inputs retain every exact raw-statistics and fault consumer'
+        (($counts.tests | Sort-Object) -join '|') -ceq (($expected | Sort-Object) -join '|')) 'count inputs retain every exact raw-statistics and fault consumer'
 }
 $modelsExpected = @('gpu_rans_models_row_mass_admission_rejects_partial_and_forged_metadata',
     'gpu_rans_models_integer_quotas_match_independent_golden_vectors',
@@ -150,12 +164,14 @@ $modelsExpected = @('gpu_rans_models_row_mass_admission_rejects_partial_and_forg
 foreach ($source in @('src/gpu/rans_model_plan.hpp', 'src/gpu/hip_rans_models.hip.cpp',
         'src/gpu/hip_rans_encode.hip.cpp', 'tests/cpp/rans_model_fixtures.hpp', 'tests/cpp/rans_stream_fixtures.hpp')) {
     $models = Get-FlitzZipNativeTestSelection -Paths @($source)
+    $expected = @($modelsExpected)
+    if ($source.StartsWith('src/')) { $expected += $encoderExpected }
     Assert-NativeSelection ($models.mode -ceq 'component' -and $models.requireHip -and
-        (($models.tests | Sort-Object) -join '|') -ceq (($modelsExpected | Sort-Object) -join '|')) 'model and stream inputs retain every exact producer, wire-reader and failure consumer'
+        (($models.tests | Sort-Object) -join '|') -ceq (($expected | Sort-Object) -join '|')) 'model and stream inputs retain every exact producer, wire-reader and failure consumer'
 }
 $sharedRansFixture = Get-FlitzZipNativeTestSelection -Paths @('tests/cpp/rans_gpu_fixtures.hpp')
 Assert-NativeSelection ($sharedRansFixture.requireHip -and
-    (($sharedRansFixture.tests | Sort-Object) -join '|') -ceq ((@($countsExpected + $modelsExpected) | Sort-Object) -join '|')) 'shared guarded GPU buffers retain all statistics, model and stream consumers'
+    (($sharedRansFixture.tests | Sort-Object) -join '|') -ceq ((@($countsExpected + $modelsExpected + $encoderExpected) | Sort-Object) -join '|')) 'shared guarded GPU buffers retain all statistics, model and stream consumers'
 foreach ($inputPaths in @(@('tests/cpp/test_dictionary_block.cpp'), $entropyPaths)) {
     $pathJson = ConvertTo-Json -InputObject $inputPaths -Compress
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($pathJson))

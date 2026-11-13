@@ -44,24 +44,23 @@ Completed checkpoint narratives remain in Git history and local review artifacts
 
 ## Current Assessment
 
-Assessment source: published `main` at
-`60390076fa0632ebae4f86b484e0b21b4619d0f9`. Its security workflow, including
-both CPU and HIP-host CodeQL jobs, lint and Scorecard completed successfully.
-The preceding native source `c2fd539a204df65745befad59d6991b75f7c7fc8` passed
-Windows CI, ROCm qualification, component contracts, lint, fuzzing, Scorecard and
-Zstandard sanitizers. Its security workflow was cancelled; the succeeding
-baseline's successful C++ analyses supply fresh evidence rather than treating
-the cancellation as a pass. The earlier source
-`3706eae43b1f447a11512c6141bd782caa43d843` also passed benchmark-graph. Its
-[ROCm run](https://github.com/strmt7/FlitzZip/actions/runs/43034932616)
-qualifies the configuration-diagnostic repair for that source. The original
-[configuration failure](https://github.com/strmt7/FlitzZip/actions/runs/43010070857)
-still has no established cause; a later pass does not explain it.
+The published GPU-component baseline is
+[`8de9ccb6b4a3f8f98ffb45ec0d6df3c71d6ca443`](https://github.com/strmt7/FlitzZip/commit/8de9ccb6b4a3f8f98ffb45ec0d6df3c71d6ca443).
+Its Windows CI, ROCm qualification, security, component contracts, lint,
+Scorecard and Zstandard sanitizer workflows completed successfully. This
+qualifies their recorded component scope, not release acceptance. The following
+oracle-only source
+[`5175c1d889252f724ac09552e577cc99ec6d8b4c`](https://github.com/strmt7/FlitzZip/commit/5175c1d889252f724ac09552e577cc99ec6d8b4c)
+adds fresh-clone reproducibility for the unchanged model expectations; its
+component contracts, lint, security and Scorecard checks passed. The original
+configuration failure remains unexplained; retain B00's evidence and uncertainty
+rather than treating a subsequent pass as its diagnosis.
 
-The live inventory confirmed only `main`, no open pull requests and no open
-Dependabot alerts. DeepSource's check on this exact source was skipped because
-its analysis quota is exhausted. Successful Actions do not replace that analysis
-or the exact-commit findings audit. Recheck volatile service state at useful
+The service inventory at that oracle source contains only protected `main`, no
+open pull requests and no open Dependabot alerts. DeepSource's last retained analysis was skipped
+because its quota was exhausted. These are snapshots, not current-service
+guarantees. Successful Actions do not replace required analysis or the
+exact-commit findings audit. Recheck volatile service state at useful
 publication and final-acceptance boundaries, rather than repeatedly polling it.
 
 The counters-only observation integration spans telemetry, HIP event owners,
@@ -84,8 +83,12 @@ fixed-payload and malformed-input controls, and differential/fault-control
 evidence. Its differential control checked 2,073 cases: 1,222 admitted frames
 decoded byte-exactly and 851 nonimproving frames were rejected. These results
 qualify the reader's recorded scope, not the connected GPU entropy pipeline.
-Public archive admission remains closed. The private HIP reader now has scoped
-device correctness controls; connected GPU model production remains unfinished.
+Public archive admission remains closed. The private HIP reader, statistics,
+normalization, model construction and stream kernels have independent device
+correctness controls. The host encoder now connects actual GPU-produced counts,
+models and streams under one bounded owner, with independent readback,
+cancellation/recovery and complete-frame loss controls. External runtime failure
+injection, public archive integration and representative adoption remain open.
 Each subsequent batch still requires its own applicable hosted acceptance.
 The earlier source `dec2dca` has a
 [qualified ZIP/MSI candidate](https://github.com/strmt7/FlitzZip/actions/runs/42993879195);
@@ -267,7 +270,7 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 | B02 | Published with bounded local host/HIP, reporting and successful hosted workflows; local broad driver deferred | Preserve source-bound results and final audit requirements | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
 | C01 | Complete-size effort progression: scoped review next | Existing nested-search inventory | Independent full-size/decoding regressions for every advertised guarantee; no padding or manufactured low-effort losses |
 | C02 | CPU codec mechanisms: planned | Demonstrated work/ownership problem per codec | Independent read/write oracles and failure/recovery checks; supported capabilities unchanged; no unmeasured speed claim |
-| N01 | In progress: canonical sparse reader and bounded private HIP host/device reader; public archive admission closed | B02 and approved format contract | Integrated device-produced models/streams, independent readback/CRC, malformed-input and lifetime controls |
+| N01 | In progress: private GPU reader, statistics, model/stream kernels and bounded host encoder; public archive admission closed | B02 and approved format contract | Finish external runtime-failure qualification, archive/version/composition integration and Neutron portfolio ownership; retain independent readback/CRC and malformed-input/lifetime controls |
 | N02 | Representative Neutron effectiveness: deferred | N01 and lifted benchmark restriction | Complete-size evidence on licensed independent workloads, including losses and all model/framing bytes, before production adoption |
 | D01 | Dependency lifecycle: alerts clear at assessment | Official metadata, compatible graph and provenance | Reproducible pins plus fresh/update installed-consumer tests; explicit unsupported/constrained platforms |
 | T01 | Correctness separation locally qualified: typed native roles, complete CTest role admission, real HIP correctness and isolated mutation/failure controls | Finish affected pushed-source hosted qualification and remaining portability consumers | No benchmark reachable through the explicit correctness-only path; all existing consumers retained in ordinary/final selection; fresh/update/recovery and owned-process cleanup evidence |

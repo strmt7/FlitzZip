@@ -353,6 +353,30 @@ aggregate resource accounting, cancellation and runtime failure controls, decode
 CRC, archive/composition/version admission, fuzzing or representative adoption.
 The application still does not emit the proposed kind or archive version.
 
+The private [host encoder](../src/gpu/hip_rans_encoder.hpp) owns the statistics
+operation and one aggregate-reserved arena for models, stream slots, results,
+offsets and compacted output. Its allocation-free workspace plan includes host
+metadata and one returned payload; callers separately charge the immutable
+resident source, retained winners, workers and allocator bookkeeping. Packed
+metadata remains aligned after odd byte extents. Checked closure retains each
+reservation until its allocation has been freed.
+
+The operation reuses source statistics and prepared symbol order across
+precision choices. Unconditional models also remain reusable across segment
+shifts. Before framing, it admits complete source mass and each serialized
+distribution's alphabet, positive frequencies and exact mass. Host code emits
+only sparse models and offset metadata around actual GPU stream bytes.
+
+Trials compare the full header, models, offsets and minimum remaining states
+against the caller's exclusive budget. Completed stream batches refine this
+bound; a proven loss stops before later batches and compaction. Losses and ties
+return no candidate, leaving the caller's previous owning payload untouched.
+Successful private payloads own their returned storage. Cancellation observes
+completed work, invalidates prepared models and drains the stream before reuse;
+a failed drain prohibits reuse. This owner does not yet connect the candidate
+to public archive/version/composition admission or the Neutron portfolio, and
+does not replace the remaining runtime-failure and adoption qualification.
+
 The fixed GPU normalization expectations are reproducible without ignored local
 experiments. Run `python tools/rans_model_oracle.py` to check their complete
 header against exact rational quotas, or `python tools/rans_model_oracle.py --emit`

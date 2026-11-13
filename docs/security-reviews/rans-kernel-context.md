@@ -126,6 +126,26 @@ existing decoder directly and therefore join its reviewed caller context.
 All reported shader bodies, allocator choices, callback owners, TAR registration
 and GDI induction remain unchanged. Existing context paths remain bound.
 
+## Host Encoder Context
+
+The private host encoder adds one HIP-only core source and one unconditional
+test-source registration. It removes no existing source, changes no allocator,
+macro, shader entry, ABI layout or compiler option, and activates no public kind.
+Its statistics member borrows the same immutable resident source through the
+existing statistics operation. Complete row-mass admission precedes model use.
+The new readback tests consume the existing admitted sparse reader and device
+decoder; their payload, model and output owners remain distinct through actual
+completion. Their CRC consumer uses the unchanged device checksum path.
+
+These additions preserve each decision below: the miniz allocator branch,
+Lhasa callback lifetimes, TAR reachability and GDI induction do not change.
+The reported CRC, prefix, sparse, rANS decoder and transition-statistics shader
+bodies and their exact definition/use relationships are unchanged. The native
+selector adds the encoder's consumers without removing the preceding cases or
+their required-HIP admission. Bind the new encoder and its readback tests into
+the affected rANS caller context. These classifications do not certify the new
+host operation or substitute for its pending execution and failure qualification.
+
 ## Individual Decisions
 
 ### Alert 8348

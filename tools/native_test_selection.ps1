@@ -144,6 +144,15 @@ function Get-FlitzZipNativeTestSelection {
            rules = @(
                @{ source = 'tests/cpp/test_gpu_rans_models.cpp'; pattern = '^gpu_rans_models_' },
                @{ source = 'tests/cpp/test_gpu_rans_streams.cpp'; pattern = '^gpu_rans_streams_' }) },
+        @{ id = 'rans-encoder'; requireHip = $true; paths = @(
+               'src/gpu/hip_rans_encoder.cpp', 'src/gpu/hip_rans_encoder.hpp',
+               'src/gpu/hip_rans_statistics.cpp', 'src/gpu/hip_rans_statistics.hpp',
+               'src/gpu/hip_rans_counts.hip.cpp', 'src/gpu/rans_count_plan.hpp',
+               'src/gpu/hip_rans_models.hip.cpp', 'src/gpu/hip_rans_encode.hip.cpp', 'src/gpu/rans_model_plan.hpp',
+               'src/gpu/hip_rans.cpp', 'src/gpu/hip_rans.hpp', 'src/gpu/hip_rans.hip.cpp', 'src/gpu/rans_decode_plan.hpp',
+               'src/core/rans_block.cpp', 'src/core/rans_block.hpp', 'src/core/byte_region.hpp',
+               'tests/cpp/rans_fixtures.hpp', 'tests/cpp/rans_gpu_fixtures.hpp')
+           rules = @(@{ source = 'tests/cpp/test_gpu_rans_encoder.cpp'; pattern = '^gpu_rans_encoder_' }) },
         @{ id = 'folder-size-cache'; requireHip = $false; paths = @('src/app/folder_size_cache.hpp')
            rules = @(@{ source = 'tests/cpp/test_folder_size_cache.cpp'; pattern = '^' }) },
         @{ id = 'gui-monitor'; requireHip = $false; paths = @(
