@@ -52,6 +52,10 @@ SOURCE = re.compile(
     r"|out/tools/cmake-4\.4\.3/cmake-4\.4\.3-windows-x86_64/share/cmake-4\.4/Modules/CMakeCompilerABI\.h)"
 )
 MAX_POLICY = 64 * 1024
+# Current decisions retain complete caller-path closures, unlike the sealed
+# historical ledger. Give that document its own bounded input budget while
+# retaining the incident, context-path, immutable-blob and evidence-cache limits.
+MAX_CURRENT_POLICY = 1024**2
 DERIVED_ROOT = "build/zstd-v1.5.7-source/zstd-1.5.7/lib"
 APPROVAL = ".github/scanner-hosted-approval.csv"
 CURRENT_POLICY = ".github/scanner-false-positive-reviews.csv"
@@ -129,16 +133,24 @@ def committed_review_blob(root: Path, commit: str, name: str) -> bytes:
     return payload
 
 
+def _current_review_rows(payload: bytes):
+    """Keep malformed CSV failures explicit without changing process-global parser limits."""
+    try:
+        reader = csv.DictReader(io.StringIO(payload.decode("utf-8")), strict=True)
+        if tuple(reader.fieldnames or ()) != CURRENT_FIELDS:
+            raise ValueError("Current false-positive review has an unknown schema")
+        yield from reader
+    except csv.Error as error:
+        raise ValueError("Current false-positive review has malformed CSV") from error
+
+
 # Purpose: Validate individual current decisions independently of all historical approval ledgers.
 # Inputs: Bounded CSV bytes. Outputs: Strict records; malformed, duplicate or broadened decisions fail.
 def read_current_reviews(payload: bytes) -> list[dict[str, str]]:
-    if len(payload) > MAX_POLICY:
+    if len(payload) > MAX_CURRENT_POLICY:
         raise ValueError("Current false-positive review exceeds its byte budget")
-    reader = csv.DictReader(io.StringIO(payload.decode("utf-8")))
-    if tuple(reader.fieldnames or ()) != CURRENT_FIELDS:
-        raise ValueError("Current false-positive review has an unknown schema")
     rows, seen, incidents = [], set(), {}
-    for row in reader:
+    for row in _current_review_rows(payload):
         if len(rows) >= 256 or set(row) != set(CURRENT_FIELDS) or any(not value for value in row.values()):
             raise ValueError("Invalid current false-positive review record")
         if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", row["repository"]) is None:

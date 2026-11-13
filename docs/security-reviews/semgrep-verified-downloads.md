@@ -7,6 +7,15 @@ a new review; these decisions do not admit any other URL finding.
 
 ## Checked source context
 
+The current-decision reader now has a separate bounded document budget because
+it retains complete caller closures, unlike the sealed historical ledger.
+Historical input limits, current incident/path limits, exact matching and the
+aggregate immutable-evidence budget remain unchanged. Strict CSV decoding rejects
+malformed headers and fields explicitly. The larger-inventory regression uses
+real isolated Git blobs, retains every raw report, rejects an additional decision
+beyond the incident limit and leaves an unreviewed report unaccepted. Neither
+reported downloader, its source hash, URL restrictions or integrity checks change.
+
 Both reported downloader sources, callers' URL restrictions, byte budgets and
 integrity checks are unchanged. The current scanner uses the reviewed Semgrep
 1.185.0 packaging revision and its normally resolved MCP/OpenTelemetry cohort.

@@ -104,8 +104,13 @@ auto device_kernel_entries(const HipKernelApi& api) {
                                     api.decode_rans_segments,
                                     api.count_rans_transitions,
                                     api.count_rans_boundaries,
-                                    api.project_rans_counts};
-    static_assert(std::tuple_size_v<decltype(entries)> == 40U);
+                                    api.project_rans_counts,
+                                    api.prepare_rans_models,
+                                    api.normalize_rans_models,
+                                    api.build_rans_models,
+                                    api.encode_rans_segments,
+                                    api.compact_rans_segments};
+    static_assert(std::tuple_size_v<decltype(entries)> == 45U);
     return entries;
 }
 
@@ -134,7 +139,7 @@ const KernelModule& admitted_kernel_module() {
                 throw GpuError(std::string("AMD HIP kernel admission failed: ") + error.what());
             }
         }();
-        const auto entry = GetProcAddress(static_cast<HMODULE>(owner.native_handle()), "flitzzip_hip_kernel_api_v3");
+        const auto entry = GetProcAddress(static_cast<HMODULE>(owner.native_handle()), "flitzzip_hip_kernel_api_v4");
         if (entry == nullptr) {
             throw GpuError("AMD HIP kernel module is missing its required ABI export");
         }

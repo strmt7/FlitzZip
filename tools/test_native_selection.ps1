@@ -137,6 +137,25 @@ foreach ($source in @('src/gpu/hip_rans_counts.hip.cpp', 'src/gpu/rans_count_pla
     Assert-NativeSelection ($counts.mode -ceq 'component' -and $counts.requireHip -and
         (($counts.tests | Sort-Object) -join '|') -ceq (($countsExpected | Sort-Object) -join '|')) 'count inputs retain every exact raw-statistics and fault consumer'
 }
+$modelsExpected = @('gpu_rans_models_row_mass_admission_rejects_partial_and_forged_metadata',
+    'gpu_rans_models_integer_quotas_match_independent_golden_vectors',
+    'gpu_rans_models_missing_contexts_and_full_width_singletons_are_explicit',
+    'gpu_rans_models_corrupted_order_mass_and_frequencies_reject_before_publication',
+    'gpu_rans_models_invalid_launch_and_precision_leave_guarded_storage_unchanged',
+    'gpu_rans_streams_singleton_states_match_independent_fixed_bytes',
+    'gpu_rans_streams_device_counts_models_and_bytes_cover_every_admitted_option',
+    'gpu_rans_streams_invalid_plans_and_corrupted_models_reject_then_recover',
+    'gpu_rans_streams_compaction_rejects_corrupt_ranges_before_dense_publication',
+    'gpu_rans_streams_maximum_source_bound_and_multiple_dispatches')
+foreach ($source in @('src/gpu/rans_model_plan.hpp', 'src/gpu/hip_rans_models.hip.cpp',
+        'src/gpu/hip_rans_encode.hip.cpp', 'tests/cpp/rans_model_fixtures.hpp', 'tests/cpp/rans_stream_fixtures.hpp')) {
+    $models = Get-FlitzZipNativeTestSelection -Paths @($source)
+    Assert-NativeSelection ($models.mode -ceq 'component' -and $models.requireHip -and
+        (($models.tests | Sort-Object) -join '|') -ceq (($modelsExpected | Sort-Object) -join '|')) 'model and stream inputs retain every exact producer, wire-reader and failure consumer'
+}
+$sharedRansFixture = Get-FlitzZipNativeTestSelection -Paths @('tests/cpp/rans_gpu_fixtures.hpp')
+Assert-NativeSelection ($sharedRansFixture.requireHip -and
+    (($sharedRansFixture.tests | Sort-Object) -join '|') -ceq ((@($countsExpected + $modelsExpected) | Sort-Object) -join '|')) 'shared guarded GPU buffers retain all statistics, model and stream consumers'
 foreach ($inputPaths in @(@('tests/cpp/test_dictionary_block.cpp'), $entropyPaths)) {
     $pathJson = ConvertTo-Json -InputObject $inputPaths -Compress
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($pathJson))

@@ -32,8 +32,9 @@ struct RansStatisticsWorkspaceRequirements {
 //
 // Checkpoints execute before work and after completed batches, including cache
 // hits. They may throw but must not reenter, change devices or mutate/retain
-// borrowed storage. A failed projection invalidates both caches; a failed drain
-// permanently prohibits reuse. Normal callers check close_checked(); destructors
+// borrowed storage. Failed admitted work or cancellation invalidates both caches;
+// option rejection leaves completed caches intact. A failed drain permanently
+// prohibits reuse. Normal callers check close_checked(); destructors
 // retain the existing best-effort HIP buffer cleanup contract on exceptional exit.
 class RansStatistics {
   public:

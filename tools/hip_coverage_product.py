@@ -19,6 +19,8 @@ SOURCES = (
     "src/gpu/hip_sparse_pattern.hip.cpp",
     "src/gpu/hip_rans.hip.cpp",
     "src/gpu/hip_rans_counts.hip.cpp",
+    "src/gpu/hip_rans_models.hip.cpp",
+    "src/gpu/hip_rans_encode.hip.cpp",
 )
 SCOPE = "development-hip-object-coverage-v1"
 MAX_METADATA = 8 * 1024**2

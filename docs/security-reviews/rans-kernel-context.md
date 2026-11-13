@@ -13,7 +13,7 @@ The current binding retains every executable source, caller, test, build and
 scanner path, together with this current evidence. Historical narrative edits
 cannot change the referenced predecessor's evidence or current source identity.
 
-The kernel module now uses private ABI version 3, with its new export, exact
+The kernel module now uses private ABI version 4, with its new export, exact
 layout and complete device-entry inventory changed together. Existing component
 binders and entrypoints remain present. The additional translation unit owns
 the bounded rANS decoder and private statistics kernels. They declare no allocator,
@@ -110,6 +110,22 @@ alter neither its highlighted expression nor the reason for its classification.
 All prior context paths, source locations, rules and producer identities remain
 bound. This review does not admit other findings or runtime memory-safety claims.
 
+## Model And Stream Context
+
+The model extension retains every preceding module entry and adds integer row
+preparation, normalization, CDF construction, bounded segment encoding and dense
+stream compaction. Each stage has explicit extents and completion requirements.
+Full-source row mass admission precedes model use. Public archive activation and
+performance adoption remain separate gates; these source classifications do not
+certify the new kernels' memory safety or effectiveness.
+
+The guarded count buffer moves verbatim into a shared test header, with its
+allocation, guard values, copies, readback and checked release unchanged. The
+existing count cases remain registered. New model/stream controls consume the
+existing decoder directly and therefore join its reviewed caller context.
+All reported shader bodies, allocator choices, callback owners, TAR registration
+and GDI induction remain unchanged. Existing context paths remain bound.
+
 ## Individual Decisions
 
 ### Alert 8348
@@ -147,7 +163,7 @@ are unchanged. The [loop review](https://github.com/strmt7/FlitzZip/blob/2ee2e91
 
 `__constant__` still qualifies the device CRC table; its five device reads
 remain in the unchanged source. The codec binder and all CRC entries remain
-in the version-3 table and complete device-support inventory. The preceding
+in the version-4 table and complete device-support inventory. The preceding
 [device review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/gpu-observation-context.md#alert-703) still applies.
 
 ### Alert 8452
@@ -160,7 +176,7 @@ kernel remains bound and admitted. See the
 ### Alert 8453
 
 Static-prefix `word_count` still bounds the following scratch-word loop.
-Its source, dimensions and binder remain unchanged in ABI version 3. See the
+Its source, dimensions and binder remain unchanged in ABI version 4. See the
 [device review](https://github.com/strmt7/FlitzZip/blob/2ee2e910d5cf6924e0f09f6f865b8a4c459fba8f/docs/security-reviews/gpu-observation-context.md#alert-8453).
 
 ### Alert 8454

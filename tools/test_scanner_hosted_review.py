@@ -466,11 +466,50 @@ class CurrentFalsePositiveTests(unittest.TestCase):
         self.row["input_sha256"] = hashes[self.row["path"]]
         encoded = json.dumps(hashes, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
         self.row["context_sha256"] = hashlib.sha256(encoded).hexdigest()
+        self.write_current_rows([self.row])
+
+    def write_current_rows(self, rows):
+        """Serialize only these explicit fixture decisions, preserving every field."""
         output = io.StringIO(newline="")
         writer = csv.DictWriter(output, fieldnames=review.CURRENT_FIELDS, lineterminator="\n")
         writer.writeheader()
-        writer.writerow(self.row)
+        writer.writerows(rows)
         (self.root / review.CURRENT_POLICY).write_text(output.getvalue(), encoding="utf-8", newline="\n")
+        return output.getvalue().encode("utf-8")
+
+    def test_current_full_context_inventory_exceeds_historical_budget_without_broadening_admission(self):
+        """Keep complete caller closures; a larger document never admits an extra report."""
+        numbers = list(range(1000, 1256))
+        evidence = "### Alert 17\n" + "".join(f"### Alert {number}\nindividual fixture\n" for number in numbers)
+        (self.root / "docs/review.md").write_text(evidence, encoding="utf-8", newline="\n")
+        self.write_policy()
+        rows = [{**self.row, "alert": str(number), "evidence": f"docs/review.md#alert-{number}"} for number in numbers]
+        payload = self.write_current_rows(rows)
+        self.assertGreater(len(payload), review.MAX_POLICY)
+        self.assertEqual(review.read_current_reviews(payload), rows)
+        commit = self.save_commit()
+        alerts = []
+        for number in [*numbers, 9999997]:
+            alert = copy.deepcopy(self.alert)
+            alert["number"] = number
+            alert["most_recent_instance"]["commit_sha"] = commit
+            alerts.append(alert)
+        raw = copy.deepcopy(alerts)
+        self.assertEqual(self.match(alerts=alerts, commit=commit), numbers)
+        self.assertEqual(alerts, raw)
+        extra = {**self.row, "alert": "9999997", "evidence": "docs/review.md#alert-9999997"}
+        expanded = self.write_current_rows([*rows, extra])
+        with self.assertRaisesRegex(ValueError, "record"):
+            review.read_current_reviews(expanded)
+
+    def test_current_document_and_malformed_csv_remain_bounded(self):
+        """Reject excessive document/field bytes before matching any source or report."""
+        with self.assertRaisesRegex(ValueError, "exceeds its byte budget"):
+            review.read_current_reviews(b"x" * (review.MAX_CURRENT_POLICY + 1))
+        valid = (self.root / review.CURRENT_POLICY).read_bytes()
+        for payload in (valid + b"x" * 131073, b"x" * 131073, valid + b'"unterminated'):
+            with self.subTest(kind=payload[:30]), self.assertRaisesRegex(ValueError, "malformed CSV"):
+                review.read_current_reviews(payload)
 
     # Purpose: Call the production matcher with fixture identities and complete raw reports.
     # Inputs: Optional report array, revision and repository. Outputs: Reviewed IDs from the real implementation.

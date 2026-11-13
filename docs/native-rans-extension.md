@@ -289,7 +289,7 @@ The caller keeps decoded storage alive through the existing device CRC consumer.
 Archive worker/resource admission, publication and malformed-input fuzz integration
 remain required before opening public kind/version admission.
 
-The next private statistics component uses the canonical block limit, one full
+The private statistics component uses the canonical block limit, one full
 previous-byte table, disposable segment-start removals and a projected table.
 It retains the prototype's 16 KiB shared context buckets and limits a dispatch to
 16 source tiles of 4 KiB. Tile predecessors are read at absolute source offsets;
@@ -304,15 +304,54 @@ boundary corrections, projected counts and reusable statuses. It counts the
 source once, reuses completed corrections across context choices, and reuses
 an identical completed projection without repeating device work. Device views
 expire at the next projection, closure or destruction. Checkpoints observe
-completed work; failure invalidates both caches, and a failed stream drain
-prohibits reuse. Checked closure retains the reservation until the allocation
+completed work. Failed admitted work or cancellation invalidates both caches;
+option rejection leaves completed caches intact. A failed stream drain prohibits
+reuse. Checked closure retains the reservation until the allocation
 has actually been freed. Host workspace and source storage remain caller charges.
 
 These statistics are not admitted normalized models. The connected GPU model
 consumer must validate row masses and their complete source sum before encoding.
-GPU model/stream production, runtime failure injection and public archive
+The owning production writer, runtime failure injection and public archive
 integration remain separate work. Neither cache reuse nor fixed-fixture
 correctness establishes a compression-size or measured speed improvement.
+
+### Private GPU model and stream components
+
+The [model kernels](../src/gpu/hip_rans_models.hip.cpp) prepare positive symbols
+in count/symbol order once per context, independently of precision. Normalization
+uses exact integer water filling, a one-frequency floor and largest remainders
+with ascending-symbol ties. It independently recounts each row's raw mass and
+alphabet and validates its complete sorted positive permutation. Empty contexts
+remain absent. Before model use, the owner must admit the complete source sum
+and context-zero presence through the [row contract](../src/gpu/rans_model_plan.hpp).
+Valid per-row upper bounds alone cannot establish that all source work finished.
+
+CDF construction verifies exact normalized mass and alphabet before publication.
+Its full-width context offsets and 257-word cumulative rows preserve singleton
+mass 65,536. Missing row offsets and their unused storage are deterministic zero.
+Every model block has 256 participating lanes and uniform barrier admission;
+neither a wave size nor cross-block progress is assumed.
+
+The [encoder](../src/gpu/hip_rans_encode.hip.cpp) visits each independent source
+segment backwards and writes renormalization bytes backwards into its derived
+slot, followed by the little-endian initial decoder state. Work is bounded to
+128 segments per dispatch, at most 4,096 source bytes per segment and at most two
+emissions per symbol. A floor reciprocal supplies the quotient with a checked
+single correction; frequency one uses its exact identity. Invalid intervals,
+quotients and states cannot authorize a completed stream.
+
+Dense compaction checks each completed result's source slot, adjacent output
+offsets and global endpoints before copying. Partial output remains unpublished
+until all batches complete and pass admission. Source, models, stream storage
+and metadata must remain immutable and owned through every consumer.
+
+The connected correctness path consumes actual GPU counts, GPU-generated models
+and GPU streams, then checks device and independent portable decoding. Test-only
+host work frames the sparse metadata and offsets; it does not normalize or encode
+symbols. These component controls do not replace the production operation's
+aggregate resource accounting, cancellation and runtime failure controls, decoded
+CRC, archive/composition/version admission, fuzzing or representative adoption.
+The application still does not emit the proposed kind or archive version.
 
 ## Adoption criteria
 

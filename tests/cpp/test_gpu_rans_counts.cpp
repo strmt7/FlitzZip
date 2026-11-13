@@ -14,53 +14,12 @@
 #if FLITZZIP_ENABLE_HIP
 #include "gpu/hip_kernel_api.hpp"
 #include "gpu/hip_rans_statistics.hpp"
+#include "rans_gpu_fixtures.hpp"
 
 namespace {
 using namespace flitzzip;
 using namespace flitzzip::hip_detail;
-
-// Initialized guards surround the actual allocation and every inactive logical
-// tail. Every copy and dispatch completes before its caller reads or releases it.
-template <typename T> class CountDeviceBuffer {
-  public:
-    static constexpr T guard = static_cast<T>(sizeof(T) == 1U ? 0xA5U : 0xA5A5A5A5U);
-
-    explicit CountDeviceBuffer(std::uint32_t words)
-        : words_(words), storage_((static_cast<std::size_t>(words) + 2U) * sizeof(T), "rANS count fixture buffer") {
-        reset({});
-    }
-    T* data() const {
-        return storage_.get() + 1U;
-    }
-    void reset(std::span<const T> prefix) {
-        REQUIRE_TRUE(prefix.size() <= words_);
-        std::vector<T> host(static_cast<std::size_t>(words_) + 2U, guard);
-        std::ranges::copy(prefix, host.begin() + 1U);
-        REQUIRE_EQ(copy_on_codec_stream(storage_.get(), host.data(), host.size() * sizeof(T), hipMemcpyHostToDevice),
-                   hipSuccess);
-    }
-    void fill(T value) {
-        reset(std::vector<T>(words_, value));
-    }
-    std::vector<T> read(std::uint32_t active) const {
-        REQUIRE_TRUE(active <= words_);
-        std::vector<T> host(static_cast<std::size_t>(words_) + 2U);
-        REQUIRE_EQ(copy_on_codec_stream(host.data(), storage_.get(), host.size() * sizeof(T), hipMemcpyDeviceToHost),
-                   hipSuccess);
-        REQUIRE_EQ(host.front(), guard);
-        REQUIRE_EQ(host.back(), guard);
-        REQUIRE_TRUE(std::ranges::all_of(std::span(host).subspan(active + 1U, words_ - active),
-                                         [](T value) { return value == guard; }));
-        return {host.begin() + 1U, host.begin() + active + 1U};
-    }
-    void release_checked() {
-        storage_.reset_checked("release rANS count fixture buffer");
-    }
-
-  private:
-    std::uint32_t words_;
-    HipDeviceBuffer<T> storage_;
-};
+using flitzzip_test::CountDeviceBuffer;
 
 // Each source has new statistics owners, so neither source identities nor
 // partial tables survive into another trial. The reservation outlives all buffers.

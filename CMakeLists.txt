@@ -563,6 +563,10 @@ if(FLITZZIP_ENABLE_HIP)
       "${CMAKE_CURRENT_BINARY_DIR}/flitzzip_hip_rans.obj")
   set(FLITZZIP_HIP_RANS_COUNTS_OBJECT
       "${CMAKE_CURRENT_BINARY_DIR}/flitzzip_hip_rans_counts.obj")
+  set(FLITZZIP_HIP_RANS_MODELS_OBJECT
+      "${CMAKE_CURRENT_BINARY_DIR}/flitzzip_hip_rans_models.obj")
+  set(FLITZZIP_HIP_RANS_ENCODE_OBJECT
+      "${CMAKE_CURRENT_BINARY_DIR}/flitzzip_hip_rans_encode.obj")
   if(FLITZZIP_HIP_COVERAGE_MANIFEST)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set(_coverage_admit_args
@@ -617,6 +621,12 @@ if(FLITZZIP_ENABLE_HIP)
   flitzzip_compile_hip_object(
     src/gpu/hip_rans_counts.hip.cpp FLITZZIP_HIP_RANS_COUNTS_OBJECT
     "Compiling AMD HIP compact entropy statistics object")
+  flitzzip_compile_hip_object(
+    src/gpu/hip_rans_models.hip.cpp FLITZZIP_HIP_RANS_MODELS_OBJECT
+    "Compiling AMD HIP compact entropy model object")
+  flitzzip_compile_hip_object(
+    src/gpu/hip_rans_encode.hip.cpp FLITZZIP_HIP_RANS_ENCODE_OBJECT
+    "Compiling AMD HIP compact entropy encoder object")
   set(FLITZZIP_HIP_OBJECTS
       "${FLITZZIP_HIP_CODEC_OBJECT}"
       "${FLITZZIP_HIP_STATIC_PREFIX_OBJECT}"
@@ -624,7 +634,9 @@ if(FLITZZIP_ENABLE_HIP)
       "${FLITZZIP_HIP_DICTIONARY_OBJECT}"
       "${FLITZZIP_HIP_SPARSE_OBJECT}"
       "${FLITZZIP_HIP_RANS_OBJECT}"
-      "${FLITZZIP_HIP_RANS_COUNTS_OBJECT}")
+      "${FLITZZIP_HIP_RANS_COUNTS_OBJECT}"
+      "${FLITZZIP_HIP_RANS_MODELS_OBJECT}"
+      "${FLITZZIP_HIP_RANS_ENCODE_OBJECT}")
   add_custom_target(
     flitzzip_hip_object
     DEPENDS ${FLITZZIP_HIP_OBJECTS}
@@ -965,6 +977,8 @@ if(FLITZZIP_BUILD_TESTS)
     tests/cpp/test_gpu_rans_decode.cpp
     tests/cpp/test_gpu_rans_operation.cpp
     tests/cpp/test_gpu_rans_counts.cpp
+    tests/cpp/test_gpu_rans_models.cpp
+    tests/cpp/test_gpu_rans_streams.cpp
     tests/cpp/test_gzip_headers.cpp
     tests/cpp/test_stream_corruption.cpp
     tests/cpp/test_gpu_telemetry.cpp
