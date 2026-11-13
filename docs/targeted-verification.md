@@ -209,6 +209,41 @@ This is an incremental coverage map, not proof that all native source families
 have fine-grained routing. A local required-HIP cohort must never be relabeled as
 passed GPU qualification on a hosted runner without hardware.
 
+### Correctness And Measurement Roles
+
+The ordinary native driver retains its complete CTest registry and measured
+corpus/controller integration. When local measurement is explicitly held, use:
+
+```powershell
+tools\test.ps1 -Configuration Release -CorrectnessOnly
+```
+
+This path first requires current HIP-enabled build identities and actual HIP
+readiness. It admits the complete CTest inventory before selecting suites labelled
+`correctness`, then runs the native registry with `--correctness-only`, followed by
+the existing CLI, kernel-boundary and planning contracts. It visibly defers the
+measured corpus/controller integration. It does not change the verifier's default
+`unit-tests` command or qualify deferred measurement gates. HIP readiness is
+checked again after native execution. CTest suites need exactly one execution
+role: `correctness`, `measurement` or the canonical `mixed-native` registry.
+Unclassified, ambiguous or unsupported mixed suites fail admission. Other labels
+may describe components; they do not supply an execution role.
+
+Native registrations default to correctness. A test that executes a successful
+benchmark pipeline must declare `TestExecutionRole::Measurement` as its second
+`TEST_CASE` argument, even when its assertions concern correctness. Planning,
+rejection-before-work and synthetic-clock policy tests remain correctness cases;
+classification follows execution, not a name prefix. Keep mixed cases in the
+measurement role until their real execution can be separated without losing
+assertions. The source inventory retains both roles and rejects unknown syntax;
+runtime admission rejects invalid roles or callbacks before any test runs.
+
+The runner's isolated controls compile the actual registration and selection
+code, retain measurement cases in default and exact execution, and challenge the
+restricted driver with recording executables and deliberately broken separators.
+Those controls run no benchmarks. Their success does not replace execution of
+the real permitted correctness path against matching product binaries.
+
 ### Hosted Native Work
 
 `tools/ci_native_plan.ps1` projects build, native runtime, format-matrix and

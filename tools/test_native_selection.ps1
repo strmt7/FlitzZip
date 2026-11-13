@@ -143,6 +143,34 @@ foreach ($shared in @('src/gpu/hip_codec_support.hpp', 'src/gpu/hip_codec.hip.cp
 Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths $entropyPaths -Full).mode -eq 'full') 'explicit full qualification'
 Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths @('tests/cpp/test_main.cpp')).mode -eq 'runner') 'runner-only edits select registry contracts'
 $inventory = @(Get-FlitzZipNativeTestInventory)
+$ctestFixture = @'
+{"kind":"ctestInfo","version":{"major":1,"minor":0},"tests":[
+{"name":"flitzzip_tests","properties":[{"name":"LABELS","value":["mixed-native"]}]},
+{"name":"contracts","properties":[{"name":"LABELS","value":["correctness","dependency"]}]},
+{"name":"measured","properties":[{"name":"LABELS","value":["measurement"]}]}]}
+'@
+Assert-FlitzZipCTestExecutionInventory -Inventory ($ctestFixture | ConvertFrom-Json)
+foreach ($invalid in @(
+        $ctestFixture.Replace('"major":1', '"major":2'),
+        $ctestFixture.Replace('"correctness","dependency"', '"unknown"'),
+        $ctestFixture.Replace('"correctness","dependency"', '"correctness","measurement"'),
+        $ctestFixture.Replace('["correctness","dependency"]', '"correctness"'),
+        $ctestFixture.Replace('"name":"contracts"', '"name":"flitzzip_tests"'),
+        $ctestFixture.Replace('"mixed-native"', '"correctness"'),
+        $ctestFixture.Replace('"name":"flitzzip_tests"', '"name":"unknown_mixed_registry"'),
+        $ctestFixture.Replace('"name":"contracts"', '"name":42'),
+        $ctestFixture.Replace('"correctness","dependency"', '"measurement"'),
+        '{"kind":"ctestInfo","version":{"major":1},"tests":[]}')) {
+    Assert-NativeSelectionRejected { Assert-FlitzZipCTestExecutionInventory -Inventory ($invalid | ConvertFrom-Json) } 'CTest'
+}
+$measurementExpected = @('memory_benchmark_source_handoff_rejects_stale_metadata_and_recovers',
+    'memory_benchmark_cpu_pipeline_is_byte_exact_and_ram_only',
+    'memory_benchmark_all_efforts_preserve_corpus_bytes_and_backend_identity',
+    'memory_benchmark_neutron_pipeline_requires_real_hip_and_exact_bytes',
+    'memory_benchmark_suite_accounts_for_container_overhead')
+$measurementActual = @($inventory | Where-Object role -eq 'Measurement' | Select-Object -ExpandProperty name)
+Assert-NativeSelection ((($measurementActual | Sort-Object) -join '|') -ceq
+    (($measurementExpected | Sort-Object) -join '|')) 'live benchmark pipelines require explicit measurement roles; other correctness cases remain admitted'
 $folderCachePath = 'src/app/folder_size_cache.hpp'
 $folderCacheExpected = @($inventory | Where-Object source -eq 'tests/cpp/test_folder_size_cache.cpp' |
     Select-Object -ExpandProperty name | Sort-Object)
@@ -262,6 +290,16 @@ target_sources(flitzzip_test_objects PUBLIC tests/cpp/test_gui.cpp)
     Assert-NativeSelectionRejected { Get-FlitzZipNativeTestInventory -Root $fixtureRoot } 'unsupported registration syntax'
     [IO.File]::WriteAllText($fixtureSource, "TEST_CASE(sample) {}`nTEST_CASE(sample) {}")
     Assert-NativeSelectionRejected { Get-FlitzZipNativeTestInventory -Root $fixtureRoot } 'Duplicate native test registration'
+    [IO.File]::WriteAllText($fixtureSource, "TEST_CASE(sample) {}`nTEST_CASE(measured, TestExecutionRole::Measurement) {}")
+    $roleInventory = @(Get-FlitzZipNativeTestInventory -Root $fixtureRoot)
+    Assert-NativeSelection (($roleInventory.name -join '|') -ceq 'sample|measured' -and
+        ($roleInventory.role -join '|') -ceq 'Correctness|Measurement') 'both execution roles retain inventory and exact selection'
+    $roleSelection = Get-FlitzZipNativeTestSelection -Paths @('tests/cpp/test_fixture.cpp') -Root $fixtureRoot
+    Assert-NativeSelection (($roleSelection.tests -join '|') -ceq 'measured|sample') 'default selection does not lose measurement cases'
+    foreach ($role in @('Unknown', 'static_cast<TestExecutionRole>(42)')) {
+        [IO.File]::WriteAllText($fixtureSource, "TEST_CASE(sample) {}`nTEST_CASE(measured, $role) {}")
+        Assert-NativeSelectionRejected { Get-FlitzZipNativeTestInventory -Root $fixtureRoot } 'unsupported registration syntax'
+    }
     [IO.File]::WriteAllText($fixtureSource, '// no registrations')
     Assert-NativeSelectionRejected { Get-FlitzZipNativeTestInventory -Root $fixtureRoot } 'no recognized cases'
     [IO.File]::WriteAllText((Join-Path $fixtureRoot 'CMakeLists.txt'), 'add_library(different_target OBJECT test.cpp)')

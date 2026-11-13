@@ -1099,17 +1099,22 @@ if(FLITZZIP_BUILD_TESTS)
     add_dependencies(flitzzip_tests FlitzZip)
   endif()
   add_test(NAME flitzzip_tests COMMAND flitzzip_tests)
+  set_tests_properties(flitzzip_tests PROPERTIES LABELS mixed-native)
   add_test(
     NAME flitzzip_runtime_manifest_contracts
     COMMAND
       "${CMAKE_COMMAND}" "-DREPO_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
       "-DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/runtime-manifest" -P
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_runtime_manifest.cmake")
-  set_tests_properties(flitzzip_runtime_manifest_contracts PROPERTIES TIMEOUT
-                                                                      15)
+  set_tests_properties(flitzzip_runtime_manifest_contracts
+                       PROPERTIES TIMEOUT 15 LABELS correctness)
   if(WIN32)
     set(FLITZZIP_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
     include(cmake/ZstdTests.cmake)
+    set_tests_properties(
+      flitzzip_zstd_bounds_tests flitzzip_zstd_cover_selection_tests
+      flitzzip_zstd_legacy_tests flitzzip_zstd_legacy_patch
+      flitzzip_zstd_header_contracts PROPERTIES LABELS correctness)
   endif()
 endif()
 

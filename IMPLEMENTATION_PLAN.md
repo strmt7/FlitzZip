@@ -45,12 +45,14 @@ Completed checkpoint narratives remain in Git history and local review artifacts
 ## Current Assessment
 
 Assessment source: published `main` at
-`c2fd539a204df65745befad59d6991b75f7c7fc8`, with a matching clean development
-checkout. At the assessment boundary, component contracts, lint, Scorecard,
-Zstandard sanitizers and fuzzing passed; Windows CI, ROCm qualification and security
-were still running. Their pending state is not a failure or a pass. The preceding
-source `3706eae43b1f447a11512c6141bd782caa43d843` passed all eight of its Actions
-workflows, including benchmark-graph. Its
+`60390076fa0632ebae4f86b484e0b21b4619d0f9`. Its security workflow, including
+both CPU and HIP-host CodeQL jobs, lint and Scorecard completed successfully.
+The preceding native source `c2fd539a204df65745befad59d6991b75f7c7fc8` passed
+Windows CI, ROCm qualification, component contracts, lint, fuzzing, Scorecard and
+Zstandard sanitizers. Its security workflow was cancelled; the succeeding
+baseline's successful C++ analyses supply fresh evidence rather than treating
+the cancellation as a pass. The earlier source
+`3706eae43b1f447a11512c6141bd782caa43d843` also passed benchmark-graph. Its
 [ROCm run](https://github.com/strmt7/FlitzZip/actions/runs/43034932616)
 qualifies the configuration-diagnostic repair for that source. The original
 [configuration failure](https://github.com/strmt7/FlitzZip/actions/runs/43010070857)
@@ -67,17 +69,20 @@ dictionary callers, output consumers and their tests. Its current HIP-enabled
 Release build, fixed-data host cases, required-HIP readback/cancellation/recovery
 cases and affected offline reporting contracts passed locally. Independent
 compatibility and format-matrix checks cover their recorded binary identities.
-Full native-driver execution remains deferred because that driver invokes
-benchmark consumers prohibited by the active goal. Hosted checks cover the
-published observation batch; the exact-source audit and final candidate
-qualification remain outstanding. The published sparse-reader component has
+The default full native driver remains deferred because it invokes prohibited
+measurement consumers. The correctness-role batch now has a successful HIP
+Release build, complete classified correctness registry, separate CTest suites,
+dependency sanitizer controls, affected offline contracts and GUI smoke with
+capture review. Measurement deferrals remain explicit. These local results do
+not qualify the batch's future pushed revision or replace the exact-source audit
+and final candidate qualification. The published sparse-reader component has
 bounded caller-owned workspace, eleven registered native tests, independent
 fixed-payload and malformed-input controls, and differential/fault-control
 evidence. Its differential control checked 2,073 cases: 1,222 admitted frames
 decoded byte-exactly and 851 nonimproving frames were rejected. These results
 qualify the reader's recorded scope, not the connected GPU entropy pipeline.
-Its archive admission and GPU integration remain closed; current hosted
-acceptance remains pending.
+Its archive admission and GPU integration remain closed. The later role batch
+still needs fresh hosted acceptance for its changed inputs.
 The earlier source `dec2dca` has a
 [qualified ZIP/MSI candidate](https://github.com/strmt7/FlitzZip/actions/runs/42993879195);
 those artifacts do not qualify subsequent source changes.
@@ -85,8 +90,8 @@ those artifacts do not qualify subsequent source changes.
 | Area | Verified state | Remaining problem or limit |
 | --- | --- | --- |
 | Product | Windows-native C++20 app, CLI, in-process adapters and HIP compute boundary | Exact methods differ by format; preserve the [capability matrix](docs/archive-format-support.md) |
-| Native tests | New observation host and required-HIP cases pass, including independent readback and failure recovery | The broad benchmark-coupled driver remains deferred; bounded cases do not establish full release acceptance |
-| Hosted/package checks | Five Actions workflows passed and three were pending on the assessment source; all eight passed on its predecessor | Final exact-source workflows, audit and ZIP/MSI lifecycle remain required; earlier packages do not qualify changed linked bytes |
+| Native tests | The explicit correctness path passes the complete admitted registry and classified CTest suites with current HIP binaries; measurement cases remain registered in the default suite | Full measurement qualification stays deferred; this is not full release acceptance |
+| Hosted/package checks | Published native checks and succeeding CPU/HIP-host security analyses passed; the local role batch passes packaging and sanitizer contracts | The role batch still needs its own hosted acceptance; final exact-source audit and ZIP/MSI lifecycle remain required |
 | GitHub maintenance | Only `main`; no open PRs or Dependabot alerts at assessment | These inventories are live, not permanent guarantees |
 | Analysis acceptance | Exact governance baseline accepted; raw reports retained | DeepSource skipped the current revision because its analysis quota is exhausted; current analyzer results and complete inventory are unavailable |
 | Neutron | GPU-only search remains separate from efforts 1–9; independent readback and real device-work controls exist | Broad size superiority and comparative speed are unproven; approved rANS is inactive in production |
@@ -123,9 +128,9 @@ These are distinct engineering categories, not a list of confirmed vulnerabiliti
   actual timed diagnostic and suite execution remain deferred.
 - **Expensive or conflicting verification entry points:** a broad unit driver
   also invokes benchmark consumers. Under the current restriction it cannot run
-  unchanged. Select legitimate correctness consumers now; review separation of
-  orchestration without removing benchmark coverage or declaring the full driver
-  passed. Record every remaining required check.
+  unchanged. The explicit correctness path now separates those consumers with
+  admitted roles and visible deferrals, without removing default benchmark
+  coverage. Preserve that distinction and every remaining required check.
 - **Evidence drift:** older plans, continuation notes, build receipts and checkout
   snapshots can disagree. Use the actual `main` checkout, matching source/tool/
   output identities and one current local continuation. Do not repeatedly rescan
@@ -237,14 +242,15 @@ into skills or install another harness, scheduler or background agent.
 
 ## Ordered Work Packages
 
-The next bounded tooling slice is **T01 correctness orchestration separation**,
-followed by **N01**, connecting the qualified sparse-reader component to the
+The **T01 correctness orchestration separation** has local consumer qualification;
+its pushed-source hosted acceptance remains required. Continue with **N01**,
+connecting the qualified sparse-reader component to the
 approved GPU pipeline. **B00 and B01 are qualified
 for their published scope; B02 is published with successful hosted checks.**
 Its local broad-driver deferral and final audit remain visible. The ready sequence
-is **T01 correctness separation → N01 → C01 → C02 → Q01**. If the tooling
-separation cannot yet prove complete consumer retention, keep the broad driver
-deferred and continue independent N01 work; do not weaken verification to unblock it.
+is **N01 → C01 → C02 → Q01**, with T01 hosted results retained at the next
+useful boundary. The default full measurement driver remains deferred; do not
+weaken verification or describe restricted execution as that driver's pass.
 D01 interrupts it for a demonstrated dependency vulnerability or incompatibility. T01 addresses
 missing tool portability evidence without repeating valid installation checks. Resume R01 on
 a provider state change; do not let that external blocker stall independent work.
@@ -261,7 +267,7 @@ N02 remains held by the measurement restriction. U01 follows affected product ch
 | N01 | In progress: canonical sparse parser/model workspace/CPU reader and independent controls; archive/GPU admission closed | B02 and approved format contract | Integrated device-produced models/streams, independent readback/CRC, malformed-input and lifetime controls |
 | N02 | Representative Neutron effectiveness: deferred | N01 and lifted benchmark restriction | Complete-size evidence on licensed independent workloads, including losses and all model/framing bytes, before production adoption |
 | D01 | Dependency lifecycle: alerts clear at assessment | Official metadata, compatible graph and provenance | Reproducible pins plus fresh/update installed-consumer tests; explicit unsupported/constrained platforms |
-| T01 | Development tools: separate correctness orchestration first; retain qualified portable consumers | Complete existing command/consumer inventory and supported provider/host/checkout contracts | No benchmark reachable through the explicit correctness-only path; all existing consumers retained in ordinary/final selection; fresh/update/recovery and owned-process cleanup evidence |
+| T01 | Correctness separation locally qualified: typed native roles, complete CTest role admission, real HIP correctness and isolated mutation/failure controls | Finish affected pushed-source hosted qualification and remaining portability consumers | No benchmark reachable through the explicit correctness-only path; all existing consumers retained in ordinary/final selection; fresh/update/recovery and owned-process cleanup evidence |
 | Q01 | Critical gaps and complexity: ongoing | Actual risk and source-bound gap inventory | Meaningful success/rejection/recovery assertions and repaired root causes; explicit residual behavior/measurement gaps |
 | U01 | User experience, upgrades and docs: maintain affected contracts | Changed product/settings/package behavior | Migration and failure/recovery tests, disposable-host installer qualification, affected GUI/figure review and accurate docs |
 
@@ -462,6 +468,15 @@ Routine repairs and already-approved work proceed within their existing contract
 
 ### T01 — Portable Development Tools
 
+The [explicit correctness path](docs/targeted-verification.md#correctness-and-measurement-roles)
+is implemented with native registry roles, complete CTest inventory admission,
+default retention and visible measurement deferrals. Isolated controls exercise
+the actual runner and driver, including failed child admission, lost HIP readiness
+and separator mutations. The real source-matched correctness path and selected
+local consumers passed. Finish affected hosted checks before calling its
+publication qualified; default full-driver measurement gates remain separate
+and held under the active local restriction.
+
 First trace the canonical `unit-tests` descriptor in
 `tools/flitzzip_verification.psm1` to its actual native driver and every child
 command. Inventory correctness cases, interoperability, fuzz controls, benchmark
@@ -645,7 +660,10 @@ These packages run at relevant boundaries rather than restarting on every turn:
 3. Review user/developer documents against implemented behavior. Remove conflicting
    active instructions at their canonical source; retain required provenance and
    regression fixtures. Do not turn skills into dated status ledgers or delete
-   evidence merely to produce a cleaner report.
+   evidence merely to produce a cleaner report. The About page's explanatory
+   paragraph still reads as a developer boundary description; replace it with
+   a concise user capability summary during U01, preserving the format matrix
+   and truthful GPU requirements.
 4. Recheck settings schema/unknown-field preservation and direct supported upgrades
    when their producers change. Qualify portable/MSI payload parity and lifecycle
    on disposable hosts. Reuse only matching evidence, never an earlier package's

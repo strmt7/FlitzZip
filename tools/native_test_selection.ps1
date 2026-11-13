@@ -61,7 +61,7 @@ function Get-FlitzZipNativeTestInventory {
     foreach ($source in $sources) {
         $text = Get-Content -LiteralPath (Join-Path $Root $source) -Raw
         Assert-FlitzZipNativeRegistrationCondition -Text $text -Source $source
-        $cases = [regex]::Matches($text, '(?m)^TEST_CASE\((?<name>\w+)\)\s*\{')
+        $cases = [regex]::Matches($text, '(?m)^TEST_CASE\((?<name>\w+)(?:, TestExecutionRole::(?<role>Correctness|Measurement))?\)\s*\{')
         if ($cases.Count -ne [regex]::Matches($text, '(?m)^\s*TEST_CASE\s*\(').Count) {
             throw "Native test source contains unsupported registration syntax: $source"
         }
@@ -71,8 +71,44 @@ function Get-FlitzZipNativeTestInventory {
         foreach ($case in $cases) {
             $name = $case.Groups['name'].Value
             if (-not $names.Add($name)) { throw "Duplicate native test registration: $name" }
-            [pscustomobject]@{ source = $source; name = $name }
+            $role = if ($case.Groups['role'].Success) { $case.Groups['role'].Value } else { 'Correctness' }
+            [pscustomobject]@{ source = $source; name = $name; role = $role }
         }
+    }
+}
+
+# Admit every registered CTest suite before the restricted driver launches any
+# test. Extra non-role labels are permitted; missing/ambiguous execution roles,
+# duplicate names or a new mixed registry require an explicit implementation review.
+function Assert-FlitzZipCTestExecutionInventory {
+    param([Parameter(Mandatory = $true)]$Inventory)
+    if ($Inventory.kind -cne 'ctestInfo' -or $Inventory.version.major -ne 1 -or
+        $Inventory.tests -isnot [array] -or -not $Inventory.tests.Count) {
+        throw 'Correctness-only CTest requires a complete version-one test inventory.'
+    }
+    $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $mixed = 0
+    $correctness = 0
+    foreach ($test in $Inventory.tests) {
+        if ($test.name -isnot [string] -or [string]::IsNullOrWhiteSpace($test.name) -or -not $names.Add($test.name)) {
+            throw 'Correctness-only CTest requires unique nonempty suite names.'
+        }
+        $properties = @($test.properties | Where-Object name -CEQ 'LABELS')
+        $roles = @($properties | ForEach-Object { $_.value } | Where-Object {
+            $_ -cin @('correctness', 'measurement', 'mixed-native')
+        })
+        if ($properties.Count -ne 1 -or $properties[0].value -isnot [array] -or $roles.Count -ne 1) {
+            throw "CTest suite has an unclassified or ambiguous execution role: $($test.name)"
+        }
+        if ($roles[0] -ceq 'mixed-native') {
+            if ($test.name -cne 'flitzzip_tests') { throw 'Unsupported mixed CTest registry.' }
+            ++$mixed
+        } elseif ($test.name -ceq 'flitzzip_tests') {
+            throw 'The native registry must retain its mixed CTest role.'
+        } elseif ($roles[0] -ceq 'correctness') { ++$correctness }
+    }
+    if ($mixed -ne 1 -or -not $correctness) {
+        throw 'Correctness-only CTest requires the mixed registry and separate correctness suites.'
     }
 }
 

@@ -14,17 +14,25 @@
 #include <winioctl.h>
 
 using TestFunction = void (*)();
-void register_test(std::string name, TestFunction fn);
+enum class TestExecutionRole { Correctness, Measurement };
+
+constexpr TestExecutionRole test_execution_role(TestExecutionRole role = TestExecutionRole::Correctness) noexcept {
+    return role;
+}
+
+// Measurement cases execute benchmark pipelines. The default suite retains both
+// roles; explicit correctness-only execution defers measurement cases visibly.
+void register_test(std::string name, TestFunction fn, TestExecutionRole role = TestExecutionRole::Correctness);
 
 // Each constructor registers its case before main through a direct function
 // reference, keeping registration visible to call-graph analysis. The registry
 // owns the copied name and borrows the static function; const registrars hold no state.
-#define TEST_CASE(name)                                                                                                \
+#define TEST_CASE(name, ...)                                                                                           \
     static void name();                                                                                                \
     namespace {                                                                                                        \
     struct name##_registrar final {                                                                                    \
         name##_registrar() {                                                                                           \
-            register_test(#name, name);                                                                                \
+            register_test(#name, name, test_execution_role(__VA_ARGS__));                                              \
         }                                                                                                              \
     };                                                                                                                 \
     const name##_registrar name##_registrar_instance;                                                                  \

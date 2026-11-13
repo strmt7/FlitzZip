@@ -1,6 +1,7 @@
 param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo")]
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [switch]$CorrectnessOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,12 +14,33 @@ $repo = Split-Path -Parent $PSScriptRoot
 & (Join-Path $PSScriptRoot "test_cmake_toolchain.ps1")
 $ctestExe = Join-Path (Split-Path -Parent (Find-CMake -RepoRoot $repo)) 'ctest.exe'
 $build = Join-Path $repo "build"
-& $ctestExe --test-dir $build -C $Configuration --interactive-debug-mode 0 --output-on-failure --stop-on-failure
+$testRunner = Join-Path $build "$Configuration/flitzzip_tests.exe"
+$cli = Join-Path $build "$Configuration/flitzzip_cli.exe"
+if ($CorrectnessOnly.IsPresent) {
+    . (Join-Path $PSScriptRoot 'native_test_selection.ps1')
+    & py -3 (Join-Path $PSScriptRoot 'native_build_receipt.py') validate --root $repo --configuration $Configuration --require-hip
+    if ($LASTEXITCODE -ne 0) { throw 'Correctness-only execution requires current HIP-enabled native binaries.' }
+    Assert-FlitzZipNativeSelectionHip -Cli $cli
+    $ctestInventory = @(& $ctestExe --test-dir $build -C $Configuration --show-only=json-v1 --stop-on-failure)
+    if ($LASTEXITCODE -ne 0) { throw 'Correctness-only CTest inventory failed.' }
+    $inventory = ($ctestInventory -join [Environment]::NewLine) | ConvertFrom-Json
+    Assert-FlitzZipCTestExecutionInventory -Inventory $inventory
+    foreach ($suite in $inventory.tests) {
+        $labels = @($suite.properties | Where-Object name -CEQ 'LABELS' | ForEach-Object { $_.value })
+        if ($labels -ccontains 'measurement') { Write-Output "DEFERRED CTest measurement suite: $($suite.name)" }
+    }
+    & $ctestExe --test-dir $build -C $Configuration --interactive-debug-mode 0 --output-on-failure --stop-on-failure -L '^correctness$'
+    if ($LASTEXITCODE -ne 0) { throw "Correctness-only CTest failed with exit code $LASTEXITCODE." }
+    & $testRunner --correctness-only
+    if ($LASTEXITCODE -ne 0) { throw "Correctness-only native registry failed with exit code $LASTEXITCODE." }
+    Assert-FlitzZipNativeSelectionHip -Cli $cli
+} else {
+    & $ctestExe --test-dir $build -C $Configuration --interactive-debug-mode 0 --output-on-failure --stop-on-failure
+}
 if ($LASTEXITCODE -ne 0) {
-    throw "ctest failed with exit code $LASTEXITCODE."
+    throw "Native tests failed with exit code $LASTEXITCODE."
 }
 
-$testRunner = Join-Path $build "$Configuration/flitzzip_tests.exe"
 foreach ($arguments in @(
     "__flitzzip_no_test_must_match_this_filter__",
     "compression_stream_gzip_read_failure_is_terminal compression_stream_zstd_read_failure_is_terminal",
@@ -54,7 +76,6 @@ foreach ($arguments in @(
 $configuredPackageVersion = Read-FlitzZipCMakeCacheValue -BuildRoot $build -Name "FLITZZIP_PACKAGE_VERSION"
 Assert-FlitzZipPackageVersionMatchesBuild -BuildRoot $build -PackageVersion $configuredPackageVersion
 
-$cli = Join-Path $build "$Configuration/flitzzip_cli.exe"
 $cliVersion = & $cli --version
 if ($LASTEXITCODE -ne 0 -or $cliVersion -ne "FlitzZip $configuredPackageVersion") {
     throw "CLI --version must report the configured package version and exit successfully."
@@ -67,7 +88,11 @@ if ((Read-FlitzZipCMakeCacheValue -BuildRoot $build -Name 'FLITZZIP_ENABLE_HIP')
     & (Join-Path $PSScriptRoot 'test_hip_kernel_boundary.ps1') -Configuration $Configuration
 }
 & (Join-Path $PSScriptRoot 'test_memory_benchmark_plan.ps1') -Configuration $Configuration
-& (Join-Path $PSScriptRoot 'test_memory_benchmark_corpus.ps1') -Configuration $Configuration
+if ($CorrectnessOnly.IsPresent) {
+    Write-Output 'DEFERRED: measured corpus/controller integration; correctness-only execution is not full qualification.'
+} else {
+    & (Join-Path $PSScriptRoot 'test_memory_benchmark_corpus.ps1') -Configuration $Configuration
+}
 
 foreach ($invalidVersion in @("01.0.0", "0.1.0+build.1", "v0.1.0", "latest")) {
     $acceptedInvalidVersion = $false

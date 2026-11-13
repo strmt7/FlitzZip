@@ -17,6 +17,7 @@ namespace {
 struct Test {
     std::string name;
     TestFunction fn;
+    TestExecutionRole role;
 };
 
 enum class TestNameMatch { Substring, Exact, Prefix };
@@ -67,6 +68,19 @@ std::vector<Test>& registry() {
     return tests;
 }
 
+// Reject malformed registrations before invoking any case, including a case
+// preceding the bad entry. Unknown roles must never become an implicit skip.
+bool admit_test_registry() {
+    for (const auto& test : registry()) {
+        if (test.fn == nullptr ||
+            (test.role != TestExecutionRole::Correctness && test.role != TestExecutionRole::Measurement)) {
+            std::cerr << "Invalid native test registration: " << test.name << "\n";
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 // Purpose: Prevent focused format selection from unintentionally invoking similarly named GPU/codec families.
@@ -114,13 +128,14 @@ TEST_CASE(test_name_filter_empty_anchored_requests_are_rejected) {
 
 // Purpose: Add a test case to the local C++ test registry.
 // Inputs: `name` is the test label and `fn` is a nonnull static test function; no captured owner is transferred.
-// Outputs: Mutates the registry; used by `TEST_CASE` static initializers.
-void register_test(std::string name, TestFunction fn) {
-    registry().push_back(Test{std::move(name), fn});
+// Outputs: Mutates the registry; admission validates every entry before execution.
+void register_test(std::string name, TestFunction fn, TestExecutionRole role) {
+    registry().push_back(Test{std::move(name), fn, role});
 }
 
 // Purpose: Execute registered tests, optionally filtered by substring, exact name or anchored prefix.
-// Inputs: `argc`/`argv` may contain one filter; leading '=' requests exact selection, '^' requests prefix selection.
+// Inputs: One filter ('=' exact, '^' prefix), or explicit '--correctness-only'.
+// The restricted mode defers measurement cases; default execution retains them.
 // Outputs: Returns zero for passing selected tests, one for failures, or two for invalid arguments/selections.
 int main(int argc, char** argv) {
 #if defined(_WIN32) && FLITZZIP_ENABLE_HIP
@@ -134,16 +149,25 @@ int main(int argc, char** argv) {
         std::cerr << "Expected at most one test-name filter\n";
         return 2;
     }
+    if (!admit_test_registry()) {
+        return 2;
+    }
+    const bool correctness_only = argc > 1 && std::string_view(argv[1]) == "--correctness-only";
     TestNameFilter filter;
     try {
-        filter = parse_test_name_filter(argc > 1 ? std::string_view(argv[1]) : std::string_view{});
+        filter = parse_test_name_filter(argc > 1 && !correctness_only ? std::string_view(argv[1]) : std::string_view{});
     } catch (const std::invalid_argument& error) {
         std::cerr << error.what() << "\n";
         return 2;
     }
     int failed = 0;
     std::size_t selected = 0;
+    std::size_t deferred = 0;
     for (const auto& test : registry()) {
+        if (correctness_only && test.role == TestExecutionRole::Measurement) {
+            ++deferred;
+            continue;
+        }
         if (!matches_test_name(test.name, filter)) {
             continue;
         }
@@ -163,6 +187,9 @@ int main(int argc, char** argv) {
     if (selected == 0) {
         std::cerr << "No tests matched the requested filter\n";
         return 2;
+    }
+    if (correctness_only) {
+        std::cout << deferred << " measurement tests deferred (correctness-only)\n";
     }
     std::cout << selected << " tests, " << failed << " failed\n";
     return failed == 0 ? 0 : 1;

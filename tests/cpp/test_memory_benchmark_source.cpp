@@ -82,7 +82,7 @@ std::string benchmark_source_execution_error(const flitzzip::cli::MemoryBenchmar
 // Purpose: Keep preflight metadata distinct from an authenticated resident snapshot at the measured API boundary.
 // Inputs: Three binary source bytes, missing/mismatched extents and mutations between planning and execution.
 // Outputs: Exact admission errors preserve caller bytes; restoring the admitted snapshot enables byte-exact reuse.
-TEST_CASE(memory_benchmark_source_handoff_rejects_stale_metadata_and_recovers) {
+TEST_CASE(memory_benchmark_source_handoff_rejects_stale_metadata_and_recovers, TestExecutionRole::Measurement) {
     std::array source{std::byte{0x80}, std::byte{0x00}, std::byte{0xff}};
     const auto original = source;
     const auto digest = flitzzip::sha256_bytes(source);
@@ -229,7 +229,7 @@ TEST_CASE(memory_benchmark_plan_rejects_invalid_geometry_before_execution) {
 // Purpose: Exercise the complete RAM-only CPU benchmark pipeline against a resident, authenticated corpus.
 // Inputs: A small unaligned source, bounded queues/workers and production encode/verify/extract implementations.
 // Outputs: Requires byte-exact validation, CPU-only identity, native-container accounting and explicit no-disk output.
-TEST_CASE(memory_benchmark_cpu_pipeline_is_byte_exact_and_ram_only) {
+TEST_CASE(memory_benchmark_cpu_pipeline_is_byte_exact_and_ram_only, TestExecutionRole::Measurement) {
     std::vector<std::byte> source(1024U * 1024U + 37U);
     flitzzip::cli::fill_memory_benchmark_chunk(source, 0U, source.size(), "RepeatedRecord");
     const auto sha256 = flitzzip::sha256_bytes(source);
@@ -297,7 +297,7 @@ TEST_CASE(memory_benchmark_suite_rejects_small_synthetic_workloads_without_parti
 // Purpose: Exercise every numeric effort against independently authenticated corpora in both production lanes.
 // Inputs: Three distinct bounded corpus shapes with a partial final block, all nine efforts and available HIP.
 // Outputs: Complete byte validation, correct backend identity, actual device work and complete container sizes.
-TEST_CASE(memory_benchmark_all_efforts_preserve_corpus_bytes_and_backend_identity) {
+TEST_CASE(memory_benchmark_all_efforts_preserve_corpus_bytes_and_backend_identity, TestExecutionRole::Measurement) {
     const bool hip = flitzzip::query_gpu_info().available;
     for (const auto* profile : {"RepeatedRecord", "SparseRecord", "Incompressible"}) {
         std::vector<std::byte> source(1024U * 1024U + 37U);
@@ -343,7 +343,7 @@ TEST_CASE(memory_benchmark_all_efforts_preserve_corpus_bytes_and_backend_identit
 // Purpose: Exercise Neutron through the same authenticated RAM-only benchmark boundary used by the CLI.
 // Inputs: A bounded corpus and a genuinely admitted AMD HIP device; CPU-only hosts report the unexercised scope.
 // Outputs: Requires required-HIP encode/decode use and exact independent byte validation without filesystem writes.
-TEST_CASE(memory_benchmark_neutron_pipeline_requires_real_hip_and_exact_bytes) {
+TEST_CASE(memory_benchmark_neutron_pipeline_requires_real_hip_and_exact_bytes, TestExecutionRole::Measurement) {
     if (!flitzzip::query_gpu_info().available) {
         std::cout << "Neutron RAM-only benchmark pipeline not exercised: HIP unavailable\n";
         return;
@@ -409,7 +409,7 @@ TEST_CASE(memory_benchmark_source_headroom_admission_is_allocation_free) {
 // Purpose: Reject a faster candidate whose native metadata exceeds the complete-archive size guard.
 // Inputs: Actual CPU/HIP zero-payload archives at two block sizes, with controlled scores rather than timing claims.
 // Outputs: Requires byte-exact RAM-only validation and the smaller complete archive despite equal payload sizes.
-TEST_CASE(memory_benchmark_suite_accounts_for_container_overhead) {
+TEST_CASE(memory_benchmark_suite_accounts_for_container_overhead, TestExecutionRole::Measurement) {
     const std::vector<std::byte> source(8U * flitzzip::kMinArchiveBlockBytes);
     for (const bool gpu : {false, true}) {
         if (gpu && !flitzzip::query_gpu_info().available) {
