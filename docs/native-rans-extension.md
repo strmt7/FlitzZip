@@ -353,6 +353,17 @@ aggregate resource accounting, cancellation and runtime failure controls, decode
 CRC, archive/composition/version admission, fuzzing or representative adoption.
 The application still does not emit the proposed kind or archive version.
 
+The fixed GPU normalization expectations are reproducible without ignored local
+experiments. Run `python tools/rans_model_oracle.py` to check their complete
+header against exact rational quotas, or `python tools/rans_model_oracle.py --emit`
+to emit a candidate header for review. Neither command modifies the tracked
+expectations. The offline contract compares a separate simultaneous integer
+water-filling formulation and exercises mass, symbol and remainder-tie corruption.
+It selects automatically for changes to the oracle or compiled golden header.
+An expected-value change requires mathematical review; regenerating data to
+accommodate a failing GPU result is not validation. These checks neither execute
+GPU kernels nor replace the required-HIP consumers of changed compiled fixtures.
+
 ## Adoption criteria
 
 The isolated reference, independent public-domain

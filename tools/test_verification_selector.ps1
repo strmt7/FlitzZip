@@ -220,6 +220,20 @@ foreach ($testPath in @('tests/cpp/test_zip_compat.cpp', 'tests/cpp/test_archive
     }
 }
 $nativeToolPlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/native_test_selection.ps1', 'tools/native_component_tests.ps1')
+foreach ($oraclePath in @('tools/rans_model_oracle.py', 'tools/test_rans_model_oracle.py', 'tests/cpp/rans_model_fixtures.hpp')) {
+    $oraclePlan = Get-FlitzZipVerificationPlan -ChangedPath @($oraclePath) -Checkpoint intermediate
+    $oracleContracts = @($oraclePlan.requiredLocalCommands | Where-Object id -eq 'rans-model-oracle-contracts')
+    Assert-Selector ($oracleContracts.Count -eq 1) "model oracle inputs must select their exact arithmetic contracts: $oraclePath"
+    Assert-Selector (Test-FlitzZipToolContractCommand -Command $oracleContracts[0]) "model oracle belongs to the offline lane: $oraclePath"
+    Assert-Selector (Test-Workflow -Plan $oraclePlan -Name 'component-contracts') "model oracle contracts must run on GitHub: $oraclePath"
+    if ($oraclePath.StartsWith('tools/')) {
+        Assert-Selector (-not (Test-RequiredCommand -Plan $oraclePlan -Id 'release-build')) "offline oracle edits must not rebuild native products: $oraclePath"
+        Assert-Selector (-not (Test-RequiredCommand -Plan $oraclePlan -Id 'unit-tests')) "offline oracle edits must not invoke measured native execution: $oraclePath"
+    } else {
+        Assert-Selector (Test-RequiredCommand -Plan $oraclePlan -Id 'release-build') 'changed compiled goldens still require their native build'
+        Assert-Selector (Test-RequiredCommand -Plan $oraclePlan -Id 'unit-tests') 'changed compiled goldens still require actual native consumers'
+    }
+}
 $folderCachePlan = Get-FlitzZipVerificationPlan -ChangedPath @('src/app/folder_size_cache.hpp')
 $folderCacheCommand = @($folderCachePlan.requiredLocalCommands | Where-Object id -eq 'unit-tests')
 Assert-Selector ($folderCacheCommand.Count -eq 1 -and 'tools/native_component_tests.ps1' -in $folderCacheCommand[0].arguments) 'private cache selects its complete native cohort once'

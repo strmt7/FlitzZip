@@ -461,6 +461,8 @@ function Get-FlitzZipScannerContractDefinition {
 function Get-FlitzZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
     $definitions = @(Get-FlitzZipPersistenceContractDefinition) + @(Get-FlitzZipVendorImportContractDefinition) + @(
+        @{ Pattern = @('^tools/(rans_model_oracle|test_rans_model_oracle)\.py$', '^tests/cpp/rans_model_fixtures\.hpp$')
+           Command = (Get-FlitzZipVerificationCommand -Id 'rans-model-oracle-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_rans_model_oracle') -Reason 'GPU model goldens must remain reproducible from independent exact arithmetic on a fresh clone; corruption controls are offline and do not replace required-HIP qualification') }
         @{ Pattern = @('^tools/(deepsource_inventory|test_deepsource_inventory|json_input)\.py$')
            Command = (Get-FlitzZipVerificationCommand -Id 'deepsource-inventory-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_deepsource_inventory') -Reason 'complete occurrence pagination, source identity, authentication boundaries and partial-failure evidence require offline contracts; no hosted credentials or scan is needed') }
         @{ Pattern = @('^tools/(executable_path|test_executable_path)\.py$')
