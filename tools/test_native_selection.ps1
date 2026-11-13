@@ -20,6 +20,66 @@ function Assert-NativeSelectionRejected {
     Assert-NativeSelection ($cause.Contains($Expected)) "Expected rejection '$Expected', received '$cause'"
 }
 
+# Follow local test-header dependencies independently of the production selector's
+# component rules. Reads stay within the canonical test tree, reject linked or
+# oversized inputs, and terminate on include cycles; no native code is executed.
+function Get-NativeTestHeaderClosure {
+    param([string]$Root, [string]$Source, [hashtable]$TextCache)
+    $testPrefix = [IO.Path]::GetFullPath((Join-Path $Root 'tests/cpp')) + [IO.Path]::DirectorySeparatorChar
+    $first = [IO.Path]::GetFullPath((Join-Path $Root $Source))
+    Assert-NativeSelection ($first.StartsWith($testPrefix, [StringComparison]::OrdinalIgnoreCase)) 'header consumers require canonical registered test paths'
+    $pending = [Collections.Generic.Stack[string]]::new()
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $pending.Push($first)
+    while ($pending.Count) {
+        $current = $pending.Pop()
+        if (-not $seen.Add($current)) { continue }
+        Assert-NativeSelection ($seen.Count -le 1024) 'local test-header dependency bound'
+        if (-not $TextCache.ContainsKey($current)) {
+            $item = Get-Item -LiteralPath $current -ErrorAction Stop
+            Assert-NativeSelection (-not $item.PSIsContainer -and
+                -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -and
+                $item.Length -le 1MB) 'test-header evidence must be a bounded regular source file'
+            $repoPrefix = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+            $ancestor = $item.Directory
+            while ($ancestor -and $ancestor.FullName.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                Assert-NativeSelection (-not ($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint)) 'test-header ancestors must stay in the owned source tree'
+                $ancestor = $ancestor.Parent
+            }
+            $TextCache[$current] = [IO.File]::ReadAllText($current, [Text.Encoding]::UTF8)
+        }
+        foreach ($match in [regex]::Matches($TextCache[$current], '(?m)^[^\S\r\n]*#[^\S\r\n]*include[^\S\r\n]*"([^"\r\n]+)"')) {
+            $candidate = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $current) $match.Groups[1].Value))
+            if ($candidate.StartsWith($testPrefix, [StringComparison]::OrdinalIgnoreCase) -and
+                [IO.Path]::GetExtension($candidate) -in @('.h', '.hpp') -and
+                (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+                $pending.Push($candidate)
+            }
+        }
+    }
+    return ,$seen
+}
+
+# An independently discovered direct or transitive header consumer must retain
+# every registered case in its translation unit and its actual HIP admission.
+# Broad selection is safe; this guard catches incomplete component mappings.
+function Assert-NativeHeaderConsumersSelected {
+    param([string]$Root, [string]$Header, [object]$Selection, [object[]]$Inventory, [hashtable]$TextCache)
+    if ($Selection.mode -ceq 'full') { return }
+    $headerPath = [IO.Path]::GetFullPath((Join-Path $Root $Header))
+    foreach ($group in @($Inventory | Group-Object source)) {
+        $closure = Get-NativeTestHeaderClosure -Root $Root -Source $group.Name -TextCache $TextCache
+        if (-not $closure.Contains($headerPath)) { continue }
+        foreach ($case in $group.Group) {
+            Assert-NativeSelection ($case.name -cin $Selection.tests) "mapped header missing registered consumer: $($case.name)"
+        }
+        $sourcePath = [IO.Path]::GetFullPath((Join-Path $Root $group.Name))
+        if ($TextCache[$sourcePath] -match '(?m)^[^\S\r\n]*#[^\S\r\n]*(?:if|ifdef|ifndef|elif)\b[^\r\n]*\bFLITZZIP_ENABLE_HIP\b') {
+            Assert-NativeSelection $Selection.requireHip "mapped header dropped HIP admission: $($group.Name)"
+        }
+    }
+}
+
 $entropyPaths = @('src/gpu/hip_codec_static_prefix.hip.cpp', 'src/gpu/hip_codec_adaptive_prefix.hip.cpp')
 $ransExpected = @('gpu_rans_reader_independent_payloads_and_segment_resets',
     'gpu_rans_reader_shared_singleton_fixture_matches_independent_wire',
@@ -175,6 +235,14 @@ foreach ($shared in @('src/gpu/hip_codec_support.hpp', 'src/gpu/hip_codec.hip.cp
 Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths $entropyPaths -Full).mode -eq 'full') 'explicit full qualification'
 Assert-NativeSelection ((Get-FlitzZipNativeTestSelection -Paths @('tests/cpp/test_main.cpp')).mode -eq 'runner') 'runner-only edits select registry contracts'
 $inventory = @(Get-FlitzZipNativeTestInventory)
+$selectorText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'native_test_selection.ps1'), [Text.Encoding]::UTF8)
+$mappedHeaders = @([regex]::Matches($selectorText, '(?i)tests/cpp/[A-Za-z0-9_./-]+\.h(?:pp)?\b') |
+    ForEach-Object Value | Sort-Object -Unique)
+$headerTextCache = @{}
+foreach ($header in $mappedHeaders) {
+    $selection = Get-FlitzZipNativeTestSelection -Paths @($header)
+    Assert-NativeHeaderConsumersSelected -Root $root -Header $header -Selection $selection -Inventory $inventory -TextCache $headerTextCache
+}
 $ctestFixture = @'
 {"kind":"ctestInfo","version":{"major":1,"minor":0},"tests":[
 {"name":"flitzzip_tests","properties":[{"name":"LABELS","value":["mixed-native"]}]},
@@ -274,6 +342,41 @@ New-Item -ItemType Directory -Path $fixtureTests -Force | Out-Null
 try {
     [IO.File]::WriteAllText((Join-Path $fixtureRoot 'CMakeLists.txt'), 'add_library(flitzzip_test_objects OBJECT tests/cpp/test_fixture.cpp)')
     $fixtureSource = Join-Path $fixtureTests 'test_fixture.cpp'
+    [IO.File]::WriteAllText($fixtureSource, "TEST_CASE(sample) {}`nTEST_CASE(sample_longer) {}")
+    $sharedHeader = Join-Path $fixtureTests 'shared.hpp'
+    $nestedHeader = Join-Path $fixtureTests 'nested.HPP'
+    [IO.File]::WriteAllText($sharedHeader, "#pragma once`n#include `"nested.HPP`"")
+    [IO.File]::WriteAllText($nestedHeader, "#pragma once`n#include `"shared.hpp`"")
+    $outsideHeader = Join-Path (Split-Path -Parent $fixtureTests) 'outside.hpp'
+    [IO.File]::WriteAllText($outsideHeader, '#pragma once')
+    [IO.File]::WriteAllText($fixtureSource, "#include `"nested.HPP`"`n#include `"../outside.hpp`"`nTEST_CASE(sample) {}`nTEST_CASE(sample_longer) {}")
+    $outsideClosure = Get-NativeTestHeaderClosure -Root $fixtureRoot -Source 'tests/cpp/test_fixture.cpp' -TextCache @{}
+    Assert-NativeSelection (-not $outsideClosure.Contains([IO.Path]::GetFullPath($outsideHeader))) 'test-header traversal must not read outside its declared scope'
+    $lateSource = Join-Path $fixtureTests 'test_late.cpp'
+    [IO.File]::WriteAllText($lateSource, @'
+#include "nested.HPP"
+TEST_CASE(late_consumer) {
+#if FLITZZIP_ENABLE_HIP
+    auto info = query_gpu_info();
+#endif
+}
+'@)
+    [IO.File]::WriteAllText((Join-Path $fixtureRoot 'CMakeLists.txt'), 'add_library(flitzzip_test_objects OBJECT tests/cpp/test_fixture.cpp tests/cpp/test_late.cpp)')
+    $lateInventory = @(Get-FlitzZipNativeTestInventory -Root $fixtureRoot)
+    $incomplete = [pscustomobject]@{ mode = 'component'; tests = @('sample', 'sample_longer'); requireHip = $true }
+    $lateCache = @{}
+    Assert-NativeSelectionRejected {
+        Assert-NativeHeaderConsumersSelected -Root $fixtureRoot -Header 'tests/cpp/shared.hpp' -Selection $incomplete -Inventory $lateInventory -TextCache $lateCache
+    } 'missing registered consumer: late_consumer'
+    $incomplete.tests += 'late_consumer'
+    $incomplete.requireHip = $false
+    Assert-NativeSelectionRejected {
+        Assert-NativeHeaderConsumersSelected -Root $fixtureRoot -Header 'tests/cpp/shared.hpp' -Selection $incomplete -Inventory $lateInventory -TextCache $lateCache
+    } 'dropped HIP admission'
+    $incomplete.requireHip = $true
+    Assert-NativeHeaderConsumersSelected -Root $fixtureRoot -Header 'tests/cpp/shared.hpp' -Selection $incomplete -Inventory $lateInventory -TextCache $lateCache
+    Assert-NativeHeaderConsumersSelected -Root $fixtureRoot -Header 'tests/cpp/shared.hpp' -Selection ([pscustomobject]@{ mode = 'full' }) -Inventory $lateInventory -TextCache $lateCache
+    [IO.File]::WriteAllText((Join-Path $fixtureRoot 'CMakeLists.txt'), 'add_library(flitzzip_test_objects OBJECT tests/cpp/test_fixture.cpp)')
     [IO.File]::WriteAllText($fixtureSource, "TEST_CASE(sample) {}`nTEST_CASE(sample_longer) {}")
     $conditionalGui = Join-Path $fixtureTests 'test_gui.cpp'
     [IO.File]::WriteAllText($conditionalGui, 'TEST_CASE(gui_click) {}')

@@ -3,7 +3,7 @@
 This review applies the maintainer's authorization for individually proven
 false positives. The listed reported files, highlighted locations, rules and
 scanner versions remain unchanged. Existing decisions renew their changed build
-and module context; two additional HIP-host parser reports are reviewed
+and module context; additional HIP-host parser reports are reviewed
 individually below. No public archive representation is admitted.
 Raw reports and the preceding individual evidence remain retained.
 
@@ -202,3 +202,60 @@ same frequency-dependent rANS recurrence; independent binary and segmented
 payloads, stream consumption and terminal-state controls exercise it. Removing
 or replacing the read would change decoding. This decision binds only the exact
 reported local declaration, source bytes, location and producer.
+
+## Transition-Statistics Classification
+
+The following decisions concern HIP language classification and direct
+definition/use evidence, rather than certification of GPU memory safety.
+Their binding includes the complete reported translation unit, its direct
+independent GPU tests, pinned compiler launcher and SDK identity, scanner
+configuration, authorization and this evidence. Existing reports retain all
+their preceding executable context paths.
+
+The complete CPU and HIP-host CodeQL analyses of
+`67c98d9ace17b46c3a12802ce22df7edf3ca129c` succeeded. Each report below occurs only
+in CodeQL 2.27.4's HIP-host category. Raw SARIF and every occurrence response
+remain retained. Required-HIP tests independently compare raw transitions,
+segment-start removals and projected counts, including dispatch tails and the
+maximum admitted source; they do not use normalization to conceal wrong counts.
+
+AMD's [language reference](https://rocm.docs.amd.com/projects/HIP/en/docs-10.1.0/how-to/hip_cpp_language_extensions.html#function-type-qualifiers)
+defines the kernel qualifier. CodeQL's [support table](https://codeql.github.com/docs/codeql-overview/supported-languages-and-frameworks/)
+describes its C/C++ language/compiler coverage; this repository does not claim
+HIP device extraction from a successful host analysis. No new extractor option,
+compiler shim, query filter or source rewrite is introduced by these decisions.
+
+### Alert 10242
+
+`tile_bytes` is a local constant, not a static object. The immediately following
+loop reads it as the bound on each lane's local source index. The bound is the
+smaller of the remaining source extent and one tile. Independent raw-count cases
+exercise partial final tiles and dispatch boundaries, and preserve input guards.
+Removing that bound or substituting an unrestricted tile would damage the
+source extent contract. This decision binds only its exact declaration and read.
+
+### Alert 10243
+
+`begin` is a local constant, not a static object. The next expression subtracts
+it from the complete source extent; the loop then adds it to each local index.
+The admitted first-tile offset remains absolute across dispatches. Multi-dispatch
+raw-count comparisons require the later ranges to visit their own bytes and
+retain the actual preceding source byte. This decision binds that exact offset
+declaration, complete source and producer, not another arithmetic report.
+
+### Alert 10244
+
+`bucket` is a local constant, not a static object. It selects predecessor groups
+in the source loop and contributes the high bits of the global histogram index
+when shared bins are published. The raw transition oracle compares every cell
+and exact total mass across varied predecessors; a zero-work or constant-bucket
+substitute cannot satisfy it. Both reads remain in the unchanged kernel body.
+
+### Alert 10245
+
+`__global__` qualifies `count_rans_transitions` as a HIP kernel and is not an
+object declaration. Its typed entry is bound in the private module and launched
+by the direct transition-count cases. Real device execution produces the exact
+independent histogram and preserves guards; host compilation alone cannot
+establish those results. Removing the qualifier would destroy this kernel's
+launch contract. The decision applies only to this exact reported qualifier.
