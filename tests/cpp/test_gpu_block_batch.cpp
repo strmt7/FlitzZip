@@ -5,6 +5,8 @@
 #include "core/checksum.hpp"
 #include "core/result.hpp"
 #include "gpu/gpu_codec.hpp"
+#include "zstd/zstd_runtime.hpp"
+#include "miniz.h"
 
 #include <array>
 #include <chrono>
@@ -16,6 +18,13 @@
 
 namespace {
 
+std::uint32_t next_fixture_random(std::uint32_t& state) {
+    state ^= state << 13U;
+    state ^= state >> 17U;
+    state ^= state << 5U;
+    return state;
+}
+
 // Purpose: Generate unequal independent blocks covering codec and CRC boundaries without filesystem I/O.
 // Inputs: lengths select positive block sizes; each position selects a deterministic content family.
 // Outputs: Returns dense fill, pattern, prefix, random, and misleading sampled-pattern bytes.
@@ -24,9 +33,7 @@ std::vector<std::byte> batch_fixture(std::span<const std::uint32_t> lengths) {
     std::uint32_t random = 0x98765432U;
     for (std::size_t block = 0; block < lengths.size(); ++block) {
         for (std::uint32_t i = 0; i < lengths[block]; ++i) {
-            random ^= random << 13U;
-            random ^= random >> 17U;
-            random ^= random << 5U;
+            next_fixture_random(random);
             const auto family = block % 6U;
             const auto value = family == 0   ? 73U
                                : family == 1 ? i % 7U
@@ -43,9 +50,12 @@ std::vector<std::byte> batch_fixture(std::span<const std::uint32_t> lengths) {
 // Purpose: Compare batched descriptors, bytes, and checksums with separately encoded independent blocks.
 // Inputs: lengths and options select bounded RAM fixtures and an explicit CPU or required-HIP backend.
 // Outputs: Requires exact encoding identity and byte-exact decoding through every applicable backend.
-void check_batch_identity(std::span<const std::uint32_t> lengths, flitzzip::GpuCodecOptions options) {
-    const auto input = batch_fixture(lengths);
-    const auto batch = flitzzip::encode_owned_block_batch(input, lengths, options);
+void check_batch_input_identity(const std::vector<std::byte>& input, std::span<const std::uint32_t> lengths,
+                                flitzzip::GpuCodecOptions options) {
+    auto owned_input = input;
+    const auto* input_allocation = owned_input.data();
+    const auto input_capacity = owned_input.capacity();
+    const auto batch = flitzzip::encode_owned_block_batch(std::move(owned_input), lengths, options);
     REQUIRE_EQ(batch.encoded.blocks.size(), lengths.size());
     REQUIRE_EQ(batch.block_crc32.size(), lengths.size());
     REQUIRE_TRUE(batch.encoded.source_crc32_available);
@@ -82,6 +92,16 @@ void check_batch_identity(std::span<const std::uint32_t> lengths, flitzzip::GpuC
     options.force_cpu = true;
     flitzzip::decode_chunk(batch.encoded.payload, batch.encoded.blocks, decoded, options);
     REQUIRE_TRUE(decoded == input);
+    if (!batch.encoded.gpu_used && !batch.encoded.payload.empty()) {
+        // A completed block never grows, so CPU output can compact into its owned
+        // input without another chunk allocation. Check after byte/CRC readback.
+        REQUIRE_TRUE(batch.encoded.payload.data() == input_allocation);
+        REQUIRE_EQ(batch.encoded.payload.capacity(), input_capacity);
+    }
+}
+
+void check_batch_identity(std::span<const std::uint32_t> lengths, flitzzip::GpuCodecOptions options) {
+    check_batch_input_identity(batch_fixture(lengths), lengths, options);
 }
 
 // Purpose: Reject invalid layouts before any GPU launch or transfer.
@@ -104,6 +124,58 @@ void require_invalid_batch(std::size_t size, std::span<const std::uint32_t> leng
     REQUIRE_EQ(counters.h2d_bytes, 0U);
 }
 
+// Compare the new ownership boundary with the unchanged borrowed encoder,
+// including complete descriptors, source lifetime, checksums and CPU readback.
+flitzzip::EncodedChunk check_owned_cpu_identity(std::span<const std::byte> input,
+                                                const flitzzip::ArchiveCodecOptions& options) {
+    const std::vector<std::byte> original(input.begin(), input.end());
+    const auto borrowed = flitzzip::encode_chunk_cpu(input, options);
+    const auto owned = flitzzip::encode_owned_chunk_cpu(original, options);
+    REQUIRE_TRUE(std::ranges::equal(input, original));
+    REQUIRE_EQ(owned.payload, borrowed.payload);
+    REQUIRE_EQ(owned.blocks.size(), borrowed.blocks.size());
+    REQUIRE_TRUE(!borrowed.source_crc32_available);
+    REQUIRE_TRUE(owned.source_crc32_available);
+    REQUIRE_EQ(owned.source_crc32, flitzzip::crc32(original));
+    REQUIRE_TRUE(!owned.gpu_used);
+    for (std::size_t index = 0; index < owned.blocks.size(); ++index) {
+        const auto& actual = owned.blocks[index];
+        const auto& expected = borrowed.blocks[index];
+        REQUIRE_EQ(actual.kind, expected.kind);
+        REQUIRE_EQ(actual.fill_value, expected.fill_value);
+        REQUIRE_EQ(actual.uncompressed_len, expected.uncompressed_len);
+        REQUIRE_EQ(actual.encoded_offset, expected.encoded_offset);
+        REQUIRE_EQ(actual.encoded_len, expected.encoded_len);
+    }
+    std::vector<std::byte> decoded(input.size(), std::byte{0xCD});
+    flitzzip::decode_chunk_cpu(owned.payload, owned.blocks, decoded, options);
+    REQUIRE_EQ(decoded, original);
+    return owned;
+}
+
+// Restore the complete frame through the codec API, without the native FLZIP
+// materializer or assembler. Expected bytes come from the original source span.
+void require_independent_cpu_frame(std::span<const std::byte> frame, std::span<const std::byte> expected,
+                                   flitzzip::BlockKind kind) {
+    std::vector<std::byte> decoded(expected.size(), std::byte{0xCD});
+    if (kind == flitzzip::BlockKind::Deflate) {
+        auto written = static_cast<mz_ulong>(decoded.size());
+        auto consumed = static_cast<mz_ulong>(frame.size());
+        REQUIRE_EQ(mz_uncompress2(reinterpret_cast<unsigned char*>(decoded.data()), &written,
+                                  reinterpret_cast<const unsigned char*>(frame.data()), &consumed),
+                   MZ_OK);
+        REQUIRE_EQ(written, expected.size());
+        REQUIRE_EQ(consumed, frame.size());
+    } else {
+        REQUIRE_TRUE(kind == flitzzip::BlockKind::CpuZstd);
+        const auto& zstd = flitzzip::zstd_runtime();
+        const auto written = zstd.decompress_block(decoded.data(), decoded.size(), frame.data(), frame.size());
+        REQUIRE_TRUE(!zstd.is_error(written));
+        REQUIRE_EQ(written, expected.size());
+    }
+    REQUIRE_TRUE(std::ranges::equal(decoded, expected));
+}
+
 }  // namespace
 
 // Purpose: Preserve per-block CPU codec policy and CRCs at all nine effort settings.
@@ -115,6 +187,248 @@ TEST_CASE(gpu_block_batch_cpu_identity) {
     for (int level = 1; level <= 9; ++level) {
         check_batch_identity(
             lengths, {.require_gpu = false, .force_cpu = true, .block_size = 256U * 1024U, .compression_level = level});
+    }
+}
+
+// The owned CPU path must transfer an all-raw allocation instead of making a second
+// chunk-sized copy. Pointer identity proves ownership transfer without timing.
+TEST_CASE(gpu_block_batch_cpu_owned_raw_reuses_source) {
+    constexpr auto block_size = flitzzip::kMinArchiveBlockBytes;
+    std::vector<std::byte> input(8U * block_size + 127U);
+    std::uint32_t random = 0x37A129D5U;
+    for (auto& value : input) {
+        value = static_cast<std::byte>(next_fixture_random(random) & 255U);
+    }
+    const auto original = input;
+    const auto expected_crc = flitzzip::crc32(original);
+    for (const auto workers : {1U, 3U, 64U}) {
+        auto owned = original;
+        owned.reserve(owned.size() + block_size);
+        const auto* allocation = owned.data();
+        const auto capacity = owned.capacity();
+        const auto encoded = flitzzip::encode_owned_chunk(
+            std::move(owned),
+            {.require_gpu = false, .force_cpu = true, .block_size = block_size, .worker_count = workers});
+        REQUIRE_TRUE(std::ranges::all_of(encoded.blocks,
+                                         [](const auto& block) { return block.kind == flitzzip::BlockKind::Raw; }));
+        REQUIRE_TRUE(encoded.payload.data() == allocation);
+        REQUIRE_EQ(encoded.payload.capacity(), capacity);
+        REQUIRE_EQ(encoded.payload, original);
+        REQUIRE_TRUE(encoded.source_crc32_available);
+        REQUIRE_EQ(encoded.source_crc32, expected_crc);
+        REQUIRE_TRUE(!encoded.gpu_used);
+    }
+}
+
+TEST_CASE(gpu_block_batch_cpu_owned_representation_identity) {
+    constexpr auto block_size = flitzzip::kMinArchiveBlockBytes;
+    constexpr std::array<std::uint32_t, 6> lengths{block_size, block_size, block_size, block_size, block_size, 127U};
+    const auto mixed = batch_fixture(lengths);
+    const std::vector<std::byte> fill(2U * block_size + 1U, std::byte{0xA7});
+    for (const auto effort : {1, 5, 9}) {
+        for (const auto workers : {0U, 3U, 64U}) {
+            const flitzzip::ArchiveCodecOptions options{
+                .block_size = block_size, .worker_count = workers, .compression_level = effort};
+            const auto empty = check_owned_cpu_identity({}, options);
+            REQUIRE_TRUE(empty.blocks.empty() && empty.payload.empty());
+            REQUIRE_EQ(empty.source_crc32, 0U);
+            const auto filled = check_owned_cpu_identity(fill, options);
+            REQUIRE_TRUE(filled.payload.empty());
+            REQUIRE_EQ(filled.blocks.size(), 3U);
+            const auto encoded = check_owned_cpu_identity(mixed, options);
+            for (const auto kind : {flitzzip::BlockKind::Fill, flitzzip::BlockKind::Raw, flitzzip::BlockKind::CpuZstd,
+                                    flitzzip::BlockKind::Deflate}) {
+                REQUIRE_TRUE(
+                    std::ranges::any_of(encoded.blocks, [kind](const auto& block) { return block.kind == kind; }));
+            }
+        }
+    }
+}
+
+// A sole complete frame can be moved even between fill blocks. Two frames must
+// still be aggregated. The independent decoders reject dropped/overwritten bytes;
+// no timing, allocation-profiler or alternative compression policy is involved.
+TEST_CASE(gpu_block_batch_cpu_complete_frames_survive_payload_handoff) {
+    constexpr auto block_size = flitzzip::kMinArchiveBlockBytes;
+    struct Layout {
+        std::uint32_t prefix_fills;
+        std::uint32_t frames;
+        std::uint32_t frame_bytes;
+        std::uint32_t suffix_fills;
+    };
+    constexpr std::array<Layout, 6> layouts{{{0U, 1U, 127U, 0U},
+                                             {2U, 1U, 127U, 0U},
+                                             {0U, 1U, block_size, 0U},
+                                             {1U, 1U, block_size, 1U},
+                                             {2U, 1U, block_size, 0U},
+                                             {1U, 2U, block_size, 1U}}};
+    for (const auto layout : layouts) {
+        std::vector<std::byte> source(layout.prefix_fills * block_size, std::byte{0xA7});
+        for (std::uint32_t frame = 0; frame < layout.frames; ++frame) {
+            for (std::uint32_t index = 0; index < layout.frame_bytes; ++index) {
+                source.push_back(static_cast<std::byte>((index + frame) % 7U));
+            }
+        }
+        source.insert(source.end(), layout.suffix_fills * block_size, std::byte{0xB9});
+        const auto expected_kind =
+            layout.frame_bytes < block_size ? flitzzip::BlockKind::Deflate : flitzzip::BlockKind::CpuZstd;
+        for (int effort = 1; effort <= 9; ++effort) {
+            for (const auto workers : {1U, 3U}) {
+                const auto encoded = check_owned_cpu_identity(
+                    source, {.block_size = block_size, .worker_count = workers, .compression_level = effort});
+                REQUIRE_EQ(encoded.blocks.size(), layout.prefix_fills + layout.frames + layout.suffix_fills);
+                std::size_t source_offset = 0U;
+                std::size_t payload_offset = 0U;
+                for (std::size_t index = 0U; index < encoded.blocks.size(); ++index) {
+                    const auto& block = encoded.blocks[index];
+                    const bool frame = index >= layout.prefix_fills && index < layout.prefix_fills + layout.frames;
+                    REQUIRE_EQ(block.kind, frame ? expected_kind : flitzzip::BlockKind::Fill);
+                    const auto length = frame ? layout.frame_bytes : block_size;
+                    REQUIRE_EQ(block.uncompressed_len, length);
+                    if (frame) {
+                        REQUIRE_EQ(block.encoded_offset, payload_offset);
+                        REQUIRE_TRUE(block.encoded_len > 0U && block.encoded_len < length);
+                        require_independent_cpu_frame(
+                            std::span(encoded.payload).subspan(payload_offset, block.encoded_len),
+                            std::span(source).subspan(source_offset, length), expected_kind);
+                        payload_offset += block.encoded_len;
+                    } else {
+                        REQUIRE_EQ(block.encoded_len, 0U);
+                    }
+                    source_offset += length;
+                }
+                REQUIRE_EQ(payload_offset, encoded.payload.size());
+                REQUIRE_EQ(source_offset, source.size());
+            }
+        }
+    }
+}
+
+TEST_CASE(gpu_block_batch_cpu_owned_validates_empty_options) {
+    for (const auto options : {flitzzip::ArchiveCodecOptions{.block_size = 0U},
+                               flitzzip::ArchiveCodecOptions{.block_size = flitzzip::kMaxArchiveBlockBytes + 1U},
+                               flitzzip::ArchiveCodecOptions{.compression_level = 0},
+                               flitzzip::ArchiveCodecOptions{.compression_level = 10}}) {
+        bool rejected = false;
+        try {
+            (void)flitzzip::encode_owned_chunk_cpu({}, options);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
+
+// These controls observe storage ownership, not allocation timing or throughput.
+TEST_CASE(gpu_block_batch_cpu_raw_batch_reuses_source) {
+    constexpr std::array<std::uint32_t, 5> lengths{32768U, 4096U, 31U, 8192U, 127U};
+    const flitzzip::GpuCodecOptions options{
+        .require_gpu = false, .force_cpu = true, .block_size = 65536U, .compression_level = 5};
+    std::vector<std::byte> input(45214U);
+    std::uint32_t random = 0x71C29A53U;
+    for (auto& value : input) {
+        value = static_cast<std::byte>(next_fixture_random(random) & 255U);
+    }
+    check_batch_input_identity(input, lengths, options);
+    const auto original = input;
+    input.reserve(input.size() + 4096U);
+    const auto* allocation = input.data();
+    const auto capacity = input.capacity();
+    const auto batch = flitzzip::encode_owned_block_batch(std::move(input), lengths, options);
+    REQUIRE_TRUE(std::ranges::all_of(batch.encoded.blocks,
+                                     [](const auto& block) { return block.kind == flitzzip::BlockKind::Raw; }));
+    REQUIRE_TRUE(batch.encoded.payload.data() == allocation);
+    REQUIRE_EQ(batch.encoded.payload.capacity(), capacity);
+    REQUIRE_EQ(batch.encoded.payload, original);
+}
+
+TEST_CASE(gpu_block_batch_cpu_fill_batch_has_no_payload_allocation) {
+    constexpr std::array<std::uint32_t, 4> lengths{1U, 31U, 4096U, 8192U};
+    const std::vector<std::byte> input(12320U, std::byte{0xA7});
+    const auto batch = flitzzip::encode_owned_block_batch(
+        input, lengths, {.require_gpu = false, .force_cpu = true, .block_size = 8192U});
+    REQUIRE_EQ(batch.encoded.blocks.size(), lengths.size());
+    REQUIRE_TRUE(std::ranges::all_of(batch.encoded.blocks,
+                                     [](const auto& block) { return block.kind == flitzzip::BlockKind::Fill; }));
+    REQUIRE_TRUE(batch.encoded.payload.empty());
+    REQUIRE_EQ(batch.encoded.payload.capacity(), 0U);
+    REQUIRE_TRUE(batch.encoded.source_crc32_available);
+    REQUIRE_EQ(batch.encoded.source_crc32, flitzzip::crc32(input));
+}
+
+TEST_CASE(gpu_block_batch_cpu_reused_state_preserves_variable_frames) {
+    constexpr std::array<std::uint32_t, 6> source_lengths{4096U, 4095U, 8192U, 32768U, 16384U, 31U};
+    constexpr std::array<std::array<std::size_t, 7>, 3> orders{{
+        {4U, 4U, 0U, 2U, 1U, 5U, 3U},
+        {0U, 4U, 1U, 2U, 5U, 4U, 3U},
+        {2U, 0U, 4U, 1U, 5U, 3U, 4U},
+    }};
+    const auto source = batch_fixture(source_lengths);
+    std::array<std::size_t, source_lengths.size()> offsets{};
+    for (std::size_t index = 1; index < offsets.size(); ++index) {
+        offsets[index] = offsets[index - 1U] + source_lengths[index - 1U];
+    }
+    for (const auto& order : orders) {
+        std::vector<std::byte> input;
+        std::vector<std::uint32_t> lengths;
+        for (const auto index : order) {
+            const auto part = std::span(source).subspan(offsets[index], source_lengths[index]);
+            input.insert(input.end(), part.begin(), part.end());
+            lengths.push_back(source_lengths[index]);
+        }
+        for (int effort = 1; effort <= 9; ++effort) {
+            check_batch_input_identity(
+                input, lengths,
+                {.require_gpu = false, .force_cpu = true, .block_size = 32768U, .compression_level = effort});
+        }
+    }
+}
+
+TEST_CASE(gpu_block_batch_cpu_direct_layout_and_recovery) {
+    const auto empty = flitzzip::encode_owned_block_batch_cpu({}, {}, {});
+    REQUIRE_TRUE(empty.encoded.blocks.empty() && empty.encoded.payload.empty() && empty.block_crc32.empty());
+    REQUIRE_TRUE(empty.encoded.source_crc32_available);
+    REQUIRE_EQ(empty.encoded.source_crc32, 0U);
+    const std::vector<std::byte> input(4U, std::byte{0xA7});
+    for (const auto& lengths :
+         {std::vector<std::uint32_t>{}, std::vector<std::uint32_t>{0U, 4U}, std::vector<std::uint32_t>{5U},
+          std::vector<std::uint32_t>{1U, 2U}, std::vector<std::uint32_t>{4U, 1U}}) {
+        bool rejected = false;
+        try {
+            (void)flitzzip::encode_owned_block_batch_cpu(input, lengths, {});
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_TRUE(std::ranges::all_of(input, [](const auto value) { return value == std::byte{0xA7}; }));
+        constexpr std::array<std::uint32_t, 2> valid_lengths{2U, 2U};
+        const auto valid = flitzzip::encode_owned_block_batch_cpu(input, valid_lengths, {});
+        REQUIRE_EQ(valid.encoded.blocks.size(), 2U);
+        REQUIRE_EQ(valid.encoded.source_crc32, flitzzip::crc32(input));
+    }
+    for (const auto count : {flitzzip::kMaxEncodeBatchBlocks, flitzzip::kMaxEncodeBatchBlocks + 1U}) {
+        bool rejected = false;
+        try {
+            const auto batch = flitzzip::encode_owned_block_batch_cpu(std::vector<std::byte>(count, std::byte{0x7B}),
+                                                                      std::vector<std::uint32_t>(count, 1U), {});
+            REQUIRE_EQ(batch.encoded.blocks.size(), count);
+            REQUIRE_EQ(batch.block_crc32.size(), count);
+            REQUIRE_EQ(batch.encoded.payload.capacity(), 0U);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_EQ(rejected, count > flitzzip::kMaxEncodeBatchBlocks);
+    }
+    for (const auto options :
+         {flitzzip::ArchiveCodecOptions{.block_size = 0U}, flitzzip::ArchiveCodecOptions{.compression_level = 0},
+          flitzzip::ArchiveCodecOptions{.compression_level = 10}}) {
+        bool rejected = false;
+        try {
+            (void)flitzzip::encode_owned_block_batch_cpu({}, {}, options);
+        } catch (const flitzzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
     }
 }
 
@@ -605,7 +919,7 @@ void print_batch_timing(const BatchTiming& timing, std::size_t input_size, const
 // Purpose: Compare the production batch API with separate encoding in repeated alternating RAM-only runs.
 // Inputs: FLITZZIP_BATCH_BENCHMARK=1 explicitly opts in under an external host-resource monitor.
 // Outputs: Prints six paired samples per profile/size/effort after warmup; requires exact sizes and CRC identity.
-TEST_CASE(gpu_block_batch_benchmark_opt_in) {
+TEST_CASE(gpu_block_batch_benchmark_opt_in, TestExecutionRole::Measurement) {
     wchar_t enabled[2]{};
     if (GetEnvironmentVariableW(L"FLITZZIP_BATCH_BENCHMARK", enabled, 2U) != 1U || enabled[0] != L'1') {
         return;

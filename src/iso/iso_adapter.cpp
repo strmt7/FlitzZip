@@ -1,4 +1,5 @@
 #include "iso/iso_adapter.hpp"
+#include "core/archive_stream_progress.hpp"
 #include "core/path_text.hpp"
 
 #include "core/file_manifest.hpp"
@@ -15,6 +16,7 @@
 #include <cctype>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -26,6 +28,9 @@
 
 namespace flitzzip {
 namespace {
+
+// Validation checkpoints are optional synchronous borrows: scans retain no
+// callback or caller storage, propagate observer exceptions and publish no files.
 
 constexpr std::size_t kIsoSectorBytes = 2048U;
 constexpr std::uint64_t kIsoPrimaryVolumeDescriptorSector = 16U;
@@ -300,9 +305,10 @@ void insert_iso_directory_extent(std::map<std::uint64_t, std::uint64_t>& extents
 // Purpose: Admit the basic ISO volume geometry and its Primary Volume Descriptor root directory.
 // Inputs: `input` is the ISO stream and `archive_size` is the image length.
 // Outputs: Returns the declared volume bound and root, or rejects unsupported geometry and malformed fields.
-IsoVolume read_iso_volume(std::ifstream& input, std::uint64_t archive_size) {
+IsoVolume read_iso_volume(std::ifstream& input, std::uint64_t archive_size, const ProgressCheckpoint& checkpoint) {
     std::array<unsigned char, kIsoSectorBytes> descriptor{};
     for (std::uint64_t ordinal = 0; ordinal < kIsoMaxVolumeDescriptors; ++ordinal) {
+        invoke_archive_checkpoint(checkpoint);
         const auto sector =
             checked_add_iso_bytes(kIsoPrimaryVolumeDescriptorSector, ordinal, "ISO volume descriptor sector overflow");
         const auto offset = checked_mul_iso_bytes(sector, kIsoSectorBytes, "ISO volume descriptor offset overflow");
@@ -349,14 +355,15 @@ IsoVolume read_iso_volume(std::ifstream& input, std::uint64_t archive_size) {
 // Inputs: `archive_path` is the ISO file to parse.
 // Outputs: Returns trusted extraction metadata; throws on malformed records, unsafe paths, duplicates, or unsupported
 // layout.
-IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
+IsoScanResult scan_iso(const std::filesystem::path& archive_path, const ProgressCheckpoint& checkpoint) {
+    invoke_archive_checkpoint(checkpoint);
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open ISO image: " + path_diagnostic_utf8(archive_path));
     }
 
-    const auto volume = read_iso_volume(input, archive_size);
+    const auto volume = read_iso_volume(input, archive_size, checkpoint);
     const auto& root = volume.root;
     validate_iso_extent(root.extent_sector, root.data_length, volume.bytes);
 
@@ -372,6 +379,7 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
     }};
 
     for (std::size_t directory_index = 0; directory_index < pending.size(); ++directory_index) {
+        invoke_archive_checkpoint(checkpoint);
         if (pending.size() > kMaxArchiveEntries) {
             throw ArchiveError("ISO image contains too many directories");
         }
@@ -385,6 +393,7 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
             read_iso_directory_extent(input, directory.extent_sector, directory.data_length, volume.bytes);
         std::size_t offset = 0;
         while (offset < bytes.size()) {
+            invoke_archive_checkpoint(checkpoint);
             const auto record_length = static_cast<std::size_t>(bytes[offset]);
             if (record_length == 0U) {
                 offset = next_iso_sector_boundary(offset, bytes.size());
@@ -442,15 +451,18 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
         }
     }
 
+    invoke_archive_checkpoint(checkpoint);
     validate_archive_path_set(validation_entries);
     return result;
 }
 
 // Purpose: Copy a validated ISO file payload into a temporary output file.
 // Inputs: `input` is the ISO stream, `entry` is trusted scan metadata, `target` is the final path, and `overwrite`
-// controls replacement. Outputs: Publishes the verified file or throws without partially publishing target bytes.
+// controls replacement. Caller-owned progress/observer may interrupt between bounded windows and before
+// publication; successful payload bytes advance progress once. Outputs: Publishes the verified file or propagates
+// cancellation/failure without replacing the target.
 void extract_iso_file_payload(std::ifstream& input, const IsoEntryMetadata& entry, const std::filesystem::path& target,
-                              bool overwrite) {
+                              bool overwrite, ProgressState& progress, const ProgressCallback& progress_callback) {
     seek_iso_offset(input, entry.payload_offset, "ISO file payload");
 
     auto temporary_target = reserve_file_publish_target(target);
@@ -462,6 +474,7 @@ void extract_iso_file_payload(std::ifstream& input, const IsoEntryMetadata& entr
         std::array<char, kIsoIoBufferBytes> buffer{};
         std::uint64_t remaining = entry.size;
         while (remaining > 0) {
+            publish_progress(progress, progress_callback);
             const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
             read_exact(input, buffer.data(), chunk, "ISO file payload");
             output.write(buffer.data(), static_cast<std::streamsize>(chunk));
@@ -469,11 +482,13 @@ void extract_iso_file_payload(std::ifstream& input, const IsoEntryMetadata& entr
                 throw ArchiveError("failed to write temporary extracted file: " + path_diagnostic_utf8(target));
             }
             remaining -= chunk;
+            progress.add_bytes(chunk);
         }
         output.close();
         if (!output) {
             throw ArchiveError("failed to finalize temporary extracted file: " + path_diagnostic_utf8(target));
         }
+        publish_progress(progress, progress_callback);
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
     } catch (...) {
@@ -493,7 +508,9 @@ OperationStats extract_iso(const std::filesystem::path& archive_path, const std:
                            bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
-    const auto scanned = scan_iso(archive_source.path());
+    // Scan is synchronous: borrow the original stateful observer, rather than cloning it.
+    const auto validation_checkpoint = make_borrowed_archive_validation_checkpoint(std::cref(progress_callback));
+    const auto scanned = scan_iso(archive_source.path(), validation_checkpoint);
     create_verified_directories(destination);
 
     std::ifstream input(archive_source.path(), std::ios::binary);
@@ -510,11 +527,12 @@ OperationStats extract_iso(const std::filesystem::path& archive_path, const std:
         if (entry.directory) {
             create_verified_directories(target);
             progress.finish_entry();
+            publish_progress(progress, progress_callback);
             continue;
         }
-        extract_iso_file_payload(input, entry, target, overwrite);
-        progress.add_bytes(entry.size);
+        extract_iso_file_payload(input, entry, target, overwrite, progress, progress_callback);
         progress.finish_entry();
+        publish_progress(progress, progress_callback);
     }
 
     OperationStats stats;

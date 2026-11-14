@@ -1130,7 +1130,7 @@ TEST_CASE(flzip_required_gpu_prefix_table_corruption_is_rejected) {
 // Purpose: Measure required-HIP pattern materialization across short, non-power-of-two, and long periods.
 // Inputs: Opt-in environment flag and three deterministic 16 MiB in-memory pattern blocks.
 // Outputs: Prints median host-wall decode times only after exact-byte validation; has no pass/fail timing threshold.
-TEST_CASE(flzip_gpu_pattern_decode_benchmark_opt_in) {
+TEST_CASE(flzip_gpu_pattern_decode_benchmark_opt_in, TestExecutionRole::Measurement) {
     const auto* enabled = std::getenv("FLITZZIP_PATTERN_GPU_BENCHMARK");
     if (enabled == nullptr || std::string_view(enabled) != "1" || !flitzzip::query_gpu_info().available) {
         return;

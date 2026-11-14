@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
+#include "test_stream_progress.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -167,29 +168,29 @@ std::vector<unsigned char> stored_lha_member(unsigned char level, bool wide = fa
     return bytes;
 }
 
-// Purpose: Independently frame stored level-zero members with arbitrary bounded payloads for real read failures.
-// Inputs: Exactly eight ASCII name bytes and at most 8160 payload bytes. Outputs: Header, bitwise ARC CRC and payload.
+// Independently frame bounded stored level-zero members. Existing eight-byte
+// read-failure names retain identical bytes; larger payloads exercise transfer windows.
 std::vector<unsigned char> read_failure_lha_member(std::string_view name, std::string_view payload) {
-    REQUIRE_EQ(name.size(), 8U);
-    REQUIRE_TRUE(payload.size() <= 8160U);
+    REQUIRE_TRUE(!name.empty() && name.size() <= 64U);
+    REQUIRE_TRUE(payload.size() <= 1024U * 1024U);
     std::uint16_t crc = 0;
     for (const auto value : payload) {
         crc ^= static_cast<unsigned char>(value);
         for (unsigned bit = 0; bit < 8U; ++bit)
             crc = static_cast<std::uint16_t>((crc >> 1U) ^ ((crc & 1U) ? 0xA001U : 0U));
     }
-    std::vector<unsigned char> bytes(32, 0);
-    bytes[0] = 30;
+    std::vector<unsigned char> bytes(24U + name.size(), 0);
+    bytes[0] = static_cast<unsigned char>(bytes.size() - 2U);
     constexpr std::string_view method = "-lh0-";
     std::copy(method.begin(), method.end(), bytes.begin() + 2);
     for (unsigned shift = 0; shift < 4U; ++shift) {
         bytes[7U + shift] = bytes[11U + shift] = static_cast<unsigned char>((payload.size() >> (shift * 8U)) & 255U);
     }
     bytes[19] = 0x20;
-    bytes[21] = 8;
+    bytes[21] = static_cast<unsigned char>(name.size());
     std::copy(name.begin(), name.end(), bytes.begin() + 22);
-    bytes[30] = static_cast<unsigned char>(crc & 255U);
-    bytes[31] = static_cast<unsigned char>(crc >> 8U);
+    bytes[22U + name.size()] = static_cast<unsigned char>(crc & 255U);
+    bytes[23U + name.size()] = static_cast<unsigned char>(crc >> 8U);
     unsigned checksum = 0;
     for (std::size_t index = 2; index < bytes.size(); ++index)
         checksum += bytes[index];
@@ -345,7 +346,47 @@ struct LhaMemoryReader {
     }
 };
 
+std::filesystem::path make_lha_cancellation_fixture(const std::filesystem::path& root, std::string_view payload) {
+    auto bytes = read_failure_lha_member("payload.bin", payload);
+    bytes.push_back(0U);
+    const auto archive = root / "input.lha";
+    write_lha_fixture(archive, bytes);
+    return archive;
+}
+
 }  // namespace
+
+// Independent stored framing covers empty and exact/tail transfer boundaries;
+// payload, progress totals and extraction telemetry must agree byte-for-byte.
+TEST_CASE(lha_cancellation_fixture_has_valid_multi_window_payload) {
+    flitzzip_test::ScopedTestDirectory cleanup{test_temp_dir("lha-window-valid")};
+    for (const std::size_t size : {0U, 1U, 262144U, 262145U, 524305U}) {
+        const auto root = cleanup.path / std::to_string(size);
+        std::filesystem::create_directories(root);
+        const auto expected = flitzzip_test::stream_cancellation_payload(size);
+        const auto archive = make_lha_cancellation_fixture(root, expected);
+        flitzzip_test::require_stream_fixture_readback(archive, root / "output", expected, flitzzip::extract_lha);
+    }
+    std::filesystem::remove_all(cleanup.path);
+}
+
+TEST_CASE(lha_extraction_validation_is_cancellable) {
+    flitzzip_test::with_stream_cancellation_fixture("lha-validate-cancel", make_lha_cancellation_fixture,
+                                                    [](const auto& archive, const auto& output, const auto& expected) {
+                                                        flitzzip_test::require_validation_cancellation(
+                                                            archive, output, "payload.bin", expected,
+                                                            flitzzip::extract_lha);
+                                                    });
+}
+
+TEST_CASE(lha_extraction_payload_windows_are_cancellable) {
+    flitzzip_test::with_stream_cancellation_fixture("lha-window-cancel", make_lha_cancellation_fixture,
+                                                    [](const auto& archive, const auto& output, const auto& expected) {
+                                                        flitzzip_test::require_stream_window_cancellation(
+                                                            archive, output, "payload.bin", expected,
+                                                            flitzzip::extract_lha, true);
+                                                    });
+}
 
 // Purpose: Verify native `.lzh` extraction reads directories and a nested payload through Lhasa.
 // Inputs: An embedded LHA archive with `subdir/subdir2/hello.txt`.
@@ -373,7 +414,7 @@ TEST_CASE(lha_extraction_reads_nested_payload) {
 
 // Purpose: Reject a real late native read failure before publishing an apparently valid archive prefix.
 // Inputs: Independent two-member stored archive, unlocked controls and a one-byte second-header read lock.
-// Outputs: Both overwrite policies reject without progress or writes; source ownership releases and exact recovery
+// Outputs: Both overwrite policies reject without publication progress or writes; source releases and exact recovery
 // succeeds.
 TEST_CASE(lha_extraction_rejects_native_read_failure_before_publication) {
     const auto root = test_temp_dir("lha-native-read-failure");
@@ -405,8 +446,11 @@ TEST_CASE(lha_extraction_rejects_native_read_failure_before_publication) {
         {
             const LhaFixtureReadLock lock(archive, 8192);
             try {
-                static_cast<void>(
-                    flitzzip::extract_lha(archive, output, overwrite, [&](const auto&) { ++progress_calls; }));
+                static_cast<void>(flitzzip::extract_lha(archive, output, overwrite, [&](const auto& snapshot) {
+                    if (!flitzzip_test::is_prepublication_progress(snapshot)) {
+                        ++progress_calls;
+                    }
+                }));
             } catch (const flitzzip::ArchiveError&) {
                 rejected = true;
             }

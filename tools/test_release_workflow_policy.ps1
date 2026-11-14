@@ -99,10 +99,32 @@ try {
         Copy-Item -LiteralPath (Join-Path $repoRoot $relative) -Destination $destination
     }
     foreach ($validator in @('Assert-ReleaseWorkflowIdentity', 'Assert-ReleaseReplacementSafeguard',
-            'Assert-ReleaseNotesDoNotDuplicateTitle', 'Assert-ReleaseValidationIsolation')) {
+            'Assert-ReleaseNotesDoNotDuplicateTitle', 'Assert-ReleaseValidationIsolation', 'Assert-ReleasePortableSmoke',
+            'Assert-ReleaseInstalledPayloadSmoke')) {
         & $validator -RepoRoot $fixtureRoot
     }
     $workflow = '.github/workflows/release.yml'
+    foreach ($mutation in @(
+            @('$portablePayload = Get-FlitzZipPortablePayload', '$portablePayload = Get-Content'),
+            @('Assert-FlitzZipInstalledPayload -PackageRoot $installedRoot -Payload $portablePayload',
+                'Write-Output ''CLI-only check'''),
+            @('foreach ($name in $portablePayload.get_Keys())', 'foreach ($name in $portablePayload.Keys)'),
+            @('$installedRoot = Split-Path -Parent (Split-Path -Parent $expectedCli)', '$installedRoot = $PWD'))) {
+        Assert-ReleasePolicyMutation -FixtureRoot $fixtureRoot -Path $workflow -Original $mutation[0] `
+            -Replacement $mutation[1] -Validator 'Assert-ReleaseInstalledPayloadSmoke'
+    }
+    foreach ($mutation in @(
+            @('$portable = Join-Path $PWD "out/$env:PACKAGE_BASE-portable.zip"',
+                '$portable = Join-Path $PWD "out/$env:PACKAGE_BASE-source.zip"'),
+            @('Invoke-FlitzZipPortableSmoke -ArchivePath $portable', 'Write-Output -InputObject $portable'),
+            @('$cli = Join-Path $packageRoot ''bin/flitzzip_cli.exe''',
+                '$cli = Join-Path $PWD ''out/install-Release/bin/flitzzip_cli.exe'''),
+            @('param($packageRoot, $smokeRoot)',
+                ('param($packageRoot, $smokeRoot)' + "`n" + '              $packageRoot = Join-Path $PWD ''out\install-Release''')),
+            @('$root = Join-Path $smokeRoot ''native''', '$root = Join-Path $env:RUNNER_TEMP ''native'''))) {
+        Assert-ReleasePolicyMutation -FixtureRoot $fixtureRoot -Path $workflow -Original $mutation[0] `
+            -Replacement $mutation[1] -Validator 'Assert-ReleasePortableSmoke'
+    }
     foreach ($mutation in @(
             @($workflow, 'uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0', 'uses: ./.github/actions/untrusted', 'Assert-ReleaseWorkflowIdentity'),
             @($workflow, 'uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0', 'uses: $/.github/actions/untrusted', 'Assert-ReleaseWorkflowIdentity'),
@@ -126,7 +148,7 @@ try {
             @($workflow, 'Packaged native verification failed.', 'Ignored verification failure.', 'Assert-ReleaseValidationIsolation'),
             @($workflow, 'Packaged native extraction failed.', 'Ignored extraction failure.', 'Assert-ReleaseValidationIsolation'),
             @($workflow, 'Packaged native readback differs from the complete source.', 'Unchecked readback.', 'Assert-ReleaseValidationIsolation'),
-            @($workflow, 'Remove-Item -LiteralPath $expectedCli -Force', 'Write-Output intact', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, 'Remove-Item -LiteralPath (Join-Path $installedRoot $name) -Force', 'Write-Output intact', 'Assert-ReleaseValidationIsolation'),
             @($workflow, 'MSI repair did not restore the exact staged CLI bytes.', 'Unchecked repair.', 'Assert-ReleaseValidationIsolation'))) {
         Assert-ReleasePolicyMutation -FixtureRoot $fixtureRoot -Path $mutation[0] -Original $mutation[1] `
             -Replacement $mutation[2] -Validator $mutation[3]

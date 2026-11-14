@@ -1,13 +1,20 @@
 #include "test_util.hpp"
 #include "test_stream_failure.hpp"
 #include "test_source_session.hpp"
+#include "test_stream_progress.hpp"
 
 #include "bzip2/bzip2_stream.hpp"
 #include "bzip2/bzip2_adapter.hpp"
 #include "base64/base64_adapter.hpp"
 #include "core/result.hpp"
+#include "core/decoded_input_buffer.hpp"
+#include "core/stream_byte_consumer.hpp"
+#include "core/archive_stream_progress.hpp"
+#include "tar/tar_adapter.hpp"
+#include "cpio/cpio_adapter.hpp"
 #include "core/path_text.hpp"
 #include "core/bounded_text_io.hpp"
+#include "core/archive_input_progress.hpp"
 #include "gzip/gzip_stream.hpp"
 #include "gzip/gzip_adapter.hpp"
 #include "lzma/bounded_sdk_allocator.hpp"
@@ -19,18 +26,56 @@
 #include "zip/zip_adapter.hpp"
 #include "uue/uue_adapter.hpp"
 #include "xxe/xxe_adapter.hpp"
+#include "test_flzip_helpers.hpp"
 
 #include <array>
+#include <algorithm>
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <type_traits>
 #include <memory>
 #include <thread>
 #include <sstream>
+#include <utility>
 
 namespace {
 
 enum class CreatedSourceFormat { Flzip, Zip, Base64, Uue, Xxe };
+
+struct ContainerProgressAbort {};
+
+struct ContainerProgressCase {
+    const char* extension;
+    bool filtered;
+    void (*create)(const std::filesystem::path&, const std::filesystem::path&);
+    flitzzip_test::ArchiveExtractor extract;
+};
+
+// Use existing production writers; this is a fixed correctness fixture, not a
+// corpus or timing workload. Callback failures are observed through public APIs.
+std::array<ContainerProgressCase, 6> container_progress_cases() {
+    using Path = std::filesystem::path;
+    return {{
+        {"tar", false, [](const Path& source, const Path& archive) { (void)flitzzip::compress_tar({source}, archive); },
+         &flitzzip::extract_tar},
+        {"tar.gz", true,
+         [](const Path& source, const Path& archive) { (void)flitzzip::compress_tar_gzip({source}, archive); },
+         &flitzzip::extract_tar_gzip},
+        {"tar.bz2", true,
+         [](const Path& source, const Path& archive) { (void)flitzzip::compress_tar_bzip2({source}, archive); },
+         &flitzzip::extract_tar_bzip2},
+        {"tar.zst", true,
+         [](const Path& source, const Path& archive) { (void)flitzzip::compress_tar_zstd({source}, archive); },
+         &flitzzip::extract_tar_zstd},
+        {"cpio", false,
+         [](const Path& source, const Path& archive) { (void)flitzzip::compress_cpio({source}, archive); },
+         &flitzzip::extract_cpio},
+        {"cpio.gz", true,
+         [](const Path& source, const Path& archive) { (void)flitzzip::compress_cpio_gzip({source}, archive); },
+         &flitzzip::extract_cpio_gzip},
+    }};
+}
 
 // Purpose: Select an explicitly CPU-only, small-memory native correctness workload without changing product defaults.
 // Inputs: overwrite controls only the owned fixture's target replacement. Outputs: Standard-mode bounded decode
@@ -144,6 +189,44 @@ void require_compressed_source_session(int codec, const char* name) {
 }
 
 }  // namespace
+
+namespace {
+
+// Fixed multi-window input tests callback/cancellation ownership, not compression
+// size or timing. The source bytes supply an independent extraction oracle.
+template <class Writer>
+void require_adapter_window_cancellation(const char* name, const char* extension,
+                                         flitzzip_test::ArchiveExtractor extract) {
+    const auto root = test_temp_dir(name);
+    const auto archive = root / (std::string("payload") + extension);
+    std::string expected(3U * 65536U + 17U, '\0');
+    for (std::size_t index = 0U; index < expected.size(); ++index) {
+        expected[index] = static_cast<char>((index * 37U + index / 251U) & 0xFFU);
+    }
+    {
+        Writer output(archive, 5);
+        output.write(expected.data(), static_cast<std::streamsize>(expected.size()));
+        output.close();
+    }
+    flitzzip_test::require_stream_window_cancellation(archive, root / "out", "payload", expected, extract);
+}
+
+}  // namespace
+
+TEST_CASE(gzip_extract_cancellation_between_output_windows) {
+    require_adapter_window_cancellation<flitzzip::GzipOutputStream>("gzip-window-cancellation", ".gz",
+                                                                    &flitzzip::extract_gzip_file);
+}
+
+TEST_CASE(bzip2_extract_cancellation_between_output_windows) {
+    require_adapter_window_cancellation<flitzzip::Bzip2OutputStream>("bzip2-window-cancellation", ".bz2",
+                                                                     &flitzzip::extract_bzip2_file);
+}
+
+TEST_CASE(zstd_extract_cancellation_between_output_windows) {
+    require_adapter_window_cancellation<flitzzip::ZstdOutputStream>("zstd-window-cancellation", ".zst",
+                                                                    &flitzzip::extract_zstd_file);
+}
 
 // Purpose: Check native source lifetime. Inputs: A tiny CPU fixture. Outputs: Exact extraction and lock recovery.
 TEST_CASE(archive_source_session_flzip) {
@@ -425,6 +508,91 @@ TEST_CASE(bounded_archive_text_lines_preserve_boundaries_and_eof) {
 // Purpose: Distinguish failed text streams from clean EOF and preserve exact archive-line writes.
 // Inputs: In-memory streams with failbit/badbit and a line containing an embedded NUL.
 // Outputs: Requires stable read/write diagnostics and exact payload-plus-LF serialization.
+TEST_CASE(encoded_input_progress_counts_framing_and_unterminated_lines) {
+    std::istringstream input("A\r\n\nBC\rD");
+    flitzzip::ProgressState progress;
+    progress.start(flitzzip::OperationKind::Extract, 11U, 1U);
+    std::size_t callbacks = 0;
+    const flitzzip::ProgressCallback observer = [&](const auto& snapshot) {
+        REQUIRE_EQ(snapshot.processed_bytes, 11U);
+        ++callbacks;
+    };
+    flitzzip::ArchiveInputProgress work(progress, std::cref(observer), 11U, 3U);
+    std::string line;
+    for (const std::string expected : {"A", "", "BC\rD"}) {
+        REQUIRE_TRUE(work.read_line(input, line, 4U, "Test"));
+        REQUIRE_EQ(line, expected);
+    }
+    REQUIRE_TRUE(!work.read_line(input, line, 4U, "Test"));
+    REQUIRE_EQ(callbacks, 0U);
+    work.finish();
+    REQUIRE_EQ(callbacks, 1U);
+    REQUIRE_EQ(progress.snapshot().processed_bytes, 11U);
+}
+
+TEST_CASE(encoded_input_progress_preserves_stateful_observer_and_exception) {
+    static_assert(!std::is_constructible_v<flitzzip::ArchiveInputProgress, flitzzip::ProgressState&,
+                                           flitzzip::ProgressCallback&&, std::uint64_t>);
+    static_assert(!std::is_constructible_v<flitzzip::ArchiveInputProgress, flitzzip::ProgressState&,
+                                           const flitzzip::ProgressCallback&&, std::uint64_t>);
+    flitzzip::ProgressState progress;
+    progress.start(flitzzip::OperationKind::Extract, 131072U, 1U);
+    struct Observer {
+        std::size_t calls = 0;
+        void operator()(const flitzzip::ProgressSnapshot& snapshot) {
+            REQUIRE_EQ(snapshot.processed_bytes, 65536U);
+            ++calls;
+            throw std::range_error("original encoded-input observer");
+        }
+    };
+    const flitzzip::ProgressCallback observer = Observer{};
+    flitzzip::ArchiveInputProgress work(progress, std::cref(observer), 131072U);
+    std::istringstream input(std::string(131072U, 'x'));
+    bool interrupted = false;
+    try {
+        while (work.read_byte(input) != std::char_traits<char>::eof()) {
+        }
+    } catch (const std::range_error& error) {
+        interrupted = std::string_view(error.what()) == "original encoded-input observer";
+    }
+    REQUIRE_TRUE(interrupted);
+    REQUIRE_TRUE(observer.target<Observer>() != nullptr);
+    REQUIRE_EQ(observer.target<Observer>()->calls, 1U);
+    REQUIRE_EQ(progress.snapshot().processed_bytes, 65536U);
+}
+
+TEST_CASE(encoded_input_progress_rejects_inexact_extents_without_wrapping) {
+    flitzzip::ProgressState progress;
+    progress.start(flitzzip::OperationKind::Extract, 2U, 1U);
+    const flitzzip::ProgressCallback no_observer;
+    bool rejected = false;
+    try {
+        flitzzip::ArchiveInputProgress invalid(progress, std::cref(no_observer), 2U, 3U);
+    } catch (const flitzzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    flitzzip::ArchiveInputProgress work(progress, std::cref(no_observer), 2U);
+    work.advance(1U);
+    rejected = false;
+    try {
+        work.finish();
+    } catch (const flitzzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    rejected = false;
+    try {
+        work.advance(std::numeric_limits<std::uint64_t>::max());
+    } catch (const flitzzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    work.advance(1U);
+    work.finish();
+    REQUIRE_EQ(progress.snapshot().processed_bytes, 2U);
+}
+
 TEST_CASE(bounded_archive_text_io_reports_stream_failures) {
     for (const auto state : {std::ios::failbit, std::ios::badbit}) {
         std::istringstream input("data");
@@ -1178,6 +1346,710 @@ TEST_CASE(compression_stream_zstd_worker_admission) {
         REQUIRE_EQ(flitzzip::zstd_stream_worker_count(std::numeric_limits<std::uint64_t>::max(), level, 64U),
                    level < 7 ? 4U : 0U);
     }
+}
+
+namespace {
+
+// Present one owned binary window lazily so tests can observe consumption and
+// prove failed sinks/zero requests do not advance or decode the source.
+class DecodedWindowFixture final : public flitzzip::DecodedInputBuffer {
+  public:
+    explicit DecodedWindowFixture(std::string bytes) : bytes_(std::move(bytes)) {}
+
+    const char* window_begin() const {
+        return bytes_.data();
+    }
+    std::size_t consumed() const {
+        return published_ ? static_cast<std::size_t>(gptr() - eback()) : 0U;
+    }
+    unsigned int underflow_calls = 0U;
+    bool source_failure = false;
+
+  protected:
+    int_type underflow() override {
+        ++underflow_calls;
+        if (source_failure) {
+            throw flitzzip::ArchiveError("independent source failure");
+        }
+        if (published_ || bytes_.empty()) {
+            return traits_type::eof();
+        }
+        published_ = true;
+        setg(bytes_.data(), bytes_.data(), bytes_.data() + bytes_.size());
+        return traits_type::to_int_type(*gptr());
+    }
+
+  private:
+    std::string bytes_;
+    bool published_ = false;
+};
+
+// Borrow already constructed storage and expose authoritative finish validation.
+// No file, decoder allocation or global fault hook is involved.
+class FinishProbeInput final : public std::istream {
+  public:
+    explicit FinishProbeInput(std::streambuf* source) : std::istream(source) {}
+    unsigned int finish_calls = 0U;
+    bool fail_finish = false;
+
+    void finish() {
+        ++finish_calls;
+        if (fail_finish) {
+            throw flitzzip::ArchiveError("independent finish failure");
+        }
+    }
+};
+
+// Retain byte values and non-owning address identities only. Partial writes and
+// original sink exceptions challenge the production transfer boundary safely.
+class DecodedSinkFixture final : public std::streambuf {
+  public:
+    std::string written;
+    std::vector<const void*> addresses;
+    bool short_write = false;
+    bool throw_on_write = false;
+
+  protected:
+    std::streamsize xsputn(const char* data, std::streamsize count) override {
+        if (count <= 0) {
+            return 0;
+        }
+        addresses.push_back(data);
+        if (throw_on_write) {
+            throw std::runtime_error("independent sink failure");
+        }
+        const auto accepted = short_write ? count - 1 : count;
+        written.append(data, static_cast<std::size_t>(accepted));
+        return accepted;
+    }
+};
+
+// A provider returning a character without an owned window violates the
+// transfer contract and must not masquerade as either data or successful EOF.
+class UnpublishedDecodedWindow final : public flitzzip::DecodedInputBuffer {
+  protected:
+    int_type underflow() override {
+        return traits_type::to_int_type('x');
+    }
+};
+
+// Exercise the actual codec reader and standalone extractor with bounded binary
+// fixtures. Mixed standard reads, direct chunks, putback, finish and counters must
+// agree with independent source bytes; no timing or throughput is collected.
+template <class Writer, class Reader, class Extractor>
+void require_decoded_chunk_transfer(const char* extension, Extractor extract) {
+    flitzzip_test::ScopedTestDirectory cleanup{test_temp_dir(std::string("decoded-transfer-") + extension)};
+    const auto& root = cleanup.path;
+    const auto path = root / (std::string("payload.") + extension);
+    std::string expected(3U * 129U * 1024U + 17U, '\0');
+    for (std::size_t index = 0U; index < expected.size(); ++index) {
+        expected[index] = static_cast<char>((index * 31U + index / 97U) & 255U);
+    }
+    {
+        Writer output(path, 5);
+        output.write(expected.data(), static_cast<std::streamsize>(expected.size()));
+        output.close();
+    }
+    {
+        Reader input(path);
+        std::ostringstream output;
+        REQUIRE_EQ(input.transfer_to(output, 0U), 0U);
+        REQUIRE_EQ(input.output_bytes(), 0U);
+        std::array<char, 13> prefix{};
+        input.read(prefix.data(), static_cast<std::streamsize>(prefix.size()));
+        REQUIRE_EQ(input.gcount(), static_cast<std::streamsize>(prefix.size()));
+        output.write(prefix.data(), static_cast<std::streamsize>(prefix.size()));
+        constexpr std::array<std::size_t, 7> limits{
+            1U, 17U, 63U, 65536U, 132096U, 4096U, std::numeric_limits<std::size_t>::max()};
+        std::size_t call = 0U;
+        for (;;) {
+            const auto limit = limits[call++ % limits.size()];
+            const auto old_count = input.gcount();
+            const auto bytes = input.transfer_to(output, limit);
+            REQUIRE_TRUE(bytes <= limit);
+            REQUIRE_EQ(input.gcount(), old_count);
+            if (bytes == 0U) {
+                break;
+            }
+            if (input.peek() != std::char_traits<char>::eof()) {
+                char next = 0;
+                input.get(next);
+                input.unget();
+                REQUIRE_TRUE(input.good());
+            }
+        }
+        input.finish();
+        REQUIRE_EQ(output.str(), expected);
+        REQUIRE_EQ(input.output_bytes(), expected.size());
+        REQUIRE_EQ(input.input_bytes(), std::filesystem::file_size(path));
+    }
+    {
+        Reader input(path);
+        std::ostringstream prefix;
+        REQUIRE_EQ(input.transfer_to(prefix, 7U), 7U);
+        input.finish();
+        input.finish();
+        REQUIRE_EQ(prefix.str(), expected.substr(0U, 7U));
+        REQUIRE_EQ(input.output_bytes(), expected.size());
+    }
+    const auto destination = root / "restored";
+    const auto stats = extract(path, destination, false, {});
+    REQUIRE_EQ(stats.output_bytes, expected.size());
+    REQUIRE_EQ(stats.input_bytes, std::filesystem::file_size(path));
+    REQUIRE_TRUE(!stats.gpu_used);
+    REQUIRE_EQ(read_stream_fixture(destination / "payload"), expected);
+    const auto empty_path = root / (std::string("empty.") + extension);
+    {
+        Writer writer(empty_path, 5);
+        writer.close();
+    }
+    {
+        Reader input(empty_path);
+        std::ostringstream output;
+        REQUIRE_EQ(input.transfer_to(output, 65536U), 0U);
+        input.finish();
+        REQUIRE_TRUE(output.str().empty());
+        REQUIRE_EQ(input.output_bytes(), 0U);
+    }
+    REQUIRE_EQ(extract(empty_path, destination, false, {}).output_bytes, 0U);
+    REQUIRE_TRUE(std::filesystem::exists(destination / "empty"));
+    REQUIRE_EQ(std::filesystem::file_size(destination / "empty"), 0U);
+    std::filesystem::remove_all(root);
+}
+
+}  // namespace
+
+// The sink must see the decoder's owned window, not a transient staging copy.
+// The old read-then-write path is an independent control for pointer sensitivity.
+TEST_CASE(decoded_input_buffer_transfers_owned_window_without_staging) {
+    const std::string expected("a\0b\xFF"
+                               "cde",
+                               7U);
+    DecodedWindowFixture direct(expected);
+    DecodedSinkFixture direct_sink;
+    std::ostream direct_output(&direct_sink);
+    REQUIRE_EQ(direct.transfer_to(direct_output, 4U), 4U);
+    REQUIRE_EQ(direct_sink.addresses.front(), direct.window_begin());
+    DecodedWindowFixture staged(expected);
+    DecodedSinkFixture staged_sink;
+    std::istream input(&staged);
+    std::ostream staged_output(&staged_sink);
+    std::array<char, 4> scratch{};
+    input.read(scratch.data(), static_cast<std::streamsize>(scratch.size()));
+    staged_output.write(scratch.data(), static_cast<std::streamsize>(scratch.size()));
+    REQUIRE_TRUE(staged_sink.addresses.front() != staged.window_begin());
+    REQUIRE_EQ(staged_sink.written, direct_sink.written);
+    REQUIRE_EQ(direct.transfer_to(direct_output, std::numeric_limits<std::size_t>::max()), 3U);
+    REQUIRE_EQ(direct_sink.addresses.back(), direct.window_begin() + 4U);
+    REQUIRE_EQ(direct.transfer_to(direct_output, 1U), 0U);
+    REQUIRE_EQ(direct_sink.written, expected);
+}
+
+// The visitor must see actual decoder storage at each bounded window. Complete
+// bytes and an independently derived byte sum also guard payload/checksum use.
+TEST_CASE(stream_byte_consumer_borrows_decoded_storage_and_preserves_tail) {
+    std::string expected(2U * 65536U + 17U, '\0');
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        expected[index] = static_cast<char>(index & 255U);
+    }
+    DecodedWindowFixture source(expected + "TRAILER");
+    std::istream input(&source);
+    std::vector<const char*> addresses;
+    std::string observed;
+    std::uint32_t sum = 0;
+    flitzzip::consume_exact_stream_bytes(
+        input, expected.size(),
+        [&](std::span<const char> bytes) {
+            REQUIRE_TRUE(bytes.size() <= 65536U);
+            addresses.push_back(bytes.data());
+            observed.append(bytes.data(), bytes.size());
+            for (const unsigned char value : bytes) {
+                sum += value;
+            }
+        },
+        "fixture payload");
+    REQUIRE_EQ(observed, expected);
+    REQUIRE_EQ(sum, 16711816U);
+    REQUIRE_EQ(addresses.size(), 3U);
+    for (std::size_t index = 0; index < addresses.size(); ++index) {
+        REQUIRE_EQ(addresses[index], source.window_begin() + index * 65536U);
+    }
+    REQUIRE_EQ(source.consumed(), expected.size());
+    std::array<char, 7> tail{};
+    input.read(tail.data(), static_cast<std::streamsize>(tail.size()));
+    REQUIRE_EQ(std::string(tail.data(), tail.size()), "TRAILER");
+}
+
+TEST_CASE(stream_byte_consumer_preserves_borrowed_window_after_visitor_failure) {
+    DecodedWindowFixture source("abcdefg");
+    std::istream input(&source);
+    input.setstate(std::ios::badbit);
+    unsigned int visits = 0U;
+    const auto visit = [&](std::span<const char>) { ++visits; };
+    flitzzip::consume_exact_stream_bytes(input, 0U, visit, "fixture");
+    bool failed = false;
+    try {
+        flitzzip::consume_exact_stream_bytes(input, 1U, visit, "fixture");
+    } catch (const flitzzip::ArchiveError&) {
+        failed = true;
+    }
+    REQUIRE_TRUE(failed && visits == 0U && source.underflow_calls == 0U);
+    input.clear();
+    failed = false;
+    try {
+        flitzzip::consume_exact_stream_bytes(
+            input, 4U, [](std::span<const char>) { throw std::runtime_error("independent visitor failure"); },
+            "fixture");
+    } catch (const std::runtime_error& error) {
+        if (std::string_view(error.what()) != "independent visitor failure") {
+            throw;
+        }
+        failed = true;
+    }
+    REQUIRE_TRUE(failed);
+    REQUIRE_EQ(source.consumed(), 0U);
+    std::string recovered;
+    flitzzip::consume_exact_stream_bytes(
+        input, 7U, [&](std::span<const char> bytes) { recovered.append(bytes.data(), bytes.size()); }, "fixture");
+    REQUIRE_EQ(recovered, "abcdefg");
+}
+
+TEST_CASE(stream_byte_consumer_plain_reads_and_truncation_are_exact) {
+    std::istringstream input("abcdefgTRAILER");
+    std::string observed;
+    const auto consume = [&](std::span<const char> bytes) { observed.append(bytes.data(), bytes.size()); };
+    flitzzip::consume_exact_stream_bytes(input, 7U, consume, "fixture");
+    REQUIRE_EQ(observed, "abcdefg");
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()), "TRAILER");
+    std::istringstream short_input("abc");
+    observed.clear();
+    bool failed = false;
+    try {
+        flitzzip::consume_exact_stream_bytes(short_input, 4U, consume, "short fixture");
+    } catch (const flitzzip::ArchiveError& error) {
+        REQUIRE_EQ(std::string(error.what()), "short fixture is truncated");
+        failed = true;
+    }
+    REQUIRE_TRUE(failed && observed.empty());
+    DecodedWindowFixture short_decoded("abc");
+    std::istream decoded(&short_decoded);
+    failed = false;
+    try {
+        flitzzip::consume_exact_stream_bytes(decoded, 4U, consume, "short fixture");
+    } catch (const flitzzip::ArchiveError& error) {
+        REQUIRE_EQ(std::string(error.what()), "short fixture is truncated");
+        failed = true;
+    }
+    REQUIRE_TRUE(failed);
+}
+
+// Checkpoint closures own their observer and status; unknown validation totals
+// never masquerade as completed work. Exceptions retain their original type.
+TEST_CASE(archive_phase_checkpoints_own_status_and_preserve_exceptions) {
+    unsigned int calls = 0U;
+    flitzzip::ProgressSnapshot observed;
+    flitzzip::ProgressCheckpoint owned;
+    {
+        flitzzip::ProgressCallback callback = [&](const flitzzip::ProgressSnapshot& snapshot) {
+            ++calls;
+            observed = snapshot;
+        };
+        flitzzip::ProgressSnapshot snapshot{.operation = flitzzip::OperationKind::Extract, .note = "owned phase"};
+        owned = flitzzip::make_archive_phase_checkpoint(callback, snapshot);
+        snapshot.note = "changed after copy";
+        callback = {};
+    }
+    flitzzip::invoke_archive_checkpoint(owned);
+    REQUIRE_EQ(calls, 1U);
+    REQUIRE_EQ(observed.note, "owned phase");
+    const flitzzip::ProgressCallback observe = [&](const flitzzip::ProgressSnapshot& snapshot) { observed = snapshot; };
+    flitzzip::invoke_archive_checkpoint(flitzzip::make_archive_validation_checkpoint(observe));
+    REQUIRE_TRUE(observed.operation == flitzzip::OperationKind::Extract);
+    REQUIRE_EQ(observed.total_bytes, 0U);
+    REQUIRE_EQ(observed.processed_bytes, 0U);
+    REQUIRE_EQ(observed.total_entries, 0U);
+    REQUIRE_EQ(observed.completed_entries, 0U);
+    flitzzip::invoke_archive_checkpoint(flitzzip::make_archive_finishing_checkpoint(observe, 71U, 3U));
+    REQUIRE_EQ(observed.total_bytes, 71U);
+    REQUIRE_EQ(observed.processed_bytes, 71U);
+    REQUIRE_EQ(observed.total_entries, 3U);
+    REQUIRE_EQ(observed.completed_entries, 3U);
+    REQUIRE_TRUE(!flitzzip::make_archive_validation_checkpoint({}));
+    REQUIRE_TRUE(!flitzzip::make_archive_finishing_checkpoint({}, 71U, 3U));
+    flitzzip::invoke_archive_checkpoint({});
+    bool aborted = false;
+    try {
+        flitzzip::invoke_archive_checkpoint(flitzzip::make_archive_validation_checkpoint(
+            [](const flitzzip::ProgressSnapshot&) { throw ContainerProgressAbort{}; }));
+    } catch (const ContainerProgressAbort&) {
+        aborted = true;
+    }
+    REQUIRE_TRUE(aborted);
+}
+
+// Final draining is cancellable between bounded windows and still calls the
+// original finish validator after EOF. A successful drain cannot conceal it.
+TEST_CASE(archive_stream_finish_checkpoints_preserve_validation_and_recovery) {
+    const std::string bytes(2U * 65536U + 17U, 'F');
+    DecodedWindowFixture source(bytes);
+    FinishProbeInput input(&source);
+    unsigned int calls = 0U;
+    bool aborted = false;
+    try {
+        flitzzip::finish_archive_stream(input, [&] {
+            if (++calls == 2U) {
+                throw ContainerProgressAbort{};
+            }
+        });
+    } catch (const ContainerProgressAbort&) {
+        aborted = true;
+    }
+    REQUIRE_TRUE(aborted);
+    REQUIRE_EQ(source.consumed(), 65536U);
+    REQUIRE_EQ(input.finish_calls, 0U);
+    source.source_failure = true;
+    bool failed = false;
+    try {
+        flitzzip::finish_archive_stream(input, [] {});
+    } catch (const flitzzip::ArchiveError& error) {
+        REQUIRE_EQ(std::string(error.what()), "independent source failure");
+        failed = true;
+    }
+    REQUIRE_TRUE(failed);
+    REQUIRE_EQ(input.finish_calls, 0U);
+    source.source_failure = false;
+    input.fail_finish = true;
+    failed = false;
+    try {
+        flitzzip::finish_archive_stream(input, [] {});
+    } catch (const flitzzip::ArchiveError& error) {
+        REQUIRE_EQ(std::string(error.what()), "independent finish failure");
+        failed = true;
+    }
+    REQUIRE_TRUE(failed);
+    REQUIRE_EQ(source.consumed(), bytes.size());
+    REQUIRE_EQ(input.finish_calls, 1U);
+    input.fail_finish = false;
+    flitzzip::finish_archive_stream(input, [] {});
+    REQUIRE_EQ(input.finish_calls, 2U);
+}
+
+TEST_CASE(archive_stream_finish_rejects_unobservable_reader_without_hidden_drain) {
+    std::stringbuf source("untouched");
+    FinishProbeInput input(&source);
+    unsigned int checks = 0U;
+    bool rejected = false;
+    try {
+        flitzzip::finish_archive_stream(input, [&] { ++checks; });
+    } catch (const std::logic_error& error) {
+        REQUIRE_EQ(std::string(error.what()), "checkpointed archive decoder has no owned window interface");
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(checks, 0U);
+    REQUIRE_EQ(input.finish_calls, 0U);
+    REQUIRE_EQ(input.peek(), 'u');
+    flitzzip::finish_archive_stream(input, {});
+    REQUIRE_EQ(input.finish_calls, 1U);
+    REQUIRE_EQ(input.peek(), 'u');
+}
+
+// Ordinary and borrowed-window sources must stop before reading the next window.
+// Independent suffix bytes distinguish a real checkpoint from post-read reporting.
+TEST_CASE(stream_byte_consumer_checkpoints_preserve_next_unread_window) {
+    std::string bytes(2U * 65536U + 17U, '\0');
+    for (std::size_t index = 0U; index < bytes.size(); ++index) {
+        bytes[index] = static_cast<char>((index * 17U + index / 71U) & 255U);
+    }
+    for (const bool borrowed : {false, true}) {
+        DecodedWindowFixture decoded(bytes);
+        std::stringbuf ordinary(bytes);
+        std::istream input(borrowed ? static_cast<std::streambuf*>(&decoded) : &ordinary);
+        std::string observed;
+        const auto consume = [&](std::span<const char> window) { observed.append(window.data(), window.size()); };
+        unsigned int checks = 0U;
+        bool aborted = false;
+        try {
+            flitzzip::consume_exact_stream_bytes(input, bytes.size(), consume, "checkpoint fixture", [&] {
+                if (++checks == 2U) {
+                    throw ContainerProgressAbort{};
+                }
+            });
+        } catch (const ContainerProgressAbort&) {
+            aborted = true;
+        }
+        REQUIRE_TRUE(aborted);
+        REQUIRE_EQ(observed, bytes.substr(0U, 65536U));
+        const std::string tail{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+        REQUIRE_EQ(tail, bytes.substr(65536U));
+    }
+    DecodedWindowFixture final_source("end");
+    std::istream final_input(&final_source);
+    unsigned int checks = 0U;
+    bool aborted = false;
+    try {
+        flitzzip::consume_exact_stream_bytes(
+            final_input, 3U, [](std::span<const char>) {}, "final checkpoint",
+            [&] {
+                if (++checks == 2U) {
+                    throw ContainerProgressAbort{};
+                }
+            });
+    } catch (const ContainerProgressAbort&) {
+        aborted = true;
+    }
+    REQUIRE_TRUE(aborted);
+    REQUIRE_EQ(final_source.consumed(), 3U);
+    flitzzip::consume_exact_stream_bytes(
+        final_input, 0U, [](std::span<const char>) {}, "zero checkpoint", [] { throw ContainerProgressAbort{}; });
+}
+
+// Final checkpoints observe all requested bytes but never the following suffix.
+// Literal boundary sequences independently cover ordinary and decoder-owned windows;
+// exceptions at that final checkpoint preserve the suffix and original exception type.
+TEST_CASE(stream_byte_consumer_final_checkpoints_preserve_tail_and_exception) {
+    struct Boundary {
+        std::size_t bytes;
+        std::vector<std::size_t> checkpoints;
+    };
+    const std::array<Boundary, 5> boundaries{{{0U, {}},
+                                              {1U, {0U, 1U}},
+                                              {65536U, {0U, 65536U}},
+                                              {65537U, {0U, 65536U, 65537U}},
+                                              {131089U, {0U, 65536U, 131072U, 131089U}}}};
+    for (const auto& boundary : boundaries) {
+        const auto expected = flitzzip_test::stream_cancellation_payload().substr(0U, boundary.bytes);
+        for (const bool borrowed : {false, true}) {
+            for (const bool fail_final : {false, true}) {
+                DecodedWindowFixture decoded(expected + "unread tail");
+                std::stringbuf ordinary(expected + "unread tail");
+                std::istream input(borrowed ? static_cast<std::streambuf*>(&decoded) : &ordinary);
+                std::string observed;
+                std::vector<std::size_t> checkpoints;
+                bool interrupted = false;
+                try {
+                    flitzzip::consume_exact_stream_bytes(
+                        input, boundary.bytes,
+                        [&](std::span<const char> window) { observed.append(window.data(), window.size()); },
+                        "final checkpoint boundary",
+                        [&] {
+                            checkpoints.push_back(observed.size());
+                            if (fail_final && observed.size() == boundary.bytes) {
+                                throw ContainerProgressAbort{};
+                            }
+                        });
+                } catch (const ContainerProgressAbort&) {
+                    interrupted = true;
+                }
+                REQUIRE_EQ(interrupted, fail_final && boundary.bytes != 0U);
+                REQUIRE_EQ(checkpoints, boundary.checkpoints);
+                REQUIRE_EQ(observed, expected);
+                if (boundary.bytes == 0U) {
+                    decoded.source_failure = true;
+                    REQUIRE_EQ(decoded.consume(0U, [](std::span<const char>) { throw ContainerProgressAbort{}; }), 0U);
+                    REQUIRE_EQ(decoded.underflow_calls, 0U);
+                    decoded.source_failure = false;
+                }
+                const std::string suffix{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+                REQUIRE_EQ(suffix, "unread tail");
+            }
+        }
+    }
+}
+
+// Filtered inputs must remain cancellable while validation is reading payload,
+// before any destination work. Plain metadata seeks need an initial checkpoint.
+TEST_CASE(container_extraction_validation_is_observable_and_cancellable) {
+    for (const auto& fixture : container_progress_cases()) {
+        flitzzip_test::ScopedTestDirectory cleanup{
+            test_temp_dir(std::string("container-validation-") + fixture.extension)};
+        const auto& root = cleanup.path;
+        const auto source = root / "payload.bin";
+        const auto archive = root / (std::string("input.") + fixture.extension);
+        const auto destination = root / "output";
+        const std::string bytes(512U * 1024U + 17U, 'V');
+        std::ofstream(source, std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        fixture.create(source, archive);
+        unsigned int checks = 0;
+        const unsigned int abort_check = fixture.filtered ? 9U : 1U;
+        bool aborted = false;
+        try {
+            (void)fixture.extract(archive, destination, false, [&](const flitzzip::ProgressSnapshot& snapshot) {
+                if (snapshot.note == "Validating") {
+                    REQUIRE_EQ(snapshot.total_bytes, 0U);
+                    REQUIRE_EQ(snapshot.processed_bytes, 0U);
+                    REQUIRE_EQ(snapshot.completed_entries, 0U);
+                    if (++checks == abort_check) {
+                        throw ContainerProgressAbort{};
+                    }
+                }
+            });
+        } catch (const ContainerProgressAbort&) {
+            aborted = true;
+        }
+        REQUIRE_TRUE(aborted && checks == abort_check);
+        REQUIRE_TRUE(!std::filesystem::exists(destination));
+        const auto renamed = root / "released.archive";
+        std::filesystem::rename(archive, renamed);
+        std::filesystem::rename(renamed, archive);
+    }
+}
+
+TEST_CASE(container_extraction_member_checkpoints_preserve_target_and_recover) {
+    for (const auto& fixture : container_progress_cases()) {
+        flitzzip_test::ScopedTestDirectory cleanup{test_temp_dir(std::string("container-copy-") + fixture.extension)};
+        const auto& root = cleanup.path;
+        const auto source = root / "payload.bin";
+        const auto archive = root / (std::string("input.") + fixture.extension);
+        const auto destination = root / "output";
+        const auto target = destination / "payload.bin";
+        const std::string bytes(512U * 1024U + 17U, 'P');
+        std::ofstream(source, std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        fixture.create(source, archive);
+        std::filesystem::create_directory(destination);
+        for (const int phase : {0, 1, 2}) {
+            std::ofstream(target, std::ios::binary) << "existing payload";
+            const auto original_time = std::filesystem::last_write_time(target);
+            unsigned int final_checks = 0;
+            bool aborted = false;
+            try {
+                (void)fixture.extract(archive, destination, true, [&](const flitzzip::ProgressSnapshot& snapshot) {
+                    if (!snapshot.note.empty() || snapshot.processed_bytes == 0U) {
+                        return;
+                    }
+                    const bool partial = snapshot.processed_bytes < snapshot.total_bytes;
+                    if (!partial) {
+                        ++final_checks;
+                    }
+                    if ((phase == 0 && partial) || (phase == 1 && final_checks == 1U) ||
+                        (phase == 2 && final_checks == 2U)) {
+                        throw ContainerProgressAbort{};
+                    }
+                });
+            } catch (const ContainerProgressAbort&) {
+                aborted = true;
+            }
+            REQUIRE_TRUE(aborted);
+            REQUIRE_EQ(read_stream_fixture(target), "existing payload");
+            REQUIRE_EQ(std::filesystem::last_write_time(target), original_time);
+            REQUIRE_EQ(
+                std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator()),
+                1);
+            const auto renamed = root / "released.archive";
+            std::filesystem::rename(archive, renamed);
+            std::filesystem::rename(renamed, archive);
+        }
+        std::uint64_t observed = 0;
+        const auto stats = fixture.extract(archive, destination, true, [&](const flitzzip::ProgressSnapshot& snapshot) {
+            if (snapshot.note == "Validating") {
+                REQUIRE_EQ(snapshot.processed_bytes, 0U);
+                return;
+            }
+            REQUIRE_EQ(snapshot.total_bytes, bytes.size());
+            REQUIRE_TRUE(snapshot.processed_bytes >= observed && snapshot.processed_bytes <= bytes.size());
+            REQUIRE_TRUE(snapshot.processed_bytes - observed <= 65536U);
+            observed = snapshot.processed_bytes;
+        });
+        REQUIRE_EQ(observed, bytes.size());
+        REQUIRE_EQ(stats.output_bytes, bytes.size());
+        REQUIRE_EQ(read_stream_fixture(target), bytes);
+    }
+}
+
+// Failed/throwing sinks retain source position, including partial writes;
+// prefailed sinks and zero requests must not decode or acquire a window.
+TEST_CASE(decoded_input_buffer_sink_failures_preserve_source_and_recovery) {
+    DecodedWindowFixture source("abcdefg");
+    std::ostringstream invalid;
+    invalid.setstate(std::ios::badbit);
+    REQUIRE_EQ(source.transfer_to(invalid, 0U), 0U);
+    bool rejected = false;
+    try {
+        (void)source.transfer_to(invalid, 1U);
+    } catch (const std::ios_base::failure&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(source.underflow_calls, 0U);
+    DecodedSinkFixture partial;
+    partial.short_write = true;
+    std::ostream short_output(&partial);
+    rejected = false;
+    try {
+        (void)source.transfer_to(short_output, 4U);
+    } catch (const std::ios_base::failure&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(partial.written, "abc");
+    REQUIRE_EQ(source.consumed(), 0U);
+    DecodedSinkFixture throwing;
+    throwing.throw_on_write = true;
+    std::ostream throwing_output(&throwing);
+    throwing_output.exceptions(std::ios::badbit);
+    rejected = false;
+    try {
+        (void)source.transfer_to(throwing_output, 4U);
+    } catch (const std::runtime_error& error) {
+        rejected = std::string_view(error.what()) == "independent sink failure";
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(source.consumed(), 0U);
+    std::ostringstream recovered;
+    REQUIRE_EQ(source.transfer_to(recovered, 7U), 7U);
+    REQUIRE_EQ(recovered.str(), "abcdefg");
+}
+
+// Direct transfer retains the same owned get area for all putback characters;
+// a provider exception remains distinguishable from successful EOF.
+TEST_CASE(decoded_input_buffer_preserves_putback_and_source_errors) {
+    DecodedWindowFixture source("abcdefg");
+    std::ostringstream output;
+    REQUIRE_EQ(source.transfer_to(output, 7U), 7U);
+    std::istream input(&source);
+    for (unsigned int index = 0U; index < 7U; ++index) {
+        input.unget();
+        REQUIRE_TRUE(input.good());
+    }
+    std::string restored(7U, '\0');
+    input.read(restored.data(), static_cast<std::streamsize>(restored.size()));
+    REQUIRE_EQ(restored, "abcdefg");
+    source.source_failure = true;
+    bool rejected = false;
+    try {
+        (void)source.transfer_to(output, 1U);
+    } catch (const flitzzip::ArchiveError& error) {
+        rejected = std::string_view(error.what()) == "independent source failure";
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(output.str(), "abcdefg");
+    UnpublishedDecodedWindow invalid;
+    rejected = false;
+    try {
+        (void)invalid.transfer_to(output, 1U);
+    } catch (const flitzzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(output.str(), "abcdefg");
+}
+
+// Validate each actual codec facade and production standalone extraction path.
+TEST_CASE(compression_stream_gzip_direct_chunk_transfer) {
+    require_decoded_chunk_transfer<flitzzip::GzipOutputStream, flitzzip::GzipInputStream>("gz",
+                                                                                          flitzzip::extract_gzip_file);
+}
+
+// Validate each actual codec facade and production standalone extraction path.
+TEST_CASE(compression_stream_bzip2_direct_chunk_transfer) {
+    require_decoded_chunk_transfer<flitzzip::Bzip2OutputStream, flitzzip::Bzip2InputStream>(
+        "bz2", flitzzip::extract_bzip2_file);
+}
+
+// Validate each actual codec facade and production standalone extraction path.
+TEST_CASE(compression_stream_zstd_direct_chunk_transfer) {
+    require_decoded_chunk_transfer<flitzzip::ZstdOutputStream, flitzzip::ZstdInputStream>("zst",
+                                                                                          flitzzip::extract_zstd_file);
 }
 
 // Purpose: Validate asynchronous ownership, finalization, wire determinism, and bounded codec allocation.

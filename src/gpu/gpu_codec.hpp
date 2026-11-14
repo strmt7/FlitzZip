@@ -293,20 +293,10 @@ GpuDiagnosticResult run_gpu_diagnostic(const GpuDiagnosticOptions& options);
 // but unavailable.
 EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOptions& options);
 
-// Purpose: Encode a caller-owned chunk while allowing zero-copy publication of raw HIP payloads.
+// Purpose: Encode a caller-owned chunk while allowing zero-copy publication of raw CPU or HIP payloads.
 // Inputs: `input` owns the uncompressed bytes and may be moved from; `options` selects block size plus backend policy.
 // Outputs: Returns descriptors, payload, and a source CRC; throws `GpuError` if GPU is required but unavailable.
 EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOptions& options);
-
-inline constexpr std::size_t kMaxEncodeBatchBlocks = 256;
-
-// Purpose: Keep independently checksummed input blocks together for one bounded codec submission.
-// Inputs: Created by encode_owned_block_batch from a validated dense block layout.
-// Outputs: Encoded descriptors and payload in input order, plus one source CRC per block.
-struct EncodedBlockBatch {
-    EncodedChunk encoded;
-    std::vector<std::uint32_t> block_crc32;
-};
 
 // Purpose: Encode independent, variably sized blocks without padding or crossing their boundaries.
 // Inputs: input owns dense bytes; positive block_lengths sum exactly to input size, with at most 256 blocks,

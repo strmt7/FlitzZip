@@ -389,6 +389,16 @@ foreach ($path in @('tools/analyze_hip_trace.py', 'tools/test_hip_trace.py')) {
 }
 
 $cmakeManifestPlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/cmake-toolchain.sha256')
+foreach ($path in @('tools/cmake_toolchain.ps1', 'tools/cmake-toolchain.sha256')) {
+    $cmakeProducerPlan = Get-FlitzZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $cmakeProducerPlan -Id 'package-smoke') "CMake/CPack changes require their portable package consumer: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $cmakeProducerPlan -Id 'msi-identity-smoke') "CMake/CPack changes require their MSI authoring consumer: $path"
+    $packageCommands = @($cmakeProducerPlan.requiredLocalCommands | Where-Object { $_.id -eq 'package-smoke' })
+    Assert-Selector ($packageCommands.Count -eq 1 -and '-CreateMsi' -in $packageCommands[0].arguments) "CMake/CPack changes must author an actual MSI: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $cmakeProducerPlan -Id 'gui-smoke')) "CMake changes must not launch the GUI: $path"
+}
+$cmakeTestOnlyPlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/test_cmake_toolchain.ps1')
+Assert-Selector (-not (Test-RequiredCommand -Plan $cmakeTestOnlyPlan -Id 'package-smoke')) 'CMake test-only changes must not package unchanged product inputs'
 Assert-Selector $cmakeManifestPlan.scope.touchesVerification 'CMake provenance must be classified as verification input'
 Assert-Selector (Test-RequiredCommand -Plan $cmakeManifestPlan -Id 'release-build') 'Changed CMake provenance requires a native build'
 Assert-Selector (Test-RequiredCommand -Plan $cmakeManifestPlan -Id 'cmake-toolchain-tests') 'Changed CMake provenance requires its direct contracts'
@@ -866,6 +876,12 @@ $runtimePlan = Get-FlitzZipVerificationPlan -ChangedPath @('tools/package_runtim
 Assert-Selector (($runtimePlan.requiredLocalCommands.id -contains 'package-runtime-contracts') -and
     ($runtimePlan.requiredLocalCommands.id -notcontains 'unit-tests') -and
     ($runtimePlan.requiredLocalCommands.id -notcontains 'release-build')) 'isolated package runtime policy changes require their own actual contracts without rebuilding the product'
+
+foreach ($auditedPath in @('tools/package.ps1', 'tools/package_runtime.ps1', 'tools/test_package_runtime.ps1', 'tools/test_msi_identity.ps1')) {
+    $auditedPlan = Get-FlitzZipVerificationPlan -ChangedPath @($auditedPath)
+    Assert-Selector (Test-RequiredCommand -Plan $auditedPlan -Id 'changed-refactor-audit') `
+        "Changed PowerShell functions must retain their size/complexity gate: $auditedPath"
+}
 
 foreach ($inputPath in @('tools/FlitzZip.GuiSmoke.Ui.psm1', 'tools/FlitzZip.GuiSmoke.Pickers.psm1', 'tools/FlitzZip.GuiSmoke.Hover.psm1', 'tools/fixtures/gui_mouse_delivery_contract.ps1', 'tools/fixtures/gui_hover_observation_contract.ps1')) {
     $deliveryPlan = Get-FlitzZipVerificationPlan -ChangedPath @($inputPath) -Checkpoint intermediate

@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
+#include "test_text_transfer_progress.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -207,4 +208,41 @@ TEST_CASE(uue_extract_rejects_overwrite_by_default) {
     REQUIRE_EQ(read_binary_file(output / "sample.txt"),
                std::vector<unsigned char>({'o', 'l', 'd', ' ', 'p', 'a', 'y', 'l', 'o', 'a', 'd'}));
     std::filesystem::remove_all(root);
+}
+
+namespace {
+void require_uue_transfer_progress(flitzzip_test::TextTransferCheck check) {
+    flitzzip_test::require_text_transfer_progress(
+        "uue-transfer-progress", "uue",
+        [](std::string_view payload, std::string_view newline) {
+            const auto prefix = std::string("begin 644 payload.bin") + std::string(newline);
+            const auto suffix = std::string("`") + std::string(newline) + "end" + std::string(newline);
+            return flitzzip_test::make_literal_transfer_text(payload, newline, prefix, "#04)#", suffix);
+        },
+        flitzzip::extract_uue_file, check);
+}
+}  // namespace
+
+TEST_CASE(uue_transfer_readback) {
+    require_uue_transfer_progress(flitzzip_test::TextTransferCheck::Readback);
+}
+
+TEST_CASE(uue_transfer_payload_cancellation) {
+    require_uue_transfer_progress(flitzzip_test::TextTransferCheck::PayloadCancellation);
+}
+
+TEST_CASE(uue_transfer_trailing_cancellation) {
+    require_uue_transfer_progress(flitzzip_test::TextTransferCheck::TrailingCancellation);
+}
+
+TEST_CASE(uue_transfer_final_counters) {
+    require_uue_transfer_progress(flitzzip_test::TextTransferCheck::FinalCounters);
+}
+
+TEST_CASE(uue_transfer_before_publication) {
+    require_uue_transfer_progress(flitzzip_test::TextTransferCheck::BeforePublication);
+}
+
+TEST_CASE(uue_transfer_bounded_callbacks) {
+    require_uue_transfer_progress(flitzzip_test::TextTransferCheck::BoundedCallbacks);
 }

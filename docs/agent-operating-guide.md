@@ -659,6 +659,10 @@ tools\package.ps1 -Configuration Release
 - Keep filesystem paths in their native representation for I/O. Use
   `path_diagnostic_utf8` for narrow progress, history and error text; never rely
   on the host ANSI code page through `path.string()`.
+  Append fixed filesystem components separately, such as `root / "retry" / "payload"`.
+  Do not embed forward-slash separators in a component appended to a Windows
+  extended path; [that namespace does not normalize them](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation).
+  Archive-member decoding and normalization still belong in the format's path helpers.
   Preserve explicit byte lengths when converting names for validation. A
   null-terminated append can discard an embedded control character and its
   suffix before the validator sees the complete untrusted name.
@@ -671,6 +675,12 @@ tools\package.ps1 -Configuration Release
 - Shared worker state must remain owned until the actual worker calls return.
   A completion counter or result signal can precede final worker cleanup;
   qualify teardown with a worker that deliberately signals before its last access.
+- Synchronous observers must retain their original state and outlive every native
+  callback that borrows them. Restore temporary callback bindings before their
+  owners expire. C callbacks must retain the first exception, return the native
+  failure status and rethrow only after the native call returns. Test stateful
+  observers, cancellation before publication, cleanup and immediate recovery;
+  follow the [stream contracts](compatibility-stream-contracts.md).
 - Adopt acquired native handles into RAII owners before any allocating operation.
   Move owners into containers; passing a raw acquisition to `emplace_back` does
   not protect it if container growth fails. Retain controlled allocation-failure

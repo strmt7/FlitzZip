@@ -1,4 +1,5 @@
 #include "test_compat_fixture.hpp"
+#include "test_stream_progress.hpp"
 #include "test_source_session.hpp"
 #include "test_util.hpp"
 
@@ -36,6 +37,10 @@ struct CabFixtureEntry {
     std::string name;
     std::string payload;
     std::uint16_t attributes = 0x20U;
+};
+
+struct CabObserverMarker {
+    int value;
 };
 
 // Purpose: Read a full text file for CAB extraction equality checks.
@@ -127,16 +132,18 @@ void write_uncompressed_cab(const std::filesystem::path& archive, const std::vec
         REQUIRE_TRUE(!entry.name.empty());
         REQUIRE_TRUE(entry.name.find('\0') == std::string::npos);
         REQUIRE_TRUE(entry.payload.size() <= 0xFFFFFFFFULL);
-        REQUIRE_TRUE(payload_size + entry.payload.size() <= 0xFFFFULL);
+        REQUIRE_TRUE(payload_size + entry.payload.size() <= 1024U * 1024U);
         payload_size += entry.payload.size();
         file_table_size += kCabFileRecordBytes + entry.name.size() + 1U;
     }
-    REQUIRE_TRUE(payload_size <= 0xFFFFULL);
+    REQUIRE_TRUE(payload_size <= 1024U * 1024U);
     REQUIRE_TRUE(file_table_size <= 0xFFFFFFFFULL);
 
     const auto file_table_offset = static_cast<std::uint32_t>(kCabHeaderBytes + kCabFolderBytes);
     const auto data_offset = static_cast<std::uint32_t>(file_table_offset + file_table_size);
-    const auto cabinet_size = static_cast<std::uint32_t>(data_offset + kCabDataHeaderBytes + payload_size);
+    constexpr std::size_t block_size = 32768U;
+    const auto blocks = std::max<std::uint64_t>(1U, (payload_size + block_size - 1U) / block_size);
+    const auto cabinet_size = static_cast<std::uint32_t>(data_offset + blocks * kCabDataHeaderBytes + payload_size);
 
     std::vector<unsigned char> bytes;
     bytes.reserve(cabinet_size);
@@ -155,7 +162,7 @@ void write_uncompressed_cab(const std::filesystem::path& archive, const std::vec
     append_le16(bytes, 0U);
 
     append_le32(bytes, data_offset);
-    append_le16(bytes, 1U);
+    append_le16(bytes, static_cast<std::uint16_t>(blocks));
     append_le16(bytes, 0U);
 
     std::uint32_t folder_offset = 0;
@@ -170,11 +177,18 @@ void write_uncompressed_cab(const std::filesystem::path& archive, const std::vec
         folder_offset += static_cast<std::uint32_t>(entry.payload.size());
     }
 
-    append_le32(bytes, 0U);
-    append_le16(bytes, static_cast<std::uint16_t>(payload_size));
-    append_le16(bytes, static_cast<std::uint16_t>(payload_size));
+    std::string payload;
+    payload.reserve(static_cast<std::size_t>(payload_size));
     for (const auto& entry : entries) {
-        bytes.insert(bytes.end(), entry.payload.begin(), entry.payload.end());
+        payload += entry.payload;
+    }
+    for (std::size_t block = 0U; block < blocks; ++block) {
+        const auto offset = block * block_size;
+        const auto count = std::min(block_size, payload.size() - offset);
+        append_le32(bytes, 0U);
+        append_le16(bytes, static_cast<std::uint16_t>(count));
+        append_le16(bytes, static_cast<std::uint16_t>(count));
+        bytes.insert(bytes.end(), payload.begin() + offset, payload.begin() + offset + count);
     }
     REQUIRE_EQ(bytes.size(), static_cast<std::size_t>(cabinet_size));
 
@@ -182,7 +196,40 @@ void write_uncompressed_cab(const std::filesystem::path& archive, const std::vec
     output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 }
 
+std::filesystem::path make_cab_cancellation_archive(const std::filesystem::path& root, std::string_view expected) {
+    const auto archive = root / "input.cab";
+    write_uncompressed_cab(archive, {{.name = "payload.bin", .payload = std::string(expected)}});
+    return archive;
+}
+
 }  // namespace
+
+TEST_CASE(cab_cancellation_fixture_has_valid_multi_block_payload) {
+    flitzzip_test::with_stream_cancellation_fixture("cab-cancel-valid", make_cab_cancellation_archive,
+                                                    [](const auto& archive, const auto& output, const auto& expected) {
+                                                        flitzzip_test::require_stream_fixture_readback(
+                                                            archive, output, expected, flitzzip::extract_cab);
+                                                        flitzzip_test::export_compat_fixture(archive, output);
+                                                    });
+}
+
+TEST_CASE(cab_extraction_validation_is_cancellable) {
+    flitzzip_test::with_stream_cancellation_fixture("cab-cancel-validation", make_cab_cancellation_archive,
+                                                    [](const auto& archive, const auto& output, const auto& expected) {
+                                                        flitzzip_test::require_validation_cancellation(
+                                                            archive, output, "payload.bin", expected,
+                                                            flitzzip::extract_cab, 3U);
+                                                    });
+}
+
+TEST_CASE(cab_extraction_payload_windows_are_cancellable) {
+    flitzzip_test::with_stream_cancellation_fixture("cab-cancel-windows", make_cab_cancellation_archive,
+                                                    [](const auto& archive, const auto& output, const auto& expected) {
+                                                        flitzzip_test::require_stream_window_cancellation(
+                                                            archive, output, "payload.bin", expected,
+                                                            flitzzip::extract_cab, true);
+                                                    });
+}
 
 // Purpose: Preserve a missing cabinet's Unicode filename in the archive error contract.
 // Inputs: A nonexistent CAB beneath a test-owned path containing supplementary Unicode characters.
@@ -475,8 +522,11 @@ void require_cab_admission_rejected(const std::filesystem::path& archive, const 
     unsigned callbacks = 0;
     bool rejected = false;
     try {
-        (void)flitzzip::extract_cab(archive, destination, true,
-                                    [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
+        (void)flitzzip::extract_cab(archive, destination, true, [&](const flitzzip::ProgressSnapshot& snapshot) {
+            if (!flitzzip_test::is_prepublication_progress(snapshot)) {
+                ++callbacks;
+            }
+        });
     } catch (const flitzzip::ArchiveError& error) {
         REQUIRE_TRUE(std::string_view(error.what()).find(diagnostic) != std::string_view::npos);
         rejected = true;
@@ -695,7 +745,11 @@ TEST_CASE(cab_active_writer_is_rejected_before_output_and_recovers) {
     bool rejected = false;
     unsigned callbacks = 0;
     try {
-        (void)flitzzip::extract_cab(archive, output, false, [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
+        (void)flitzzip::extract_cab(archive, output, false, [&](const flitzzip::ProgressSnapshot& snapshot) {
+            if (!flitzzip_test::is_prepublication_progress(snapshot)) {
+                ++callbacks;
+            }
+        });
     } catch (const flitzzip::SecurityError&) {
         rejected = true;
     }
@@ -769,7 +823,7 @@ void throw_cab_observer_failure(unsigned kind) {
     if (kind == 1U) {
         throw std::bad_alloc();
     }
-    throw 31415;
+    throw CabObserverMarker{31415};
 }
 }  // namespace
 
@@ -834,16 +888,21 @@ TEST_CASE(cab_callback_failures_preserve_types_cleanup_and_reuse) {
             const auto destination = root / (std::to_string(phase) + "-" + std::to_string(kind));
             std::filesystem::create_directory(destination);
             std::ofstream(destination / "file.txt", std::ios::binary) << "original";
-            unsigned callbacks = 0;
+            std::vector<std::uint64_t> completion_states;
             bool observed = false;
             try {
-                (void)flitzzip::extract_cab(archive, destination, true,
-                                            [&](const flitzzip::ProgressSnapshot& snapshot) {
-                                                ++callbacks;
-                                                if (snapshot.completed_entries == phase) {
-                                                    throw_cab_observer_failure(kind);
-                                                }
-                                            });
+                (void)flitzzip::extract_cab(
+                    archive, destination, true, [&](const flitzzip::ProgressSnapshot& snapshot) {
+                        if (flitzzip_test::is_prepublication_progress(snapshot)) {
+                            return;
+                        }
+                        if (completion_states.empty() || completion_states.back() != snapshot.completed_entries) {
+                            completion_states.push_back(snapshot.completed_entries);
+                        }
+                        if (snapshot.completed_entries == phase) {
+                            throw_cab_observer_failure(kind);
+                        }
+                    });
             } catch (const std::bad_alloc&) {
                 REQUIRE_EQ(kind, 1U);
                 observed = true;
@@ -851,13 +910,15 @@ TEST_CASE(cab_callback_failures_preserve_types_cleanup_and_reuse) {
                 REQUIRE_EQ(kind, 0U);
                 REQUIRE_EQ(std::string(error.what()), "independent CAB observer failure");
                 observed = true;
-            } catch (int marker) {
+            } catch (const CabObserverMarker& marker) {
                 REQUIRE_EQ(kind, 2U);
-                REQUIRE_EQ(marker, 31415);
+                REQUIRE_EQ(marker.value, 31415);
                 observed = true;
             }
             REQUIRE_TRUE(observed);
-            REQUIRE_EQ(callbacks, phase + 1U);
+            const auto expected_states =
+                phase == 0U ? std::vector<std::uint64_t>{0U} : std::vector<std::uint64_t>{0U, 1U};
+            REQUIRE_EQ(completion_states, expected_states);
             REQUIRE_EQ(read_text_file(destination / "file.txt"), phase == 0U ? "original" : "new CAB bytes");
             REQUIRE_EQ(
                 std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),

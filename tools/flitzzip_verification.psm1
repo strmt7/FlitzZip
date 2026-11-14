@@ -218,6 +218,7 @@ function Test-FlitzZipDiffLine {
 # Outputs: Returns fresh documentation, known-path and lint pattern arrays for one verification scope.
 function Get-FlitzZipVerificationPathPolicy {
     return [pscustomobject]@{
+        cmakeToolchain = @('^tools/cmake_toolchain\.ps1$', '^tools/cmake-toolchain\.sha256$')
         documentation = @(
             '^AGENTS\.md$',
             '^SECURITY\.md$',
@@ -365,7 +366,7 @@ function Get-FlitzZipVerificationScope {
     ))
     $touchesGui = Test-FlitzZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/FlitzZip\.GuiSmoke\.[^/]+\.psm1$')
     $touchesBrand = Test-FlitzZipAnyPath -Path $paths -Pattern @('^resources/brand/', '^resources/app/', '^tools/(generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^src/app/flitzzip_brand_logo')
-    $touchesPackaging = Test-FlitzZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version|test_installer_lifecycle)\.(ps1|py)$', '^tools/msi_(database|process)\.psm1$', '^tests/installer/')
+    $touchesPackaging = Test-FlitzZipAnyPath -Path $paths -Pattern (@('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version|test_installer_lifecycle)\.(ps1|py)$', '^tools/msi_(database|process)\.psm1$', '^tests/installer/') + $patterns.cmakeToolchain)
     $touchesLintSurface = Test-FlitzZipAnyPath -Path $paths -Pattern $patterns.lint
     $touchesBenchmarkCliDiff = (Test-FlitzZipAnyPath -Path $paths -Pattern @('^src/cli/main\.cpp$')) -and (Test-FlitzZipDiffLine -Path @("src/cli/main.cpp") -Pattern @('benchmark', 'throughput', 'compression.?level', 'block.?size', 'workers', 'inflight', 'gpu'))
     $touchesPerformance = $touchesBenchmarkCliDiff -or (Test-FlitzZipAnyPath -Path $paths -Pattern @('^src/gpu/', '^src/core/(archive|archive_blocks|archive_block_types|resource_limits)\.', '^tools/(bench|gpu_|storage_smoke)'))
@@ -558,6 +559,18 @@ function Get-FlitzZipToolVerificationCommand {
     }
 }
 
+# Describe the real ZIP and MSI authoring consumers when the CMake/CPack
+# distribution changes. This only selects arguments; it never installs a product.
+function Get-FlitzZipPackageSmokeCommand {
+    param([string[]]$Paths)
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/package.ps1', '-Configuration', 'Release')
+    $policy = Get-FlitzZipVerificationPathPolicy
+    if (Test-FlitzZipAnyPath -Path $Paths -Pattern $policy.cmakeToolchain) {
+        $arguments += '-CreateMsi'
+    }
+    return Get-FlitzZipVerificationCommand -Id 'package-smoke' -Stage 'local' -Executable 'powershell' -Arguments $arguments -Reason 'installer, CPack, versioning, or broad changes require package validation'
+}
+
 # Purpose: Select local checks without changing coverage for remote checkpoint timing.
 # Inputs: Scope and Paths describe the classified change; TouchesBenchmarkGraph selects graph tests; tool contracts use explicit dependency routing.
 # Outputs: Returns the ordered, deduplicated required local command descriptors.
@@ -619,7 +632,8 @@ function Get-FlitzZipLocalVerificationCommand {
             Add-FlitzZipVerificationCommand -List $local -Seen $seen -Command (Get-FlitzZipVerificationCommand -Id 'unit-tests' -Stage 'local' -Executable 'powershell' -Arguments $nativeArguments -Reason $nativeReason)
         }
     }
-    if ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
+    $touchesAuditedFunctions = Test-FlitzZipAnyPath -Path $scope.paths -Pattern @('\.(c|cc|cpp|h|hpp|ps1|psm1)$')
+    if ($touchesAuditedFunctions -or $scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
         Add-FlitzZipVerificationCommand -List $local -Seen $seen -Command (Get-FlitzZipVerificationCommand -Id "changed-refactor-audit" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/refactor_audit.ps1", "-ChangedOnly", "-MaxFunctionLines", "120", "-MaxComplexityMarkers", "35", "-FailOnFindings") -Reason "changed source and verification code must stay small and reviewable; substantive contracts receive source review")
     }
     if ($scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.fullEscalationRequired) {
@@ -644,7 +658,7 @@ function Get-FlitzZipLocalVerificationCommand {
     }
     if ($scope.touchesPackaging -or $scope.fullEscalationRequired) {
         Add-FlitzZipVerificationCommand -List $local -Seen $seen -Command (Get-FlitzZipVerificationCommand -Id "msi-identity-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_msi_identity.ps1") -Reason "installer identity changes require deterministic ProductCode and stable UpgradeCode coverage")
-        Add-FlitzZipVerificationCommand -List $local -Seen $seen -Command (Get-FlitzZipVerificationCommand -Id "package-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/package.ps1", "-Configuration", "Release") -Reason "installer, CPack, versioning, or broad changes require package validation")
+        Add-FlitzZipVerificationCommand -List $local -Seen $seen -Command (Get-FlitzZipPackageSmokeCommand -Paths $Paths)
     }
     foreach ($command in @(Get-FlitzZipToolVerificationCommand -Scope $Scope -Paths $Paths)) {
         # tools/test.ps1 already executes these identical helper contracts before CTest.

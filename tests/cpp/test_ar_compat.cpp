@@ -1,6 +1,7 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 #include "test_legacy_name.hpp"
+#include "test_stream_progress.hpp"
 
 #include "ar/ar_adapter.hpp"
 #include "ar/ar_reader.hpp"
@@ -246,7 +247,72 @@ void require_ar_reader_boundary_failures(bool io_error) {
     }
 }
 
+void check_ar_extraction_cancellation(bool validation) {
+    const auto root = test_temp_dir(validation ? "ar-validation-cancellation" : "ar-window-cancellation");
+    const auto source = root / "payload";
+    const auto archive = root / "payload.ar";
+    const auto expected = flitzzip_test::stream_cancellation_payload();
+    {
+        std::ofstream output(source, std::ios::binary);
+        output.write(expected.data(), static_cast<std::streamsize>(expected.size()));
+    }
+    (void)flitzzip::compress_ar({source}, archive);
+    if (validation) {
+        // Metadata-only AR seeks over payload; require the record checkpoint as
+        // well as scan entry/exit, rather than waiting for unneeded payload reads.
+        flitzzip_test::require_validation_cancellation(archive, root / "out", "payload", expected,
+                                                       &flitzzip::extract_ar, 3U);
+    } else {
+        flitzzip_test::require_stream_window_cancellation(archive, root / "out", "payload", expected,
+                                                          &flitzzip::extract_ar);
+    }
+}
+
 }  // namespace
+
+TEST_CASE(ar_extraction_validation_is_cancellable) {
+    check_ar_extraction_cancellation(true);
+}
+
+TEST_CASE(ar_extraction_payload_windows_are_cancellable) {
+    check_ar_extraction_cancellation(false);
+}
+
+TEST_CASE(ar_creation_payload_windows_preserve_target_on_cancellation) {
+    const auto root = test_temp_dir("ar-create-cancellation");
+    const auto source = root / "payload";
+    const auto archive = root / "caller.ar";
+    const auto expected = flitzzip_test::stream_cancellation_payload();
+    {
+        std::ofstream output(source, std::ios::binary);
+        output.write(expected.data(), static_cast<std::streamsize>(expected.size()));
+    }
+    {
+        std::ofstream output(archive, std::ios::binary);
+        output << "preserved archive";
+    }
+    std::size_t checkpoints = 0U;
+    bool interrupted = false;
+    try {
+        (void)flitzzip::compress_ar({source}, archive, [&](const auto& snapshot) {
+            REQUIRE_EQ(snapshot.operation, flitzzip::OperationKind::Compress);
+            REQUIRE_TRUE(snapshot.processed_bytes <= snapshot.total_bytes);
+            if (snapshot.completed_entries == 0U && ++checkpoints == 3U) {
+                throw flitzzip_test::SourceSessionInterrupted();
+            }
+        });
+    } catch (const flitzzip_test::SourceSessionInterrupted&) {
+        interrupted = true;
+    }
+    REQUIRE_TRUE(interrupted);
+    REQUIRE_EQ(flitzzip_test::source_session_fixture_bytes(archive), "preserved archive");
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(root), std::filesystem::directory_iterator()), 2);
+    DWORD error = ERROR_SUCCESS;
+    REQUIRE_TRUE(flitzzip_test::source_writer_available(source, error));
+    (void)flitzzip::compress_ar({source}, archive);
+    (void)flitzzip::extract_ar(archive, root / "retry", false);
+    REQUIRE_EQ(read_text_file(root / "retry" / "payload"), expected);
+}
 
 // Purpose: Prevent a non-EOF read error from being classified as a clean AR terminator.
 // Inputs: A valid two-member archive whose second member becomes unreadable at each byte boundary.

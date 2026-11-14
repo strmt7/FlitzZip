@@ -1078,7 +1078,7 @@ TEST_CASE(dictionary_encoder_workspace_boundaries) {
 // Purpose: Measure the actual experimental encoder only when a resource-monitoring harness explicitly opts in.
 // Inputs: FLITZZIP_DICTIONARY_BENCHMARK=1; deterministic RAM-only profiles, efforts, and batch sizes.
 // Outputs: Prints host-wall encoding time and real resource/size counters after independent CPU/HIP verification.
-TEST_CASE(dictionary_encoder_benchmark_opt_in) {
+TEST_CASE(dictionary_encoder_benchmark_opt_in, TestExecutionRole::Measurement) {
     wchar_t enabled[2]{};
     if (GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_BENCHMARK", enabled, 2U) != 1U || enabled[0] != L'1') {
         return;
@@ -1137,7 +1137,7 @@ TEST_CASE(dictionary_encoder_benchmark_opt_in) {
 // Purpose: Compare production CPU/HIP encoding on the same dictionary-friendly RAM-only source.
 // Inputs: Explicit opt-in, near-identical seeded 16 KiB records, equal effort/block settings, and alternating lanes.
 // Outputs: Prints median host times and exact sizes after byte-exact decode and GPU-native selection.
-TEST_CASE(dictionary_production_benchmark_opt_in) {
+TEST_CASE(dictionary_production_benchmark_opt_in, TestExecutionRole::Measurement) {
     wchar_t enabled[2]{};
     if (GetEnvironmentVariableW(L"FLITZZIP_DICTIONARY_PRODUCTION_BENCHMARK", enabled, 2U) != 1U || enabled[0] != L'1') {
         return;

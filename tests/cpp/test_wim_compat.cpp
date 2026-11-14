@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_source_session.hpp"
+#include "test_stream_progress.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -83,7 +84,59 @@ void write_unicode_wim_fixture(const std::filesystem::path& source, const std::f
     REQUIRE_EQ(write(wim.get(), archive.c_str(), WIMLIB_ALL_IMAGES, WIMLIB_WRITE_FLAG_CHECK_INTEGRITY, 1U), 0);
 }
 
+std::filesystem::path make_wim_cancellation_archive(const std::filesystem::path& root, std::string_view expected) {
+    // Initialize the real checked runtime before resolving its independent writer.
+    (void)flitzzip::extract_wim(wim_fixture_path("basic.wim"), root / "initialize", false);
+    const auto source = root / "source";
+    std::filesystem::create_directory(source);
+    {
+        std::ofstream output(source / "payload.bin", std::ios::binary);
+        output.exceptions(std::ios::badbit | std::ios::failbit);
+        output.write(expected.data(), static_cast<std::streamsize>(expected.size()));
+        output.close();
+    }
+    const auto archive = root / "input.wim";
+    write_unicode_wim_fixture(source, archive, 1);
+    return archive;
+}
+
 }  // namespace
+
+TEST_CASE(wim_cancellation_fixture_has_valid_multi_window_payload) {
+    flitzzip_test::with_stream_cancellation_fixture("wim-cancel-valid", make_wim_cancellation_archive,
+                                                    [](const auto& archive, const auto& output, const auto& expected) {
+                                                        flitzzip_test::require_stream_fixture_readback(
+                                                            archive, output, expected, flitzzip::extract_wim);
+                                                        flitzzip_test::export_compat_fixture(archive, output);
+                                                    });
+}
+
+TEST_CASE(wim_extraction_validation_is_cancellable) {
+    flitzzip_test::with_stream_cancellation_fixture("wim-cancel-validation", make_wim_cancellation_archive,
+                                                    [](const auto& archive, const auto& output, const auto& expected) {
+                                                        flitzzip_test::require_validation_cancellation(
+                                                            archive, output, "payload.bin", expected,
+                                                            flitzzip::extract_wim, 3U);
+                                                    });
+}
+
+TEST_CASE(wim_native_image_staging_is_cancellable) {
+    flitzzip_test::with_stream_cancellation_fixture("wim-cancel-native", make_wim_cancellation_archive,
+                                                    [](const auto& archive, const auto& output, const auto& expected) {
+                                                        flitzzip_test::require_validation_cancellation(
+                                                            archive, output, "payload.bin", expected,
+                                                            flitzzip::extract_wim, 1U, "Decoding WIM image");
+                                                    });
+}
+
+TEST_CASE(wim_extraction_payload_windows_are_cancellable) {
+    flitzzip_test::with_stream_cancellation_fixture("wim-cancel-windows", make_wim_cancellation_archive,
+                                                    [](const auto& archive, const auto& output, const auto& expected) {
+                                                        flitzzip_test::require_stream_window_cancellation(
+                                                            archive, output, "payload.bin", expected,
+                                                            flitzzip::extract_wim, true);
+                                                    });
+}
 
 // Purpose: Qualify source ownership and destination refusal through the real WIM library and publication path.
 // Inputs: One tiny image from the pinned independent writer, active source/destination handles and cancellation.
@@ -314,8 +367,11 @@ void require_wim_metadata_rejected(const std::filesystem::path& archive, const s
     unsigned callbacks = 0;
     bool rejected = false;
     try {
-        (void)flitzzip::extract_wim(archive, destination, true,
-                                    [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
+        (void)flitzzip::extract_wim(archive, destination, true, [&](const flitzzip::ProgressSnapshot& snapshot) {
+            if (!flitzzip_test::is_prepublication_progress(snapshot)) {
+                ++callbacks;
+            }
+        });
     } catch (const flitzzip::Error& error) {
         REQUIRE_TRUE(std::string_view(error.what()).find(expected) != std::string_view::npos);
         rejected = true;
@@ -445,7 +501,10 @@ TEST_CASE(wim_staged_size_changes_reject_before_publication_and_recover) {
         std::filesystem::path staged_payload;
         bool rejected = false;
         try {
-            (void)flitzzip::extract_wim(archive, destination, true, [&](const flitzzip::ProgressSnapshot&) {
+            (void)flitzzip::extract_wim(archive, destination, true, [&](const flitzzip::ProgressSnapshot& snapshot) {
+                if (flitzzip_test::is_prepublication_progress(snapshot)) {
+                    return;
+                }
                 ++callbacks;
                 REQUIRE_EQ(callbacks, 1U);
                 for (const auto& candidate : std::filesystem::recursive_directory_iterator(destination)) {
@@ -662,7 +721,11 @@ TEST_CASE(wim_corrupt_payload_fails_staging_and_preserves_destination) {
     bool rejected = false;
     try {
         (void)flitzzip::extract_wim(rejected_archive, destination, true,
-                                    [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
+                                    [&](const flitzzip::ProgressSnapshot& snapshot) {
+                                        if (!flitzzip_test::is_prepublication_progress(snapshot)) {
+                                            ++callbacks;
+                                        }
+                                    });
     } catch (const flitzzip::ArchiveError& error) {
         REQUIRE_TRUE(std::string_view(error.what()).find("failed to stage WIM image") != std::string_view::npos);
         rejected = true;
@@ -818,8 +881,11 @@ void require_wim_utf16_rejected_without_output(const std::filesystem::path& arch
     unsigned callbacks = 0;
     bool rejected = false;
     try {
-        (void)flitzzip::extract_wim(archive, destination, false,
-                                    [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
+        (void)flitzzip::extract_wim(archive, destination, false, [&](const flitzzip::ProgressSnapshot& snapshot) {
+            if (!flitzzip_test::is_prepublication_progress(snapshot)) {
+                ++callbacks;
+            }
+        });
     } catch (const flitzzip::ArchiveError& error) {
         REQUIRE_EQ(std::string(error.what()), "wimlib returned invalid UTF-16 text: Windows error 1113");
         rejected = true;

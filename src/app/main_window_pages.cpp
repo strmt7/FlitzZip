@@ -993,7 +993,7 @@ void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& sta
     draw_button(dc, layout.open_log_file, L"Open log file", false);
 }
 
-// Purpose: Render the About page brand, version, and compatibility boundary summary.
+// Purpose: Render the About page brand, version, and user capability summary.
 // Inputs: `dc` is the target device context and `rect` is the DPI-scaled page bounds.
 // Outputs: Draws into `dc`; does not mutate archive state or perform I/O.
 void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
@@ -1019,10 +1019,9 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
               widen(std::string("Version: ") + FLITZZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_text(
         dc, RECT{card.left + scale(42), card.top + scale(184), card.right - scale(42), card.top + scale(294)},
-        L"FlitzZip separates native .flzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, "
-        L"LZMA, lzip, Zstandard, Unix Compress, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM standard "
-        L"archive/compression handling. Legacy transfer decoders remain extract-only. AMD HIP is the only GPU "
-        L"acceleration boundary; security-sensitive extraction validates paths and metadata before writing output.",
+        L"Create and extract archives with a native Windows interface and a command line tool. Work with ZIP, TAR, "
+        L"Gzip, Bzip2 and Zstandard, and extract supported 7z, XZ, CAB and other formats. Native .flzip jobs can use "
+        L"compatible AMD GPUs. Neutron star mode requires GPU acceleration and prioritizes archive size.",
         kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_button(dc, licenses_button, L"Licenses", false);
     draw_text(

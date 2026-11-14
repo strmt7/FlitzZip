@@ -38,6 +38,8 @@ CONFIGURATIONS = ("Debug", "Release", "RelWithDebInfo")
 RECEIPT = "native-build-receipt.json"
 TRANSACTION = "native-build-transaction.json"
 LOCK = "native-build.lock"
+RECEIPT_SCHEMA_VERSION = 2
+RECEIPT_KIND = "successful-native-invocation-v2"
 SHA256 = r"[0-9a-f]{64}"
 RECIPE_KEYS = (
     "CMAKE_GENERATOR",
@@ -100,11 +102,13 @@ def validate_receipt(value: dict, *, allow_historical_toolchain: bool = False) -
         "clean_first",
         "outputs_sha256",
     }
+    if isinstance(value, dict) and value.get("schema_version") == 2:
+        keys.add("executable_targets")
     if not isinstance(value, dict) or set(value) != keys or type(value["schema_version"]) is not int:
         raise ValueError("invalid native receipt schema")
     if (
-        value["schema_version"] != 1
-        or value["kind"] != "successful-native-invocation-v1"
+        value["schema_version"] not in (1, 2)
+        or value["kind"] != f"successful-native-invocation-v{value['schema_version']}"
         or value["status"] != "successful"
     ):
         raise ValueError("unsupported native invocation receipt")
@@ -164,6 +168,10 @@ def validate_receipt(value: dict, *, allow_historical_toolchain: bool = False) -
         f"build/{recipe['configuration']}/{product}.exe",
         manifest,
     }
+    if value["schema_version"] == 2:
+        targets = validate_executable_targets(value["executable_targets"], recipe["configuration"])
+        required.update(targets.values())
+        required.add(f"build/{recipe['configuration']}/flitzzip-native-executables.json")
     if not required <= outputs.keys():
         raise ValueError("native receipt lacks required outputs")
     prefix = f"build/{recipe['configuration']}/"
@@ -172,6 +180,32 @@ def validate_receipt(value: dict, *, allow_historical_toolchain: bool = False) -
     ):
         raise ValueError("native receipt output exceeds the app-local artifact scope")
     return hashlib.sha256(canonical(value)).hexdigest()
+
+
+# Bind named default-built targets, including future native tests, to portable
+# configuration-specific executable paths. Distinct targets cannot alias a file.
+def validate_executable_targets(value: object, configuration: str) -> dict:
+    if not isinstance(value, dict) or not value or len(value) > 256:
+        raise ValueError("invalid native executable target inventory")
+    if any(not isinstance(path, str) for path in value.values()):
+        raise ValueError("invalid native executable path")
+    validate_hash_map({path: "0" * 64 for path in value.values()}, 256, "build/")
+    paths = set()
+    for target, path in value.items():
+        if not isinstance(target, str) or not re.fullmatch(r"[A-Za-z0-9_.+-]{1,128}", target):
+            raise ValueError("invalid native executable target name")
+        if configuration not in PurePosixPath(path).parts[1:-1] or not path.endswith(".exe"):
+            raise ValueError("native executable is outside its configuration")
+        if path.casefold() in paths:
+            raise ValueError("native executable targets alias the same artifact")
+        paths.add(path.casefold())
+    expected = {
+        "FlitzZip": f"build/{configuration}/FlitzZip.exe",
+        "flitzzip_cli": f"build/{configuration}/flitzzip_cli.exe",
+    }
+    if any(value.get(target) != path for target, path in expected.items()) or "flitzzip_tests" not in value:
+        raise ValueError("native executable inventory lacks required product/test targets")
+    return value
 
 
 # Purpose: Reject unsupported or path-bearing observed toolchain fields in portable receipts.
@@ -504,7 +538,7 @@ def prepare(root: Path, token: str, cmake: Path) -> dict:
             current_outputs = None
         fresh = (
             previous.get("status") != "successful"
-            or previous.get("kind") != "successful-native-invocation-v1"
+            or previous.get("kind") != RECEIPT_KIND
             or previous.get("recipe") != recipe
             or previous.get("toolchain") != toolchain
             or previous.get("outputs_sha256") != current_outputs
@@ -515,14 +549,52 @@ def prepare(root: Path, token: str, cmake: Path) -> dict:
     return {"clean_first_required": fresh}
 
 
-# Purpose: Bind actual GUI, CLI, runtime manifest and all app-local DLL contents.
+# Read the generated CMake inventory without executing build tools or tests.
+# Excluded targets remain declared but cannot qualify an old leftover executable.
+def executable_inventory(root: Path, configuration: str) -> dict:
+    name = f"build/{configuration}/flitzzip-native-executables.json"
+    value = read_metadata(root, name)
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema_version", "configuration", "executables"}
+        or type(value["schema_version"]) is not int
+        or value["schema_version"] != 1
+        or value["configuration"] != configuration
+        or not isinstance(value["executables"], list)
+        or not 1 <= len(value["executables"]) <= 256
+    ):
+        raise ValueError("invalid native executable declaration schema or configuration")
+    targets = {}
+    seen = set()
+    for item in value["executables"]:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"target", "path", "default_build"}
+            or not isinstance(item["target"], str)
+            or not re.fullmatch(r"[A-Za-z0-9_.+-]{1,128}", item["target"])
+            or not isinstance(item["path"], str)
+            or type(item["default_build"]) is not bool
+        ):
+            raise ValueError("invalid native executable declaration")
+        relative = "build/" + item["path"]
+        validate_hash_map({relative: "0" * 64}, 1, "build/")
+        if item["target"] in seen:
+            raise ValueError("duplicate native executable declaration")
+        seen.add(item["target"])
+        if item["default_build"]:
+            targets[item["target"]] = relative
+    return validate_executable_targets(targets, configuration)
+
+
+# Purpose: Bind actual executables, their CMake declaration, runtime manifest and all app-local DLL contents.
 # Inputs: Checkout and configuration. Outputs: Portable output hashes; missing, linked or inconsistent outputs fail.
 def capture_outputs(root: Path, configuration: str) -> dict:
     if configuration not in CONFIGURATIONS:
         raise ValueError("unsupported native output configuration")
     prefix = f"build/{configuration}"
     manifest = f"{prefix}/flitzzip-runtime-dependencies.json"
-    names = {f"{prefix}/flitzzip_cli.exe", f"{prefix}/FlitzZip.exe", manifest}
+    targets = executable_inventory(root, configuration)
+    names = {*targets.values(), manifest, f"{prefix}/flitzzip-native-executables.json"}
     runtime = read_metadata(root, manifest)
     dependencies = runtime.get("packaged_runtime_files")
     if not isinstance(dependencies, list) or not dependencies:
@@ -552,8 +624,8 @@ def finish(root: Path, token: str, cmake: Path, clean_first: bool) -> dict:
     if capture_inputs(root) != state["inputs"]:
         raise ValueError("native inputs changed during build; no successful receipt published")
     receipt = {
-        "schema_version": 1,
-        "kind": "successful-native-invocation-v1",
+        "schema_version": RECEIPT_SCHEMA_VERSION,
+        "kind": RECEIPT_KIND,
         "transaction_id": token,
         "status": "successful",
         "inputs": state["inputs"],
@@ -561,6 +633,7 @@ def finish(root: Path, token: str, cmake: Path, clean_first: bool) -> dict:
         "toolchain": state["toolchain"],
         "clean_first": clean_first,
         "outputs_sha256": outputs,
+        "executable_targets": executable_inventory(root, state["configuration"]),
     }
     validate_receipt(receipt)
     publish(root, rebuild_receipt_name(state["configuration"]), receipt)
@@ -581,33 +654,78 @@ def end_incomplete(root: Path, token: str, status: str) -> None:
 
 
 # Purpose: Verify current source/output/configuration against one completed native build.
-# Inputs: Checkout, configuration and whether HIP is required.
+# Inputs: Checkout, configuration (None selects the completed receipt), HIP requirement
+# and optional exact target/path requests. Explicit configuration mismatches fail.
 # Outputs: Portable receipt summary; rejects active or stale evidence.
-def validate_current(root: Path, configuration: str, require_hip: bool) -> dict:
+def validate_current(root: Path, configuration: str | None, require_hip: bool, executables=None) -> dict:
     # Windows FileShare.None held by build.ps1 rejects this open throughout configure/build/publication.
     with input_path(root, f"build/{LOCK}").open("rb"):
         state = read_metadata(root, f"build/{TRANSACTION}")
         receipt = read_metadata(root, f"build/{RECEIPT}")
         digest = validate_receipt(receipt)
+        if receipt["schema_version"] != RECEIPT_SCHEMA_VERSION:
+            raise ValueError("current execution requires a rebuilt executable-binding receipt")
         if state.get("status") != "successful" or receipt.get("status") != "successful":
             raise ValueError("native build is active, failed or incomplete")
         if state.get("transaction_id") != receipt.get("transaction_id") or state.get("receipt_sha256") != digest:
             raise ValueError("native build receipt does not match the completed transaction")
+        if configuration is None:
+            configuration = receipt["recipe"]["configuration"]
         recipe, _ = configured_recipe(root, configuration)
         if recipe != receipt.get("recipe"):
             raise ValueError("native build receipt configuration is stale")
         if require_hip and recipe["FLITZZIP_ENABLE_HIP"] != "ON":
-            raise ValueError("required-HIP measurement cannot use a CPU-only build receipt")
-        if capture_inputs(root) != receipt.get("inputs") or capture_outputs(root, configuration) != receipt.get(
-            "outputs_sha256"
+            raise ValueError("required-HIP execution cannot use a CPU-only build receipt")
+        if (
+            capture_inputs(root) != receipt.get("inputs")
+            or capture_outputs(root, configuration) != receipt.get("outputs_sha256")
+            or executable_inventory(root, configuration) != receipt["executable_targets"]
         ):
-            raise ValueError("native build inputs or outputs changed; rebuild before measurement")
-        return {
+            raise ValueError("native build inputs or outputs changed; rebuild before execution")
+        result = {
             "receipt_sha256": digest,
             "inputs_sha256": receipt["inputs"]["inputs_sha256"],
             "recipe": recipe,
             "receipt": receipt,
         }
+        if executables is not None:
+            result["executables"] = admit_executables(root, receipt, executables)
+        return result
+
+
+# Admit exact caller requests against already checked build-declared targets.
+# Paths remain inside the checkout and cannot traverse linked ancestors. Returned
+# paths are canonical receipt names; callers must execute those admitted names.
+def admit_executables(root: Path, receipt: dict, requests) -> list[dict]:
+    if not isinstance(requests, (tuple, list)) or not 1 <= len(requests) <= 256:
+        raise ValueError("a bounded nonempty executable selection is required")
+    declared = receipt["executable_targets"]
+    seen = set()
+    admitted = []
+    for expected, supplied in requests:
+        if expected is not None and expected not in declared:
+            raise ValueError("requested executable target is not part of the successful build")
+        supplied_path = Path(supplied)
+        absolute = Path(os.path.abspath(root / supplied_path))
+        try:
+            relative = absolute.relative_to(root.resolve(strict=True)).as_posix()
+        except ValueError:
+            raise ValueError("requested executable is outside the successful build") from None
+        selected = input_path(root, relative)
+        matches = [
+            (target, path)
+            for target, path in declared.items()
+            if path.casefold() == relative.casefold() and (expected is None or expected == target)
+        ]
+        if len(matches) != 1 or relative.casefold() in seen:
+            raise ValueError("requested executable does not match a unique declared target")
+        target, name = matches[0]
+        digest = file_digest(selected)
+        if digest != receipt["outputs_sha256"][name]:
+            raise ValueError("requested executable changed after build validation")
+        seen.add(relative.casefold())
+        admitted.append({"target": target, "path": name, "sha256": digest})
+    return admitted
 
 
 # Purpose: Bridge Windows build/benchmark tools to one receipt implementation.
@@ -615,24 +733,36 @@ def validate_current(root: Path, configuration: str, require_hip: bool) -> dict:
 # Outputs: Bounded JSON summary or nonzero actionable failure.
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("begin", "prepare", "finish", "failed", "configure-only", "validate"))
+    parser.add_argument(
+        "operation",
+        choices=("begin", "prepare", "finish", "failed", "configure-only", "validate", "validate-execution"),
+    )
     parser.add_argument("--root", type=Path, default=ROOT)
-    parser.add_argument("--configuration", choices=CONFIGURATIONS, default="Release")
+    parser.add_argument("--configuration", choices=CONFIGURATIONS)
     parser.add_argument("--token", default="")
     parser.add_argument("--cmake", type=Path)
     parser.add_argument("--clean-first", action="store_true")
     parser.add_argument("--require-hip", action="store_true")
+    parser.add_argument("--artifact", action="append", default=[])
+    parser.add_argument("--target", action="append", default=[])
     args = parser.parse_args()
     if args.operation in ("prepare", "finish") and args.cmake is None:
         parser.error("configured receipt operations require --cmake")
     if args.operation == "begin":
-        result = begin(args.root, args.configuration)
+        result = begin(args.root, args.configuration or "Release")
     elif args.operation == "prepare":
         result = prepare(args.root, args.token, args.cmake)
     elif args.operation == "finish":
         result = finish(args.root, args.token, args.cmake, args.clean_first)
     elif args.operation == "validate":
-        result = validate_current(args.root, args.configuration, args.require_hip)
+        result = validate_current(args.root, args.configuration or "Release", args.require_hip)
+    elif args.operation == "validate-execution":
+        if not args.artifact or args.target and len(args.target) != len(args.artifact):
+            parser.error("execution requires artifacts and matching optional target names")
+        targets = args.target or [None] * len(args.artifact)
+        result = validate_current(
+            args.root, args.configuration, args.require_hip, list(zip(targets, args.artifact, strict=True))
+        )
     else:
         end_incomplete(args.root, args.token, args.operation)
         result = {"status": args.operation}

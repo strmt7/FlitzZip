@@ -145,6 +145,54 @@ function Assert-ReleaseNotesDoNotDuplicateTitle {
     }
 }
 
+# Portable smoke must consume the emitted distribution, not an equivalent-looking
+# staging directory. Archive/runtime behavior remains exercised by its normal tests.
+function Assert-ReleasePortableSmoke {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+    $text = Get-Content -LiteralPath (Join-Path $RepoRoot '.github/workflows/release.yml') -Raw
+    $step = [regex]::Match($text,
+        '(?ms)^      - name: Portable install smoke\r?\n(?<body>.*?)(?=^      - name:|\z)')
+    if (-not $step.Success -or $step.Groups['body'].Value -match 'out[\\/]install-Release') {
+        throw 'Portable smoke must consume the actual extracted candidate ZIP, not the install stage.'
+    }
+    foreach ($required in @(
+            '$portable = Join-Path $PWD "out/$env:PACKAGE_BASE-portable.zip"',
+            'Invoke-FlitzZipPortableSmoke -ArchivePath $portable -WorkRoot $env:RUNNER_TEMP -Confirm:$false -Test {',
+            'param($packageRoot, $smokeRoot)',
+            '$cli = Join-Path $packageRoot ''bin/flitzzip_cli.exe''',
+            '$root = Join-Path $smokeRoot ''native''')) {
+        if (-not $step.Groups['body'].Value.Contains($required)) {
+            throw "Portable artifact qualification lost its extraction or consumer: $required"
+        }
+    }
+}
+
+# Both installer phases must verify the complete portable payload before running
+# installed binaries. A CLI-only repair control does not cover the other files.
+function Assert-ReleaseInstalledPayloadSmoke {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+    $text = Get-Content -LiteralPath (Join-Path $RepoRoot '.github/workflows/release.yml') -Raw
+    $step = [regex]::Match($text, '(?ms)^      - name: MSI install smoke\r?\n(?<body>.*?)(?=^      - name:|\z)')
+    $body = $step.Groups['body'].Value
+    $snapshot = '$portablePayload = Get-FlitzZipPortablePayload -Path (Join-Path $PWD "out/$env:PACKAGE_BASE-portable.zip")'
+    $check = 'Assert-FlitzZipInstalledPayload -PackageRoot $installedRoot -Payload $portablePayload'
+    $install = $body.IndexOf('-Phase "MSI install"', [StringComparison]::Ordinal)
+    $repair = $body.IndexOf('-Phase "MSI repair"', [StringComparison]::Ordinal)
+    $remove = $body.IndexOf('Remove-Item -LiteralPath (Join-Path $installedRoot $name) -Force', [StringComparison]::Ordinal)
+    $first = $body.IndexOf($check, [StringComparison]::Ordinal)
+    $last = $body.LastIndexOf($check, [StringComparison]::Ordinal)
+    if (-not $step.Success -or -not $body.Contains($snapshot) -or
+        -not $body.Contains('$installedRoot = Split-Path -Parent (Split-Path -Parent $expectedCli)') -or
+        -not $body.Contains('foreach ($name in $portablePayload.get_Keys())') -or
+        $body.IndexOf($snapshot, [StringComparison]::Ordinal) -ge $install -or
+        $install -lt 0 -or $first -le $install -or $first -ge $repair -or $last -le $repair -or
+        $remove -le $first -or $remove -ge $repair -or
+        $body.IndexOf('$dependency =', [StringComparison]::Ordinal) -le $first -or
+        $body.IndexOf('$repairDependency =', [StringComparison]::Ordinal) -le $last) {
+        throw 'MSI install and repair must each verify all portable payload bytes before execution.'
+    }
+}
+
 # Purpose: Keep candidate validation read-only and publication dependent on the validated artifact.
 # Inputs: RepoRoot contains the manual release workflow and its explicit publication input.
 # Outputs: Throws when validation can publish, publication is unconditional, or candidate checksums are unchecked.
@@ -181,7 +229,7 @@ function Assert-ReleaseValidationIsolation {
             '& tools/format_matrix_smoke.ps1 -Configuration Release -WorkRoot $env:RUNNER_TEMP -CliPath $cli',
             'Packaged native compression failed.', 'Packaged native verification failed.',
             'Packaged native extraction failed.', 'Packaged native readback differs from the complete source.',
-            'Remove-Item -LiteralPath $expectedCli -Force',
+            'Remove-Item -LiteralPath (Join-Path $installedRoot $name) -Force',
             'MSI repair did not restore the exact staged CLI bytes.')) {
         if (-not $validationText.Contains($required)) {
             throw "Release qualification lost its packaged-binary or repair consumer: $required"

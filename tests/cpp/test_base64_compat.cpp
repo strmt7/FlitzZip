@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
+#include "test_text_transfer_progress.hpp"
 
 #include "base64/base64_adapter.hpp"
 #include "core/archive_format.hpp"
@@ -226,4 +227,66 @@ TEST_CASE(base64_extract_rejects_overwrite_by_default) {
                                                             'd',
                                                         }));
     std::filesystem::remove_all(root);
+}
+
+namespace {
+void require_base64_transfer_progress(bool wrapped, flitzzip_test::TextTransferCheck check) {
+    flitzzip_test::require_text_transfer_progress(
+        "base64-transfer-progress", "b64",
+        [wrapped](std::string_view payload, std::string_view newline) {
+            const auto prefix =
+                wrapped ? std::string("begin-base64 644 payload.bin") + std::string(newline) : std::string{};
+            const auto suffix = wrapped ? std::string("====") + std::string(newline) : std::string{};
+            return flitzzip_test::make_literal_transfer_text(payload, newline, prefix, "QUJD", suffix);
+        },
+        flitzzip::extract_base64_file, check);
+}
+}  // namespace
+
+TEST_CASE(base64_raw_transfer_readback) {
+    require_base64_transfer_progress(false, flitzzip_test::TextTransferCheck::Readback);
+}
+
+TEST_CASE(base64_wrapped_transfer_readback) {
+    require_base64_transfer_progress(true, flitzzip_test::TextTransferCheck::Readback);
+}
+
+TEST_CASE(base64_raw_transfer_payload_cancellation) {
+    require_base64_transfer_progress(false, flitzzip_test::TextTransferCheck::PayloadCancellation);
+}
+
+TEST_CASE(base64_wrapped_transfer_payload_cancellation) {
+    require_base64_transfer_progress(true, flitzzip_test::TextTransferCheck::PayloadCancellation);
+}
+
+TEST_CASE(base64_raw_transfer_trailing_cancellation) {
+    require_base64_transfer_progress(false, flitzzip_test::TextTransferCheck::TrailingCancellation);
+}
+
+TEST_CASE(base64_wrapped_transfer_trailing_cancellation) {
+    require_base64_transfer_progress(true, flitzzip_test::TextTransferCheck::TrailingCancellation);
+}
+
+TEST_CASE(base64_raw_transfer_final_counters) {
+    require_base64_transfer_progress(false, flitzzip_test::TextTransferCheck::FinalCounters);
+}
+
+TEST_CASE(base64_wrapped_transfer_final_counters) {
+    require_base64_transfer_progress(true, flitzzip_test::TextTransferCheck::FinalCounters);
+}
+
+TEST_CASE(base64_raw_transfer_before_publication) {
+    require_base64_transfer_progress(false, flitzzip_test::TextTransferCheck::BeforePublication);
+}
+
+TEST_CASE(base64_wrapped_transfer_before_publication) {
+    require_base64_transfer_progress(true, flitzzip_test::TextTransferCheck::BeforePublication);
+}
+
+TEST_CASE(base64_raw_transfer_bounded_callbacks) {
+    require_base64_transfer_progress(false, flitzzip_test::TextTransferCheck::BoundedCallbacks);
+}
+
+TEST_CASE(base64_wrapped_transfer_bounded_callbacks) {
+    require_base64_transfer_progress(true, flitzzip_test::TextTransferCheck::BoundedCallbacks);
 }

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
@@ -14,6 +15,7 @@
 #include <iterator>
 #include <limits>
 #include <string>
+#include <sys/stat.h>
 #include <vector>
 #include <windows.h>
 
@@ -245,6 +247,37 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
     return count;
 }
 
+// Fixed binary input crosses multiple Miniz I/O windows without a benchmark.
+std::string zip_progress_fixture() {
+    std::string bytes(256U * 1024U + 19U, '\0');
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+        bytes[index] = static_cast<char>((index * 37U + (index >> 6U)) & 255U);
+    }
+    return bytes;
+}
+
+std::string read_zip_fixture(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    REQUIRE_TRUE(input.good());
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+// Keep the pinned add_file implementation as an independent assembly/metadata
+// oracle. Close before assertions and never unwind across the C calls.
+void write_zip_file_reference(const std::filesystem::path& source, const std::filesystem::path& path, int effort) {
+    const auto archive_path = path.u8string();
+    const auto source_path = source.u8string();
+    mz_zip_archive writer{};
+    REQUIRE_TRUE(mz_zip_writer_init_file(&writer, reinterpret_cast<const char*>(archive_path.c_str()), 0));
+    const bool added = mz_zip_writer_add_file(&writer, "source.bin", reinterpret_cast<const char*>(source_path.c_str()),
+                                              nullptr, 0, static_cast<mz_uint>(effort)) != 0;
+    const bool finalized = added && mz_zip_writer_finalize_archive(&writer) != 0;
+    const bool closed = mz_zip_writer_end(&writer) != 0;
+    REQUIRE_TRUE(added && finalized && closed);
+}
+
+struct ZipProgressAbort {};
+
 }  // namespace
 
 // Purpose: Exercise miniz's UTF-8 filesystem interface and ZIP EFS metadata at every supported effort.
@@ -290,6 +323,149 @@ TEST_CASE(zip_unicode_paths_roundtrip_all_efforts) {
             REQUIRE_EQ(
                 std::filesystem::file_size(destination / source.filename() / std::filesystem::path(u8"\u00e9.txt")),
                 0U);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// An observer must be able to interrupt within a member, retaining the caller's
+// destination and releasing every staging/source handle before it receives control.
+TEST_CASE(zip_create_progress_aborts_within_member_before_publication) {
+    const auto root = test_temp_dir("zip-create-progress-abort");
+    const auto source = root / "source.bin";
+    const auto archive = root / "output.zip";
+    const auto bytes = zip_progress_fixture();
+    std::ofstream(source, std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    for (const bool at_end : {false, true}) {
+        std::ofstream(archive, std::ios::binary) << "existing destination";
+        bool checkpoint = false;
+        bool aborted = false;
+        try {
+            (void)flitzzip::compress_zip({source}, archive, 5, [&](const flitzzip::ProgressSnapshot& snapshot) {
+                const bool complete = snapshot.processed_bytes == snapshot.total_bytes;
+                if (snapshot.processed_bytes > 0U && complete == at_end) {
+                    checkpoint = true;
+                    throw ZipProgressAbort{};
+                }
+            });
+        } catch (const ZipProgressAbort&) {
+            aborted = true;
+        }
+        REQUIRE_TRUE(checkpoint && aborted);
+        REQUIRE_EQ(read_zip_fixture(archive), "existing destination");
+        REQUIRE_EQ(read_zip_fixture(source), bytes);
+        REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(root), std::filesystem::directory_iterator()), 2);
+    }
+    const auto renamed = root / "released.bin";
+    std::filesystem::rename(source, renamed);
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE(zip_create_streaming_preserves_pinned_file_bytes_all_efforts) {
+    const auto root = test_temp_dir("zip-create-stream-parity");
+    const auto source = root / "source.bin";
+    const auto archive = root / "actual.zip";
+    const auto reference = root / "reference.zip";
+    for (const auto& bytes : {std::string{}, zip_progress_fixture()}) {
+        std::ofstream(source, std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        for (int effort = 1; effort <= 9; ++effort) {
+            std::uint64_t observed = 0;
+            bool partial = false;
+            const auto stats =
+                flitzzip::compress_zip({source}, archive, effort, [&](const flitzzip::ProgressSnapshot& snapshot) {
+                    REQUIRE_EQ(snapshot.total_bytes, bytes.size());
+                    REQUIRE_TRUE(snapshot.processed_bytes >= observed && snapshot.processed_bytes <= bytes.size());
+                    REQUIRE_TRUE(snapshot.processed_bytes - observed <= 64U * 1024U);
+                    observed = snapshot.processed_bytes;
+                    partial = partial || (observed > 0U && observed < bytes.size());
+                });
+            REQUIRE_EQ(stats.input_bytes, bytes.size());
+            REQUIRE_EQ(observed, bytes.size());
+            REQUIRE_EQ(partial, !bytes.empty());
+            write_zip_file_reference(source, reference, effort);
+            REQUIRE_EQ(read_zip_fixture(archive), read_zip_fixture(reference));
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Cancellation must reach decoded windows before a member replaces an existing
+// target, including the final output window. Archive locks must not survive it.
+TEST_CASE(zip_extract_progress_aborts_within_member_before_publication) {
+    const auto root = test_temp_dir("zip-extract-progress-abort");
+    const auto source = root / "source.bin";
+    const auto archive = root / "input.zip";
+    const auto destination = root / std::filesystem::path(u8"output-\u03a9");
+    const auto target = destination / "source.bin";
+    const auto bytes = zip_progress_fixture();
+    std::ofstream(source, std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    std::filesystem::create_directory(destination);
+    write_zip_file_reference(source, archive, 5);
+    for (const bool at_end : {false, true}) {
+        std::ofstream(target, std::ios::binary) << "existing destination";
+        const auto original_time = std::filesystem::last_write_time(target);
+        bool checkpoint = false;
+        bool aborted = false;
+        try {
+            (void)flitzzip::extract_zip(archive, destination, true, [&](const flitzzip::ProgressSnapshot& snapshot) {
+                const bool complete = snapshot.processed_bytes == snapshot.total_bytes;
+                if (snapshot.processed_bytes > 0U && complete == at_end) {
+                    checkpoint = true;
+                    throw ZipProgressAbort{};
+                }
+            });
+        } catch (const ZipProgressAbort&) {
+            aborted = true;
+        }
+        REQUIRE_TRUE(checkpoint && aborted);
+        REQUIRE_EQ(read_zip_fixture(target), "existing destination");
+        REQUIRE_EQ(std::filesystem::last_write_time(target), original_time);
+        REQUIRE_EQ(
+            std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator()), 1);
+        const auto renamed = root / "released.zip";
+        std::filesystem::rename(archive, renamed);
+        std::filesystem::rename(renamed, archive);
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE(zip_extract_streaming_preserves_bytes_and_unicode_timestamp) {
+    const auto root = test_temp_dir("zip-extract-stream-parity");
+    const auto source = root / "source.bin";
+    const auto archive = root / "input.zip";
+    const auto destination = root / std::filesystem::path(u8"output-\u03a9");
+    const auto target = destination / "source.bin";
+    for (const auto& bytes : {std::string{}, zip_progress_fixture()}) {
+        std::ofstream(source, std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        const auto modified = std::chrono::sys_days{std::chrono::year{2000} / std::chrono::January / 1};
+        std::filesystem::last_write_time(source,
+                                         std::chrono::clock_cast<std::filesystem::file_time_type::clock>(modified));
+        for (const auto effort : {0, 9}) {
+            write_zip_file_reference(source, archive, effort);
+            mz_zip_archive reader{};
+            const auto archive_path = archive.u8string();
+            REQUIRE_TRUE(mz_zip_reader_init_file(&reader, reinterpret_cast<const char*>(archive_path.c_str()), 0));
+            mz_zip_archive_file_stat metadata{};
+            const bool found = mz_zip_reader_file_stat(&reader, 0U, &metadata) != 0;
+            const bool closed = mz_zip_reader_end(&reader) != 0;
+            REQUIRE_TRUE(found && closed);
+            std::uint64_t observed = 0;
+            bool partial = false;
+            const auto stats =
+                flitzzip::extract_zip(archive, destination, true, [&](const flitzzip::ProgressSnapshot& snapshot) {
+                    REQUIRE_EQ(snapshot.total_bytes, bytes.size());
+                    REQUIRE_TRUE(snapshot.processed_bytes >= observed && snapshot.processed_bytes <= bytes.size());
+                    REQUIRE_TRUE(snapshot.processed_bytes - observed <= 64U * 1024U);
+                    observed = snapshot.processed_bytes;
+                    partial = partial || (observed > 0U && observed < bytes.size());
+                });
+            REQUIRE_EQ(stats.output_bytes, bytes.size());
+            REQUIRE_EQ(observed, bytes.size());
+            REQUIRE_EQ(partial, !bytes.empty());
+            REQUIRE_EQ(read_zip_fixture(target), bytes);
+            struct __stat64 actual{};
+            REQUIRE_EQ(_wstat64(target.c_str(), &actual), 0);
+            REQUIRE_EQ(actual.st_mtime, metadata.m_time);
         }
     }
     std::filesystem::remove_all(root);

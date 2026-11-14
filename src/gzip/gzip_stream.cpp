@@ -1,5 +1,6 @@
 #include "gzip/gzip_stream.hpp"
 
+#include "core/decoded_input_buffer.hpp"
 #include "core/file_manifest.hpp"
 #include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
@@ -395,7 +396,7 @@ class GzipOutputStream::Buffer final : public std::streambuf {
     std::uint64_t output_bytes_ = 0;
 };
 
-class GzipInputStream::Buffer final : public std::streambuf {
+class GzipInputStream::Buffer final : public DecodedInputBuffer {
   public:
     // Purpose: Open and initialize a bounded raw-deflate reader for one Gzip stream.
     // Inputs: `archive_path` names a regular non-reparse `.gz` source, pinned before opening or parsing.
@@ -628,6 +629,12 @@ GzipInputStream::~GzipInputStream() = default;
 void GzipInputStream::finish() {
     buffer_->finish();
     clear();
+}
+
+// Consume only a successfully written decoder-owned window; framing and get-area
+// lifetime remain governed by the existing input buffer.
+std::size_t GzipInputStream::transfer_to(std::ostream& output, std::size_t maximum_bytes) {
+    return buffer_->transfer_to(output, maximum_bytes);
 }
 
 std::uint64_t GzipInputStream::input_bytes() const {

@@ -16,14 +16,18 @@ $ctestExe = Join-Path (Split-Path -Parent (Find-CMake -RepoRoot $repo)) 'ctest.e
 $build = Join-Path $repo "build"
 $testRunner = Join-Path $build "$Configuration/flitzzip_tests.exe"
 $cli = Join-Path $build "$Configuration/flitzzip_cli.exe"
+. (Join-Path $PSScriptRoot 'native_test_selection.ps1')
+$admission = Get-FlitzZipNativeExecutionAdmission -TestRunner $testRunner -Cli $cli -RequireCli `
+    -Configuration $Configuration -RequireHip:$CorrectnessOnly
+$testRunner = $admission.TestRunner
+$cli = $admission.Cli
+Write-Output "Native execution receipt: $($admission.Receipt.receipt_sha256)."
+$ctestInventory = @(& $ctestExe --test-dir $build -C $Configuration --show-only=json-v1 --stop-on-failure)
+if ($LASTEXITCODE -ne 0) { throw 'CTest inventory failed.' }
+$inventory = ($ctestInventory -join [Environment]::NewLine) | ConvertFrom-Json
+Assert-FlitzZipCTestExecutableAdmission -Inventory $inventory -Root $repo -Configuration $Configuration
 if ($CorrectnessOnly.IsPresent) {
-    . (Join-Path $PSScriptRoot 'native_test_selection.ps1')
-    & py -3 (Join-Path $PSScriptRoot 'native_build_receipt.py') validate --root $repo --configuration $Configuration --require-hip
-    if ($LASTEXITCODE -ne 0) { throw 'Correctness-only execution requires current HIP-enabled native binaries.' }
     Assert-FlitzZipNativeSelectionHip -Cli $cli
-    $ctestInventory = @(& $ctestExe --test-dir $build -C $Configuration --show-only=json-v1 --stop-on-failure)
-    if ($LASTEXITCODE -ne 0) { throw 'Correctness-only CTest inventory failed.' }
-    $inventory = ($ctestInventory -join [Environment]::NewLine) | ConvertFrom-Json
     Assert-FlitzZipCTestExecutionInventory -Inventory $inventory
     foreach ($suite in $inventory.tests) {
         $labels = @($suite.properties | Where-Object name -CEQ 'LABELS' | ForEach-Object { $_.value })

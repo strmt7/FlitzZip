@@ -18,6 +18,15 @@ struct EncodedChunk {
     bool source_crc32_available = false;
 };
 
+inline constexpr std::size_t kMaxEncodeBatchBlocks = 256;
+
+// One descriptor and finalized source CRC per independent block, in input order.
+// Payload offsets refer to encoded.payload; the combined source CRC covers all input.
+struct EncodedBlockBatch {
+    EncodedChunk encoded;
+    std::vector<std::uint32_t> block_crc32;
+};
+
 struct ArchiveCodecOptions {
     std::uint32_t block_size = kDefaultArchiveBlockBytes;
     std::uint32_t worker_count = 1;
@@ -33,6 +42,11 @@ void validate_codec_block_size(std::uint32_t block_size);
 // Inputs: `size` is a proposed span length and `label` identifies it in diagnostics. Outputs: Returns while bounded;
 // throws `ArchiveError` above the resource limit.
 void validate_codec_span_size(std::size_t size, const char* label);
+
+// Validate exact positive coverage by at most kMaxEncodeBatchBlocks independent
+// blocks, each within block_size, before CPU work, HIP dispatch or allocation.
+// Empty input requires an empty table. Invalid codec or layout bounds throw ArchiveError.
+void validate_encode_batch(std::size_t input_size, std::span<const std::uint32_t> lengths, std::uint32_t block_size);
 
 // Purpose: Bound native CPU encode workspace before allocating queued input windows.
 // Inputs: A nonzero bounded chunk, validated codec options, and a 1..64 aggregate worker budget.
@@ -67,7 +81,25 @@ bool block_kind_has_payload(BlockKind kind);
 // Purpose: Encode a chunk with the bounded CPU archive codec.
 // Inputs: `input` is uncompressed data and `options` controls block size, workers, and codec effort.
 // Outputs: Returns encoded descriptors and payload; throws `ArchiveError` on invalid limits.
+// Workers finish before payload publication. A sole compact compressed frame
+// transfers its allocation, including among payload-free fills; spare search
+// capacity is released through dense assembly instead of retained in the result.
 EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCodecOptions& options);
+
+// Encode owned CPU input with the same block policy as encode_chunk_cpu and a complete source CRC.
+// Transfers the input allocation into an all-raw result; other representations release it on return.
+// No borrowed input survives the call. Invalid options or codec failures throw before publication.
+EncodedChunk encode_owned_chunk_cpu(std::vector<std::byte> input, const ArchiveCodecOptions& options);
+
+// Encode validated independent CPU frames with one serial, reusable codec workspace.
+// Validates options and exact block coverage before work. Returns individual and
+// combined source CRCs, computed before any original bytes are overwritten.
+// Completed blocks compact into input storage without touching unread blocks;
+// nonempty payloads transfer that allocation. All-fill batches retain no payload
+// storage. Exceptions publish no partial result. No CPU worker fan-out.
+EncodedBlockBatch encode_owned_block_batch_cpu(std::vector<std::byte> input,
+                                               std::span<const std::uint32_t> block_lengths,
+                                               const ArchiveCodecOptions& options);
 
 // Purpose: Detect whether a block table contains a CPU-only compression kind.
 // Inputs: `blocks` is a validated or soon-to-be-validated native FLZIP block table.

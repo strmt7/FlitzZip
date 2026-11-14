@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
+#include "test_text_transfer_progress.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -571,4 +572,49 @@ TEST_CASE(hqx_extract_rejects_overwrite_by_default) {
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(read_binary_file(output / "payload.txt"), std::vector<unsigned char>({'o', 'l', 'd'}));
     std::filesystem::remove_all(root);
+}
+
+namespace {
+void require_hqx_transfer_progress(flitzzip_test::TextTransferCheck check) {
+    flitzzip_test::require_text_transfer_progress(
+        "hqx-transfer-progress", "hqx",
+        [](std::string_view payload, std::string_view newline) {
+            const std::vector<unsigned char> data(payload.begin(), payload.end());
+            const auto fixture = make_hqx_fixture("payload.bin", data);
+            std::string text;
+            for (const char ch : fixture) {
+                if (ch == '\n') {
+                    text.append(newline);
+                } else {
+                    text += ch;
+                }
+            }
+            return text;
+        },
+        flitzzip::extract_hqx_file, check);
+}
+}  // namespace
+
+TEST_CASE(hqx_transfer_readback) {
+    require_hqx_transfer_progress(flitzzip_test::TextTransferCheck::Readback);
+}
+
+TEST_CASE(hqx_transfer_payload_cancellation) {
+    require_hqx_transfer_progress(flitzzip_test::TextTransferCheck::PayloadCancellation);
+}
+
+TEST_CASE(hqx_transfer_trailing_cancellation) {
+    require_hqx_transfer_progress(flitzzip_test::TextTransferCheck::TrailingCancellation);
+}
+
+TEST_CASE(hqx_transfer_final_counters) {
+    require_hqx_transfer_progress(flitzzip_test::TextTransferCheck::FinalCounters);
+}
+
+TEST_CASE(hqx_transfer_before_publication) {
+    require_hqx_transfer_progress(flitzzip_test::TextTransferCheck::BeforePublication);
+}
+
+TEST_CASE(hqx_transfer_bounded_callbacks) {
+    require_hqx_transfer_progress(flitzzip_test::TextTransferCheck::BoundedCallbacks);
 }

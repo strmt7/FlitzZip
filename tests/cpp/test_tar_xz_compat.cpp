@@ -1,5 +1,7 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
+#include "test_decoded_input_transfer.hpp"
+#include "test_archive_entry_progress.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -77,6 +79,28 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
 
 }  // namespace
 
+TEST_CASE(tar_create_progress_reports_final_completed_entry) {
+    flitzzip_test::require_archive_entry_completion(
+        "tar-create-entry-progress", false,
+        [](const auto& sources, const auto& archive, const auto& callback) {
+            return flitzzip::compress_tar(sources, archive, callback);
+        },
+        [](const auto& archive, const auto& output, bool overwrite, const auto& callback) {
+            return flitzzip::extract_tar(archive, output, overwrite, callback);
+        });
+}
+
+TEST_CASE(tar_extract_progress_reports_final_completed_entry) {
+    flitzzip_test::require_archive_entry_completion(
+        "tar-extract-entry-progress", true,
+        [](const auto& sources, const auto& archive, const auto& callback) {
+            return flitzzip::compress_tar(sources, archive, callback);
+        },
+        [](const auto& archive, const auto& output, bool overwrite, const auto& callback) {
+            return flitzzip::extract_tar(archive, output, overwrite, callback);
+        });
+}
+
 // Purpose: Verify in-process `.tar.xz` compatibility extraction for files and directories.
 // Inputs: A deterministic CRC64 `.tar.xz` fixture.
 // Outputs: Throws if extraction fails, format detection is wrong, or restored contents differ.
@@ -87,7 +111,10 @@ TEST_CASE(tar_xz_extracts_files_and_directories) {
     REQUIRE_EQ(flitzzip::detect_archive_format(archive), flitzzip::ArchiveFormat::TarXz);
 
     const auto output = root / "out";
-    const auto stats = flitzzip::extract_tar_xz(archive, output, false);
+    flitzzip_test::ArchivePhaseProbe phases;
+    const auto stats = flitzzip::extract_tar_xz(archive, output, false,
+                                                [&](const flitzzip::ProgressSnapshot& snapshot) { phases(snapshot); });
+    REQUIRE_TRUE(phases.validation_seen && phases.finishing_seen);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(3));
     REQUIRE_EQ(read_text_file(output / "dir" / "hello.txt"), "hello from tar.xz\n");
     REQUIRE_EQ(read_text_file(output / "root.txt"), "root tar xz payload");

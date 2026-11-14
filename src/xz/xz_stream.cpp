@@ -1,4 +1,5 @@
 #include "xz/xz_stream.hpp"
+#include "core/decoded_input_buffer.hpp"
 #include "core/file_manifest.hpp"
 #include "core/path_text.hpp"
 
@@ -64,7 +65,7 @@ const char* xz_status_name(enum xz_ret status) {
 
 }  // namespace
 
-class XzInputStream::Buffer final : public std::streambuf {
+class XzInputStream::Buffer final : public DecodedInputBuffer {
   public:
     // Purpose: Open a bounded Xz decoder and initialize its owned input/output buffers.
     // Inputs: `archive_path` names untrusted regular input; immutable source admission precedes decoder allocation.
@@ -237,6 +238,12 @@ XzInputStream::~XzInputStream() = default;
 
 void XzInputStream::finish() {
     buffer_->finish();
+}
+
+// Consume only a successfully written decoder-owned window; framing and get-area
+// lifetime remain governed by the existing input buffer.
+std::size_t XzInputStream::transfer_to(std::ostream& output, std::size_t maximum_bytes) {
+    return buffer_->transfer_to(output, maximum_bytes);
 }
 
 std::uint64_t XzInputStream::input_bytes() const {

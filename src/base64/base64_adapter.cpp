@@ -2,6 +2,7 @@
 #include "core/path_text.hpp"
 
 #include "core/bounded_text_io.hpp"
+#include "core/archive_input_progress.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
@@ -31,6 +32,7 @@ constexpr std::string_view kBase64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh
 struct Base64Header {
     std::optional<std::string> entry_name;
     std::size_t lines_consumed = 0;
+    std::uint64_t bytes_consumed = 0;
     bool wrapped = false;
 };
 
@@ -48,10 +50,11 @@ void write_base64_line(std::ofstream& output, const std::string& line) {
 }
 
 // Purpose: Read one bounded Base64 text line without allowing unbounded allocation.
-// Inputs: `input` is the source stream and `line` receives bytes excluding CR/LF.
+// Inputs: `input` supplies text, `line` excludes CR/LF, and optional physical_bytes
+// receives the exact input extent, including stripped line endings.
 // Outputs: Returns true for a line, false at clean EOF before any bytes; throws on overlong lines or I/O errors.
-bool read_base64_line(std::ifstream& input, std::string& line) {
-    return read_bounded_text_line(input, line, kMaxBase64LineBytes, "Base64");
+bool read_base64_line(std::ifstream& input, std::string& line, std::size_t* physical_bytes = nullptr) {
+    return read_bounded_text_line(input, line, kMaxBase64LineBytes, "Base64", physical_bytes);
 }
 
 // Purpose: Test whether a line contains only ignorable whitespace after a Base64 trailer.
@@ -217,21 +220,28 @@ std::string raw_base64_output_name(const std::filesystem::path& archive_path) {
 // Outputs: Returns wrapper metadata; resets `input` to the start when no wrapper is found.
 Base64Header read_base64_header_or_reset(std::ifstream& input, const std::filesystem::path& archive_path) {
     std::string line;
+    std::uint64_t bytes_consumed = 0;
     for (std::size_t line_index = 1; line_index <= kMaxBase64PreambleLines; ++line_index) {
         const auto position = input.tellg();
-        if (!read_base64_line(input, line)) {
+        std::size_t line_bytes = 0;
+        if (!read_base64_line(input, line, &line_bytes)) {
             input.clear();
             input.seekg(0, std::ios::beg);
             return Base64Header{
                 .entry_name = raw_base64_output_name(archive_path), .lines_consumed = 0, .wrapped = false};
         }
+        bytes_consumed += line_bytes;
         if (line.starts_with("begin-base64 ")) {
-            return Base64Header{
-                .entry_name = parse_begin_base64_line(line), .lines_consumed = line_index, .wrapped = true};
+            return Base64Header{.entry_name = parse_begin_base64_line(line),
+                                .lines_consumed = line_index,
+                                .bytes_consumed = bytes_consumed,
+                                .wrapped = true};
         }
         if (line.starts_with("begin-base64-encoded ")) {
-            return Base64Header{
-                .entry_name = parse_begin_base64_line(line), .lines_consumed = line_index, .wrapped = true};
+            return Base64Header{.entry_name = parse_begin_base64_line(line),
+                                .lines_consumed = line_index,
+                                .bytes_consumed = bytes_consumed,
+                                .wrapped = true};
         }
         if (line_index == 1U && position == std::ifstream::pos_type(0) && !line.empty()) {
             input.clear();
@@ -246,13 +256,14 @@ Base64Header read_base64_header_or_reset(std::ifstream& input, const std::filesy
 // Purpose: Decode a Base64 stream body to an already-open temporary file.
 // Inputs: `input` is positioned at payload start, `header` defines raw/wrapper mode, and `output` is the destination
 // temp stream. Outputs: Returns decoded byte count; throws on malformed payload, missing trailer, or output failure.
-std::uint64_t decode_base64_body(std::ifstream& input, const Base64Header& header, std::ofstream& output) {
+std::uint64_t decode_base64_body(std::ifstream& input, const Base64Header& header, std::ofstream& output,
+                                 ArchiveInputProgress& input_progress) {
     std::string line;
     std::vector<unsigned char> decoded;
     Base64DecodeState state;
     std::uint64_t output_size = 0;
     bool saw_wrapper_trailer = false;
-    while (read_base64_line(input, line)) {
+    while (input_progress.read_line(input, line, kMaxBase64LineBytes, "Base64")) {
         if (header.wrapped && line == "====") {
             saw_wrapper_trailer = true;
             break;
@@ -275,7 +286,7 @@ std::uint64_t decode_base64_body(std::ifstream& input, const Base64Header& heade
         if (!saw_wrapper_trailer) {
             throw ArchiveError("Base64 wrapper ended before the trailer line");
         }
-        while (read_base64_line(input, line)) {
+        while (input_progress.read_line(input, line, kMaxBase64LineBytes, "Base64")) {
             if (!is_blank_or_whitespace(line)) {
                 throw ArchiveError("Base64 wrapper contains trailing data after trailer");
             }
@@ -417,13 +428,14 @@ OperationStats extract_base64_file(const std::filesystem::path& requested_archiv
         if (!output) {
             throw ArchiveError("cannot create Base64 extraction target: " + path_diagnostic_utf8(target));
         }
-        output_size = decode_base64_body(input, header, output);
-        progress.add_bytes(archive_size);
-        publish_progress(progress, progress_callback);
+        ArchiveInputProgress input_progress(progress, std::cref(progress_callback), archive_size,
+                                            header.bytes_consumed);
+        output_size = decode_base64_body(input, header, output, input_progress);
         output.close();
         if (!output) {
             throw ArchiveError("failed to finalize Base64 extraction target: " + path_diagnostic_utf8(target));
         }
+        input_progress.finish();
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;

@@ -178,6 +178,79 @@ models and already-compressed data; retain losing and failed observations
 locally. Additional dependencies and format changes follow the existing
 approval and compatibility contracts.
 
+## Deterministic Model Candidates
+
+Recent primary sources reinforce the need to qualify the probability model and
+its decoder, rather than adopting an LLM runtime as an archive dependency:
+
+- [The Invocation Bottleneck in LLM-Based Lossless Compression](https://arxiv.org/html/2611.05871)
+  discusses numerical disagreement between block and sequential inference, even
+  with the same weights. Its numerical-parity method fixes reduction order and
+  cache scheduling; its arithmetic coder still runs on the CPU. That does not
+  establish Windows HIP compatibility or cross-device deterministic decoding.
+- [SigComp's author documentation](https://github.com/BioinfoSZU/SigComp)
+  describes integer-quantized predictors, a GPU range coder and matching models
+  for decoding. Its documented platform is Linux; its nanopore models and
+  source-bit elimination options do not qualify a general Windows lossless
+  archive implementation. Quantizing predictor weights can preserve the input;
+  discarding source bits cannot.
+- [StateSMix](https://arxiv.org/html/2605.02904) describes online model updates
+  and sparse context mixing. Its implementation uses floating-point AVX2/FMA,
+  and its tokenization uses the GPT-NeoX vocabulary plus a stored compact ID
+  mapping. A compact ID mapping alone does not define the token-to-byte
+  vocabulary. A self-contained design must specify and account for both.
+  Its discussion also reports a remaining gap against copy-based compression
+  on longer text. These preprints and author reports are hypotheses for this
+  project, not independent FlitzZip results.
+
+The next private prototypes should answer specific questions, in this order:
+
+1. **Learn a better partition of byte contexts.** The existing version-12
+   proposal selects a static model from the high bits of the preceding byte.
+   Prototype a content-derived partition that can group unrelated byte values
+   with similar successor distributions. Start from the existing exact HIP
+   transition histogram. Evaluate merges against complete encoded cost, including
+   the explicit context map, sparse model rows, segment states and offsets.
+   Freeze the selected partition before entropy coding; include the initial
+   previous-byte state in every segment's model admission. Different partitions
+   must compete with the unchanged incumbent, never replace it by heuristic.
+2. **Test a bounded integer predictor only if static partitions leave a gap.**
+   Use an explicitly specified finite context and integer arithmetic, including
+   intermediate widths, rounding, saturation and positive frequency normalization.
+   A small predictor trained by the encoder can serialize its frozen integer
+   parameters. The decoder then needs neither training nor an external model.
+   Online adaptation is a separate experiment: it requires an exact update order
+   reproducible from already decoded bytes, including reset and rescaling rules.
+   Do not require floating-point gradient replay to recover an archive.
+3. **Combine prediction with explicit matches.** Compare literal/residual models
+   with a representation that also codes verified match decisions. Good next-byte
+   prediction does not eliminate the value of copying a long repeated phrase.
+   Price model, literal, length and distance streams together, including their
+   tables and framing. Retain exact original bytes, not reconstructed numerical
+   values, for tensor data, signed zero and NaN payloads.
+
+These experiments must use HIP for production compression and the required-GPU
+reader; an independent CPU decoder is a correctness oracle. Bound work per kernel
+launch, observe completion and cancellation, and charge candidate models, training
+state, temporary streams and retained winners to aggregate memory admission.
+Do not change driver timeout policy or introduce a CPU compression fallback.
+A frame must be decodable without another frame's unavailable training state.
+
+The first controls are fixed-data correctness cases: equal successor distributions
+under different byte labels, a genuinely useful extra context, a model whose
+metadata outweighs its payload saving, segment resets, all byte values and exact
+CPU/HIP readback. Independent expected costs must cover every serialized field;
+histogram entropy is not encoded size. Cross-device integer agreement needs
+actual device evidence, not a source-level determinism claim.
+
+An arbitrary context map, adaptive update rule or learned predictor is **not**
+the currently approved kind-14 model. Keep prototypes private and obtain a
+separate public-format review before connecting a new representation to archive
+writers. No neural runtime, external tokenizer or pretrained model is adopted.
+After correctness, use the existing licensed RAM-only corpus engine for complete
+size and execution qualification when measurements are permitted. Keep losing
+observations and publish no superiority claim without representative evidence.
+
 ## Exact Dictionary Work Admission
 
 The current experiment uses the complete verified match graph to bound the

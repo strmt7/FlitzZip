@@ -1,4 +1,5 @@
 #include "core/archive_blocks.hpp"
+#include "core/checksum.hpp"
 #include "core/compound_block.hpp"
 #include "core/byte_plane_block.hpp"
 #include "core/dictionary_block.hpp"
@@ -14,6 +15,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
@@ -153,6 +155,56 @@ std::vector<std::byte> try_zstd_block(std::span<const std::byte> block, int comp
         }
     }
     return best;
+}
+
+struct ZstdEncodeContextDeleter {
+    void operator()(ZstdCompressionContext* context) const noexcept {
+        zstd_runtime().free_compression_context(context);
+    }
+};
+
+// Exclusive synchronous workspace. Each codec resets its frame for every call;
+// only allocation capacity survives across blocks. A range or batch owns it until
+// all compression and copies finish, including exceptional cleanup.
+struct CpuEncodeWorkspace {
+    std::unique_ptr<ZstdCompressionContext, ZstdEncodeContextDeleter> context;
+    std::unique_ptr<tdefl_compressor> deflate;
+    std::vector<std::byte> trial;
+};
+
+// block is a nonempty, validated source extent no larger than the native block
+// limit. The returned payload owns only a winning compressed frame; raw and fill
+// descriptors borrow no storage and leave publication to the caller.
+EncodedBlockWork encode_cpu_block(std::span<const std::byte> block, int compression_level,
+                                  CpuEncodeWorkspace& workspace) {
+    const auto len = static_cast<std::uint32_t>(block.size());
+    EncodedBlockWork work{.descriptor = {
+                              .kind = BlockKind::Raw,
+                              .uncompressed_len = len,
+                              .encoded_len = len,
+                          }};
+    std::uint8_t fill = 0;
+    if (block_is_fill(block, fill)) {
+        work.descriptor.kind = BlockKind::Fill;
+        work.descriptor.fill_value = fill;
+        work.descriptor.encoded_len = 0;
+        return work;
+    }
+    const bool use_zstd = block.size() >= kMinArchiveBlockBytes;
+    if (use_zstd && !workspace.context) {
+        workspace.context.reset(zstd_runtime().create_compression_context());
+        if (!workspace.context) {
+            throw ArchiveError("Zstandard native compression context allocation failed");
+        }
+    }
+    auto compressed = use_zstd ? try_zstd_block(block, compression_level, workspace.context.get(), workspace.trial)
+                               : try_deflate_block(block, compression_level, workspace.deflate, workspace.trial);
+    if (!compressed.empty()) {
+        work.descriptor.kind = use_zstd ? BlockKind::CpuZstd : BlockKind::Deflate;
+        work.descriptor.encoded_len = static_cast<std::uint32_t>(compressed.size());
+        work.payload = std::move(compressed);
+    }
+    return work;
 }
 
 // Purpose: Inflate exactly one complete miniz deflate payload into the caller-owned output span.
@@ -667,6 +719,24 @@ void validate_codec_span_size(std::size_t size, const char* label) {
     }
 }
 
+void validate_encode_batch(std::size_t input_size, std::span<const std::uint32_t> lengths, std::uint32_t block_size) {
+    validate_codec_block_size(block_size);
+    validate_codec_span_size(input_size, "codec batch input");
+    if (lengths.size() > kMaxEncodeBatchBlocks) {
+        throw ArchiveError("encode batch exceeds the block-count limit");
+    }
+    std::size_t consumed = 0;
+    for (const auto length : lengths) {
+        if (length == 0 || length > block_size || length > input_size - consumed) {
+            throw ArchiveError("encode batch block is outside its input or block-size limit");
+        }
+        consumed += length;
+    }
+    if (consumed != input_size) {
+        throw ArchiveError("encode batch blocks do not cover the input exactly");
+    }
+}
+
 // Purpose: Estimate native encode metadata and retained codec storage before pipeline allocation.
 // Inputs: A bounded nonempty chunk, codec block size/effort, and the aggregate worker ceiling.
 // Outputs: Returns conservative overhead beyond three payload buffers; throws for invalid runtime bounds.
@@ -757,65 +827,27 @@ bool block_kind_has_payload(BlockKind kind) {
 // Outputs: Fills each slot with a complete descriptor and optional compressed payload, or throws on codec failure.
 static void encode_cpu_block_range(std::span<const std::byte> input, std::uint32_t block_size, int compression_level,
                                    std::span<EncodedBlockWork> block_work, std::size_t begin, std::size_t end) {
-    const auto release_context = [](ZstdCompressionContext* context) {
-        zstd_runtime().free_compression_context(context);
-    };
-    std::unique_ptr<ZstdCompressionContext, decltype(release_context)> context(nullptr, release_context);
-    std::unique_ptr<tdefl_compressor> deflate;
-    std::vector<std::byte> trial;
+    CpuEncodeWorkspace workspace;
     for (std::size_t i = begin; i < end; ++i) {
         const auto pos = i * static_cast<std::size_t>(block_size);
         const auto len = static_cast<std::uint32_t>(std::min<std::size_t>(block_size, input.size() - pos));
-        const auto block = input.subspan(pos, len);
-        std::uint8_t fill = 0;
-        if (block_is_fill(block, fill)) {
-            block_work[i].descriptor = BlockDescriptor{
-                .kind = BlockKind::Fill,
-                .fill_value = fill,
-                .uncompressed_len = len,
-                .encoded_offset = 0,
-                .encoded_len = 0,
-            };
-            continue;
-        }
-        const bool use_zstd = block.size() >= kMinArchiveBlockBytes;
-        if (use_zstd && !context) {
-            context.reset(zstd_runtime().create_compression_context());
-            if (!context) {
-                throw ArchiveError("Zstandard native compression context allocation failed");
-            }
-        }
-        auto compressed = use_zstd ? try_zstd_block(block, compression_level, context.get(), trial)
-                                   : try_deflate_block(block, compression_level, deflate, trial);
-        if (!compressed.empty()) {
-            block_work[i].descriptor = BlockDescriptor{
-                .kind = use_zstd ? BlockKind::CpuZstd : BlockKind::Deflate,
-                .fill_value = 0,
-                .uncompressed_len = len,
-                .encoded_offset = 0,
-                .encoded_len = static_cast<std::uint32_t>(compressed.size()),
-            };
-            block_work[i].payload = std::move(compressed);
-        } else {
-            block_work[i].descriptor = BlockDescriptor{
-                .kind = BlockKind::Raw,
-                .fill_value = 0,
-                .uncompressed_len = len,
-                .encoded_offset = 0,
-                .encoded_len = len,
-            };
-        }
+        block_work[i] = encode_cpu_block(input.subspan(pos, len), compression_level, workspace);
     }
 }
 
-// Purpose: Compress one bounded native chunk into independently decodable CPU block descriptors and payload.
-// Inputs: Source bytes and validated block size, worker count, and effort options.
-// Outputs: Returns a dense encoded chunk or throws before exposing incomplete codec output.
-EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCodecOptions& options) {
+// owned_input, when present, owns exactly input and outlives every joined worker.
+// Its bytes are checksummed before an all-raw allocation is transferred; nothing
+// reads the borrowed span after that transfer. Borrowed callers retain their input.
+static EncodedChunk encode_chunk_cpu_impl(std::span<const std::byte> input, std::vector<std::byte>* owned_input,
+                                          const ArchiveCodecOptions& options) {
     validate_encode_options(options);
     validate_codec_span_size(input.size(), "codec input");
 
     EncodedChunk out;
+    if (owned_input != nullptr) {
+        out.source_crc32 = crc32(input);
+        out.source_crc32_available = true;
+    }
     const auto block_size = std::max<std::uint32_t>(1U, options.block_size);
     const auto block_count = (input.size() + block_size - 1U) / block_size;
     std::vector<EncodedBlockWork> block_work(block_count);
@@ -829,10 +861,14 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
 
     out.blocks.resize(block_count);
     std::uint64_t encoded_offset = 0;
+    std::size_t payload_blocks = 0;
+    std::size_t payload_index = 0;
     bool all_raw = true;
     for (std::size_t i = 0; i < block_work.size(); ++i) {
         out.blocks[i] = block_work[i].descriptor;
         if (block_kind_has_payload(out.blocks[i].kind)) {
+            ++payload_blocks;
+            payload_index = i;
             out.blocks[i].encoded_offset = encoded_offset;
             encoded_offset += out.blocks[i].encoded_len;
         }
@@ -843,7 +879,21 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
     if (encoded_offset == 0) {
         return out;
     }
+    // Joined workers already own each compressed frame. A compact sole payload,
+    // even between fill blocks, is the complete dense output. Spare search
+    // capacity must instead be released through the existing dense assembly.
+    if (payload_blocks == 1U) {
+        auto& payload = block_work[payload_index].payload;
+        if (!payload.empty() && payload.capacity() == payload.size()) {
+            out.payload = std::move(payload);
+            return out;
+        }
+    }
     if (all_raw) {
+        if (owned_input != nullptr) {
+            out.payload = std::move(*owned_input);
+            return out;
+        }
         out.payload.resize(input.size());
         run_parallel_ranges(out.blocks.size(), options.worker_count, [&](std::size_t begin, std::size_t end) {
             for (std::size_t i = begin; i < end; ++i) {
@@ -874,6 +924,53 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
         }
     });
     return out;
+}
+
+EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCodecOptions& options) {
+    return encode_chunk_cpu_impl(input, nullptr, options);
+}
+
+EncodedChunk encode_owned_chunk_cpu(std::vector<std::byte> input, const ArchiveCodecOptions& options) {
+    return encode_chunk_cpu_impl(input, &input, options);
+}
+
+EncodedBlockBatch encode_owned_block_batch_cpu(std::vector<std::byte> input,
+                                               std::span<const std::uint32_t> block_lengths,
+                                               const ArchiveCodecOptions& options) {
+    validate_encode_options(options);
+    validate_encode_batch(input.size(), block_lengths, options.block_size);
+    EncodedBlockBatch batch;
+    batch.encoded.blocks.reserve(block_lengths.size());
+    batch.block_crc32.reserve(block_lengths.size());
+    CpuEncodeWorkspace workspace;
+    std::size_t source_offset = 0;
+    std::size_t encoded_offset = 0;
+    for (const auto length : block_lengths) {
+        const auto source = std::span<const std::byte>(input).subspan(source_offset, length);
+        auto work = encode_cpu_block(source, options.compression_level, workspace);
+        // Capture original bytes before a dense output prefix can overwrite this
+        // block. Completed output never extends into the next unread block.
+        const auto checksum = crc32(source);
+        work.descriptor.encoded_offset = encoded_offset;
+        batch.encoded.blocks.push_back(work.descriptor);
+        if (work.descriptor.kind == BlockKind::Raw) {
+            if (encoded_offset != source_offset) {
+                std::memmove(input.data() + encoded_offset, source.data(), length);
+            }
+        } else if (!work.payload.empty()) {
+            std::copy(work.payload.begin(), work.payload.end(), input.data() + encoded_offset);
+        }
+        encoded_offset += work.descriptor.encoded_len;
+        batch.block_crc32.push_back(checksum);
+        batch.encoded.source_crc32 = crc32_combine(batch.encoded.source_crc32, checksum, length);
+        source_offset += length;
+    }
+    if (encoded_offset != 0U) {
+        input.resize(encoded_offset);
+        batch.encoded.payload = std::move(input);
+    }
+    batch.encoded.source_crc32_available = true;
+    return batch;
 }
 
 // Purpose: Report whether a decoded FLZIP block table needs CPU-only codec handling.

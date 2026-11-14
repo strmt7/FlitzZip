@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 from tools import native_build_receipt as receipt
 from tools import test_native_build_provenance as input_fixtures
+from tools.executable_path import executable_path
 from tools.native_build_provenance import canonical
 
 
@@ -67,7 +68,13 @@ class NativeBuildReceiptTests(unittest.TestCase):
         for configuration in receipt.CONFIGURATIONS:
             output = self.build / configuration
             output.mkdir(exist_ok=True)
-            for name in ("flitzzip_cli.exe", "FlitzZip.exe", "fixture.dll"):
+            for name in (
+                "flitzzip_cli.exe",
+                "FlitzZip.exe",
+                "fixture.dll",
+                "flitzzip_tests.exe",
+                "future_contract.exe",
+            ):
                 (output / name).write_bytes(f"{configuration}:{name}".encode("ascii"))
             (output / "flitzzip-runtime-dependencies.json").write_text(
                 json.dumps(
@@ -82,6 +89,278 @@ class NativeBuildReceiptTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            self.write_executable_inventory(configuration)
+
+    def write_executable_inventory(self, configuration="Release"):
+        declarations = [
+            {"target": target, "path": f"{configuration}/{filename}", "default_build": True}
+            for target, filename in [
+                ("FlitzZip", "FlitzZip.exe"),
+                ("flitzzip_cli", "flitzzip_cli.exe"),
+                ("flitzzip_tests", "flitzzip_tests.exe"),
+                ("future_contract", "future_contract.exe"),
+            ]
+        ]
+        declarations.append(
+            {"target": "optional_contract", "path": f"{configuration}/optional.exe", "default_build": False}
+        )
+        path = self.build / configuration / "flitzzip-native-executables.json"
+        path.write_text(
+            json.dumps({"schema_version": 1, "configuration": configuration, "executables": declarations}),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_success_binds_main_and_future_test_executables(self):
+        self.successful()
+        completed = receipt.read_metadata(self.root, f"build/{receipt.RECEIPT}")
+        for filename in ("flitzzip_tests.exe", "future_contract.exe", "flitzzip-native-executables.json"):
+            self.assertIn(f"build/Release/{filename}", completed["outputs_sha256"])
+
+    def test_replaced_test_executable_invalidates_success(self):
+        for filename in ("flitzzip_tests.exe", "future_contract.exe"):
+            with self.subTest(filename=filename):
+                self.successful()
+                path = self.build / "Release" / filename
+                original = path.read_bytes()
+                path.write_bytes(b"stale executable from another source")
+                try:
+                    with self.assertRaisesRegex(ValueError, "inputs or outputs changed"):
+                        receipt.validate_current(self.root, "Release", False)
+                finally:
+                    path.write_bytes(original)
+
+    def test_missing_test_executable_prevents_success(self):
+        path = self.build / "Release/flitzzip_tests.exe"
+        path.unlink()
+        with self.assertRaises((ValueError, OSError)):
+            self.successful()
+        self.assertFalse((self.build / receipt.RECEIPT).exists())
+
+    def test_changed_executable_declaration_invalidates_success(self):
+        self.successful()
+        path = self.build / "Release/flitzzip-native-executables.json"
+        value = json.loads(path.read_text())
+        value["executables"][3]["default_build"] = False
+        path.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "inputs or outputs changed"):
+            receipt.validate_current(self.root, "Release", False)
+
+    def test_absent_executable_inventory_prevents_success(self):
+        (self.build / "Release/flitzzip-native-executables.json").unlink()
+        with self.assertRaises((ValueError, OSError)):
+            self.successful()
+
+    def test_executable_inventory_rejects_invalid_declarations(self):
+        path = self.build / "Release/flitzzip-native-executables.json"
+        valid = json.loads(path.read_text())
+        invalid = []
+        value = copy.deepcopy(valid)
+        value["configuration"] = "Debug"
+        invalid.append(value)
+        value = copy.deepcopy(valid)
+        value["executables"].append(copy.deepcopy(value["executables"][0]))
+        invalid.append(value)
+        for field, replacement in [
+            ("path", "../outside.exe"),
+            ("path", "Debug/flitzzip_tests.exe"),
+            ("default_build", "false"),
+            ("target", ""),
+        ]:
+            value = copy.deepcopy(valid)
+            value["executables"][2][field] = replacement
+            invalid.append(value)
+        for value in invalid:
+            with self.subTest(value=value):
+                path.write_text(json.dumps(value))
+                with self.assertRaises((ValueError, OSError)):
+                    receipt.capture_outputs(self.root, "Release")
+
+    def test_excluded_stale_executable_is_not_admitted(self):
+        (self.build / "Release/optional.exe").write_bytes(b"old optional target, never part of this build")
+        self.successful()
+        completed = receipt.read_metadata(self.root, f"build/{receipt.RECEIPT}")
+        self.assertNotIn("build/Release/optional.exe", completed["outputs_sha256"])
+
+    def test_execution_admits_only_exact_declared_target_and_path(self):
+        self.successful()
+        selected = receipt.validate_current(
+            self.root,
+            None,
+            False,
+            [
+                ("flitzzip_tests", "build/Release/flitzzip_tests.exe"),
+                ("flitzzip_cli", str(self.build / "Release/flitzzip_cli.exe")),
+            ],
+        )
+        self.assertEqual(["flitzzip_tests", "flitzzip_cli"], [item["target"] for item in selected["executables"]])
+        requests = [
+            [("flitzzip_tests", "build/Release/flitzzip_cli.exe")],
+            [("absent", "build/Release/flitzzip_tests.exe")],
+            [(None, "build/Release/fixture.dll")],
+            [(None, str(self.root.parent / "outside.exe"))],
+            [(None, "build/Release/flitzzip_tests.exe")] * 2,
+        ]
+        for request in requests:
+            with self.subTest(request=request), self.assertRaises((ValueError, OSError)):
+                receipt.validate_current(self.root, None, False, request)
+
+    def test_nested_unicode_executable_is_discovered_without_target_name_changes(self):
+        path = self.build / "contracts/Release/future tool \u03bb.exe"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"bounded nonexecutable fixture")
+        manifest = self.build / "Release/flitzzip-native-executables.json"
+        value = json.loads(manifest.read_text())
+        value["executables"][3]["path"] = path.relative_to(self.build).as_posix()
+        manifest.write_text(json.dumps(value))
+        self.successful()
+        selected = receipt.validate_current(self.root, None, False, [(None, str(path))])
+        self.assertEqual("future_contract", selected["executables"][0]["target"])
+        self.assertEqual(path.relative_to(self.root).as_posix(), selected["executables"][0]["path"])
+
+    def test_historical_v1_requires_fresh_migration_before_execution(self):
+        self.successful()
+        value = receipt.read_metadata(self.root, f"build/{receipt.RECEIPT}")
+        value["schema_version"] = 1
+        value["kind"] = "successful-native-invocation-v1"
+        del value["executable_targets"]
+        value["outputs_sha256"] = {
+            name: digest
+            for name, digest in value["outputs_sha256"].items()
+            if not name.endswith(("flitzzip_tests.exe", "future_contract.exe", "flitzzip-native-executables.json"))
+        }
+        digest = receipt.validate_receipt(value)
+        receipt.publish(self.root, receipt.RECEIPT, value)
+        state = receipt.read_metadata(self.root, f"build/{receipt.TRANSACTION}")
+        state["receipt_sha256"] = digest
+        receipt.publish(self.root, receipt.TRANSACTION, state)
+        with self.assertRaisesRegex(ValueError, "rebuilt executable-binding receipt"):
+            receipt.validate_current(self.root, "Release", False)
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        self.assertTrue(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+        receipt.finish(self.root, token, self.cmake, True)
+        receipt.validate_current(self.root, "Release", False)
+
+    def test_receipt_target_map_cannot_disagree_with_declarations(self):
+        self.successful()
+        value = receipt.read_metadata(self.root, f"build/{receipt.RECEIPT}")
+        value["executable_targets"]["renamed_contract"] = value["executable_targets"].pop("future_contract")
+        digest = receipt.validate_receipt(value)
+        receipt.publish(self.root, receipt.RECEIPT, value)
+        state = receipt.read_metadata(self.root, f"build/{receipt.TRANSACTION}")
+        state["receipt_sha256"] = digest
+        receipt.publish(self.root, receipt.TRANSACTION, state)
+        with self.assertRaisesRegex(ValueError, "inputs or outputs changed"):
+            receipt.validate_current(self.root, "Release", False)
+
+    def test_execution_configuration_option_has_one_consistent_meaning(self):
+        self.successful()
+        command = [
+            sys.executable,
+            "-B",
+            str(Path(receipt.__file__).resolve()),
+            "validate-execution",
+            "--root",
+            str(self.root),
+            "--configuration",
+            "Debug",
+            "--artifact",
+            "build/Release/flitzzip_tests.exe",
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=15, check=False)
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("configuration is stale", result.stderr)
+        self.successful("Debug")
+        result = subprocess.run(
+            [*command[:6], "--artifact", "build/Debug/flitzzip_tests.exe"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("Debug", json.loads(result.stdout)["recipe"]["configuration"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell consumers")
+    def test_powershell_admission_uses_real_receipt_and_never_launches_fixtures(self):
+        scripts = self.root / "tools"
+        scripts.mkdir()
+        for name in ("native_build_receipt.py", "native_build_provenance.py", "native_test_selection.ps1"):
+            (scripts / name).write_bytes((Path(receipt.__file__).parent / name).read_bytes())
+        self.successful()
+        probe = self.root / "admission.ps1"
+        probe.write_text(
+            r"""
+param([string]$Mode)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'tools/native_test_selection.ps1')
+$runner = Join-Path $PSScriptRoot 'build/Release/flitzzip_tests.exe'
+$cli = Join-Path $PSScriptRoot 'build/Release/flitzzip_cli.exe'
+if ($Mode -eq 'hip') {
+    Get-FlitzZipNativeExecutionAdmission -TestRunner $runner -Cli $cli -RequireCli -RequireHip | Out-Null
+} elseif ($Mode -eq 'wrong-target') {
+    Get-FlitzZipNativeExecutionAdmission -TestRunner $cli | Out-Null
+} elseif ($Mode -eq 'wrong-configuration') {
+    Get-FlitzZipNativeExecutionAdmission -TestRunner $runner -Configuration Debug | Out-Null
+} elseif ($Mode -eq 'runner') {
+    $admitted = Get-FlitzZipNativeExecutionAdmission -TestRunner $runner -Cli $cli -RequireCli -Configuration Release
+    if ($admitted.TestRunner -cne $runner -or $admitted.Cli -cne $cli) { throw 'Wrong admitted paths' }
+} else {
+    $paths = @($runner, $runner, (Join-Path $PSScriptRoot 'build/Release/future_contract.exe'))
+    if ($Mode -eq 'excluded') { $paths += Join-Path $PSScriptRoot 'build/Release/optional.exe' }
+    if ($Mode -eq 'unresolved') { $paths += 'relative.exe' }
+    $tests = @($paths | ForEach-Object { [pscustomobject]@{name = 'fixture'; command = @($_)} })
+    $tests += [pscustomobject]@{name = 'external-tool'; command = @((Get-Process -Id $PID).Path)}
+    Assert-FlitzZipCTestExecutableAdmission -Inventory ([pscustomobject]@{tests = $tests}) `
+        -Root $PSScriptRoot -Configuration Release
+}
+'admitted without execution'
+""",
+            encoding="utf-8",
+        )
+        for command in ("powershell", "pwsh"):
+            try:
+                shell = executable_path(command)
+            except FileNotFoundError:
+                if command == "powershell":
+                    raise
+                continue
+            for mode, expected in (
+                ("runner", 0),
+                ("ctest", 0),
+                ("hip", 1),
+                ("wrong-target", 1),
+                ("wrong-configuration", 1),
+                ("excluded", 1),
+                ("unresolved", 1),
+            ):
+                with self.subTest(shell=command, mode=mode):
+                    result = subprocess.run(
+                        [shell, "-NoProfile", "-File", str(probe), mode],
+                        cwd=self.root,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        check=False,
+                    )
+                    self.assertEqual(expected, result.returncode, result.stdout + result.stderr)
+                    self.assertEqual(expected == 0, "admitted without execution" in result.stdout)
+            artifact = self.build / "Release/flitzzip_tests.exe"
+            original = artifact.read_bytes()
+            artifact.write_bytes(b"stale nonexecutable artifact")
+            try:
+                result = subprocess.run(
+                    [shell, "-NoProfile", "-File", str(probe), "runner"],
+                    cwd=self.root,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("inputs or outputs changed", result.stderr)
+            finally:
+                artifact.write_bytes(original)
 
     # Purpose: Write the private configured cache. Inputs: Fixture values. Outputs: CMake-compatible regular file.
     def write_cache(self):
@@ -447,7 +726,7 @@ class NativeBuildReceiptTests(unittest.TestCase):
         valid = json.loads(original)
         changes = [
             (("schema_version",), True),
-            (("schema_version",), 2),
+            (("schema_version",), 3),
             (("kind",), "configure-only"),
             (("status",), "failed"),
             (("transaction_id",), "F" * 32),
@@ -776,6 +1055,37 @@ class NativeBuildReceiptTests(unittest.TestCase):
             result = json.loads(invoke("finish", *options, *fresh, direct=direct).stdout)
             validated = json.loads(invoke("validate", direct=direct).stdout)
             self.assertEqual(result["receipt_sha256"], validated["receipt_sha256"])
+            selected = json.loads(
+                invoke(
+                    "validate-execution",
+                    "--artifact",
+                    str(self.build / "Release/flitzzip_tests.exe"),
+                    "--target",
+                    "flitzzip_tests",
+                    "--configuration",
+                    "Release",
+                    direct=direct,
+                ).stdout
+            )
+            self.assertEqual(["flitzzip_tests"], [item["target"] for item in selected["executables"]])
+            self.assertIn(
+                "configuration is stale",
+                invoke(
+                    "validate-execution",
+                    "--artifact",
+                    "build/Release/flitzzip_tests.exe",
+                    "--configuration",
+                    "Debug",
+                    direct=direct,
+                    expected=1,
+                ).stderr,
+            )
+            self.assertIn(
+                "matching optional target names",
+                invoke(
+                    "validate-execution", "--artifact", "a", "--target", "b", "--target", "c", direct=direct, expected=2
+                ).stderr,
+            )
         for terminal in ("failed", "configure-only"):
             token = json.loads(invoke("begin").stdout)["transaction_id"]
             self.assertEqual(json.loads(invoke(terminal, "--token", token).stdout), {"status": terminal})

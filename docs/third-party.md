@@ -88,7 +88,7 @@ for provenance.
 FlitzZip builds an app-local Zstandard/libzstd `v1.5.7` runtime from the pinned
 upstream source archive, with multithreading and legacy decoding enabled.
 
-- Upstream: <https://github.com/facebook/zstd>
+- Upstream: <https://github.com/meta/zstd>
 - Release tag: `v1.5.7`
 - Source archive SHA-256: `7897bc5d620580d9b7cd3539c44b59d78f3657d33663fe97a145e07b4ebd69a4`
 - Win64 runtime package SHA-256: `acb4e8111511749dc7a3ebedca9b04190e37a17afeb73f55d4425dbf0b90fad9`

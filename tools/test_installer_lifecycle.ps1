@@ -87,6 +87,36 @@ function Assert-MsiRollbackFixture {
     }
 }
 
+# Independently break each linked part of existing-directory recovery and future
+# ARP registration. These edits affect disposable MSI copies, never host state.
+function Get-InstallLocationMutation {
+    @(
+        @{ Sql = @('DELETE FROM `AppSearch` WHERE `Property`=''INSTALL_ROOT'''); Reason = 'install location' },
+        @{ Sql = @('DELETE FROM `RegLocator`'); Reason = 'install location' },
+        @{ Sql = @('DELETE FROM `AppSearch` WHERE `Property`=''INSTALL_ROOT''',
+            'INSERT INTO `AppSearch` (`Property`,`Signature_`) VALUES (''INSTALL_ROOT'',''UnlinkedLocation'')'); Reason = 'install location' },
+        @{ Sql = @('UPDATE `RegLocator` SET `Root`=1'); Reason = 'install location' },
+        @{ Sql = @('UPDATE `RegLocator` SET `Type`=2'); Reason = 'install location' },
+        @{ Sql = @('UPDATE `RegLocator` SET `Key`=''Software\WrongProduct'''); Reason = 'install location' },
+        @{ Sql = @('UPDATE `RegLocator` SET `Name`=''WrongLocation'''); Reason = 'install location' },
+        @{ Sql = @('DELETE FROM `InstallUISequence` WHERE `Action`=''AppSearch'''); Reason = 'install location' },
+        @{ Sql = @('DELETE FROM `InstallUISequence` WHERE `Action`=''FindRelatedProducts'''); Reason = 'install location' },
+        @{ Sql = @('UPDATE `InstallUISequence` SET `Sequence`=0 WHERE `Action`=''AppSearch'''); Reason = 'install location' },
+        @{ Sql = @('UPDATE `InstallUISequence` SET `Sequence`=1 WHERE `Action`=''AppSearch'''); Reason = 'install location' },
+        @{ Sql = @('UPDATE `InstallUISequence` SET `Condition`=''Installed'' WHERE `Action`=''AppSearch'''); Reason = 'install location' },
+        @{ Sql = @('DELETE FROM `InstallExecuteSequence` WHERE `Action`=''AppSearch'''); Reason = 'install location' },
+        @{ Sql = @('UPDATE `InstallExecuteSequence` SET `Condition`=''Installed'' WHERE `Action`=''FindRelatedProducts'''); Reason = 'install location' },
+        @{ Sql = @('UPDATE `InstallExecuteSequence` SET `Sequence`=900 WHERE `Action`=''AppSearch'''); Reason = 'install location' },
+        @{ Sql = @('UPDATE `InstallExecuteSequence` SET `Condition`=''Installed'' WHERE `Action`=''AppSearch'''); Reason = 'install location' },
+        @{ Sql = @('DELETE FROM `CustomAction` WHERE `Action`=''SetARPINSTALLLOCATION'''); Reason = 'install location' },
+        @{ Sql = @('UPDATE `CustomAction` SET `Target`=''[OtherDirectory]'' WHERE `Action`=''SetARPINSTALLLOCATION'''); Reason = 'install location' },
+        @{ Sql = @('UPDATE `CustomAction` SET `Type`=35 WHERE `Action`=''SetARPINSTALLLOCATION'''); Reason = 'install location' },
+        @{ Sql = @('DELETE FROM `InstallExecuteSequence` WHERE `Action`=''SetARPINSTALLLOCATION'''); Reason = 'install location' },
+        @{ Sql = @('UPDATE `InstallExecuteSequence` SET `Sequence`=999 WHERE `Action`=''SetARPINSTALLLOCATION'''); Reason = 'install location' },
+        @{ Sql = @('UPDATE `InstallExecuteSequence` SET `Condition`=''Installed'' WHERE `Action`=''SetARPINSTALLLOCATION'''); Reason = 'install location' }
+    )
+}
+
 # Purpose: Prove compiled policy checks reject real database drift, not just malformed authoring text.
 # Inputs: One known-good MSI and its upgrade or rollback-control role; edits stay in this invocation's owned root.
 # Outputs: Every independent compiled mutation is rejected for its intended invariant.
@@ -109,7 +139,7 @@ function Test-CompiledMsiMutation {
         @{ Sql = @("DELETE FROM ``InstallExecuteSequence`` WHERE ``Action``='MigrateFeatureStates'"); Reason = 'migrate features' },
         @{ Sql = @("DELETE FROM ``LaunchCondition``"); Reason = 'launch condition' },
         @{ Sql = @("UPDATE ``Registry`` SET ``Root``=1 WHERE ``Name``='desktop_shortcut'"); Reason = 'HKMU' }
-    ) }
+    ) + @(Get-InstallLocationMutation) }
     for ($index = 0; $index -lt $mutations.Count; ++$index) {
         # Reflection requires a native BSTR, not the extended string returned by pipeline commands.
         [string]$path = Join-Path $root "mutation-$RollbackControl-$index.msi"

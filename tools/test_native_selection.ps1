@@ -82,6 +82,12 @@ function Assert-NativeHeaderConsumersSelected {
 
 $entropyPaths = @('src/gpu/hip_codec_static_prefix.hip.cpp', 'src/gpu/hip_codec_adaptive_prefix.hip.cpp')
 $encoderExpected = @('gpu_rans_encoder_workspace_counts_padding_all_models_and_returned_payload',
+    'gpu_rans_encoder_search_workspace_covers_retained_trial_and_order',
+    'gpu_rans_encoder_search_preserves_requested_winner_and_reuses_gpu_models',
+    'gpu_rans_encoder_search_conditional_groups_match_fresh_trial_oracle',
+    'gpu_rans_encoder_search_reordered_ties_keep_original_priority',
+    'gpu_rans_encoder_search_duplicates_preserve_bytes_without_repeating_device_work',
+    'gpu_rans_encoder_search_validates_all_options_and_discards_cancelled_winner',
     'gpu_rans_encoder_runtime_constructor_failures_release_acquired_storage',
     'gpu_rans_encoder_runtime_copy_failures_discard_partial_trials_and_recover',
     'gpu_rans_encoder_runtime_clear_failures_discard_partial_trials_and_recover',
@@ -312,7 +318,12 @@ foreach ($invalid in @(
         '{"kind":"ctestInfo","version":{"major":1},"tests":[]}')) {
     Assert-NativeSelectionRejected { Assert-FlitzZipCTestExecutionInventory -Inventory ($invalid | ConvertFrom-Json) } 'CTest'
 }
-$measurementExpected = @('memory_benchmark_source_handoff_rejects_stale_metadata_and_recovers',
+$measurementExpected = @('flzip_cpu_pattern_decode_benchmark_opt_in',
+    'flzip_gpu_pattern_decode_benchmark_opt_in',
+    'dictionary_encoder_benchmark_opt_in',
+    'dictionary_production_benchmark_opt_in',
+    'gpu_block_batch_benchmark_opt_in',
+    'memory_benchmark_source_handoff_rejects_stale_metadata_and_recovers',
     'memory_benchmark_cpu_pipeline_is_byte_exact_and_ram_only',
     'memory_benchmark_all_efforts_preserve_corpus_bytes_and_backend_identity',
     'memory_benchmark_neutron_pipeline_requires_real_hip_and_exact_bytes',
@@ -480,6 +491,8 @@ target_sources(flitzzip_test_objects PUBLIC tests/cpp/test_gui.cpp)
         ($roleInventory.role -join '|') -ceq 'Correctness|Measurement') 'both execution roles retain inventory and exact selection'
     $roleSelection = Get-FlitzZipNativeTestSelection -Paths @('tests/cpp/test_fixture.cpp') -Root $fixtureRoot
     Assert-NativeSelection (($roleSelection.tests -join '|') -ceq 'measured|sample') 'default selection does not lose measurement cases'
+    Assert-NativeSelection ((@($roleSelection.roles | Sort-Object name | ForEach-Object { "$($_.name):$($_.role)" }) -join '|') -ceq
+        'measured:Measurement|sample:Correctness') 'selection retains exact source-bound roles for restricted execution'
     foreach ($role in @('Unknown', 'static_cast<TestExecutionRole>(42)')) {
         [IO.File]::WriteAllText($fixtureSource, "TEST_CASE(sample) {}`nTEST_CASE(measured, $role) {}")
         Assert-NativeSelectionRejected { Get-FlitzZipNativeTestInventory -Root $fixtureRoot } 'unsupported registration syntax'
@@ -508,6 +521,20 @@ add_library(flitzzip_test_objects OBJECT
         throw 'Refusing to remove an unverified native-selection fixture.'
     }
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
+}
+
+# Protocol cases isolate the admission dependency; real admission uses the
+# Python real-file regressions and the live native qualification cohort.
+$nativeAdmissionOriginal = ${function:Get-FlitzZipNativeExecutionAdmission}
+$script:NativeAdmissionCalls = [Collections.Generic.List[string]]::new()
+$script:NativeAdmissionReject = $false
+function Get-FlitzZipNativeExecutionAdmission {
+    param([string]$TestRunner, [string]$Cli, [switch]$RequireCli, [switch]$RequireHip, [string]$Configuration)
+    $script:NativeAdmissionCalls.Add("$TestRunner|cli=$($RequireCli.IsPresent)|hip=$($RequireHip.IsPresent)|configuration=$Configuration")
+    if ($script:NativeAdmissionReject) { throw 'fixture executable admission rejected' }
+    [pscustomobject]@{TestRunner = $TestRunner; Cli = $Cli;
+        Receipt = [pscustomobject]@{receipt_sha256 = 'controlled-admission';
+            recipe = [pscustomobject]@{FLITZZIP_ENABLE_HIP = $(if ($RequireHip) { 'ON' } else { 'OFF' })}}}
 }
 
 $script:NativeFixtureCalls = [Collections.Generic.List[string]]::new()
@@ -549,8 +576,15 @@ function Invoke-NativeFixtureCase {
 }
 
 $controlled = [pscustomobject]@{ mode = 'component'; components = @('fixture'); tests = @('first', 'second'); requireHip = $true }
-Invoke-FlitzZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli | Out-Null
+Invoke-FlitzZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli -Configuration Debug | Out-Null
+Assert-NativeSelection ($script:NativeAdmissionCalls.Count -eq 1) 'one admission before a nonempty cohort'
+Assert-NativeSelection ($script:NativeAdmissionCalls[0] -ceq 'Invoke-NativeFixtureCase|cli=True|hip=True|configuration=Debug') 'exact configuration and backend requirements reach admission'
 Assert-NativeSelection (($script:NativeFixtureCalls -join '|') -eq 'cli:gpu-info|case:first|case:second|cli:gpu-info') 'each case once with before/after HIP checks'
+$script:NativeFixtureCalls.Clear()
+$script:NativeAdmissionReject = $true
+Assert-NativeSelectionRejected { Invoke-FlitzZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli } 'fixture executable admission rejected'
+Assert-NativeSelection ($script:NativeFixtureCalls.Count -eq 0) 'rejected admission cannot start CLI or runner'
+$script:NativeAdmissionReject = $false
 foreach ($mode in @('failure', 'wrong-name', 'wrong-count', 'no-summary')) {
     $script:NativeFixtureCalls.Clear()
     $script:NativeFixtureMode = $mode
@@ -678,5 +712,147 @@ try {
         Remove-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
     }
 }
+# Record actual dispatch and fail safely if a restricted cohort reaches its
+# measurement body. The sentinel performs no timed or benchmark work.
+function Invoke-NativeRoleFixture {
+    param([string]$Filter)
+    $name = $Filter.Substring(1)
+    $script:NativeRoleCalls.Add($name)
+    if ($name -ceq 'measured' -and $script:NativeRoleMeasurementForbidden) {
+        throw 'Restricted native execution reached the measurement sentinel.'
+    }
+    "[RUN ] $name"
+    if ($name -ceq $script:NativeRoleFailure) {
+        $global:LASTEXITCODE = 1
+        "[FAIL] $name"
+        '1 tests, 1 failed'
+    } else {
+        $global:LASTEXITCODE = 0
+        "[PASS] $name"
+        '1 tests, 0 failed'
+    }
+}
+
+# A recording readiness boundary proves admission happens around actual work,
+# while an invalid or entirely deferred selection must never query the backend.
+function Invoke-NativeRoleFixtureCli {
+    param([string]$Command)
+    if ($Command -cne 'gpu-info') { throw 'Unexpected component readiness command.' }
+    $script:NativeRoleCliCalls++
+    $global:LASTEXITCODE = 0
+    'hip_compiled=true'
+    'available=true'
+}
+
+$script:NativeRoleCalls = [Collections.Generic.List[string]]::new()
+$script:NativeRoleCliCalls = 0
+$script:NativeRoleFailure = ''
+$script:NativeRoleMeasurementForbidden = $true
+$roleRecords = @(
+    [pscustomobject]@{ name = 'early'; role = 'Correctness' },
+    [pscustomobject]@{ name = 'measured'; role = 'Measurement' },
+    [pscustomobject]@{ name = 'late'; role = 'Correctness' })
+$restricted = [pscustomobject]@{ mode = 'component'; components = @('role-control')
+    tests = @('early', 'measured', 'late'); requireHip = $true; roles = $roleRecords }
+$restrictedOutput = @(Invoke-FlitzZipNativeTestSelection -Selection $restricted -TestRunner Invoke-NativeRoleFixture `
+    -Cli Invoke-NativeRoleFixtureCli -CorrectnessOnly)
+Assert-NativeSelection (($script:NativeRoleCalls -join '|') -ceq 'early|late') 'restricted dispatch excludes the real measurement sentinel and preserves order'
+Assert-NativeSelection ($script:NativeRoleCliCalls -eq 2) 'restricted correctness preserves both required-HIP admission checks'
+Assert-NativeSelection (@($restrictedOutput | Where-Object { $_ -ceq 'DEFERRED native measurement case: measured' }).Count -eq 1) 'measurement deferral is exact and visible'
+Assert-NativeSelection (($restricted.tests -join '|') -ceq 'early|measured|late') 'restricted execution preserves caller selection'
+
+$script:NativeRoleCalls.Clear()
+$script:NativeRoleMeasurementForbidden = $false
+$null = @(Invoke-FlitzZipNativeTestSelection -Selection $restricted -TestRunner Invoke-NativeRoleFixture -Cli Invoke-NativeRoleFixtureCli)
+Assert-NativeSelection (($script:NativeRoleCalls -join '|') -ceq 'early|measured|late') 'default component execution retains every measurement case'
+$script:NativeRoleMeasurementForbidden = $true
+
+foreach ($invalid in @(
+        @{ roles = @() }, @{ roles = @($null) },
+        @{ roles = @($roleRecords[0], $roleRecords[1]) },
+        @{ roles = @($roleRecords[0], $roleRecords[1], $roleRecords[0]) },
+        @{ roles = @($roleRecords) + @([pscustomobject]@{ name = 'extra'; role = 'Measurement' }) },
+        @{ roles = @($roleRecords[0], $roleRecords[1], [pscustomobject]@{ name = 'late'; role = 'Unknown' }) },
+        @{ roles = @($roleRecords[0], $roleRecords[1], [pscustomobject]@{ name = 'LATE'; role = 'Correctness' }) })) {
+    $restricted.roles = $invalid.roles
+    $script:NativeRoleCalls.Clear()
+    $script:NativeRoleCliCalls = 0
+    Assert-NativeSelectionRejected {
+        Invoke-FlitzZipNativeTestSelection -Selection $restricted -TestRunner Invoke-NativeRoleFixture `
+            -Cli Invoke-NativeRoleFixtureCli -CorrectnessOnly
+    } 'execution roles'
+    Assert-NativeSelection ($script:NativeRoleCalls.Count -eq 0 -and $script:NativeRoleCliCalls -eq 0) 'invalid role metadata fails before test dispatch or backend access'
+}
+$restricted.roles = $roleRecords
+$script:NativeRoleCalls.Clear()
+$script:NativeRoleCliCalls = 0
+$allMeasurements = [pscustomobject]@{ mode = 'component'; components = @('measurement-control')
+    tests = @('measured'); requireHip = $true; roles = @($roleRecords[1]) }
+$deferredOutput = @(Invoke-FlitzZipNativeTestSelection -Selection $allMeasurements -TestRunner Invoke-NativeRoleFixture `
+    -Cli Invoke-NativeRoleFixtureCli -CorrectnessOnly)
+Assert-NativeSelection ($script:NativeRoleCalls.Count -eq 0 -and $script:NativeRoleCliCalls -eq 0) 'an entirely deferred cohort launches no test or backend query'
+Assert-NativeSelection (($deferredOutput -join '|') -match 'DEFERRED native component cohort' -and
+    ($deferredOutput -join '|') -notmatch '(?i)passed') 'an entirely deferred cohort cannot report a passing test'
+
+$script:NativeRoleCalls.Clear()
+$script:NativeRoleFailure = 'early'
+Assert-NativeSelectionRejected {
+    Invoke-FlitzZipNativeTestSelection -Selection $restricted -TestRunner Invoke-NativeRoleFixture `
+        -Cli Invoke-NativeRoleFixtureCli -CorrectnessOnly -ContinueAfterAssertionFailure
+} 'Native batch assertion failures: early'
+Assert-NativeSelection (($script:NativeRoleCalls -join '|') -ceq 'early|late') 'restricted batch mode retains failures and later correctness work without measuring'
+
+# Execute the public adapter with a recording dependency, then omit the forwarding
+# argument in an owned copy to prove the control detects that regression.
+function Test-NativeCorrectnessWrapperForwarding {
+    $fixture = Join-Path $root ('out/native-component-wrapper-' + [guid]::NewGuid().ToString('N'))
+    $scripts = Join-Path $fixture 'tools'
+    if ((Get-Item -LiteralPath (Join-Path $root 'out')).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'Refusing a redirected component wrapper fixture root.'
+    }
+    $wrapper = Join-Path $scripts 'native_component_tests.ps1'
+    $created = $false
+    try {
+        New-Item -ItemType Directory -Path $fixture | Out-Null
+        $created = $true
+        New-Item -ItemType Directory -Path $scripts | Out-Null
+        Copy-Item -LiteralPath (Join-Path $root 'tools/native_component_tests.ps1') -Destination $wrapper
+        [IO.File]::WriteAllText((Join-Path $scripts 'native_test_selection.ps1'), @'
+function ConvertFrom-FlitzZipNativeSelectionPath { param([string]$Base64) @('tests/cpp/test_fixture.cpp') }
+function Get-FlitzZipNativeTestSelection { param($Paths, $Root) [pscustomobject]@{ mode = 'component'; requireHip = $true } }
+function Invoke-FlitzZipNativeTestSelection {
+    param($Selection, $TestRunner, $Cli, [switch]$CpuOnlyValidation, [switch]$CorrectnessOnly, $Configuration)
+    if ($Configuration -cne 'Debug') { throw 'Component wrapper lost its explicit build configuration.' }
+    "component_forward_correctness=$($CorrectnessOnly.IsPresent)"
+}
+'@)
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('["tests/cpp/test_fixture.cpp"]'))
+        foreach ($restrictedMode in @($false, $true)) {
+            $output = @(& $wrapper -ChangedPathBase64 $encoded -CorrectnessOnly:$restrictedMode -Configuration Debug)
+            $expected = "component_forward_correctness=$restrictedMode"
+            Assert-NativeSelection (@($output | Where-Object { $_ -ceq $expected }).Count -eq 1) 'public component adapter forwards the explicit mode exactly once'
+        }
+        $source = [IO.File]::ReadAllText($wrapper)
+        $argument = ' -CorrectnessOnly:$CorrectnessOnly'
+        Assert-NativeSelection ([regex]::Matches($source, [regex]::Escape($argument)).Count -eq 1) 'wrapper forwarding mutation identifies one actual command argument'
+        [IO.File]::WriteAllText($wrapper, $source.Replace($argument, ''))
+        $mutated = @(& $wrapper -ChangedPathBase64 $encoded -CorrectnessOnly -Configuration Debug)
+        Assert-NativeSelection (@($mutated | Where-Object { $_ -ceq 'component_forward_correctness=False' }).Count -eq 1) 'recording boundary detects omitted restricted-mode forwarding'
+    } finally {
+        if ($created -and (Test-Path -LiteralPath $fixture)) {
+            $absolute = [IO.Path]::GetFullPath($fixture)
+            $prefix = [IO.Path]::GetFullPath((Join-Path $root 'out')) + [IO.Path]::DirectorySeparatorChar
+            $resolved = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $fixture).Path)
+            if (-not $absolute.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -or
+                -not $resolved.Equals($absolute, [StringComparison]::OrdinalIgnoreCase) -or
+                ((Get-Item -LiteralPath $fixture).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'Refusing redirected component wrapper fixture cleanup.'
+            }
+            Remove-Item -LiteralPath $resolved -Recurse -Force
+        }
+    }
+}
+Test-NativeCorrectnessWrapperForwarding
+Set-Item -Path Function:Get-FlitzZipNativeExecutionAdmission -Value $nativeAdmissionOriginal
 $global:LASTEXITCODE = 0
 Write-Output 'Native selection registry, component, HIP, absence, exact execution and early-stop contracts passed.'

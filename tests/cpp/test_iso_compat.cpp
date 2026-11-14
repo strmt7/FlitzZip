@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
+#include "test_stream_progress.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -215,7 +216,48 @@ void write_iso_fixture(const std::filesystem::path& archive, IsoFixtureMode mode
     output.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
 }
 
+// One independently authored file extent spans several copy windows; volume and
+// directory fields use the existing fixture builders, never the product reader.
+void check_iso_extraction_cancellation(bool validation) {
+    const auto root = test_temp_dir(validation ? "iso-validation-cancellation" : "iso-window-cancellation");
+    const auto archive = root / "payload.iso";
+    const auto expected = flitzzip_test::stream_cancellation_payload();
+    constexpr std::uint32_t payload_sector = 24U;
+    const auto sectors = (expected.size() + kTestIsoSectorBytes - 1U) / kTestIsoSectorBytes;
+    std::vector<unsigned char> image(sector_offset(payload_sector) + sectors * kTestIsoSectorBytes, 0U);
+    const auto directory = make_iso_record(kTestIsoRootSector, kTestIsoSectorBytes, 2U, {0U});
+    write_iso_descriptors(image, directory);
+    std::size_t cursor = 0U;
+    append_iso_directory_record(image, kTestIsoRootSector, cursor, directory);
+    append_iso_directory_record(image, kTestIsoRootSector, cursor,
+                                make_iso_record(kTestIsoRootSector, kTestIsoSectorBytes, 2U, {1U}));
+    append_iso_directory_record(
+        image, kTestIsoRootSector, cursor,
+        make_iso_record(payload_sector, static_cast<std::uint32_t>(expected.size()), 0U, iso_identifier("PAYLOAD;1")));
+    std::copy(expected.begin(), expected.end(),
+              image.begin() + static_cast<std::ptrdiff_t>(sector_offset(payload_sector)));
+    {
+        std::ofstream output(archive, std::ios::binary);
+        output.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
+    }
+    if (validation) {
+        flitzzip_test::require_validation_cancellation(archive, root / "out", "PAYLOAD", expected,
+                                                       &flitzzip::extract_iso);
+    } else {
+        flitzzip_test::require_stream_window_cancellation(archive, root / "out", "PAYLOAD", expected,
+                                                          &flitzzip::extract_iso);
+    }
+}
+
 }  // namespace
+
+TEST_CASE(iso_extraction_validation_is_cancellable) {
+    check_iso_extraction_cancellation(true);
+}
+
+TEST_CASE(iso_extraction_payload_windows_are_cancellable) {
+    check_iso_extraction_cancellation(false);
+}
 
 // Purpose: Verify native `.iso` extraction reads files and directories from a basic ISO 9660 image.
 // Inputs: A handcrafted ISO fixture with root and nested file records.
@@ -501,10 +543,10 @@ TEST_CASE(iso_cancellation_preserves_destination_and_allows_reuse) {
 
 namespace {
 
-// Purpose: Require ISO admission failure before progress, then prove source release and same-destination reuse.
-// Inputs: Owned archive/destination, independently mutated bytes, complete good bytes and exact rejection category.
-// Outputs: Preserves two caller files and the full destination inventory; restoring the archive recovers exact
-// payloads.
+// Purpose: Require ISO admission failure before extraction progress, then prove source release and same-destination
+// reuse. Inputs: Owned archive/destination, independently mutated bytes, complete good bytes and exact rejection
+// category. Outputs: Preserves two caller files and the full destination inventory; restoring the archive recovers
+// exact payloads.
 void require_iso_admission_failure_and_recovery(const std::filesystem::path& archive,
                                                 const std::filesystem::path& destination,
                                                 std::span<const unsigned char> changed,
@@ -513,17 +555,24 @@ void require_iso_admission_failure_and_recovery(const std::filesystem::path& arc
     std::filesystem::create_directory(destination);
     std::ofstream(destination / "ROOT.TXT", std::ios::binary) << "retain original root";
     std::ofstream(destination / "sentinel.txt", std::ios::binary) << "retain unrelated caller data";
-    unsigned callbacks = 0;
+    unsigned extraction_callbacks = 0;
     bool rejected = false;
     try {
-        (void)flitzzip::extract_iso(archive, destination, true,
-                                    [&](const flitzzip::ProgressSnapshot&) { ++callbacks; });
+        (void)flitzzip::extract_iso(archive, destination, true, [&](const flitzzip::ProgressSnapshot& snapshot) {
+            if (snapshot.total_bytes == 0U && snapshot.total_entries == 0U) {
+                REQUIRE_EQ(snapshot.operation, flitzzip::OperationKind::Extract);
+                REQUIRE_EQ(snapshot.processed_bytes, 0U);
+                REQUIRE_EQ(snapshot.completed_entries, 0U);
+            } else {
+                ++extraction_callbacks;
+            }
+        });
     } catch (const flitzzip::ArchiveError& error) {
         REQUIRE_TRUE(std::string_view(error.what()).find(diagnostic) != std::string_view::npos);
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
-    REQUIRE_EQ(callbacks, 0U);
+    REQUIRE_EQ(extraction_callbacks, 0U);
     REQUIRE_EQ(read_text_file(destination / "ROOT.TXT"), "retain original root");
     REQUIRE_EQ(read_text_file(destination / "sentinel.txt"), "retain unrelated caller data");
     REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(destination), std::filesystem::directory_iterator{}),

@@ -9,6 +9,11 @@ Evaluate the concrete candidate against the
 requires current evidence for every applicable gate and review of residual risk.
 Permission to publish remains a separate maintainer decision.
 
+**The accumulated development changes are not yet a release-qualified candidate.**
+The [current assessment and next round](../IMPLEMENTATION_PLAN.md#next-coherent-round)
+identify the unmet source, product, distribution, lifecycle and hosted acceptance
+milestones. Earlier successful builds and workflow runs do not qualify later edits.
+
 ## Product Evidence
 
 The retained native qualification covers the main test registry, seven CTest suites,

@@ -1,4 +1,5 @@
 #include "cpio/cpio_adapter.hpp"
+#include "core/archive_stream_progress.hpp"
 #include "cpio/cpio_numeric.hpp"
 
 #include "core/file_manifest.hpp"
@@ -100,24 +101,26 @@ void write_zero_padding(std::ostream& output, std::uint64_t padding) {
 // Purpose: Read an exact byte count from an input stream.
 // Inputs: `input` is the archive stream, `buffer` receives bytes, and `label` names the region.
 // Outputs: Fills the buffer or throws when the archive is truncated.
-void read_exact(std::istream& input, char* buffer, std::size_t size, const char* label) {
-    input.read(buffer, static_cast<std::streamsize>(size));
-    if (input.gcount() != static_cast<std::streamsize>(size)) {
-        throw ArchiveError(std::string(label) + " is truncated");
+void read_exact(std::istream& input, char* buffer, std::size_t size, const char* label,
+                const ProgressCheckpoint& checkpoint = {}) {
+    std::size_t offset = 0;
+    while (offset < size) {
+        invoke_archive_checkpoint(checkpoint);
+        const auto bytes = std::min(size - offset, kCpioIoBufferBytes);
+        input.read(buffer + offset, static_cast<std::streamsize>(bytes));
+        if (input.gcount() != static_cast<std::streamsize>(bytes)) {
+            throw ArchiveError(std::string(label) + " is truncated");
+        }
+        offset += bytes;
     }
 }
 
 // Purpose: Consume an exact byte count from a possibly non-seekable CPIO stream.
 // Inputs: `input` is the source stream, `size` is the byte count, and `label` names the consumed region.
 // Outputs: Reads and discards exactly `size` bytes, or throws on truncation/read failure.
-void discard_stream_bytes(std::istream& input, std::uint64_t size, const char* label) {
-    std::array<char, kCpioIoBufferBytes> buffer{};
-    std::uint64_t remaining = size;
-    while (remaining > 0) {
-        const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
-        read_exact(input, buffer.data(), chunk, label);
-        remaining -= chunk;
-    }
+void discard_stream_bytes(std::istream& input, std::uint64_t size, const char* label,
+                          const ProgressCheckpoint& checkpoint = {}) {
+    consume_exact_stream_bytes(input, size, [](std::span<const char>) {}, label, checkpoint);
 }
 
 // Purpose: Seek forward by an exact byte count in a CPIO file stream.
@@ -141,12 +144,15 @@ void skip_file_bytes(std::istream& input, std::uint64_t size, const char* label)
 // Purpose: Consume CPIO bytes using seeking when possible and reads otherwise.
 // Inputs: `input` is the archive stream, `size` is the byte count, `label` names the region, and `seekable` selects the
 // fast path. Outputs: Advances the stream or throws on truncation/seek failure.
-void skip_cpio_payload_bytes(std::istream& input, std::uint64_t size, const char* label, bool seekable) {
+void skip_cpio_payload_bytes(std::istream& input, std::uint64_t size, const char* label, bool seekable,
+                             const ProgressCheckpoint& checkpoint = {}) {
     if (seekable) {
+        invoke_archive_checkpoint(checkpoint);
         skip_file_bytes(input, size, label);
+        invoke_archive_checkpoint(checkpoint);
         return;
     }
-    discard_stream_bytes(input, size, label);
+    discard_stream_bytes(input, size, label, checkpoint);
 }
 
 // Purpose: Parse one eight-digit hexadecimal CPIO header field.
@@ -261,11 +267,22 @@ void copy_file_to_cpio(const std::filesystem::path& source, std::ostream& output
     }
 }
 
+// The newc CRC variant uses a modulo-2^32 unsigned byte sum, independent of
+// signed char and window boundaries. Payload writers and validation share it.
+std::uint32_t cpio_byte_sum(std::span<const char> bytes) {
+    std::uint32_t sum = 0;
+    for (const char value : bytes) {
+        sum += static_cast<unsigned char>(value);
+    }
+    return sum;
+}
+
 // Purpose: Copy a validated seekable CPIO file payload into a temporary output file.
 // Inputs: `input` is the archive stream, `entry` is trusted scan metadata, `target` is the final path, and `overwrite`
 // controls replacement. Outputs: Publishes the verified file or throws without partially publishing target bytes.
 void extract_cpio_seekable_file_payload(std::ifstream& input, const CpioEntryMetadata& entry,
-                                        const std::filesystem::path& target, bool overwrite) {
+                                        const std::filesystem::path& target, bool overwrite, ProgressState& progress,
+                                        const ProgressCallback& progress_callback) {
     if (entry.payload_offset > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
         throw ArchiveError("CPIO payload offset is too large to seek safely");
     }
@@ -288,15 +305,15 @@ void extract_cpio_seekable_file_payload(std::ifstream& input, const CpioEntryMet
             const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
             read_exact(input, buffer.data(), chunk, "CPIO file payload");
             if (entry.crc) {
-                for (std::size_t i = 0; i < chunk; ++i) {
-                    sum += static_cast<unsigned char>(buffer[i]);
-                }
+                sum += cpio_byte_sum(std::span<const char>(buffer.data(), chunk));
             }
             output.write(buffer.data(), static_cast<std::streamsize>(chunk));
             if (!output) {
                 throw ArchiveError("failed to write temporary extracted file: " + path_diagnostic_utf8(target));
             }
             remaining -= chunk;
+            progress.add_bytes(chunk);
+            publish_progress(progress, progress_callback);
         }
         if (entry.crc && sum != entry.check) {
             throw ArchiveError("CPIO CRC entry checksum changed between validation and publication: " + entry.path);
@@ -305,6 +322,7 @@ void extract_cpio_seekable_file_payload(std::ifstream& input, const CpioEntryMet
         if (!output) {
             throw ArchiveError("failed to finalize temporary extracted file: " + path_diagnostic_utf8(target));
         }
+        publish_progress(progress, progress_callback);
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
     } catch (...) {
@@ -318,7 +336,8 @@ void extract_cpio_seekable_file_payload(std::ifstream& input, const CpioEntryMet
 // `overwrite` controls replacement. Outputs: Publishes the verified file atomically, consumes payload padding, and
 // throws without partially publishing target bytes.
 void extract_cpio_stream_file_payload(std::istream& input, const CpioEntryMetadata& entry,
-                                      const std::filesystem::path& target, bool overwrite) {
+                                      const std::filesystem::path& target, bool overwrite, ProgressState& progress,
+                                      const ProgressCallback& progress_callback) {
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing CPIO extraction target: " + path_diagnostic_utf8(target));
     }
@@ -335,15 +354,15 @@ void extract_cpio_stream_file_payload(std::istream& input, const CpioEntryMetada
             const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
             read_exact(input, buffer.data(), chunk, "CPIO file payload");
             if (entry.crc) {
-                for (std::size_t i = 0; i < chunk; ++i) {
-                    sum += static_cast<unsigned char>(buffer[i]);
-                }
+                sum += cpio_byte_sum(std::span<const char>(buffer.data(), chunk));
             }
             output.write(buffer.data(), static_cast<std::streamsize>(chunk));
             if (!output) {
                 throw ArchiveError("failed to write temporary extracted file: " + path_diagnostic_utf8(target));
             }
             remaining -= chunk;
+            progress.add_bytes(chunk);
+            publish_progress(progress, progress_callback);
         }
         if (entry.crc && sum != entry.check) {
             throw ArchiveError("CPIO CRC entry checksum mismatch: " + entry.path);
@@ -353,6 +372,7 @@ void extract_cpio_stream_file_payload(std::istream& input, const CpioEntryMetada
         if (!output) {
             throw ArchiveError("failed to finalize temporary extracted file: " + path_diagnostic_utf8(target));
         }
+        publish_progress(progress, progress_callback);
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
     } catch (...) {
@@ -364,18 +384,11 @@ void extract_cpio_stream_file_payload(std::istream& input, const CpioEntryMetada
 // Purpose: Read and checksum a CPIO CRC payload during validation.
 // Inputs: `input` is positioned at the payload, `size` is the expected payload size.
 // Outputs: Returns the unsigned byte sum required by the `070702` variant.
-std::uint32_t checksum_cpio_payload(std::istream& input, std::uint64_t size) {
-    std::array<char, kCpioIoBufferBytes> buffer{};
-    std::uint64_t remaining = size;
+std::uint32_t checksum_cpio_payload(std::istream& input, std::uint64_t size,
+                                    const ProgressCheckpoint& checkpoint = {}) {
     std::uint32_t sum = 0;
-    while (remaining > 0) {
-        const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
-        read_exact(input, buffer.data(), chunk, "CPIO CRC payload");
-        for (std::size_t i = 0; i < chunk; ++i) {
-            sum += static_cast<unsigned char>(buffer[i]);
-        }
-        remaining -= chunk;
-    }
+    consume_exact_stream_bytes(
+        input, size, [&](std::span<const char> bytes) { sum += cpio_byte_sum(bytes); }, "CPIO CRC payload", checkpoint);
     return sum;
 }
 
@@ -403,12 +416,14 @@ bool classify_cpio_entry(const CpioHeader& header, const std::string& name) {
 // Inputs: `input` is positioned at the CPIO start and `seekable` indicates whether payload offsets can be recorded.
 // Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported
 // entries.
-CpioScanResult scan_cpio_stream(std::istream& input, bool seekable, ArchivePathEncoding encoding) {
+CpioScanResult scan_cpio_stream(std::istream& input, bool seekable, ArchivePathEncoding encoding,
+                                const ProgressCheckpoint& checkpoint = {}) {
     CpioScanResult result;
     std::vector<ArchivePathValidationEntry> validation_entries;
     while (true) {
+        invoke_archive_checkpoint(checkpoint);
         std::array<char, kCpioHeaderBytes> raw_header{};
-        read_exact(input, raw_header.data(), raw_header.size(), "CPIO header");
+        read_exact(input, raw_header.data(), raw_header.size(), "CPIO header", checkpoint);
         const auto header = parse_cpio_header(raw_header);
         if (header.namesize == 0 || header.namesize > kMaxCpioNameBytes) {
             throw ArchiveError("CPIO entry name size is invalid");
@@ -417,12 +432,13 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable, ArchivePathE
             checked_add_archive_path_metadata_bytes(result.path_metadata_bytes, header.namesize, "CPIO path metadata");
 
         std::string raw_name(header.namesize, '\0');
-        read_exact(input, raw_name.data(), raw_name.size(), "CPIO entry name");
+        read_exact(input, raw_name.data(), raw_name.size(), "CPIO entry name", checkpoint);
         if (raw_name.back() != '\0') {
             throw ArchiveError("CPIO entry name is not NUL-terminated");
         }
         raw_name.pop_back();
-        skip_cpio_payload_bytes(input, cpio_padding(kCpioHeaderBytes + header.namesize), "CPIO name padding", seekable);
+        skip_cpio_payload_bytes(input, cpio_padding(kCpioHeaderBytes + header.namesize), "CPIO name padding", seekable,
+                                checkpoint);
 
         if (raw_name == kCpioTrailerName) {
             if (header.filesize != 0) {
@@ -448,14 +464,14 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable, ArchivePathE
             payload_offset = static_cast<std::uint64_t>(payload_position);
         }
         if (header.crc) {
-            const auto actual = checksum_cpio_payload(input, header.filesize);
+            const auto actual = checksum_cpio_payload(input, header.filesize, checkpoint);
             if (actual != header.check) {
                 throw ArchiveError("CPIO CRC entry checksum mismatch: " + raw_name);
             }
         } else {
-            skip_cpio_payload_bytes(input, header.filesize, "CPIO file payload", seekable);
+            skip_cpio_payload_bytes(input, header.filesize, "CPIO file payload", seekable, checkpoint);
         }
-        skip_cpio_payload_bytes(input, cpio_padding(header.filesize), "CPIO file padding", seekable);
+        skip_cpio_payload_bytes(input, cpio_padding(header.filesize), "CPIO file padding", seekable, checkpoint);
 
         validation_entries.push_back(ArchivePathValidationEntry{
             .path = raw_name,
@@ -476,7 +492,9 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable, ArchivePathE
         }
     }
 
+    invoke_archive_checkpoint(checkpoint);
     validate_archive_path_set(validation_entries);
+    invoke_archive_checkpoint(checkpoint);
     return result;
 }
 
@@ -484,12 +502,13 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable, ArchivePathE
 // Inputs: `archive_path` is the CPIO file to parse.
 // Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported
 // entries.
-CpioScanResult scan_cpio(const std::filesystem::path& archive_path, ArchivePathEncoding encoding) {
+CpioScanResult scan_cpio(const std::filesystem::path& archive_path, ArchivePathEncoding encoding,
+                         const ProgressCheckpoint& checkpoint = {}) {
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open CPIO archive: " + path_diagnostic_utf8(archive_path));
     }
-    return scan_cpio_stream(input, true, encoding);
+    return scan_cpio_stream(input, true, encoding, checkpoint);
 }
 
 // Purpose: Write a CPIO stream to any output stream using shared compatibility semantics.
@@ -521,6 +540,7 @@ CpioWriteStats write_cpio_stream(const Manifest& manifest, std::ostream& output,
         progress.finish_entry();
     }
     write_cpio_entry_header(output, kCpioTrailerName, 0, 0, ino);
+    publish_progress(progress, progress_callback);
     return CpioWriteStats{
         .input_bytes = manifest.total_file_bytes,
         .entries = static_cast<std::uint64_t>(manifest.entries.size()),
@@ -530,21 +550,22 @@ CpioWriteStats write_cpio_stream(const Manifest& manifest, std::ostream& output,
 // Purpose: Read one CPIO stream record during second-pass extraction.
 // Inputs: `input` is positioned at a CPIO header.
 // Outputs: Returns entry metadata or a trailer marker; throws on malformed metadata or unsupported entry types.
-CpioStreamRecord read_cpio_stream_record(std::istream& input, ArchivePathEncoding encoding) {
+CpioStreamRecord read_cpio_stream_record(std::istream& input, ArchivePathEncoding encoding,
+                                         const ProgressCheckpoint& checkpoint) {
     std::array<char, kCpioHeaderBytes> raw_header{};
-    read_exact(input, raw_header.data(), raw_header.size(), "CPIO header");
+    read_exact(input, raw_header.data(), raw_header.size(), "CPIO header", checkpoint);
     const auto header = parse_cpio_header(raw_header);
     if (header.namesize == 0 || header.namesize > kMaxCpioNameBytes) {
         throw ArchiveError("CPIO entry name size is invalid");
     }
 
     std::string raw_name(header.namesize, '\0');
-    read_exact(input, raw_name.data(), raw_name.size(), "CPIO entry name");
+    read_exact(input, raw_name.data(), raw_name.size(), "CPIO entry name", checkpoint);
     if (raw_name.back() != '\0') {
         throw ArchiveError("CPIO entry name is not NUL-terminated");
     }
     raw_name.pop_back();
-    discard_stream_bytes(input, cpio_padding(kCpioHeaderBytes + header.namesize), "CPIO name padding");
+    discard_stream_bytes(input, cpio_padding(kCpioHeaderBytes + header.namesize), "CPIO name padding", checkpoint);
 
     if (raw_name == kCpioTrailerName) {
         if (header.filesize != 0) {
@@ -588,9 +609,12 @@ void extract_validated_cpio_stream(std::istream& input, const CpioScanResult& sc
                                    const ProgressCallback& progress_callback, ArchivePathEncoding encoding) {
     ProgressState progress;
     progress.start(OperationKind::Extract, scanned.total_file_bytes, scanned.entries.size());
+    const ProgressCheckpoint checkpoint =
+        progress_callback ? ProgressCheckpoint([&] { publish_progress(progress, progress_callback); })
+                          : ProgressCheckpoint{};
     std::size_t entry_index = 0;
     for (;;) {
-        const auto record = read_cpio_stream_record(input, encoding);
+        const auto record = read_cpio_stream_record(input, encoding, checkpoint);
         if (record.trailer) {
             break;
         }
@@ -607,8 +631,7 @@ void extract_validated_cpio_stream(std::istream& input, const CpioScanResult& sc
             discard_stream_bytes(input, cpio_padding(expected.size), "CPIO file padding");
             progress.finish_entry();
         } else {
-            extract_cpio_stream_file_payload(input, expected, target, overwrite);
-            progress.add_bytes(expected.size);
+            extract_cpio_stream_file_payload(input, expected, target, overwrite, progress, progress_callback);
             progress.finish_entry();
         }
         ++entry_index;
@@ -691,7 +714,9 @@ OperationStats extract_cpio(const std::filesystem::path& archive_path, const std
     validate_archive_name_encoding(encoding);
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
-    const auto scanned = scan_cpio(archive_source.path(), encoding);
+    const auto validation_checkpoint = make_archive_validation_checkpoint(progress_callback);
+    invoke_archive_checkpoint(validation_checkpoint);
+    const auto scanned = scan_cpio(archive_source.path(), encoding, validation_checkpoint);
     create_verified_directories(destination);
 
     std::ifstream input(archive_source.path(), std::ios::binary);
@@ -710,10 +735,10 @@ OperationStats extract_cpio(const std::filesystem::path& archive_path, const std
             progress.finish_entry();
             continue;
         }
-        extract_cpio_seekable_file_payload(input, entry, target, overwrite);
-        progress.add_bytes(entry.size);
+        extract_cpio_seekable_file_payload(input, entry, target, overwrite, progress, progress_callback);
         progress.finish_entry();
     }
+    publish_progress(progress, progress_callback);
 
     OperationStats stats;
     stats.input_bytes = archive_source.size();
@@ -742,14 +767,17 @@ OperationStats extract_cpio_gzip(const std::filesystem::path& archive_path, cons
     validate_archive_name_encoding(encoding);
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
+    const auto validation_checkpoint = make_archive_validation_checkpoint(progress_callback);
+    invoke_archive_checkpoint(validation_checkpoint);
     GzipInputStream scan_input(archive_source.path());
-    const auto scanned = scan_cpio_stream(scan_input, false, encoding);
-    scan_input.finish();
+    const auto scanned = scan_cpio_stream(scan_input, false, encoding, validation_checkpoint);
+    finish_archive_stream(scan_input, validation_checkpoint);
     create_verified_directories(destination);
 
     GzipInputStream extract_input(archive_source.path());
     extract_validated_cpio_stream(extract_input, scanned, destination, overwrite, progress_callback, encoding);
-    extract_input.finish();
+    finish_archive_stream(extract_input, make_archive_finishing_checkpoint(progress_callback, scanned.total_file_bytes,
+                                                                           scanned.entries.size()));
 
     OperationStats stats;
     stats.input_bytes = extract_input.input_bytes();

@@ -37,6 +37,27 @@ its checksum is generated only after successful publication. CPack must report
 success and produce the new MSI: an older file at the final path cannot satisfy
 that contract. Temporary generation data is removed on success and failure.
 
+The portable ZIP is generated from CMake's installed-file manifest, including
+declared hidden, Unicode and empty files. Before atomic publication, its complete
+file inventory, lengths and SHA-256 digests must match the snapshot captured
+immediately after installation staging. Build-machine dependency diagnostics
+belong in validation logs, not distribution contents. No filename exclusions
+substitute for this installed-payload contract.
+
+Portable qualification extracts the actual candidate ZIP into a fresh temporary
+directory and runs its CLI, runtime checks and archive smoke tests there. It must
+not substitute the builder's installation stage for the distribution artifact.
+The owned extraction is removed after success or failure; diagnostic logs remain
+separate from both the archive and its extracted contents.
+
+MSI install and repair qualification compares every declared payload file with
+the actual portable ZIP, including its length and SHA-256 digest. This reference
+is captured before installation; CPack's later install-manifest paths cannot
+redefine it. Files outside installer ownership are left untouched. Runtime
+admission remains a separate check. On the disposable release host, the repair
+control removes only the freshly installed package's declared files, then requires
+forced repair to restore every file before running the repaired CLI.
+
 ## GPU Targets
 
 The release workflow selects the `release` architecture preset from

@@ -43,6 +43,89 @@ existing file. Regression tests first reproduced that behavior in all three
 implementations, then verified preservation for existing and missing paths at
 levels 0, 10, and both signed integer extremes.
 
+## ZIP Creation Progress
+
+ZIP creation uses the pinned Miniz source callback interface with its existing
+64 KiB input windows. Progress within a member describes the preceding completed
+input window, so an observer can cancel before the next window is read. Empty
+members remain valid and count no source bytes. Each source stays locked until
+its entry has been added; no whole-file input staging is introduced.
+
+The callback latches exceptions rather than unwinding through Miniz. After the
+C call releases its compression workspaces, the original exception is rethrown.
+The archive transaction then removes private output and preserves the existing
+destination. Source reads must match the pinned declared length; incomplete input
+cannot silently become a successful shorter entry.
+
+The writer retains the original file timestamp, compression flags, input
+partition and CRC policy. Complete ZIP byte-parity controls compare against
+Miniz's unchanged file interface at all nine efforts for empty and nonempty
+sources. Separate cancellation controls check destination preservation, source
+handle release and temporary cleanup; independent readers qualify interoperability.
+These are functional contracts, not measured throughput or latency claims.
+
+## ZIP Decoded Output Windows
+
+Extraction and read-only verification share the bounded decoded-size, progress
+and exception bridge. Extraction supplies a borrowed synchronous stream for its
+reserved private file; verification explicitly discards decoded bytes. Successful
+writes advance progress within a member, and observer exceptions return through
+Miniz before the original exception is rethrown. No exception unwinds through C.
+
+The private output must decode completely, pass Miniz's existing CRC checks and
+close successfully. Its archived modification timestamp is restored through the
+Windows wide-character file API, including Unicode and extended-length paths.
+A timestamp failure is reported before publication. This repairs the narrow-path
+timestamp attempt whose error Miniz's file helper ignored.
+
+Only then does the existing guarded per-file commit run. Cancellation or failure
+before that commit preserves the previous target's bytes and timestamp and cleans
+the reserved output. Earlier completed members can remain after a later failure;
+extraction is not an atomic directory replacement. Stored and Deflate, empty and
+nonempty members have byte, timestamp, progress and cancellation controls using
+archives produced through the independent pinned file interface.
+
+## Standalone Extraction Cancellation
+
+Standalone Gzip, Bzip2, Zstandard, XZ, Lzip and LZMA-Alone extraction report
+synchronous progress between bounded decoder/output windows. A callback can
+cancel without waiting for the entire file to decode. Bzip2, XZ, Lzip and
+LZMA-Alone retain 64 KiB windows; Zstandard retains its 128 KiB transfer limit.
+These boundaries do not interrupt an individual codec call.
+
+Window checkpoints preserve the existing compressed-input progress units;
+repeated snapshots are cancellation opportunities, not additional completed
+bytes. Final codec validation and output close still precede guarded publication.
+Callback failures before publication preserve the existing target, remove private
+output and release source handles. A later retry starts with fresh decoder state.
+Completion notifications occur after publication and do not undo committed files.
+
+Fixed multi-window fixtures exercise absent and existing destinations, original
+callback exceptions, cleanup and successful byte-exact recovery. Independently
+encoded XZ, Lzip and marked/unmarked LZMA-Alone frames complement the standard
+writer-based Gzip, Bzip2 and Zstandard controls. These are correctness tests,
+not latency or throughput measurements.
+
+## Stored Container Cancellation
+
+AR, ARC, ARJ and ISO expose their initial validation phase before creating output.
+That phase has unknown totals: metadata records and, where required, bounded
+payload CRC reads provide cancellation opportunities without claiming completed
+extraction bytes. Format checks and complete path-set validation remain required.
+The synchronous scan borrows the original observer, preserving stateful callbacks.
+
+Their stored-file extraction checks cancellation between the existing 64 KiB copy
+windows and after closing private output, before guarded publication. Payload bytes
+advance once per successful copy; completion notifications follow publication.
+Earlier published members can remain after a later cancellation. AR creation uses
+the same bounded copy checkpoints and checks again before publishing its complete
+archive, preserving an existing archive when interrupted.
+
+Shared public-API controls cover validation and copying separately, existing and
+missing destinations, callback state, source-handle release, cleanup and exact
+retry results. The controls use independently authored stored ARC, ARJ and ISO
+framing alongside the AR writer. They do not establish latency or throughput.
+
 ## Shared IEEE Integrity Backend
 
 ZIP and Gzip use Miniz's documented external-CRC hook to share the existing
@@ -78,9 +161,10 @@ This removes an input staging copy and a 64 KiB buffer per writer while
 preserving the existing input-chunk limits. Libbzip2's legacy non-const pointer
 is borrowed only during synchronous compression; its pinned implementation
 reads caller bytes without modifying them. This does not make the codecs
-themselves zero-copy or establish an end-to-end speedup. The maintainer has re-enabled
-timing runs after the busy-host deferral; comparisons must monitor CPU, GPU,
-RAM, and storage contention before and throughout measurements.
+themselves zero-copy or establish an end-to-end speedup. When measurements are
+permitted, comparisons must monitor CPU, GPU, RAM, and storage contention before
+and throughout the run. Historical reports do not override a current task's
+measurement restriction.
 
 Independent CLI checks decoded a 262,161-byte mixed binary fixture at all nine
 efforts using Python 3.12.14's Gzip, Bzip2, and ZIP readers and the separately
@@ -88,6 +172,73 @@ installed `zstandard` 0.25.0 reader. All 36 outputs restored the original bytes.
 These bounded filesystem checks establish interoperability, not throughput or
 universally distinct sizes: several efforts produced equal sizes on this
 fixture, and Bzip2/Zstandard sizes were not uniformly monotonic.
+
+## Shared CPU Readers
+
+Standalone Gzip, Bzip2, Zstandard, XZ and Lzip extraction can transfer a bounded decoded
+window directly to the output stream through `DecodedInputBuffer`. The reader
+continues to own the get area, so standard reads, peek and putback retain their
+existing behavior. The transfer adds no buffer, queue, thread or runtime dependency.
+It removes the extractor's intermediate plaintext array: 64 KiB for Gzip, Bzip2,
+XZ and Lzip, and 128 KiB for Zstandard. Codec history and output-sink buffering remain separate.
+This is a dataflow/storage change, not measured throughput evidence.
+
+`transfer_to` writes at most one window. A short positive result is not EOF;
+callers continue until zero and still call `finish()` before publication. The
+method returns its count without changing `istream` flags or `gcount`. Source
+errors propagate; a failed sink leaves the source window unconsumed even if the
+sink accepted a prefix. Callers own output rollback and must serialize source
+operations, including during sink calls. The standalone adapters retain their
+write diagnostics, resource limits, finish validation and publication transaction.
+
+## Compressed-Container Inspection Windows
+
+`DecodedInputBuffer::consume` exposes one bounded owned window to a synchronous
+visitor. The visitor must neither retain its span nor reenter the source. It
+advances the source only after a successful visit. `transfer_to` uses this same
+primitive, preserving its failed-sink, putback, zero-request and exception rules.
+A short positive visit is a window boundary; only zero means EOF.
+
+The shared exact-byte consumer uses these windows for decoded streams and bounded
+64 KiB reads for ordinary streams. An unreadable stream is rejected before source
+work; a zero-length request performs no I/O. Truncation and source/visitor errors
+propagate, and earlier windows may already have been consumed. Buffered reads
+consume input before invoking the visitor; callers own rollback and must not
+assume a failed operation rewinds the stream.
+
+TAR and CPIO payload/padding discard paths now use the common consumer. CPIO CRC
+inspection sums unsigned bytes directly from decoded windows; its seekable and
+streaming payload writers share the same byte-sum primitive modulo `2^32`. These
+changes remove the extra plaintext staging copy from decoded inspection without
+skipping decompression, checksums, entry extents or final stream validation.
+
+Extraction output keeps its existing write batching. Borrowing smaller decoder
+windows can change sink call counts, so extending direct output is a separate
+measurement-dependent step. No throughput, peak stack-memory or whole-codec
+zero-copy claim follows from the pointer-identity and byte-exact controls.
+
+## TAR And CPIO Extraction Checkpoints
+
+Plain and filtered TAR/CPIO extraction observe cancellation during the initial
+metadata and payload-validation pass, before creating destination directories.
+These validation snapshots have unknown totals, represented by zero counters;
+they do not claim completion. Record boundaries and bounded reads retain the
+observer's original exception. Seekable metadata skips still receive record
+checkpoints; compressed payload inspection continues to decode and validate.
+
+Extraction progress counts each successfully written payload window once, with
+the existing 64 KiB write batching. A final checkpoint follows successful close
+and precedes guarded publication of each file. Cancellation before publication
+preserves the previous target and removes private output. Earlier completed
+members can remain; extraction is not an atomic directory replacement.
+
+Filtered readers drain any remaining decoded bytes through bounded checkpoints,
+then run their original `finish()` validation. A completed member count does not
+substitute for final checksum or termination checks. Readers lacking the owned
+window interface cannot silently take an unobservable drain path when an
+observer is present. No benchmark or cancellation-latency guarantee follows from
+these functional checkpoints; a codec refill or filesystem operation can still
+do synchronous work between them.
 
 ## Exact-Size Zstandard Workspace
 
@@ -102,7 +253,7 @@ are rejected before consumption, short input cannot finalize, and the reserved
 unknown-size sentinel is rejected before the destination is opened. The size
 remains omitted from the frame, preserving the streaming framing policy and
 avoiding extra header bytes. This uses the stable
-[libzstd 1.5.7 API](https://github.com/facebook/zstd/blob/v1.5.7/lib/zstd.h).
+[libzstd 1.5.7 API](https://github.com/meta/zstd/blob/v1.5.7/lib/zstd.h).
 
 RAM-only comparisons with the pinned runtime, 64 KiB input/output chunks, and
 the existing effort parameters measured these codec-owned context allocations:
@@ -231,6 +382,93 @@ These are tiny filesystem correctness fixtures, not performance benchmarks.
 The Windows libarchive 3.8.8 7z writer crashed during the initial independent
 fixture-generation attempt; py7zr generated the retained fixture instead.
 No libarchive-wide compatibility or speed conclusion follows from that crash.
+
+## Native-library Extraction Cancellation
+
+CAB, 7z and WIM report preparation separately from file publication. Preparation
+snapshots have unknown totals and zero published-byte and completed-entry counts.
+Metadata scans sample cancellation between records. CAB also samples its Windows
+FDI validation pass; 7z samples SDK input reads and seeks; WIM uses its pinned
+library's progress API during integrity checking and image staging. WIM identifies
+native image work as `Decoding WIM image`.
+
+Each native callback catches and retains the original observer exception, returns
+the library's error or abort status, and rethrows only after the native call
+returns. Observers are synchronous borrows; copying a stateful observer must not
+split its state. Per-call SDK bindings are restored before their local progress
+owners expire, and WIM progress contexts outlive their native handles.
+
+CAB CRT transfers and copies from the existing 7z decoded cache use 64 KiB
+windows. WIM keeps its existing 256 KiB staging-copy windows. Successful payload
+writes advance the publication byte counter once. Final close and cancellation
+notification precede guarded file publication; entry completion follows it.
+Cancellation before publication preserves that target and removes private output.
+Earlier completed files can remain after a later interruption.
+
+These are cooperative checkpoints. Individual library decode and operating-system
+calls are not forcibly interrupted. Decoder policies, allocation limits, checksum
+validation, format capabilities and source ownership remain in force. These
+contracts make no measured speed or cancellation-latency claim.
+
+## LHA Preparation And Payload Cancellation
+
+LHA samples the caller's original observer during metadata preparation and
+between bounded native payload reads. Preparation has unknown totals and zero
+published-byte and completed-entry counters. Validation drains each payload
+through the existing 256 KiB buffer size, then retains Lhasa's original CRC and
+decoded-length check. The publication pass reuses its output buffer for final
+draining and validation, rather than adding a second payload workspace.
+
+Observers run outside native C calls, so their original exceptions propagate
+without crossing the library boundary. Successful writes advance payload progress
+once. A final checkpoint follows close and precedes guarded publication;
+completion follows commit. Interruption preserves an existing target, removes
+private output and permits a fresh retry. Individual native calls remain
+cooperative; this contract makes no cancellation-latency or speed claim.
+
+## RPM Preparation And Final Entry Notifications
+
+RPM exposes metadata reading, payload preparation and payload decoding as separate
+preparation phases. They borrow the original observer, report unknown totals and
+zero published counters, and propagate its original exception. Metadata reads
+use bounded windows and sample index-record checks. Compressed and decoded
+payload staging retain their existing 256 KiB transfer buffers. A cooperative
+checkpoint precedes each window, and private payload cleanup covers cancellation
+and decoder failure. Every compressed route retains its own `finish()` validation
+before the prepared CPIO stream is admitted to extraction.
+
+CPIO and TAR writers publish one final entry-count snapshot after their trailer
+or footer is written. This precedes the enclosing archive's close and publication;
+it reports completed input work, not durable archive publication. Their seekable
+extractors publish the final count after the last member is committed. A callback
+exception there propagates while already committed files remain in place.
+Existing per-entry notification frequency is preserved.
+
+## Encoded Text Transfer Progress
+
+Base64, BinHex, UUencode and XXEncode share physical-input progress accounting.
+It includes encoded payloads, consumed metadata, CR/LF bytes and permitted trailing
+whitespace. Snapshots retain encoded-input units rather than treating decoded
+output length as input work. Line readers return their exact physical extent
+without changing line-length limits, stripped text or EOF/error handling.
+
+The adapters borrow the original synchronous observer and report between bounded
+64 KiB input windows. UUencode and XXEncode no longer publish a snapshot for every
+short payload line. BinHex counts work through its preamble, decoding and trailing
+validation, including discarded resource forks. Individual parsing/decoding calls
+remain cooperative; this is not a measured latency guarantee.
+
+Decoder framing, CRC and trailer checks remain required. A final input checkpoint
+follows successful output close and precedes guarded publication. An observer
+exception preserves an existing target, removes private output and releases the
+source; a fresh retry restores the exact expected bytes. Entry completion follows
+publication. Final byte counters equal the physical source length for both LF
+and CRLF fixtures, including unterminated final lines where the format allows them.
+
+Shared controls use independent known payload encodings and handcrafted BinHex
+frames. They cover payload/trailer/pre-publication cancellation, original observer
+state and exceptions, cleanup/retry, exact counters and bounded callback counts.
+Callback work counts do not establish a measured throughput improvement.
 
 ## Remaining Scope
 

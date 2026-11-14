@@ -9,9 +9,14 @@
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
+#include <fstream>
 #include <limits>
+#include <ostream>
+#include <sys/stat.h>
+#include <sys/utime.h>
 #include <windows.h>
 
 #include "miniz.h"
@@ -109,25 +114,104 @@ ZipScanResult scan_zip_entries(mz_zip_archive& zip) {
     return result;
 }
 
-struct ZipVerificationOutput {
+// One synchronous Miniz call borrows these owners. Read boundaries retain the
+// pinned source's exact length; progress describes the preceding completed input
+// window. Exceptions are latched until the C writer has released its workspaces.
+struct ZipCompressionInput {
+    std::ifstream& source;
     ProgressState& progress;
     const ProgressCallback& callback;
+    std::uint64_t expected_bytes = 0;
+    std::uint64_t read_bytes = 0;
+    std::exception_ptr failure;
+};
+
+std::size_t read_zip_compression(void* opaque, mz_uint64 offset, void* buffer, std::size_t size) noexcept {
+    auto& input = *static_cast<ZipCompressionInput*>(opaque);
+    if (input.failure) {
+        return 0;
+    }
+    try {
+        if (offset != input.read_bytes || offset > input.expected_bytes) {
+            throw ArchiveError("ZIP source read offset is inconsistent");
+        }
+        publish_progress(input.progress, input.callback);
+        const auto count = static_cast<std::size_t>(std::min<std::uint64_t>(
+            {size, input.expected_bytes - offset, static_cast<std::uint64_t>(MZ_ZIP_MAX_IO_BUF_SIZE)}));
+        if (count == 0U) {
+            return 0;
+        }
+        input.source.read(static_cast<char*>(buffer), static_cast<std::streamsize>(count));
+        if (!input.source || input.source.gcount() != static_cast<std::streamsize>(count)) {
+            throw ArchiveError("failed to read ZIP source bytes");
+        }
+        input.read_bytes += count;
+        input.progress.add_bytes(count);
+        return count;
+    } catch (...) {
+        input.failure = std::current_exception();
+        return 0;
+    }
+}
+
+// Preserve add_file's stat64 timestamp, flags and I/O partition while exposing
+// bounded progress/cancellation. The caller retains the manifest source lock.
+// Neither an observer exception nor an incomplete source can publish an entry.
+void add_zip_source(mz_zip_archive& zip, const ManifestEntry& entry, int effort, ProgressState& progress,
+                    const ProgressCallback& callback) {
+    const auto path = windows_api_path(entry.source_path);
+    struct __stat64 metadata{};
+    if (_wstat64(path.c_str(), &metadata) != 0) {
+        throw ArchiveError("cannot read ZIP source metadata: " + entry.archive_path);
+    }
+    std::ifstream source(std::filesystem::path(path), std::ios::binary);
+    if (!source) {
+        throw ArchiveError("cannot open ZIP source: " + entry.archive_path);
+    }
+    const MZ_TIME_T modified_time = metadata.st_mtime;
+    ZipCompressionInput input{source, progress, callback, entry.size};
+    const auto added = mz_zip_writer_add_read_buf_callback(&zip, entry.archive_path.c_str(), read_zip_compression,
+                                                           &input, entry.size, &modified_time, nullptr, 0,
+                                                           static_cast<mz_uint>(effort), nullptr, 0, nullptr, 0);
+    if (input.failure) {
+        std::rethrow_exception(input.failure);
+    }
+    if (!added || input.read_bytes != entry.size) {
+        throw ArchiveError("failed to add ZIP file: " + entry.archive_path);
+    }
+}
+
+// The optional borrowed sink selects extraction; explicit null selects read-only
+// verification. All owners outlive the synchronous C decoder and exception replay.
+struct ZipDecodedOutput {
+    ProgressState& progress;
+    const ProgressCallback& callback;
+    std::ostream* sink;
     std::uint64_t expected_bytes = 0;
     std::uint64_t decoded_bytes = 0;
     std::exception_ptr failure;
 };
 
-// Purpose: Count bounded decoder output and propagate progress without unwinding through the C library.
-// Inputs: `opaque` owns synchronous verification state; `offset` and `size` describe decoded bytes being discarded.
+// Purpose: Consume bounded decoded windows and report progress without unwinding through the C library.
+// Inputs: Synchronous state and decoded bytes; a non-null sink borrows a live writable output stream.
 // Outputs: Returns the accepted size, or latches an exception and returns zero for the C caller to stop cleanly.
-std::size_t consume_zip_verification(void* opaque, mz_uint64 offset, const void*, std::size_t size) noexcept {
-    auto& output = *static_cast<ZipVerificationOutput*>(opaque);
+std::size_t consume_zip_decoded_output(void* opaque, mz_uint64 offset, const void* bytes, std::size_t size) noexcept {
+    auto& output = *static_cast<ZipDecodedOutput*>(opaque);
     if (output.failure) {
         return 0;
     }
     try {
         if (offset != output.decoded_bytes || offset > output.expected_bytes || size > output.expected_bytes - offset) {
             throw ArchiveError("ZIP decoded payload exceeds its declared size");
+        }
+        if (output.sink != nullptr && size != 0U) {
+            if (size > static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max())) {
+                throw ArchiveError("ZIP decoded window exceeds stream limits");
+            }
+            output.sink->write(static_cast<const char*>(bytes), static_cast<std::streamsize>(size));
+            if (!*output.sink) {
+                throw ArchiveError("failed to write decoded ZIP output");
+            }
         }
         output.decoded_bytes += size;
         output.progress.add_bytes(size);
@@ -136,6 +220,35 @@ std::size_t consume_zip_verification(void* opaque, mz_uint64 offset, const void*
     } catch (...) {
         output.failure = std::current_exception();
         return 0;
+    }
+}
+
+// Decode only into a reserved private file. Close and check output before
+// restoring the archived timestamp through a wide path, then let the caller
+// perform its existing guarded publication. C/observer failures publish nothing.
+void write_zip_member(mz_zip_archive& zip, mz_uint index, const mz_zip_archive_file_stat& metadata,
+                      const std::filesystem::path& temporary, ProgressState& progress,
+                      const ProgressCallback& callback) {
+    std::ofstream sink(temporary, std::ios::binary | std::ios::trunc);
+    if (!sink) {
+        throw ArchiveError("cannot open private ZIP output");
+    }
+    ZipDecodedOutput output{
+        .progress = progress, .callback = callback, .sink = &sink, .expected_bytes = metadata.m_uncomp_size};
+    const bool decoded = mz_zip_reader_extract_to_callback(&zip, index, consume_zip_decoded_output, &output, 0) != 0;
+    if (output.failure) {
+        std::rethrow_exception(output.failure);
+    }
+    if (!decoded || output.decoded_bytes != metadata.m_uncomp_size) {
+        throw ArchiveError("failed to decode ZIP entry payload");
+    }
+    sink.close();
+    if (!sink) {
+        throw ArchiveError("failed to close private ZIP output");
+    }
+    struct __utimbuf64 times{metadata.m_time, metadata.m_time};
+    if (_wutime64(temporary.c_str(), &times) != 0) {
+        throw ArchiveError("failed to restore ZIP entry timestamp");
     }
 }
 
@@ -176,12 +289,7 @@ OperationStats compress_zip(const std::vector<std::filesystem::path>& sources,
                 continue;
             }
             const auto source_lock = lock_manifest_source(entry);
-            if (!mz_zip_writer_add_file(&zip, entry.archive_path.c_str(),
-                                        zip_filesystem_path(entry.source_path).c_str(), nullptr, 0,
-                                        static_cast<mz_uint>(compression_level))) {
-                throw ArchiveError("failed to add ZIP file: " + entry.archive_path);
-            }
-            progress.add_bytes(entry.size);
+            add_zip_source(zip, entry, compression_level, progress, progress_callback);
             progress.finish_entry();
         }
         if (!mz_zip_writer_finalize_archive(&zip)) {
@@ -239,9 +347,12 @@ OperationStats verify_zip(const std::filesystem::path& requested_archive, const 
                 !mz_zip_validate_file(&zip, i, MZ_ZIP_FLAG_VALIDATE_HEADERS_ONLY)) {
                 throw ArchiveError("ZIP entry headers failed verification: " + entry.path);
             }
-            ZipVerificationOutput output{
-                .progress = progress, .callback = progress_callback, .expected_bytes = stat.m_uncomp_size};
-            const bool decoded = mz_zip_reader_extract_to_callback(&zip, i, consume_zip_verification, &output, 0) != 0;
+            ZipDecodedOutput output{.progress = progress,
+                                    .callback = progress_callback,
+                                    .sink = nullptr,
+                                    .expected_bytes = stat.m_uncomp_size};
+            const bool decoded =
+                mz_zip_reader_extract_to_callback(&zip, i, consume_zip_decoded_output, &output, 0) != 0;
             if (output.failure) {
                 std::rethrow_exception(output.failure);
             }
@@ -309,9 +420,7 @@ OperationStats extract_zip(const std::filesystem::path& requested_archive, const
             const auto temporary_target = reserve_file_publish_target(target);
             bool temporary_active = true;
             try {
-                if (!mz_zip_reader_extract_to_file(&zip, i, zip_filesystem_path(temporary_target.file).c_str(), 0)) {
-                    throw ArchiveError("failed to extract ZIP entry: " + std::string(stat.m_filename));
-                }
+                write_zip_member(zip, i, stat, temporary_target.file, progress, progress_callback);
                 commit_verified_file(temporary_target, target, overwrite);
                 cleanup_file_publish_target(temporary_target);
                 temporary_active = false;
@@ -322,7 +431,6 @@ OperationStats extract_zip(const std::filesystem::path& requested_archive, const
                 }
                 throw;
             }
-            progress.add_bytes(stat.m_uncomp_size);
             progress.finish_entry();
         }
         mz_zip_reader_end(&zip);

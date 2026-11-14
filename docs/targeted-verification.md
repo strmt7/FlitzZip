@@ -24,6 +24,10 @@ also require the real hosted measurement and upload consumer.
 
 ## Commands
 
+The changed-function size/complexity gate follows every supported source type,
+including PowerShell packaging helpers and their tests. Selecting that gate does
+not itself select native compilation or unrelated test suites.
+
 Plan without running:
 
 ```powershell
@@ -126,6 +130,12 @@ Release orchestration alone does not alter compiled artifacts or MSI inputs.
 Its source-bound stages and safeguards are tested directly. Changes to
 CMake, package scripts or installer producers still
 require the artifact checks; publication remains a separate acceptance step.
+Changes to the pinned CMake distribution or its resolver select actual ZIP and
+MSI creation through `tools/package.ps1 -Configuration Release -CreateMsi`,
+alongside package-runtime and MSI-identity contracts. This creates artifacts
+without installing the product. Follow the recorded authorization and setup in
+[local MSI tooling](release.md#local-msi-tooling). Changes confined to CMake
+tests retain their narrower consumers.
 
 ### Explicit Broad Coverage And Classification
 
@@ -183,8 +193,26 @@ production header. Shared window or metadata headers and unknown dependencies
 retain the full native driver. Combining this cohort with another mechanism
 preserves its consumers and required-HIP admission without duplicate execution.
 
-The component driver validates the current successful native build receipt
-before running. HIP-dependent cohorts require a compiled backend and an
+Native execution validates the current successful source, configuration and
+output receipt before running. CMake generates a configuration-specific inventory
+of executable targets, including explicit and inherited exclusions. Version-two
+receipts bind every non-excluded executable, the declaration inventory, runtime
+manifest and app-local DLLs. Both component and full drivers admit the exact
+requested runner and CLI paths; the full driver also admits build-owned executable
+commands from CTest's generated inventory. Excluded targets remain unqualified
+even if a manual build or dependency produces them; their file's presence cannot
+admit a CTest consumer. Future default targets enter this contract through their
+CMake declarations rather than a manually maintained executable list.
+
+Historical version-one receipts remain readable as evidence, but cannot admit
+current execution. The first version-two build requires fresh compilation; later
+builds retain the existing source/tool/output-aware incremental policy. Builds
+with tests disabled retain their documented roles and cannot qualify a product
+test run. The executable-inventory CTest contract configures and builds a tiny
+owned project, never the product, and does not launch its fixture executables.
+It is a native correctness consumer, not an offline parser contract.
+
+HIP-dependent cohorts require a compiled backend and an
 available device before and after execution. It invokes exact names using the
 native runner's `=case_name` filter, verifies one requested case per invocation
 and stops at the first failure. Existing substring filters and the default
@@ -231,12 +259,31 @@ may describe components; they do not supply an execution role.
 
 Native registrations default to correctness. A test that executes a successful
 benchmark pipeline must declare `TestExecutionRole::Measurement` as its second
-`TEST_CASE` argument, even when its assertions concern correctness. Planning,
+`TEST_CASE` argument, even when its assertions concern correctness or an opt-in
+environment guard normally skips the workload. An inherited setting must not
+make a measurement reachable through correctness-only execution. Planning,
 rejection-before-work and synthetic-clock policy tests remain correctness cases;
 classification follows execution, not a name prefix. Keep mixed cases in the
 measurement role until their real execution can be separated without losing
 assertions. The source inventory retains both roles and rejects unknown syntax;
 runtime admission rejects invalid roles or callbacks before any test runs.
+
+The role covers the complete descendant command path, including post-test hooks.
+A tiny input does not turn a measured controller into a correctness operation.
+Capability and codec-independence checks use ordinary archive operations with
+bounded fixtures and independent readback; planning stays explicitly plan-only.
+The kernel probe admits only its ordinary CLI verbs, with offline rejection
+controls in `tools/test_native_ci.ps1`. Kernel and format-matrix probes share
+the [Windows argument formatter](../tools/native_process_arguments.ps1) so paths,
+empty arguments, quotes and trailing backslashes retain their native meaning.
+
+When the planner selects `tools/native_component_tests.ps1`, keep its exact
+configuration and encoded path arguments and add `-CorrectnessOnly` while
+measurement is held. The component runner requires complete source-admitted
+roles, preserves case order and HIP admission, and explicitly lists deferred
+measurements. An entirely deferred cohort launches no tests and reports a
+deferral rather than a pass. This option does not turn unmapped changes into a
+component scope or satisfy the unchanged default measurement requirements.
 
 The runner's isolated controls compile the actual registration and selection
 code, retain measurement cases in default and exact execution, and challenge the

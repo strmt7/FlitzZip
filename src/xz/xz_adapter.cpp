@@ -9,7 +9,7 @@
 #include "xz/xz_stream.hpp"
 
 #include <algorithm>
-#include <array>
+#include <cstddef>
 #include <chrono>
 #include <cctype>
 #include <cstdint>
@@ -55,27 +55,29 @@ OperationStats extract_xz_file(const std::filesystem::path& archive_path, const 
             throw ArchiveError("cannot create XZ extraction target: " + path_diagnostic_utf8(target));
         }
 
-        std::array<char, kXzBufferBytes> buffer{};
-        while (input) {
-            input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-            const auto bytes_read = static_cast<std::size_t>(input.gcount());
-            if (bytes_read > 0U) {
-                output_size = checked_add_extracted_output_bytes(output_size, static_cast<std::uint64_t>(bytes_read),
-                                                                 "XZ output");
-                output.write(buffer.data(), static_cast<std::streamsize>(bytes_read));
-                if (!output) {
-                    throw ArchiveError("failed to write XZ extraction target: " + path_diagnostic_utf8(target));
-                }
+        for (;;) {
+            std::size_t bytes_read = 0U;
+            publish_progress(progress, progress_callback);
+            try {
+                bytes_read = input.transfer_to(output, kXzBufferBytes);
+            } catch (const std::ios_base::failure&) {
+                throw ArchiveError("failed to write XZ extraction target: " + path_diagnostic_utf8(target));
             }
+            if (bytes_read == 0U) {
+                break;
+            }
+            // The decoder bounds cumulative bytes before exposing this owned window.
+            output_size =
+                checked_add_extracted_output_bytes(output_size, static_cast<std::uint64_t>(bytes_read), "XZ output");
         }
         input.finish();
         progress.add_bytes(archive_size);
-        publish_progress(progress, progress_callback);
 
         output.close();
         if (!output) {
             throw ArchiveError("failed to finalize XZ extraction target: " + path_diagnostic_utf8(target));
         }
+        publish_progress(progress, progress_callback);
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;

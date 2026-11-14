@@ -1,4 +1,5 @@
 #include "ar/ar_adapter.hpp"
+#include "core/archive_stream_progress.hpp"
 #include "core/path_text.hpp"
 #include "ar/ar_reader.hpp"
 
@@ -15,6 +16,7 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <string>
@@ -22,6 +24,9 @@
 
 namespace flitzzip {
 namespace {
+
+// Validation checkpoints are optional synchronous borrows: scans retain no
+// callback or caller storage, propagate observer exceptions and publish no files.
 
 using detail::ArEntryMetadata;
 using detail::ArScanResult;
@@ -205,8 +210,10 @@ std::array<char, kArHeaderBytes> make_bsd_ar_header(std::string_view path, std::
 
 // Purpose: Copy a bounded file payload into an AR output stream.
 // Inputs: `source` is a regular file path, `output` is the archive stream, and `expected_size` bounds copied bytes.
-// Outputs: Writes exactly `expected_size` bytes or throws on read/write failure.
-void copy_file_to_ar(const std::filesystem::path& source, std::ostream& output, std::uint64_t expected_size) {
+// Outputs: Writes exactly `expected_size` bytes, advances progress once per successful window and propagates
+// synchronous observer errors before publication. The caller owns progress and callback throughout this call.
+void copy_file_to_ar(const std::filesystem::path& source, std::ostream& output, std::uint64_t expected_size,
+                     ProgressState& progress, const ProgressCallback& progress_callback) {
     std::ifstream input(source, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open file for AR archive: " + path_diagnostic_utf8(source));
@@ -214,6 +221,7 @@ void copy_file_to_ar(const std::filesystem::path& source, std::ostream& output, 
     std::array<char, kArIoBufferBytes> buffer{};
     std::uint64_t remaining = expected_size;
     while (remaining > 0) {
+        publish_progress(progress, progress_callback);
         const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
         input.read(buffer.data(), static_cast<std::streamsize>(chunk));
         if (input.gcount() != static_cast<std::streamsize>(chunk)) {
@@ -221,6 +229,7 @@ void copy_file_to_ar(const std::filesystem::path& source, std::ostream& output, 
         }
         write_ar_bytes(output, buffer.data(), chunk);
         remaining -= chunk;
+        progress.add_bytes(chunk);
     }
 }
 
@@ -360,20 +369,22 @@ std::string read_string_table(std::istream& input, std::uint64_t size) {
 // Purpose: Open the pinned filesystem archive and obtain its complete validated publication plan.
 // Inputs: archive_path is an existing regular archive and encoding selects member-name interpretation.
 // Outputs: Returns owned metadata or propagates open, extent, framing and validation failures.
-ArScanResult scan_ar(const std::filesystem::path& archive_path, ArchivePathEncoding encoding) {
+ArScanResult scan_ar(const std::filesystem::path& archive_path, ArchivePathEncoding encoding,
+                     const ProgressCheckpoint& checkpoint) {
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open AR archive: " + path_diagnostic_utf8(archive_path));
     }
-    return detail::scan_ar_stream(input, archive_size, encoding);
+    return detail::scan_ar_stream(input, archive_size, encoding, checkpoint);
 }
 
 // Purpose: Copy a validated AR file payload into a temporary output file.
 // Inputs: `input` is the archive stream, `entry` is trusted scan metadata, `target` is the final path, and `overwrite`
-// controls replacement. Outputs: Publishes the verified file or throws without partially publishing target bytes.
+// controls replacement. Caller-owned progress and observer remain live for this synchronous copy.
+// Outputs: Publishes the verified file or propagates failure/cancellation without replacing the target.
 void extract_ar_file_payload(std::ifstream& input, const ArEntryMetadata& entry, const std::filesystem::path& target,
-                             bool overwrite) {
+                             bool overwrite, ProgressState& progress, const ProgressCallback& progress_callback) {
     if (entry.payload_offset > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
         throw ArchiveError("AR payload offset is too large to seek safely");
     }
@@ -392,6 +403,7 @@ void extract_ar_file_payload(std::ifstream& input, const ArEntryMetadata& entry,
         std::array<char, kArIoBufferBytes> buffer{};
         std::uint64_t remaining = entry.size;
         while (remaining > 0) {
+            publish_progress(progress, progress_callback);
             const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
             read_exact(input, buffer.data(), chunk, "AR file payload");
             output.write(buffer.data(), static_cast<std::streamsize>(chunk));
@@ -399,11 +411,13 @@ void extract_ar_file_payload(std::ifstream& input, const ArEntryMetadata& entry,
                 throw ArchiveError("failed to write temporary extracted file: " + path_diagnostic_utf8(target));
             }
             remaining -= chunk;
+            progress.add_bytes(chunk);
         }
         output.close();
         if (!output) {
             throw ArchiveError("failed to finalize temporary extracted file: " + path_diagnostic_utf8(target));
         }
+        publish_progress(progress, progress_callback);
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
     } catch (...) {
@@ -419,7 +433,8 @@ void extract_ar_file_payload(std::ifstream& input, const ArEntryMetadata& entry,
 // Outputs: Returns owned metadata only after accounting for the complete extent; rejects premature EOF and I/O
 // failures.
 detail::ArScanResult detail::scan_ar_stream(std::istream& input, std::uint64_t archive_size,
-                                            ArchivePathEncoding encoding) {
+                                            ArchivePathEncoding encoding, const ProgressCheckpoint& checkpoint) {
+    invoke_archive_checkpoint(checkpoint);
     std::array<char, 8> magic{};
     if (archive_size < magic.size()) {
         throw ArchiveError("AR global header is truncated");
@@ -437,6 +452,7 @@ detail::ArScanResult detail::scan_ar_stream(std::istream& input, std::uint64_t a
     // An EOF probe cannot distinguish a complete archive from a shortened source.
     // Consume the independently established extent; every expected header must actually be read.
     while (offset < archive_size) {
+        invoke_archive_checkpoint(checkpoint);
         if (archive_size - offset < kArHeaderBytes) {
             throw ArchiveError("AR member header is truncated");
         }
@@ -481,6 +497,7 @@ detail::ArScanResult detail::scan_ar_stream(std::istream& input, std::uint64_t a
         offset = member_end;
     }
 
+    invoke_archive_checkpoint(checkpoint);
     validate_archive_path_set(validation_entries);
     return result;
 }
@@ -524,9 +541,8 @@ OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
         const auto header = make_bsd_ar_header(entry.archive_path, entry.size);
         write_ar_bytes(output, header.data(), header.size());
         write_ar_bytes(output, entry.archive_path.data(), entry.archive_path.size());
-        copy_file_to_ar(entry.source_path, output, entry.size);
+        copy_file_to_ar(entry.source_path, output, entry.size, progress, progress_callback);
         write_ar_bytes(output, "\n", static_cast<std::size_t>(ar_padding(entry.archive_path.size() + entry.size)));
-        progress.add_bytes(entry.size);
         progress.finish_entry();
         ++entries;
     }
@@ -534,6 +550,7 @@ OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
     if (!output) {
         throw ArchiveError("failed to finalize AR archive: " + path_diagnostic_utf8(output_archive));
     }
+    publish_progress(progress, progress_callback);
     publication.commit(true);
 
     OperationStats stats;
@@ -563,7 +580,9 @@ OperationStats extract_ar(const std::filesystem::path& archive_path, const std::
     validate_archive_name_encoding(encoding);
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
-    const auto scanned = scan_ar(archive_source.path(), encoding);
+    // Scan is synchronous: borrow the original stateful observer, rather than cloning it.
+    const auto validation_checkpoint = make_borrowed_archive_validation_checkpoint(std::cref(progress_callback));
+    const auto scanned = scan_ar(archive_source.path(), encoding, validation_checkpoint);
     create_verified_directories(destination);
 
     std::ifstream input(archive_source.path(), std::ios::binary);
@@ -577,9 +596,9 @@ OperationStats extract_ar(const std::filesystem::path& archive_path, const std::
         progress.set_current(entry.path);
         publish_progress(progress, progress_callback);
         const auto target = safe_join_archive_path(destination, entry.path, ArchivePathEncoding::Utf8);
-        extract_ar_file_payload(input, entry, target, overwrite);
-        progress.add_bytes(entry.size);
+        extract_ar_file_payload(input, entry, target, overwrite, progress, progress_callback);
         progress.finish_entry();
+        publish_progress(progress, progress_callback);
     }
 
     OperationStats stats;

@@ -222,11 +222,14 @@ bool has_lzma_trailing_bytes(std::ifstream& input, std::size_t position, std::si
 
 // Purpose: Decode the LZMA-Alone payload into one private temporary output file.
 // Inputs: `input` is positioned immediately after the 13-byte header, `header` contains parsed policy-relevant
-// metadata, `temporary_file` receives decoded bytes, and `target` is used only for diagnostics. Outputs: Returns
-// decoded byte count; throws before returning on malformed data, policy violations, or failed writes.
+// metadata, `temporary_file` receives decoded bytes, and `target` is used only for diagnostics. The synchronous
+// observer may throw between bounded decode windows; caller-owned progress and callback outlive this call.
+// Outputs: Returns decoded byte count; propagates the original observer error, or throws on malformed data,
+// policy violations, or failed writes.
 std::uint64_t decode_lzma_stream_to_file(std::ifstream& input, const LzmaAloneHeader& header,
                                          const std::filesystem::path& temporary_file,
-                                         const std::filesystem::path& target) {
+                                         const std::filesystem::path& target, ProgressState& progress,
+                                         const ProgressCallback& progress_callback) {
     std::uint64_t output_size = 0;
     ScopedLzmaDecoder decoder(header.properties);
     std::ofstream output(temporary_file, std::ios::binary | std::ios::trunc);
@@ -242,6 +245,7 @@ std::uint64_t decode_lzma_stream_to_file(std::ifstream& input, const LzmaAloneHe
     bool finished = false;
 
     while (!finished) {
+        publish_progress(progress, progress_callback);
         (void)refill_lzma_input(input, input_buffer, input_position, input_size, input_eof);
 
         std::uint64_t remaining_declared = static_cast<std::uint64_t>(output_buffer.size());
@@ -338,7 +342,7 @@ OperationStats extract_lzma_file(const std::filesystem::path& archive_path, cons
     bool temporary_active = true;
     std::uint64_t output_size = 0;
     try {
-        output_size = decode_lzma_stream_to_file(input, header, temporary.file, target);
+        output_size = decode_lzma_stream_to_file(input, header, temporary.file, target, progress, progress_callback);
         progress.add_bytes(archive_size);
         publish_progress(progress, progress_callback);
         commit_verified_file(temporary, target, overwrite);

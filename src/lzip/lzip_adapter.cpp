@@ -7,7 +7,7 @@
 #include "lzip/lzip_stream.hpp"
 
 #include <algorithm>
-#include <array>
+#include <cstddef>
 #include <chrono>
 #include <cctype>
 #include <cstdint>
@@ -61,26 +61,27 @@ OperationStats extract_lzip_file(const std::filesystem::path& archive_path, cons
             throw ArchiveError("cannot create lzip extraction target: " + path_diagnostic_utf8(target));
         }
 
-        std::array<char, kLzipAdapterBufferBytes> buffer{};
-        while (input) {
-            input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-            const auto bytes_read = static_cast<std::size_t>(input.gcount());
-            if (bytes_read > 0U) {
-                checked_add_lzip_adapter_bytes(output_size, static_cast<std::uint64_t>(bytes_read), "lzip output");
-                output.write(buffer.data(), static_cast<std::streamsize>(bytes_read));
-                if (!output) {
-                    throw ArchiveError("failed to write lzip extraction target: " + path_diagnostic_utf8(target));
-                }
+        for (;;) {
+            std::size_t bytes_read = 0U;
+            publish_progress(progress, progress_callback);
+            try {
+                bytes_read = input.transfer_to(output, kLzipAdapterBufferBytes);
+            } catch (const std::ios_base::failure&) {
+                throw ArchiveError("failed to write lzip extraction target: " + path_diagnostic_utf8(target));
             }
+            if (bytes_read == 0U) {
+                break;
+            }
+            checked_add_lzip_adapter_bytes(output_size, static_cast<std::uint64_t>(bytes_read), "lzip output");
         }
         input.finish();
         progress.add_bytes(input.input_bytes());
-        publish_progress(progress, progress_callback);
 
         output.close();
         if (!output) {
             throw ArchiveError("failed to finalize lzip extraction target: " + path_diagnostic_utf8(target));
         }
+        publish_progress(progress, progress_callback);
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;

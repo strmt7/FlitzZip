@@ -1,4 +1,5 @@
 #include "arc/arc_adapter.hpp"
+#include "core/archive_stream_progress.hpp"
 #include "core/path_text.hpp"
 
 #include "core/file_size.hpp"
@@ -14,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <span>
 #include <string>
@@ -21,6 +23,9 @@
 
 namespace flitzzip {
 namespace {
+
+// Validation checkpoints are optional synchronous borrows: scans retain no
+// callback or caller storage, propagate observer exceptions and publish no files.
 
 constexpr unsigned char kArcHeaderMarker = 0x1AU;
 constexpr std::uint8_t kArcMethodEnd = 0U;
@@ -202,7 +207,8 @@ ArcHeader read_arc_header(std::ifstream& input, std::uint64_t archive_size) {
 // Purpose: Validate an unpacked ARC payload before destination writes.
 // Inputs: `input` is positioned at payload data, `header` supplies size/CRC metadata, and `archive_size` bounds reads.
 // Outputs: Leaves `input` after the payload and throws if the data does not match metadata.
-void validate_unpacked_payload(std::ifstream& input, const ArcHeader& header, std::uint64_t archive_size) {
+void validate_unpacked_payload(std::ifstream& input, const ArcHeader& header, std::uint64_t archive_size,
+                               const ProgressCheckpoint& checkpoint) {
     const auto payload_pos = input.tellg();
     if (payload_pos == std::istream::pos_type(-1)) {
         throw ArchiveError("failed to read ARC payload offset");
@@ -216,6 +222,7 @@ void validate_unpacked_payload(std::ifstream& input, const ArcHeader& header, st
     std::uint64_t remaining = header.compressed_size;
     std::uint16_t crc = 0;
     while (remaining > 0U) {
+        invoke_archive_checkpoint(checkpoint);
         const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
         read_exact(input, reinterpret_cast<char*>(buffer.data()), chunk, "ARC unpacked payload");
         crc = crc16_arc(std::span<const unsigned char>(buffer.data(), chunk), crc);
@@ -230,7 +237,8 @@ void validate_unpacked_payload(std::ifstream& input, const ArcHeader& header, st
 // Inputs: `archive_path` is the ARC/ARK file to parse.
 // Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, unsupported methods,
 // duplicates, or corrupt stored data.
-ArcScanResult scan_arc(const std::filesystem::path& archive_path) {
+ArcScanResult scan_arc(const std::filesystem::path& archive_path, const ProgressCheckpoint& checkpoint) {
+    invoke_archive_checkpoint(checkpoint);
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
@@ -240,6 +248,7 @@ ArcScanResult scan_arc(const std::filesystem::path& archive_path) {
     ArcScanResult result;
     std::vector<ArchivePathValidationEntry> validation_entries;
     while (true) {
+        invoke_archive_checkpoint(checkpoint);
         if (result.entries.size() >= kMaxArchiveEntries) {
             throw ArchiveError("ARC archive contains too many entries");
         }
@@ -254,7 +263,7 @@ ArcScanResult scan_arc(const std::filesystem::path& archive_path) {
         if (payload_pos == std::istream::pos_type(-1)) {
             throw ArchiveError("failed to read ARC payload offset");
         }
-        validate_unpacked_payload(input, header, archive_size);
+        validate_unpacked_payload(input, header, archive_size, checkpoint);
         result.total_file_bytes =
             checked_add_arc_bytes(result.total_file_bytes, header.original_size, "ARC extracted byte count overflows");
         if (result.total_file_bytes > kMaxPipelineMemoryBytes) {
@@ -276,6 +285,7 @@ ArcScanResult scan_arc(const std::filesystem::path& archive_path) {
     if (static_cast<std::uint64_t>(end_pos) != archive_size) {
         throw ArchiveError("ARC archive contains trailing data after the end marker");
     }
+    invoke_archive_checkpoint(checkpoint);
     validate_archive_path_set(validation_entries);
     return result;
 }
@@ -283,9 +293,10 @@ ArcScanResult scan_arc(const std::filesystem::path& archive_path) {
 // Purpose: Publish one validated unpacked ARC file payload.
 // Inputs: `input` is an archive stream, `entry` is trusted scan metadata, `target` is the destination file, and
 // `overwrite` controls replacement. Outputs: Writes and atomically publishes the file, or throws without leaving a
-// final partial output.
+// final partial output. Caller-owned progress/observer remain live and may interrupt between bounded windows
+// or before publication; successful payload bytes advance progress exactly once.
 void extract_arc_file_payload(std::ifstream& input, const ArcEntryMetadata& entry, const std::filesystem::path& target,
-                              bool overwrite) {
+                              bool overwrite, ProgressState& progress, const ProgressCallback& progress_callback) {
     seek_arc_offset(input, entry.payload_offset, "ARC payload");
     auto temporary_target = reserve_file_publish_target(target);
     try {
@@ -297,6 +308,7 @@ void extract_arc_file_payload(std::ifstream& input, const ArcEntryMetadata& entr
         std::uint64_t remaining = entry.size;
         std::uint16_t crc = 0;
         while (remaining > 0U) {
+            publish_progress(progress, progress_callback);
             const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
             read_exact(input, reinterpret_cast<char*>(buffer.data()), chunk, "ARC file payload");
             output.write(reinterpret_cast<const char*>(buffer.data()), static_cast<std::streamsize>(chunk));
@@ -305,6 +317,7 @@ void extract_arc_file_payload(std::ifstream& input, const ArcEntryMetadata& entr
             }
             crc = crc16_arc(std::span<const unsigned char>(buffer.data(), chunk), crc);
             remaining -= chunk;
+            progress.add_bytes(chunk);
         }
         if (crc != entry.crc) {
             throw ArchiveError("ARC file payload CRC mismatch during publish");
@@ -313,6 +326,7 @@ void extract_arc_file_payload(std::ifstream& input, const ArcEntryMetadata& entr
         if (!output) {
             throw ArchiveError("failed to finalize temporary extracted file: " + path_diagnostic_utf8(target));
         }
+        publish_progress(progress, progress_callback);
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
     } catch (...) {
@@ -331,7 +345,9 @@ OperationStats extract_arc(const std::filesystem::path& requested_archive, const
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(requested_archive);
     const auto& archive_path = archive_source.path();
-    const auto scanned = scan_arc(archive_path);
+    // Scan is synchronous: borrow the original stateful observer, rather than cloning it.
+    const auto validation_checkpoint = make_borrowed_archive_validation_checkpoint(std::cref(progress_callback));
+    const auto scanned = scan_arc(archive_path, validation_checkpoint);
     create_verified_directories(destination);
 
     std::ifstream input(archive_path, std::ios::binary);
@@ -345,9 +361,9 @@ OperationStats extract_arc(const std::filesystem::path& requested_archive, const
         progress.set_current(entry.path);
         publish_progress(progress, progress_callback);
         const auto target = safe_join_archive_path(destination, entry.path);
-        extract_arc_file_payload(input, entry, target, overwrite);
-        progress.add_bytes(entry.size);
+        extract_arc_file_payload(input, entry, target, overwrite, progress, progress_callback);
         progress.finish_entry();
+        publish_progress(progress, progress_callback);
     }
 
     OperationStats stats;

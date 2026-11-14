@@ -215,7 +215,40 @@ function Get-FlitzZipNativeTestSelection {
         $text -match '(?m)^\s*#\s*(?:if|ifdef|ifndef|elif)\b[^\r\n]*\bFLITZZIP_ENABLE_HIP\b|\b(?:query_gpu_info|hip_kernel_api|hip_device_available|require_hip_device_ready)\s*\('
     })
     return [pscustomobject]@{ mode = 'component'; components = @($components | ForEach-Object { $_.id }) + $testSources
-        tests = @($selected | Sort-Object); requireHip = (@($components | Where-Object { $_.requireHip }).Count -gt 0 -or @($testSources | Where-Object { $_ -in $hipSources }).Count -gt 0) }
+        tests = @($selected | Sort-Object)
+        roles = @($inventory | Where-Object { $selected.Contains($_.name) } | Select-Object name, role)
+        requireHip = (@($components | Where-Object { $_.requireHip }).Count -gt 0 -or @($testSources | Where-Object { $_ -in $hipSources }).Count -gt 0) }
+}
+
+# Project a source-admitted component cohort without changing caller metadata.
+# Restricted execution requires one exact known role per selected name before
+# dispatch or backend access; an unknown/missing role can never become a skip.
+function Get-FlitzZipNativeExecutionSelection {
+    param([Parameter(Mandatory = $true)]$Selection, [switch]$CorrectnessOnly)
+    if ($Selection.mode -ne 'component' -or -not $Selection.tests.Count -or
+        @($Selection.tests | Sort-Object -Unique).Count -ne $Selection.tests.Count -or
+        @($Selection.tests | Where-Object { $_ -isnot [string] -or [string]::IsNullOrWhiteSpace($_) }).Count) {
+        throw 'Native component execution requires a nonempty unique selection.'
+    }
+    if (-not $CorrectnessOnly.IsPresent) {
+        return [pscustomobject]@{ tests = @($Selection.tests); deferred = @() }
+    }
+    $roles = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+    foreach ($entry in @($Selection.roles)) {
+        if ($null -eq $entry -or $entry.name -isnot [string] -or
+            $entry.name -cnotin $Selection.tests -or $entry.role -cnotin @('Correctness', 'Measurement') -or
+            $roles.ContainsKey($entry.name)) {
+            throw 'Restricted native component execution requires complete unique execution roles.'
+        }
+        $roles.Add($entry.name, $entry.role)
+    }
+    if ($roles.Count -ne $Selection.tests.Count) {
+        throw 'Restricted native component execution requires complete unique execution roles.'
+    }
+    return [pscustomobject]@{
+        tests = @($Selection.tests | Where-Object { $roles[$_] -ceq 'Correctness' })
+        deferred = @($Selection.tests | Where-Object { $roles[$_] -ceq 'Measurement' })
+    }
 }
 
 # Purpose: Require a compiled, available HIP backend before and after GPU-dependent component cases.
@@ -251,23 +284,98 @@ function Assert-FlitzZipNativeHipAbsence {
     $global:LASTEXITCODE = 0
 }
 
+# Run the canonical receipt reader without letting shell-native stderr policy
+# replace its original diagnostic. Preferences stay local to this function.
+function Invoke-FlitzZipNativeReceiptAdmission {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    $PSNativeCommandUseErrorActionPreference = $false
+    $ErrorActionPreference = 'Continue'
+    $output = @(& py -3 (Join-Path $PSScriptRoot 'native_build_receipt.py') @Arguments 2>&1)
+    $status = $LASTEXITCODE
+    if ($status -ne 0) { throw "Native executable admission failed: $($output -join [Environment]::NewLine)" }
+    return ($output -join [Environment]::NewLine) | ConvertFrom-Json -ErrorAction Stop
+}
+
+# Admit executable paths through the current CMake/source/output receipt before
+# any backend probe or case runs. Return canonical names from that receipt.
+function Get-FlitzZipNativeExecutionAdmission {
+    param([Parameter(Mandatory = $true)][string]$TestRunner, [string]$Cli,
+          [switch]$RequireCli, [switch]$RequireHip,
+          [ValidateSet('', 'Debug', 'Release', 'RelWithDebInfo')][string]$Configuration = '')
+    $admissionRoot = Split-Path -Parent $PSScriptRoot
+    $arguments = @('validate-execution',
+        '--root', $admissionRoot, '--target', 'flitzzip_tests', '--artifact', $TestRunner)
+    if ($RequireCli.IsPresent) {
+        if ([string]::IsNullOrWhiteSpace($Cli)) { throw 'Native backend admission requires an explicit CLI.' }
+        $arguments += @('--target', 'flitzzip_cli', '--artifact', $Cli)
+    }
+    if ($RequireHip.IsPresent) { $arguments += '--require-hip' }
+    if ($Configuration) { $arguments += @('--configuration', $Configuration) }
+    $metadata = Invoke-FlitzZipNativeReceiptAdmission -Arguments $arguments
+    $runner = @($metadata.executables | Where-Object target -CEQ 'flitzzip_tests')
+    $cliTarget = @($metadata.executables | Where-Object target -CEQ 'flitzzip_cli')
+    if ($runner.Count -ne 1 -or ($RequireCli.IsPresent -and $cliTarget.Count -ne 1)) {
+        throw 'Native executable admission returned an incomplete target selection.'
+    }
+    [pscustomobject]@{TestRunner = (Join-Path $admissionRoot $runner[0].path);
+        Cli = $(if ($RequireCli.IsPresent) { Join-Path $admissionRoot $cliTarget[0].path } else { $Cli });
+        Receipt = $metadata}
+}
+
+# CTest's generated commands are the execution authority. Build-owned executable
+# commands must also be present in the current receipt; external controller tools
+# retain their separate toolchain qualification. This never launches a test.
+function Assert-FlitzZipCTestExecutableAdmission {
+    param([Parameter(Mandatory = $true)]$Inventory,
+          [string]$Root = (Split-Path -Parent $PSScriptRoot),
+          [ValidateSet('', 'Debug', 'Release', 'RelWithDebInfo')][string]$Configuration = '')
+    $binaryPrefix = [IO.Path]::GetFullPath((Join-Path $Root 'build')).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    $artifacts = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($suite in $Inventory.tests) {
+        $command = @($suite.command)
+        if (-not $command.Count -or $command[0] -isnot [string] -or
+            [string]::IsNullOrWhiteSpace($command[0]) -or -not [IO.Path]::IsPathRooted($command[0])) {
+            throw "CTest admission requires a resolved command: $($suite.name)"
+        }
+        $path = [IO.Path]::GetFullPath($command[0])
+        if ($path.StartsWith($binaryPrefix, [StringComparison]::OrdinalIgnoreCase) -and
+            [IO.Path]::GetExtension($path) -ieq '.exe') { $null = $artifacts.Add($path) }
+    }
+    if (-not $artifacts.Count) { return }
+    $arguments = @('validate-execution', '--root', $Root)
+    if ($Configuration) { $arguments += @('--configuration', $Configuration) }
+    foreach ($path in @($artifacts | Sort-Object)) { $arguments += @('--artifact', $path) }
+    $admitted = Invoke-FlitzZipNativeReceiptAdmission -Arguments $arguments
+    if (@($admitted.executables).Count -ne $artifacts.Count) { throw 'CTest executable admission is incomplete.' }
+}
+
 # Purpose: Execute exact cases once, optionally retaining ordinary assertion failures for a development batch.
-# Inputs: Validated selection/binaries; CpuOnlyValidation requires HIP OFF. The caller owns process-tree deadlines.
+# Inputs: Validated selection/binaries; CpuOnlyValidation requires HIP OFF. CorrectnessOnly explicitly defers source-admitted measurement roles.
 # Outputs: Throws for any failure; batch mode continues only after a complete one-case assertion result and retained
 # backend readiness. Registry disagreement, process failure and unavailable hardware always stop execution.
 function Invoke-FlitzZipNativeTestSelection {
     param([Parameter(Mandatory = $true)]$Selection,
           [Parameter(Mandatory = $true)][string]$TestRunner, [string]$Cli, [switch]$CpuOnlyValidation,
-          [switch]$ContinueAfterAssertionFailure)
-    if ($Selection.mode -ne 'component' -or -not $Selection.tests.Count -or
-        @($Selection.tests | Sort-Object -Unique).Count -ne $Selection.tests.Count) {
-        throw 'Native component execution requires a nonempty unique selection.'
+          [switch]$ContinueAfterAssertionFailure, [switch]$CorrectnessOnly,
+          [ValidateSet('', 'Debug', 'Release', 'RelWithDebInfo')][string]$Configuration = '')
+    $execution = Get-FlitzZipNativeExecutionSelection -Selection $Selection -CorrectnessOnly:$CorrectnessOnly
+    foreach ($name in $execution.deferred) { Write-Output "DEFERRED native measurement case: $name" }
+    if (-not $execution.tests.Count) {
+        Write-Output "DEFERRED native component cohort: no correctness cases; measurement cases=$($execution.deferred.Count)."
+        return
     }
     $failures = [Collections.Generic.List[string]]::new()
     $requiresBackendCheck = $Selection.requireHip -or $CpuOnlyValidation.IsPresent
+    $admission = Get-FlitzZipNativeExecutionAdmission -TestRunner $TestRunner -Cli $Cli `
+        -RequireCli:$requiresBackendCheck -RequireHip:($Selection.requireHip -and -not $CpuOnlyValidation.IsPresent) `
+        -Configuration $Configuration
+    if ($CpuOnlyValidation.IsPresent) { Assert-FlitzZipCpuValidationReceipt -Receipt $admission.Receipt }
+    $TestRunner = [string]$admission.TestRunner
+    $Cli = [string]$admission.Cli
+    Write-Output "Native execution receipt: $($admission.Receipt.receipt_sha256)."
     $backendCheckCurrent = $false
     if ($Selection.requireHip -or $CpuOnlyValidation.IsPresent) { Assert-FlitzZipNativeSelectionHip -Cli $Cli -CpuOnlyValidation:$CpuOnlyValidation }
-    foreach ($name in $Selection.tests) {
+    foreach ($name in $execution.tests) {
         $output = @(& $TestRunner "=$name")
         $exitCode = $LASTEXITCODE
         $output
@@ -292,8 +400,11 @@ function Invoke-FlitzZipNativeTestSelection {
     }
     if ($failures.Count) { throw "Native batch assertion failures: $($failures -join ', ')." }
     if ($CpuOnlyValidation.IsPresent) {
-        Write-Output "CPU-only component validation completed: $($Selection.tests.Count) invocations; GPU assertions are not qualified."
-    } else {
+        Write-Output "CPU-only component validation completed: $($execution.tests.Count) invocations; GPU assertions are not qualified."
+    }
+    if ($CorrectnessOnly.IsPresent) {
+        Write-Output "Native component correctness passed: $($execution.tests.Count) cases; measurement cases deferred=$($execution.deferred.Count); components=$($Selection.components -join ',')."
+    } elseif (-not $CpuOnlyValidation.IsPresent) {
         Write-Output "Native component tests passed: $($Selection.tests.Count) cases; components=$($Selection.components -join ',')."
     }
 }

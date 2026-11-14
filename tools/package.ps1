@@ -103,6 +103,7 @@ New-Item -ItemType Directory -Force -Path $stage | Out-Null
 $cmake = Find-CMake -RepoRoot $repo
 & $cmake --install $build --config $Configuration --prefix $stage
 if ($LASTEXITCODE -ne 0) { throw "Package staging failed: $LASTEXITCODE" }
+$installedPayload = Get-FlitzZipInstalledPayload -StageRoot $stage -InstallManifest (Join-Path $build 'install_manifest.txt')
 & (Join-Path $PSScriptRoot 'verify_license_notices.ps1') -PackageRoot $stage
 Assert-FlitzZipPackagedRuntime -PackageRoot $stage -HipEnabled $hipEnabled
 
@@ -120,7 +121,8 @@ if ($hipEnabled) {
     }
     $dependencyOutput = & $cli dependency-check 2>&1
     $dependencyExit = $LASTEXITCODE
-    $dependencyOutput | Set-Content -LiteralPath (Join-Path $stage "flitzzip-dependency-check.txt")
+    # Build-machine diagnostics belong in validation logs, never in the install payload.
+    $dependencyOutput | Write-Output
     Assert-FlitzZipHipDependencyState -Output $dependencyOutput -ExitCode $dependencyExit
 }
 
@@ -128,7 +130,10 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $package) | Out-Nu
 $package = Publish-FlitzZipGeneratedPackage -OutputDirectory (Join-Path $repo 'out') `
     -FileName (Split-Path -Leaf $package) -Generate {
         param($candidate)
-        Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $candidate -CompressionLevel Optimal -ErrorAction Stop
+        New-FlitzZipPortablePackage -Path $candidate -Payload $installedPayload -Confirm:$false
+    } -Validate {
+        param($candidate)
+        Assert-FlitzZipPortablePayload -Path $candidate -Payload $installedPayload
     }
 Write-Output "Created $package"
 

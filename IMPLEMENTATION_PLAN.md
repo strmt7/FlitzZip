@@ -2,726 +2,357 @@
 
 ## Current Milestone
 
-Prepare a Windows x64, HIP-enabled beta candidate with source-bound verification
-and exact ZIP/MSI qualification. Publication requires the maintainer's green light.
-See [beta readiness](docs/beta-readiness.md) and [release qualification](docs/release.md).
-
-Use the [investigation skill](.agents/skills/flitzzip-test-investigation/SKILL.md)
-and its independent oracles for coherent development batches. Apply the
+Qualify a Windows 11 x64, HIP-enabled beta candidate, present its exact artifacts
+and limitations for maintainer review, then wait for permission to publish.
+Do not create a release or tag during development. The
 [release criteria](docs/release.md#acceptance-criteria) and
-[coverage acceptance policy](docs/code-coverage.md#release-acceptance) to the
-final candidate. Preserve critical behavior tests and reviewed residual risks;
-universal 100% line coverage is not a release requirement.
+[coverage acceptance policy](docs/code-coverage.md#release-acceptance) govern
+acceptance; this plan does not replace or relax them.
 
-## Engineering Priorities
-
-1. Preserve archive correctness, backward readability, safe extraction and explicit
-   format capabilities. Fix production boundaries and retain independent regressions.
-2. Keep Neutron star mode GPU-only and separate from numeric efforts. Optimize
-   complete archive bytes across representative workloads; transfer changes to
-   ordinary efforts only after demonstrating both smaller size and faster execution.
-   Pursue structural gains in representation, entropy modelling and GPU work
-   scheduling; small overhead reductions alone do not meet the compression goal.
-3. Investigate GPU failures through code, runtime and retained execution evidence.
-   Keep unexplained incidents visible; a successful rerun does not establish a cause.
-4. Repair actionable security findings at source. Preserve raw findings, provenance
-   and executable recurrence guards. Individually proven false positives use
-   the authorized exact-source review contract without suppressing scanner output.
-5. Use licensed real corpora and RAM-only transport. Separate size qualification,
-   descriptive timings, controlled comparisons and broader effectiveness claims.
-6. Keep development tools portable, verification proportional to changed consumers,
-   and current documentation concise. Reuse evidence only when its identities match.
-7. Qualify the exact portable ZIP and MSI payloads, checksums and installer lifecycle
-   before requesting publication approval.
-8. Improve the CPU lane across supported algorithms. Review each writer and reader
-   separately, including allocation, checksums and streaming. Qualify comparative
-   performance only when permitted. Preserve independent interoperability and avoid claiming
-   that a native Zstandard improvement qualifies Deflate, Bzip2, LZMA or other codecs.
-
-[Agent instructions](AGENTS.md) define the mandatory operating rules.
-[Benchmark index](docs/benchmarks/README.md) identifies current evidence and limitations.
-Completed checkpoint narratives remain in Git history and local review artifacts.
+Read [agent instructions](AGENTS.md) before execution. Keep one current ignored
+continuation note with source identities, evidence paths and the next action.
+Completed chronological reports belong in local artifacts and Git history.
 
 ## Current Assessment
 
-The published GPU-component baseline is
-[`8de9ccb6b4a3f8f98ffb45ec0d6df3c71d6ca443`](https://github.com/strmt7/FlitzZip/commit/8de9ccb6b4a3f8f98ffb45ec0d6df3c71d6ca443).
-Its Windows CI, ROCm qualification, security, component contracts, lint,
-Scorecard and Zstandard sanitizer workflows completed successfully. This
-qualifies their recorded component scope, not release acceptance. The following
-oracle-only source
-[`5175c1d889252f724ac09552e577cc99ec6d8b4c`](https://github.com/strmt7/FlitzZip/commit/5175c1d889252f724ac09552e577cc99ec6d8b4c)
-adds fresh-clone reproducibility for the unchanged model expectations; its
-component contracts, lint, security and Scorecard checks passed. The original
-configuration failure remains unexplained; retain B00's evidence and uncertainty
-rather than treating a subsequent pass as its diagnosis.
+**The repository is not yet release-qualified.** Component repairs and successful
+published checks do not establish acceptance of accumulated unpublished changes
+or of a final distribution.
 
-The service inventory at that oracle source contains only protected `main`, no
-open pull requests and no open Dependabot alerts. DeepSource's last retained analysis was skipped
-because its quota was exhausted. These are snapshots, not current-service
-guarantees. Successful Actions do not replace required analysis or the
-exact-commit findings audit. Recheck volatile service state at useful
-publication and final-acceptance boundaries, rather than repeatedly polling it.
+The latest read-only GitHub assessment found one protected branch, `main`, no
+open pull requests, and eight successful Actions workflows for published commit
+[`dc1a5f0582b95bb389d658d9caef6f973e8b94fe`](https://github.com/strmt7/FlitzZip/commit/dc1a5f0582b95bb389d658d9caef6f973e8b94fe).
+That snapshot does not qualify later edits, establish current analyzer or
+vulnerability acceptance, or replace the final exact-commit audit. Refresh volatile
+service state at publication and final acceptance, not through repeated polling.
 
-The counters-only observation integration spans telemetry, HIP event owners,
-dictionary callers, output consumers and their tests. Its current HIP-enabled
-Release build, fixed-data host cases, required-HIP readback/cancellation/recovery
-cases and affected offline reporting contracts passed locally. Independent
-compatibility and format-matrix checks cover their recorded binary identities.
-The default full native driver remains deferred because it invokes prohibited
-measurement consumers. The correctness-role batch now has a successful HIP
-Release build, complete classified correctness registry, separate CTest suites,
-dependency sanitizer controls, affected offline contracts and GUI smoke with
-capture review. Measurement deferrals remain explicit. The published role batch's
-[Windows](https://github.com/strmt7/FlitzZip/actions/runs/43333941927),
-[ROCm](https://github.com/strmt7/FlitzZip/actions/runs/43333941960) and
-[security](https://github.com/strmt7/FlitzZip/actions/runs/43333942376) workflows
-passed. These results do not replace the exact-source audit or final candidate
-qualification. The published sparse-reader component has
-bounded caller-owned workspace, eleven registered native tests, independent
-fixed-payload and malformed-input controls, and differential/fault-control
-evidence. Its differential control checked 2,073 cases: 1,222 admitted frames
-decoded byte-exactly and 851 nonimproving frames were rejected. These results
-qualify the reader's recorded scope, not the connected GPU entropy pipeline.
-Public archive admission remains closed. The private HIP reader, statistics,
-normalization, model construction and stream kernels have independent device
-correctness controls. The host encoder now connects actual GPU-produced counts,
-models and streams under one bounded owner, with independent readback,
-cancellation/recovery and complete-frame loss controls. Per-instance runtime
-fault controls now exercise actual HIP acquisitions, copies, submissions,
-completion and checked release. A reproduced child-drain failure now preserves
-the parent's terminal state, including trials pruned before device work. The
-affected correctness registry and separate correctness CTest suites passed;
-measurement consumers remain deferred. Public archive integration and
-representative adoption remain open.
-Each subsequent batch still requires its own applicable hosted acceptance.
-The earlier source `dec2dca` has a
-[qualified ZIP/MSI candidate](https://github.com/strmt7/FlitzZip/actions/runs/42993879195);
-those artifacts do not qualify subsequent source changes.
-
-| Area | Verified state | Remaining problem or limit |
+| Area | Established evidence | Remaining acceptance limit |
 | --- | --- | --- |
-| Product | Windows-native C++20 app, CLI, in-process adapters and HIP compute boundary | Exact methods differ by format; preserve the [capability matrix](docs/archive-format-support.md) |
-| Native tests | The explicit correctness path passes the complete admitted registry and classified CTest suites with current HIP binaries; measurement cases remain registered in the default suite | Full measurement qualification stays deferred; this is not full release acceptance |
-| Hosted/package checks | Published role-batch native and CPU/HIP-host security checks passed; local packaging and sanitizer contracts qualify their recorded inputs | Later decoder changes require fresh hosted acceptance; final exact-source audit and ZIP/MSI lifecycle remain required |
-| GitHub maintenance | Only `main`; no open PRs or Dependabot alerts at assessment | These inventories are live, not permanent guarantees |
-| Analysis acceptance | Exact governance baseline accepted; raw reports retained | DeepSource skipped the current revision because its analysis quota is exhausted; current analyzer results and complete inventory are unavailable |
-| Neutron | GPU-only search remains separate from efforts 1–9; independent readback and real device-work controls exist | Broad size superiority and comparative speed are unproven; approved rANS is inactive in production |
-| Numeric efforts | Nested CPU frame search and GPU entropy selection have scoped contracts | Complete-archive monotonicity is not established across all writers, partitions and resource policies |
-| Build generation | Shared probe output writing preserves unchanged bytes/metadata; actual source/header/bridge dependencies are registered and have canonical regressions | Work-count controls prove eliminated recompilation and targeted rebuilds, not a measured speedup |
-| Observation | Published mode inheritance, optional event ownership, paired recording and structured status have local qualification and successful predecessor hosted checks | The broad local driver and final exact-source audit remain outstanding; measured remains the default and no speedup is claimed |
-| Maintainability | Audit identifies large GUI, GPU, test and tooling files | Size is a review lead, not a defect or justification for mechanical splitting |
-| Dependencies/tools | Pinned graphs have provenance and installed-consumer evidence; constrained parents remain explicit | Resolution is not runtime acceptance; universal upstream latestness is not established |
-| Coverage/docs | CPU, HIP host, GUI, tooling and device scopes are separate; user/developer guides have canonical homes | Refresh affected gaps and claims, not a fictional whole-repository percentage; stale checkpoint prose must not drive execution |
+| Archive operations | Scoped independent readback, malformed-input, publication, Unicode, cancellation and recovery regressions | Review the accumulated patch and qualify current format consumers |
+| Cancellation and completion | Adapter-specific original-failure, recovery and independent-format controls, plus current Release correctness-registry acceptance | Complete the registry-based boundary inventory and final package qualification |
+| Test execution identity | Executable-bound HIP receipts, full/component driver acceptance and real-file PowerShell controls reject stale, missing, mismatched and unqualified executables | Preserve source/tool/output binding; historical results retain their original narrower artifact scope |
+| HIP | Real-device correctness, cancellation, allocation/copy/dispatch cleanup and recovery controls for recorded inputs | Qualify affected current paths; compilation for six targets is not execution on every GPU |
+| Coverage | Scoped CPU, HIP host, GUI, tooling and shared-header evidence | Review changed zero-hit behavior and unmeasured sources using matching identities; no whole-repository coverage claim |
+| Distribution | Earlier ZIP/MSI parity and portable readback passed | Current production edits make those artifacts historical; rebuild once source settles |
+| Installer | Authoring, version, location and recovery contracts have executable controls | Actual current install, repair, skipped-version upgrade, rollback and uninstall need a disposable Windows host |
+| User experience | Earlier frontend Neutron admission/readback and reviewed captures passed | Final candidate journeys and affected pages require matching evidence |
+| Analysis | Required gates and accepted governance observations remain defined | Security work is separately owned and deferred; retained publication admission is unresolved |
+| Neutron | GPU-only behavior separate from efforts 1–9; private compact entropy components have independent controls | Public kind-14/version-12 emission remains inactive; integration and representative adoption evidence incomplete |
+| Efficiency | Scoped ownership, bounded streaming and deterministic work-count improvements | No new comparative speed or broad compression superiority established |
 
-This is an engineering assessment of inspected contracts and retained matching
-evidence, not an exhaustive audit of every code line, dependency release or
-document. Unreviewed behavior remains unreviewed. No new production defect is
-established merely by listing an integration gap or an optimization opportunity.
-The repository is not yet release-qualified.
+The [compatibility contracts](docs/compatibility-stream-contracts.md) describe
+qualified preparation, bounded payload, original-observer and publication
+mechanisms across the repaired adapters. RPM now samples metadata, staging and
+decoding while retaining decoder finish checks and CPIO publication. TAR/CPIO
+emit the missing final entry notification. Current direct tests cover all five
+RPM payload routes and the coupled TAR filters, CPIO, DEB, error and encoding
+consumers. Historical runs remain bound to their own source and assertion scope.
 
-### Problems, Inefficiencies And Uncertainty
+The preceding native qualification passed 1,367 correctness cases and eight
+selected CTest suites, explicitly deferring ten measurement cases and measured
+corpus integration. Executable admission passed 54 provenance/receipt regressions
+and focused live component/CTest checks. The subsequent transfer-stream repair
+passed its complete 67-case affected cohort, including independent frames,
+physical-byte counters, cancellation, cleanup and retry. Earlier broader results
+retain their own source identities; later changes require their actual consumers.
+These are scoped engineering results, not final candidate acceptance.
 
-These are distinct engineering categories, not a list of confirmed vulnerabilities:
-
-- **Repaired observation contract:** the preceding count helper accepted measured
-  launches without a duration, allowing a later sample to mask missing coverage.
-  Measured recording now pairs launches with a duration/unavailable sample and
-  rejects count-only misuse before mutation. The regression rejects the old
-  behavior. No observed archive corruption is attributed to this accounting gap.
-- **Profiling separation:** B02's counters-only mode avoids optional events and
-  queries while retaining completion, deadlines and cancellation. Measured
-  remains the default; the new operation contract adds no public mode switch.
-  Fixed provider/work-count controls establish eliminated optional work, not a
-  measured application speedup.
-- **Reporting consistency:** the suite writer now uses the common GPU projection.
-  Transfer-diagnostic admission rejects absent/incomplete timing status and
-  missing actual-work evidence. Fixed-lane tests exercise the real consumer tail;
-  actual timed diagnostic and suite execution remain deferred.
-- **Expensive or conflicting verification entry points:** a broad unit driver
-  also invokes benchmark consumers. Under the current restriction it cannot run
-  unchanged. The explicit correctness path now separates those consumers with
-  admitted roles and visible deferrals, without removing default benchmark
-  coverage. Preserve that distinction and every remaining required check.
-- **Evidence drift:** older plans, continuation notes, build receipts and checkout
-  snapshots can disagree. Use the actual `main` checkout, matching source/tool/
-  output identities and one current local continuation. Do not repeatedly rescan
-  unchanged inputs or treat an old successful build as current.
-- **Overbroad evidence invalidation:** the dependency sanitizer receipt includes
-  the whole native input projection. A late unrelated native-test edit therefore
-  required another sanitizer qualification. Batch test edits before broad gates
-  now. A future narrower projection needs demonstrated transitive completeness,
-  mutation controls and a reviewed proposal before any mandatory gate changes;
-  it must not be introduced as an exception to source freshness.
-- **Compression opportunities:** integrated compact entropy coding, complete-size
-  effort progression, duplicate candidate work, allocation and stream ownership
-  merit investigation. Their presence on the queue is not proof of a defect or
-  a promised compression gain. N01, C01 and C02 require concrete oracles first.
-- **External analysis gap:** DeepSource quota prevents current complete analysis.
-  Keep R01 visible, retain raw inventories and continue independent development.
-  Do not contact support, pay, move accounts or reduce analyzer coverage.
-- **Hardware and effectiveness limits:** the historical freeze has no confirmed
-  cause; the unreproduced corruption incident has the maintainer's documented
-  nonblocking disposition. Fresh mismatches or hangs reopen the affected gate.
-  Broad Neutron size superiority and GPU speedup remain unproven.
-
-### Priority And Decision Boundaries
-
-| Priority | Work class | Decision |
-| --- | --- | --- |
-| Immediate | Any newly reproduced corruption, unsafe publication, hang, lifetime defect or incompatible dependency | Stop the affected path, preserve the first reproducer, repair its shared boundary and qualify recovery before continuing that path |
-| Next ready | Correctness/benchmark orchestration separation and N01 GPU integration | Remove avoidable verification coupling without losing consumers; integrate bounded stages with independent oracles |
-| Following | C01 complete-size progression, C02 CPU work reduction, Q01 critical gaps | Select demonstrated accounting, ownership or duplicated-work problems; do not undertake speculative blanket rewrites |
-| External hold | R01 current DeepSource analysis | Resume on actual provider availability; no support request, payment, account move or analyzer reduction |
-| Measurement hold | N02 representative size and CPU/GPU comparisons | No local corpus campaign or performance timing under the active goal; no new superiority claim or entropy-writer activation |
-| Final candidate | Exact-source audit, applicable coverage review, package and installer lifecycle | Complete every applicable gate before requesting release approval; inactive research is not itself a defect in existing formats |
-
-Dependency freshness is a separate inventory, not a conclusion from an empty
-Dependabot list. Review runtime libraries, build tools, Actions and agent-provider
-graphs independently. Preserve compatible pins until their replacements pass
-actual consumers. Newly discovered fixes interrupt the queue according to their
-impact; speculative opportunities do not continually reopen accepted work.
-
-## Execution With The Active Goal
-
-This canonical plan is already required by `AGENTS.md` and the development-context
-reading map. Use it with the existing active goal and one local continuation;
-do not create another goal, worker pool, maintenance service or recurring workflow.
-Execution remains serial under the repository's single-agent rule.
-
-The active goal prohibits benchmarks and performance-timing calculations. Continue
-source review, implementation, ordinary correctness tests, independent complete-size
-fixtures and deterministic work-count checks. Do not invoke benchmark controllers
-or corpus campaigns, including size-only campaigns. Preserve safety deadlines,
-cancellation and resource admission. Keep prohibited qualification deferred.
-
-For each package, establish the contract, concrete problem, independent oracle and
-affected consumers before editing. Batch one coherent mechanism with its regressions;
-retain old-source or isolated mutation controls when practical. Preserve the first
-failure and distinguish product, fixture, collector and infrastructure causes.
-
-Use the canonical targeted verifier and inspect command roles before execution.
-Reuse only matching source/tool/output evidence; do not hide a deferred check behind
-a narrower pass. Publish reviewed batches on `main` through the official connector,
-verify contributor/parent/tree, sample exact-SHA workflows once, and continue
-independent work. Update durable package status when it changes and retain detailed
-results in the single local continuation. A passing checkpoint does not complete
-the full goal.
-
-### Harness Execution And Resumption
-
-The existing active goal supplies the current restrictions; this plan supplies
-the queue and completion contracts. Neither is a second agent or service. Use
-this serial loop in the current harness:
-
-1. Read current user steering, this queue and the single local continuation.
-   Reconcile the Git root, published head, working changes and owned jobs.
-   Recover an existing job's result before relaunching it or changing its inputs.
-2. Select the first ready package whose dependencies are met. State its invariant,
-   direct consumers and independent success/rejection/recovery oracle. Reuse
-   matching accepted evidence. A held external gate does not hold unrelated work.
-3. Implement one coherent mechanism with its tests. Keep source immutable while
-   its build or collector runs. Preserve the first failure, diagnose it, then
-   qualify the correction under a new evidence identity.
-4. Inspect `tools\verification_plan.ps1 -IncludeUntracked -Checkpoint intermediate`
-   before invoking selected checks. Explicitly identify benchmark-producing
-   commands and keep them deferred under the current goal; do not substitute
-   an unrelated pass. Use exact selected native cases for development feedback.
-5. Review the intentional diff, renew only substantively reviewed source-bound
-   evidence where required, and publish qualified changes through the official
-   connector with an expected parent. Never publish unfinished working changes
-   incidentally with a documentation checkpoint.
-6. Sample exact-SHA hosted work opportunistically once. Save pending/failed
-   results and continue ready work. Update the package's durable status and the
-   local continuation with source identity, evidence, remaining checks and the
-   next action; put no changing counts or transcripts in skills.
-7. At the final candidate boundary, apply all release criteria across the full
-   accumulated change range. A package can be complete while overall release
-   acceptance remains pending. Ask for publication approval only after the
-   candidate qualifies; do not create a release or tag during development.
-
-Package status means: **implemented** is source present; **qualified** adds the
-required matching acceptance evidence; **held** names a specific unmet dependency.
-Do not collapse these into a single misleading done marker.
-
-For each active batch, the existing local continuation records: package/substep,
-invariant and affected paths; source/tool/output identities; independent oracle;
-observed failures and their disposition; terminal or still-owned job state;
-completed, pending and deferred commands; published SHA and next concrete action.
-Keep raw logs in ignored evidence directories. This plan owns durable scope and
-decisions; skills own reusable instructions. Do not duplicate volatile evidence
-into skills or install another harness, scheduler or background agent.
-
-## Ordered Work Packages
-
-The **T01 correctness orchestration separation** has local and published-source
-hosted qualification. Continue with **N01**,
-connecting the qualified sparse-reader component to the
-approved GPU pipeline. **B00 and B01 are qualified
-for their published scope; B02 is published with successful hosted checks.**
-Its local broad-driver deferral and final audit remain visible. The ready sequence
-is **N01 → C01 → C02 → Q01**. The default full measurement driver remains deferred; do not
-weaken verification or describe restricted execution as that driver's pass.
-D01 interrupts it for a demonstrated dependency vulnerability or incompatibility. T01 addresses
-missing tool portability evidence without repeating valid installation checks. Resume R01 on
-a provider state change; do not let that external blocker stall independent work.
-N02 remains held by the measurement restriction. U01 follows affected product changes.
-
-| ID | Work and current state | Dependency | Required completion evidence |
-| --- | --- | --- | --- |
-| B00 | Qualified diagnostic-loss repair; original failure cause unconfirmed | Preserve accepted evidence unless inputs change | Independent rejection/recovery controls and successful current ROCm qualification; retain historical uncertainty |
-| R01 | Current analysis acceptance: quota exhausted | Provider allowance resumes and a current run completes | Successful required analyzers, complete paginated inventory and exact-commit audit; retain the accepted governance baseline |
-| B01 | Qualified probe invalidation repair with local and hosted evidence | Revalidate only affected changed inputs | Old behavior detected; unchanged outputs preserve identities and avoid recompilation; changed inputs rebuild consumers |
-| B02 | Published with bounded local host/HIP, reporting and successful hosted workflows; local broad driver deferred | Preserve source-bound results and final audit requirements | Real HIP counters without optional profiling; correct bytes, inheritance, failure cleanup and reuse; prohibited timing checks remain deferred |
-| C01 | Complete-size effort progression: scoped review next | Existing nested-search inventory | Independent full-size/decoding regressions for every advertised guarantee; no padding or manufactured low-effort losses |
-| C02 | CPU codec mechanisms: planned | Demonstrated work/ownership problem per codec | Independent read/write oracles and failure/recovery checks; supported capabilities unchanged; no unmeasured speed claim |
-| N01 | In progress: private GPU reader, statistics, model/stream kernels and bounded host encoder with real-HIP runtime-failure controls; public archive admission closed | B02 and approved format contract | Complete current hosted acceptance, archive/version/composition integration and Neutron portfolio ownership; retain independent readback/CRC and malformed-input/lifetime controls |
-| N02 | Representative Neutron effectiveness: deferred | N01 and lifted benchmark restriction | Complete-size evidence on licensed independent workloads, including losses and all model/framing bytes, before production adoption |
-| D01 | Dependency lifecycle: alerts clear at assessment | Official metadata, compatible graph and provenance | Reproducible pins plus fresh/update installed-consumer tests; explicit unsupported/constrained platforms |
-| T01 | Correctness separation locally qualified: typed native roles, complete CTest role admission, real HIP correctness and isolated mutation/failure controls | Finish affected pushed-source hosted qualification and remaining portability consumers | No benchmark reachable through the explicit correctness-only path; all existing consumers retained in ordinary/final selection; fresh/update/recovery and owned-process cleanup evidence |
-| Q01 | Critical gaps and complexity: ongoing | Actual risk and source-bound gap inventory | Meaningful success/rejection/recovery assertions and repaired root causes; explicit residual behavior/measurement gaps |
-| U01 | User experience, upgrades and docs: maintain affected contracts | Changed product/settings/package behavior | Migration and failure/recovery tests, disposable-host installer qualification, affected GUI/figure review and accurate docs |
-
-### B00 — HIP Configuration Diagnostics
-
-Scope: `cmake/ResolveHipArchitecture.cmake`, `tools/hip_architecture.ps1`, their
-direct callers and existing configuration/architecture tests.
-
-The resolver now retains its child result and both captured streams in failures.
-Real subprocess controls cover nonzero stdout/stderr, malformed successful output,
-missing commands and deadline expiry after valid partial output, followed by
-canonical recovery. Both Windows PowerShell and PowerShell 7 passed these controls;
-the original resolver fails the diagnostic-loss assertion. Target policy and the
-existing deadline are unchanged. This repairs diagnostic loss, not the unconfirmed
-cause of the earlier hosted configuration failure. Current published ROCm
-qualification has passed; do not rerun this investigation without changed inputs
-or a new failure.
-
-1. Preserve the failing run, exact source, SDK/compiler identity and command.
-   The observed failure precedes HIP compilation; it does not demonstrate a
-   kernel defect, unsupported GPU or defective probe output.
-2. Keep subprocess result, standard output and standard error together. The
-   preceding fatal message lost that distinction; independent controls detect
-   the loss. Establish a new failure's cause before changing admission policy.
-3. Exercise canonical success and independent nonzero, malformed-output,
-   unavailable-command and bounded-deadline controls at the resolver boundary.
-   Keep diagnostics actionable, reject partial target lists and prove recovery.
-   Do not repair this by weakening validation, retrying into a pass or blindly
-   increasing a deadline.
-4. Qualify the affected native configure/build consumer and current hosted ROCm
-   job. Reuse unrelated successful evidence while source/tool identities match;
-   retain incomplete Windows/analysis results until their actual outcomes arrive.
-
-### B01 — Probe Generation Contract
-
-Scope: `tests/zstd/RawBlockProbe.cmake`, `HuffmanTableProbe.cmake`,
-`DictionaryMergeProbe.cmake` and the existing dependency CMake contract suite.
-
-1. Share a small text-output boundary. Validate source/region identities before
-   output reuse; preserve generated definitions and provenance. Do not cache
-   unverified compiler products.
-2. Cover first emission, unchanged output, corruption repair, changed bridge input,
-   restoration and unrelated-producer independence. Use fixed metadata sentinels,
-   not elapsed measurements, to detect unnecessary writes.
-3. Reject altered source inputs without mutating admitted outputs. Keep native
-   newline semantics and the declared CMake minimum compatible; avoid adding a
-   dependency merely to compare generated text.
-4. Check real unchanged incremental compile work and a real input-induced rebuild.
-   Counts establish eliminated work, not a measured speedup.
-
-### B02 — Observation Contract
-
-Scope: telemetry/snapshots, shared dispatch, prefix/dictionary encoders,
-`NeutronStageClock`, child attempts and structured-output consumers.
-
-Host encode and owned-decode phase boundaries now share an operation-local clock.
-Absent phase telemetry, including nested encode trials, requests no clock reads
-or recorder callbacks. Tracked nested phases copy their enclosing boundary;
-recorder failure retains the last successfully recorded boundary. Fixed clock-read
-and tick-sequence fixtures exercise these contracts without reading a real clock.
-The integration propagates an immutable observation mode through
-shared, prefix, sparse and dictionary event owners, child attempts, snapshots,
-aggregation and output consumers. This remains an internal operation contract;
-no new public CLI switch is claimed. A successful build is not runtime acceptance.
-
-Bounded host and real HIP tests now cover mode admission, literal aggregation,
-completion/query failure, independent CPU/upstream readback, optional attempts
-and Neutron cancellation followed by recovery. The paired-recording regression
-fails on the preceding source and passes after repair. Transfer admission also
-has a reproduced old-consumer failure and fixed-provider rejection/projection
-controls. Preserve this evidence; do not describe the deferred broad driver or
-timed consumers as passed.
-
-Define an immutable operation mode and distinct not-requested, measured and
-failed/incomplete timing states. Specify mixed-mode aggregation before changing
-consumers; missing timing must not become zero. Inherit the mode into every child.
-
-Counters-only mode must avoid optional event creation, elapsed queries and profiling
-clocks throughout the operation. Preserve completion waits, mandatory deadlines,
-cancellation, overflow checks and ownership. Count actual completed work and
-transfers; do not invent internal-library kernel counts.
-
-Test inheritance, aggregation, failure, poisoned event reuse and immediate recovery
-independently. Audit CLI/output/figure/qualification consumers together. Preserve
-existing measured-mode contracts and explicitly defer prohibited timing-producing
-qualification rather than silently disabling it.
-
-Complete this batch in the following order:
-
-1. Restrict the count-only recording primitive to counters-only operations.
-   Measured completion must supply its duration or an explicit unavailable sample
-   with the same launch count. Reject mismatched use before changing counters.
-   Completion failure counts no completed launch; query failure preserves actual
-   completed work and marks timing unavailable exactly once.
-2. Exercise the host state table with independent literal expectations: no
-   samples, observed zero, not requested, invalid and mixed/incomplete. Check
-   aggregation associativity and child-mode admission. A missing requested
-   duration must not become a valid measured zero.
-3. Prove the counters-only event factory and query callbacks are never invoked.
-   Use throwing providers and isolated behavioral mutations, not wall-clock
-   comparisons. Keep stream completion, checked cleanup and cancellation active.
-4. Run the new bounded RAM-only HIP cases: cached and deferred dictionary readback,
-   cancellation followed by immediate Neutron recovery, and optional/required
-   native GPU attempts. Require real device admission and byte equality against
-   independent CPU/upstream decoding. A no-device return cannot qualify these cases.
-5. Qualify changed structured consumers. Fresh measured records must reject
-   missing/unknown/partial timing status; retained historical identity records
-   remain readable without inventing timing fields. Keep those parser roles
-   separate and retain their failure controls.
-6. Run the remaining selected offline, interoperability, format-matrix and
-   bounded correctness consumers on the matching build. Publish only after
-   their applicable contracts pass. Record broad benchmark-coupled driver and
-   measurement deferrals explicitly; refresh hosted acceptance for the new SHA.
-
-### C01 — Complete-Size Effort Contract
-
-Map the existing nested CPU frame search and GPU entropy selection before extending
-them. Distinguish per-block savings from full archive framing, dictionary choices,
-partition changes and resource admission. Retain a lower effort's winning complete
-representation wherever the same format/resource contracts permit it.
-
-Use bounded empty, small, repetitive, mixed and already-compressed fixtures with
-independent decoding. Count every descriptor, dictionary, model, name, checksum and
-index byte. Repair demonstrated regressions through shared candidate accounting,
-explicit admissibility and duplicate-trial elimination while preserving tie policy.
-Do not manufacture low-effort losses or promise inverse-linear size on arbitrary data.
-Keep Neutron outside numeric progression. Representative effectiveness campaigns and
-speed qualification remain separate and deferred under the active restriction.
-
-1. Enumerate each enabled writer's effort mapping, partition policy, candidate
-   ordering, budget and tie rule. Label guarantees by format and resource policy;
-   do not extend a block-local result to a whole archive.
-2. Build a small fixed regression matrix covering empty/tiny boundaries, repeated
-   content, mixed blocks and already-compressed bytes. Compare complete serialized
-   representations and independently restore every result. These are deterministic
-   correctness fixtures, not a size campaign or timing exercise.
-3. For each actual regression, trace the lost lower-effort candidate, framing
-   change or accounting error. Repair shared admission/accounting rather than
-   padding a result, weakening an effort or adding workload-specific exceptions.
-4. Test deduplication with explicit candidate/work identities: identical work can
-   be reused only when source, parameters, dictionary and decoding contract match.
-   Preserve cancellation and memory bounds. Publish each proven scope precisely.
-
-### C02 — CPU Codec Review Contract
-
-Review supported readers and writers separately: ZIP/Deflate/Gzip, Bzip2,
-Zstandard, native CPU blocks and read-only LZMA-family adapters. This does not
-authorize adding writers to extract-only formats. Start with the format registry
-and native codec inventory so every enabled reader/writer, including LZ4 and
-method-specific decoders, receives an explicit scope rather than assuming this
-summary list is exhaustive.
-
-Inspect repeated allocation, copying, checksum passes, buffer ownership and stream
-handoffs. Share bounded mechanisms only where a demonstrated problem warrants it.
-Preserve errors, cancellation, interoperability and publication semantics. Retain
-independent empty/partial/truncated input, allocation-failure, cleanup and reuse
-controls, including an old-source or isolated failure oracle where practical.
-
-Keep instruction-set admission portable across supported x64 hosts; avoid
-machine-specific global flags or optimistic execution followed by crash recovery.
-Comparative performance remains unqualified until measurement is permitted.
-
-Work through a reader/writer inventory, not a blanket codec rewrite. For each
-selected mechanism, record the current buffer owner, number of copies/allocations,
-checksum pass and error/publication boundary. Choose a demonstrated avoidable
-operation or ownership defect, then use deterministic work counters and independent
-format readers to validate the change. Cover streaming split boundaries, empty
-and truncated input, output capacity, cancellation and reuse after failure. Review
-instruction-set dispatch separately from compression policy. Stop broadening a
-batch when its consumers no longer share the same mechanism; no timing result or
-cross-codec improvement follows from a work-count reduction alone.
-
-### Q01 And U01 — Review And Maintenance Contract
-
-Review large GUI state, HIP host, format/stream test and build/smoke modules by
-responsibility, ownership and consumers. Split only a demonstrated duplication or
-responsibility problem, not a file merely because it is long. Batch meaningful
-tests before recollecting coverage; review zero-hit and unmeasured-source inventories
-with their actual source/tool/binary scope.
-
-Follow the [persistence and upgrade contract](docs/development/persistence-and-upgrades.md)
-for stable external keys, unknown fields, schema transitions and recovery. Preserve
-append-only historical fixtures and direct upgrades from supported earlier versions;
-do not infer compatibility with unknown future implementations. Preserve installer
-scope, upgrade identity, portable/MSI parity, repair, rollback, uninstall and user-data
-policy. Qualify lifecycle on disposable hosts rather than altering the maintainer's install.
-
-Keep README/user guides product-oriented and developer rules canonical and linked.
-Recheck affected GUI capability/settings gates and user journeys when behavior
-changes. Review affected figures, error bars, units, legends and source/data identities
-when charts change. Old measurements and golden renderer fixtures are not current
-results; preserve the canonical mark and native product-text rendering system.
-
-Critical changes beyond existing approvals require a concrete reviewed proposal
-before execution: additional public format assignments, new application runtime
-dependencies, platform expansion, destructive history changes or weakened gates.
-Routine repairs and already-approved work proceed within their existing contracts.
-
-### T01 — Portable Development Tools
-
-The [explicit correctness path](docs/targeted-verification.md#correctness-and-measurement-roles)
-is implemented with native registry roles, complete CTest inventory admission,
-default retention and visible measurement deferrals. Isolated controls exercise
-the actual runner and driver, including failed child admission, lost HIP readiness
-and separator mutations. The real source-matched correctness path and selected
-local consumers passed. Finish affected hosted checks before calling its
-publication qualified; default full-driver measurement gates remain separate
-and held under the active local restriction.
-
-First trace the canonical `unit-tests` descriptor in
-`tools/flitzzip_verification.psm1` to its actual native driver and every child
-command. Inventory correctness cases, interoperability, fuzz controls, benchmark
-campaigns and measurement consumers before changing orchestration. Reuse the
-existing runner and verifier rather than introducing a parallel test framework.
-
-Add an explicit correctness-only execution contract only if the inventory proves
-which commands it must retain and which benchmark producers it must decline.
-Unknown or mixed-role commands must fail classification rather than run silently.
-Use synthetic command recording to prove no benchmark can start, required
-correctness consumers remain present, failed children fail the invocation, and
-cancellation leaves no owned child alive. Default and final qualification must
-retain every existing required consumer; the restricted path never implies that
-held measurement gates passed. Qualify the real permitted correctness invocation
-after the offline controls, using current source-bound binaries and no timing.
-
-Qualify Caveman instruction delivery, source-bound CocoIndex search, Crawl4AI
-extraction and affected MCP/verification consumers through their canonical launchers.
-Cover fresh and existing installations, absent/stale providers, moved checkouts,
-supported configuration overrides and actionable access failures. Preserve valid
-receipts rather than reinstalling unchanged tools at every checkpoint.
-
-Use discovered paths and capabilities; do not track a maintainer-specific cache or
-overwrite another task's registration. Treat site challenges as access limitations,
-retain failed crawl receipts and use only permitted alternatives. Actual tool
-defects require repair; a changed cache context is not evidence of a product defect.
-
-Verify owned subprocess, pipe, cancellation and shutdown lifetimes. Leave no stale
-workers, scheduled services or unbounded buffers, and do not interfere with unrelated
-host work. Installation, an index marker or a resolver result alone is not proof of
-actual tool use, runtime acceptance or complete analysis.
+Retain distinct historical uncertainties: the original system freeze has no
+confirmed cause; the unreproduced concurrent dictionary-corruption investigation
+was closed as nonblocking by the maintainer with regressions retained. A new byte
+mismatch or hang reopens the affected gate. Later success and a suspected driver
+cause are not a diagnosis. An earlier PowerShell 5 analyzer crash also remains
+unexplained despite passing isolated and PowerShell 7 controls.
 
 ## Release Blockers
 
-The following gates define what blocks a candidate. Determine their current
-status from source-bound local evidence, the pushed revision and its hosted
-checks. Completed checks may be reused only while relevant identities match.
-Qualification and authorization to publish remain separate decisions.
+Distance to release is measured by these unmet evidence milestones, not an
+invented percentage, calendar estimate or universal absence-of-bugs claim.
 
-The product and format migration uses FlitzZip and `.flzip` throughout active
-interfaces, build targets, packages and tooling. Wire signatures and the MSI
-upgrade identity remain stable. Legacy names are confined to compatibility
-inputs and their tests, exact historical evidence, and verified build-cache
-migration. The previous release and its tag were deleted at the maintainer's
-request; this does not authorize publication of a replacement.
+1. **Review and freeze accumulated changes.** Complete Q01/U01, resolve demonstrated
+   defects and classify remaining critical behavior gaps. Select commands for the
+   complete intended range, including untracked files. Local evidence must match
+   its actual source, tools and outputs.
+2. **Complete current product qualification.** Run applicable correctness registry,
+   CTest suites, independent interoperability and format matrix, real-HIP consumers,
+   affected GUI journeys and required coverage review. Earlier full runs and current
+   component runs qualify their own scopes only. Benchmark- or scanner-coupled
+   commands remain deferred under current restrictions.
+3. **Qualify exact distribution and lifecycle.** Build portable ZIP and MSI from one
+   source, compare every declared payload and verify checksums, runtime admission,
+   notices and corresponding source. Exercise installation, repair, supported
+   direct/skipped-version upgrades, rollback, downgrade rejection and uninstall on
+   a disposable Windows host. Do not install fixtures on the developer machine.
+4. **Complete final admission and hosted acceptance.** Publish verified development
+   increments through the authenticated official GitHub connector on `main` and
+   verify contributor attribution and applicable hosted checks. Development
+   publication is separate from release qualification. The candidate still needs
+   separately owned security acceptance and the required exact-SHA post-push audit.
+   Older green workflows do not satisfy this milestone.
+5. **Present a qualified candidate for approval.** Supply artifact identities, source
+   offering, supported scope, test/coverage limitations and residual risks. Request
+   release green light only after all applicable criteria pass. Candidate
+   qualification is not release-publication permission.
 
-1. **Retain current source-analysis acceptance.** Qualify the exact pushed
-   revision against open and reproduced dismissed findings. The authorized
-   [individual false positives](docs/security-reviews/current-source-findings.md)
-   and two exact governance observations remain bound to their reviewed identities.
-   Repeat the affected detectors and exact-commit audit after further production
-   changes; an earlier checkpoint does not approve later source bytes.
-2. **Qualify current GPU execution.** Validate required-HIP behavior, bounded kernel
-   progress, asynchronous ownership and failure cleanup on the candidate binaries.
-   Preserve the historical incident evidence and its limitations in
-   [beta readiness](docs/beta-readiness.md#outstanding-acceptance-limits).
-   The maintainer has closed the unreproduced dictionary-corruption investigation
-   as nonblocking after focused qualification; neither a driver cause nor a
-   production repair has been established. Keep the distinct-input and start-schedule
-   regressions active. Any new byte mismatch or hang reopens the affected release gate.
-3. **Complete source and release qualification.** Review changed behavior and
-   critical parser, extraction, codec, driver and kernel contracts; resolve
-   identified defects and perform the required source and dependency audit.
-   Qualify the final pushed SHA's
-   workflows, audit, HIP-enabled ZIP/MSI, checksums and installer lifecycle before
-   requesting release approval. Earlier successful artifacts cover their own
-   source identities, not every later commit.
+Security scans, finding remediation, disposition renewal, Dependabot and fuzzing
+remain excluded from this agent's work. The last retained publication failure
+was `Affected review has stale source or scanner context: 10227`; it has not been
+rescanned in this round. Its separate owner must resolve it through existing
+policy for final candidate acceptance. Deferred work must never be reported as a
+passing scan, approval or release gate.
 
-4. **Apply risk-based testing and coverage acceptance.** Require meaningful
-   success, malformed-input, lifetime and recovery assertions for critical and
-   changed behavior. Resolve demonstrated defects at their actual boundaries.
-   Review the uncovered-line and unmeasured-source inventories under the
-   [coverage policy](docs/code-coverage.md#release-acceptance), investigate
-   regressions and retain residual risks. Missing critical behavior tests,
-   failed required collection and unexplained regressions block release.
-   CPU, GUI, tooling, HIP host and device measurements retain separate scopes.
+Benchmarks, corpus/size campaigns and performance-timing calculations remain held.
+Ordinary fixed correctness fixtures and product diagnostics may continue. A
+required but prohibited check stays deferred, never passed. Preserve default
+measurement consumers and required final gates. The two accepted CodeReview and
+CII Best Practices observations remain a pass under the existing
+[governance baseline](.github/scanner-governance-baseline.json).
+
+## Execution Order
+
+Publish coherent verified engineering increments during these stages; do not
+withhold all development publication until release qualification is complete.
+Use the maintainer-authorized scope, retain explicit deferrals and preserve the
+standing safeguards. Final candidate acceptance covers the resulting exact SHA.
+
+| Stage | Work | Exit evidence |
+| --- | --- | --- |
+| 1 | Finish coherent repairs and inspect siblings | Original failure, independent regression sensitivity, successful direct consumers and reviewed source diff |
+| 2 | Q01/U01: accumulated behavior, coverage and documentation review | Critical inventory reconciled; defects repaired; remaining gaps and affected journeys explicit |
+| 3 | Freeze inputs and prepare current engineering packages | Source/tool/output identities, exact ZIP/MSI parity and portable runtime/readback |
+| 4 | Disposable-host lifecycle and separately owned admission | Actual lifecycle logs and required owner acceptance; no prohibited check relabelled |
+| 5 | Publish admitted source and qualify final SHA | Natural contributor identity, required successful hosted checks and final audit |
+| 6 | Assemble final candidate and ask for green light | Every applicable criterion satisfied; concrete artifacts and limitations ready for inspection |
+
+Order dependencies by actual consumers. A source change invalidates affected
+binary evidence; documentation-only edits do not automatically invalidate unchanged
+codec execution. Final artifacts still need current docs and corresponding source.
+Do not rebuild, recollect coverage or rerun unchanged suites merely because a
+new development turn began.
+
+Use the existing [verification planner](docs/targeted-verification.md), inspect
+command roles and run admitted consumers through canonical bounded executors.
+Offline contracts must not silently rebuild native targets. Default broad
+commands can include measurements or scanners: inspect them before execution.
+Retain explicit omissions instead of creating a parallel passing framework.
+
+## Next Coherent Round
+
+The next round follows the remaining critical path rather than restarting every
+previous investigation. These are evidence milestones, not a release date or an
+estimate of implementation completeness.
+
+| Priority | Batch and dependency | Concrete completion condition |
+| --- | --- | --- |
+| 1 | Reconcile Q01/C02 against the format registry and accumulated patch | One inventory connects each affected operation's preparation, payload, finish, notification and publication boundaries to current regressions or an explicit gap; demonstrated defects receive grouped root-cause repairs |
+| 2 | Qualify critical behavior and coverage using that inventory | Reuse the matching native/CTest results; complete remaining independent format consumers, real HIP and affected GUI journeys; investigate changed critical zero-hit behavior |
+| 3 | Freeze one candidate and qualify its distribution | ZIP/MSI payload parity, checksums, runtime admission, notices and corresponding source match; a disposable Windows host passes install, repair, supported direct/skipped-version upgrade, rollback, downgrade rejection and uninstall |
+| 4 | Complete separately owned final admission and hosted acceptance | Development increments are published on main with natural attribution; final candidate admission, required exact-SHA hosted checks and audit pass |
+| 5 | Present the candidate for maintainer inspection | Artifact/source identities, supported scope, remaining limitations and every acceptance result are reconciled; ask for green light without creating a release or tag |
+
+N01's private extension work can proceed only after its prerequisites are met;
+public kind-14/version-12 emission stays inactive. N02's representative size and
+speed adoption evidence remains prohibited in the present round. Do not substitute
+fixed correctness fixtures for that study, count it as complete, or make an
+unmeasured compression claim. Active release behavior must qualify independently
+of unfinished research.
+
+## Q01 And U01 — Candidate Review And User Experience
+
+1. Map the complete patch to production contracts: detection/formats, publication
+   and overwrite, CPU/HIP ownership, cancellation/scheduling, settings, GUI state,
+   installer and runtime loading. Separate confirmed defects, untested behavior,
+   retained incidents and optimization hypotheses.
+2. Batch meaningful boundary tests before coverage recollection. Use independent
+   bytes/readers, original-source failures or isolated mutations where needed.
+   Assert success, rejection, partial progress, first-error preservation, cleanup
+   and immediate reuse. Inspect sibling adapters, not just the observed format.
+3. Reconcile zero-hit lines and unmeasured sources by actual component. Keep CPU,
+   HIP host, GUI, tooling and device scopes separate. Repair missing critical tests
+   and invalid collection; review lower-risk gaps with concrete evidence. Never
+   fabricate hits, remove defensive code or suppress paths for a percentage.
+4. Review large modules by ownership and responsibility. Share common mechanisms
+   and remove proven orphans; preserve format-specific contracts and write batching.
+   Do not split files mechanically to satisfy a metric.
+5. Preserve external settings keys, unknown fields and append-only historical
+   fixtures under the [persistence contract](docs/development/persistence-and-upgrades.md).
+   Test migration, failed writes, recovery and supported skipped-version paths.
+   Do not promise compatibility with unknown future implementations.
+6. Check capability/settings gates, queues, create/extract/verify, cancellation and
+   persistence. Announce necessary GUI testing and review every capture; never
+   build or package while that GUI owns outputs.
+7. Keep README and user guides task-oriented, with developer material linked from
+   the [developer guide](docs/development/README.md). Review affected charts' units,
+   bounds/error bars, legends, data and source identities. Old plots and golden
+   renderer fixtures are not new measurements. Preserve canonical branding.
+
+## C01 — Complete-Size Effort Contracts
+
+Inventory each advertised writer's effort mapping, partition policy, resource
+budget, candidate order and tie rule. Distinguish block savings from complete
+framing, dictionaries, indexes and composition. Retain a lower effort's winning
+representation wherever identical format/resource constraints permit it. Do not
+pad output, degrade lower efforts or promise inverse-linear size on arbitrary data.
+Keep Neutron outside numeric progression.
+
+Existing native fixed-fixture regressions independently count complete framing,
+restore bytes and detect discarded lower-effort winners. They cover recorded
+block/worker policies, not all compatibility writers. Extend the deterministic
+matrix for an uncovered advertised contract or actual regression: empty/tiny,
+repeated, mixed and already-compressed data. Trace lost candidates, framing and
+accounting separately. Reuse work only with matching source, parameters, dictionary
+and decode contract; preserve bounds, cancellation and deterministic ties.
+Representative size and speed effectiveness remain N02 work.
+
+## C02 — CPU Codec And Streaming Efficiency
+
+Use the registry and codec inventory to review every enabled reader and writer,
+including method-specific decoders. Do not add writers to extract-only formats.
+Record ownership, copies, allocations, retained capacity, checksum passes and
+publication/finish requirements for each selected mechanism.
+
+Native candidate ownership, shared Gzip/Bzip2/Zstandard/XZ/Lzip windows,
+TAR/CPIO/ZIP boundaries and stored/native-library cancellation have scoped repairs.
+Review remaining mechanisms against concrete hypotheses; an extra copy or large
+file alone does not establish a defect or end-to-end loss. Preserve batching and
+pinned source ownership. The LZMA dictionary-to-output path needs particular care
+before changing batching/termination. LZ4 already has a direct-buffer lane.
+
+RPM preparation now has original-source reproducers across all five supported
+payload routes: independent byte-validity controls pass while metadata, staging
+and decoded-window cancellation fail before repair. Separate regressions also
+reproduce missing final entry notifications in TAR/CPIO and their RPM consumer.
+The repair preserves buffer sizes, decoder finish checks and private cleanup;
+its complete affected cohort passes in Debug and Release. The first partial-window
+observation required correction from cached directory sizes to fresh active-file
+handle sizes. Retain those failed observations and their independent Windows
+control rather than treating them as production failures. Scope-specific coverage
+review and final candidate qualification remain separate requirements.
+
+Before package generation, reconcile preparation, bounded payload work, final
+validation and completion notifications against the format registry in one
+remaining-consumer inventory. Batch any demonstrated sibling defects and their
+tests; do not restart already qualified mechanisms without new evidence.
+
+Validate with independent readers and deterministic work/ownership controls:
+split boundaries, empty/truncated data, output capacity, allocation failure,
+cancellation, finish validation and reuse. Review instruction-set admission
+independently from codec policy. No machine-specific global flags or crash-based
+dispatch. A work-count reduction is not a measured speedup.
 
 ## Approved Entropy Extension
 
-Implement and qualify the [compact rANS design](docs/native-rans-extension.md)
-for Neutron only. Version 12 and kind 14 are approved design assignments, not
-currently emitted product representations. Preserve versions 1–11 and efforts
-1–9, and include inner-stage kinds in writer and reader version admission.
-Continue bounded HIP correctness and ownership qualification independently of
-performance measurement. Derive candidate histograms from immutable transition
-counts with exact segment resets, and reuse counts across precision choices.
-Qualify normalization and model/stream construction independently before joining
-the archive pipeline, then connect actual device-produced counts, models and
-streams in the integrated proof. Bound source scanning without resetting
-predecessors at dispatch boundaries, and reject partial statistics after
-cancellation. Enable the production candidate only after independent
-correctness and worthwhile complete-size evidence from representative workloads.
-The shared-host restriction on local benchmarks remains in effect.
+The [compact rANS design](docs/native-rans-extension.md) assigns version 12 and
+kind 14 to Neutron-only development. **Public archive admission and emission
+remain inactive.** Preserve versions 1–11 and efforts 1–9. Private qualification
+is not integrated archive or representative adoption qualification.
 
 ### N01 — Integrated Correctness Before Adoption
 
-Execute these implementation batches in order. Keep public archive admission and
-writer activation separate from private component qualification.
-
-| Batch | Production boundary | Independent acceptance |
+| Batch | Boundary and next work | Required acceptance |
 | --- | --- | --- |
-| N01-A | Private HIP ABI/export/layout, component binding and complete device-entry admission; bounded GPU decoder consuming the canonical admitted payload/model views | Independent framed bytes, actual required-HIP dispatch and byte/CRC equality; absent or incompatible module rejection; malformed states, capacities, cancellation, failure cleanup and immediate recovery |
-| N01-B | GPU transition counts, segment corrections and context projection bound to immutable stage bytes | Direct independent counts across all approved contexts/shifts and dispatch tails; disappearing contexts, zero predecessors, overflow/underflow and omitted/corrupted correction controls; reject partial statistics |
-| N01-C | Normalization, full-width model construction and stream encoding consuming actual preceding GPU outputs | Exact positive model mass, singleton 65,536, deterministic ties, canonical model order, state/stream bounds and portable decoding of emitted streams; compare raw counts so normalization cannot hide an upstream error |
-| N01-D | Archive/version/composition readers, resource admission, shared materialization and CRC; direct malformed-payload fuzz entry before public admission | Versions 1–11 preserved; kind 14/version 12 checked at every advertised and recovered inner stage; exact workspace/multiworker accounting, independent readback, interoperability and affected parser/fuzz qualification |
-| N01-E | Neutron-only candidate portfolio, complete-frame lower bounds, winner ownership and payload-aware minimum-version propagation | Losing/tied trials preserve the previous winner and version; all model/framing/workspace bytes counted; efforts 1–9 unchanged; emission remains inactive until N02 qualifies adoption |
+| N01-A | Preserve qualified private HIP ABI/module admission and bounded segment decoder | Independent frames, real device dispatch, byte/CRC equality, missing/incompatible module rejection and lifetime/cancellation recovery |
+| N01-B | Preserve transition statistics, context projection and immutable counts across precision trials | Exact counts/resets, dispatch tails, disappearing contexts, overflow/underflow and corrupted correction rejection |
+| N01-C | Qualify connected GPU model normalization/construction/encoding and bounded host ownership | Exact model mass including singleton 65,536, deterministic ties/order, stream bounds, independent decode and failed-stage reuse |
+| N01-D | Integrate archive/version/composition readers, resource admission and materialization after current component acceptance | Versions 1–11 unchanged; inner kind/version checks; complete workspace accounting, readback and required parser/fuzz qualification |
+| N01-E | Integrate Neutron portfolio, lower bounds and winner ownership after reader qualification | Count all framing/model bytes; losing/tied trials preserve winner/version; numeric efforts unchanged; emission held pending N02 |
 
-The reader component is already published; do not rebuild it as a second product
-parser or treat private prototype successes as integrated device-model evidence.
-The private ABI and segment kernel have live-HIP fixed-payload, malformed-input,
-guard-byte and recovery controls. The host operation adds bounded scratch and
-dispatch, cancellation, logical-span admission and existing device CRC consumers.
-Qualify its complete connected path, including allocation/copy/launch/release
-failure controls; direct kernel tests alone do not qualify that host integration.
-Reuse the existing composed materialization and CRC path instead of implementing
-it again.
-Each batch qualifies its real connected consumers before the next stage relies
-on them. A failed stage cannot publish statistics, advertise an admitted kernel
-or silently retry CPU compression. Implementation of a writer is distinct from
-permission to activate it.
+Use canonical admitted payload/model views, not a second product parser. Preserve
+allocation/copy/submit/completion/release fault controls, child-attempt terminal
+state, bounded dispatch and rejection of partial statistics after cancellation.
+Do not reset predecessors at dispatch boundaries. Propagate minimum versions
+through recovered inner stages. N01-D's security/fuzz consumers remain with their
+separate owner; private success cannot waive them.
 
-1. Reuse the canonical `GpuRansBlockView` component and its registered native
-   tests; do not introduce a second payload parser or portable decoder. Its
-   explicit scratch requirement must enter caller resource accounting. Retained
-   independent option-matrix and final-state-omission controls cover their source
-   identities; no correctness fixture establishes a compression advantage.
-2. Bind the existing private proofs to their actual source inputs. Trace device
-   transition counts through normalization, model construction, stream emission,
-   inner-stage admission and decode; do not substitute host-generated statistics
-   for the claimed GPU-produced stage.
-3. Integrate behind the approved inactive candidate boundary. Count complete
-   model/stream/framing bytes and preserve versions 1–11, numeric efforts and
-   ordinary required-HIP behavior. Do not assign another public kind/version.
-4. Use an independent reference decoder and CRC/byte equality on bounded fixed
-   fixtures. Cover empty and single-symbol models, segment/dispatch boundaries,
-   skewed and mixed symbols, normalization limits and invalid model/stream data.
-   Reject partial counts after cancellation and validate sizes before allocation.
-5. Exercise GPU completion, checked release, failed-stage reuse and cancellation
-   recovery without optional profiling. Add the direct malformed-payload fuzz
-   target before opening public kind/version admission; run affected format and
-   interoperability consumers.
-6. Keep production emission disabled until N02 supplies worthwhile representative
-   complete-size evidence. Passing synthetic correctness fixtures cannot justify
-   adoption, a superiority claim or removal of a competitive existing candidate.
+### N02 — Representative Effectiveness And Research
 
-### D01, R01 And T01 — Maintenance Execution
+Resume only when measurement is permitted and candidate correctness qualifies.
+Retain the [benchmark index](docs/benchmarks/README.md) and
+[public-corpus study](docs/neutron-public-corpus-benchmark.md) with actual source,
+workload, losses and limits. Neither establishes universal size superiority or
+comparative GPU speedup.
 
-These packages run at relevant boundaries rather than restarting on every turn:
+Evaluate content-derived static byte-context partitions first, then bounded
+integer prediction and explicit match/residual modelling. Use retained
+[candidate research](docs/neutron-star-mode-research.md#deterministic-model-candidates)
+before another broad crawl. Consider GPU-suitable dictionary search, parsing,
+batched entropy work and lossless model-data representations. New runtime
+dependencies or additional public format assignments require reviewed approval.
 
-1. **Dependencies:** capture current official release/registry metadata once for
-   the graph being considered. Separate application runtimes, build tools, Actions
-   wrappers and development providers. Identify constraints and consumer contracts
-   before changing any pin; newer metadata alone is not upgrade acceptance.
-2. **Upgrade qualification:** update a coherent pinned graph with provenance and
-   licenses. Exercise fresh install and existing-install update through actual
-   supported consumers, including rollback/recovery where applicable. Preserve
-   unaffected installed environments and report unsupported platforms explicitly.
-   Keep action wrappers and their installed executables aligned, including the
-   Vulnetix action/CLI. Signed installation and upload-help evidence qualifies
-   the offline interface; live upload still needs its authorized scanner/broker.
-3. **Analysis:** on a genuine quota/provider change, obtain current complete
-   paginated DeepSource occurrences using the existing inventory tool, reconcile
-   counts and bind the run/configuration/source. Repair real findings in coherent
-   root-cause batches; retain raw results and exact individual reviews. Until then,
-   R01 stays held and other packages continue. An empty alert list is insufficient.
-4. **Tool portability:** use canonical launchers for actual index and crawl use,
-   installation/update/recovery and moved-checkout controls. Restore a stale index
-   only when navigation requires it. Treat a site refusal separately from a
-   crawler defect; do not reinstall a qualified provider to evade an access limit.
-5. **Harness ownership:** inspect broad test-driver command roles. If correctness
-   and performance orchestration need separation, retain both sets of consumers,
-   source-bound receipts and explicit final selection. Test that a correctness-only
-   invocation cannot start a benchmark. Do not create a second verifier framework.
-6. **Cleanup:** prove cancellation, pipe draining/closure, bounded output and owned
-   child termination through success and failure controls. Remove only task-owned
-   temporary work; never stop unrelated processes or modify shared registrations.
+Use licensed independent workload classes, held-out files and RAM-only transport.
+Count all archive, model, dictionary and framing bytes; independently restore
+every result. Compare equal efforts and actual HIP execution. Separate complete
+size, descriptive timing and controlled CPU/GPU comparisons; include losses.
+A learned classifier may order trials but cannot discard a competitive candidate
+in a minimum-size mode without a proven bound. Count training/inference and
+decoder/model costs. Lossy quantization is not a lossless archive technique.
+Transfer Neutron work to numeric efforts only after proving both smaller complete
+output and faster execution under relevant supported policies.
 
-### Q01 And U01 — Candidate Review Sequence
+## B00, B01, B02 And B03 — Build And Observation Contracts
 
-1. Inventory critical changed behavior and its tests: archive publication/parsing,
-   CPU/HIP ownership, scheduling/cancellation, settings migration, GUI admission
-   and package/runtime loading. Distinguish a reviewed contract from a filename
-   inventory or an incidental coverage hit.
-2. Add coherent success/rejection/recovery test batches using independent oracles.
-   Investigate actual failures before broad refactoring. Collect the applicable
-   coverage scopes after the batch stabilizes, review residual high-risk gaps and
-   repair root causes with sibling-caller guards. Preserve raw missed lines.
-3. Review user/developer documents against implemented behavior. Remove conflicting
-   active instructions at their canonical source; retain required provenance and
-   regression fixtures. Do not turn skills into dated status ledgers or delete
-   evidence merely to produce a cleaner report. The About page's explanatory
-   paragraph still reads as a developer boundary description; replace it with
-   a concise user capability summary during U01, preserving the format matrix
-   and truthful GPU requirements.
-4. Recheck settings schema/unknown-field preservation and direct supported upgrades
-   when their producers change. Qualify portable/MSI payload parity and lifecycle
-   on disposable hosts. Reuse only matching evidence, never an earlier package's
-   pass for changed linked bytes.
-5. Inspect affected GUI journeys and every changed graph against its actual data,
-   units, scales, legends and uncertainty. Keep renderer fixtures separate from
-   measurements; do not regenerate benchmark results while campaigns are prohibited.
-6. Freeze the final source offering, run selected final workflows and exact-commit
-   audit, qualify HIP ZIP/MSI/checksums/notices and installer lifecycle, then present
-   the concrete candidate and residual limitations for the maintainer's green light.
+| ID | Preserved qualification | Reopen only for |
+| --- | --- | --- |
+| B00 | Resolver retains child status and both streams; nonzero, malformed, unavailable and deadline controls | Changed resolver/toolchain consumers or new failure; original hosted failure cause remains unconfirmed |
+| B01 | Generated probes preserve unchanged bytes/metadata and rebuild changed dependencies | Changed generation inputs or unnecessary work; no unverified compiled cache or unmeasured speed claim |
+| B02 | Counters-only mode propagates through host/HIP ownership and output consumers without optional event/query clocks | Changed consumers, timing-state errors, completion/cleanup failures or new counter mismatch |
+| B03 | Executable-bound receipts, full/component admission, CMake declaration contracts, stale/mismatched rejection and current HIP recovery | Changed build/receipt/execution consumers, changed executable declarations or a new artifact mismatch |
 
-N02 is a prerequisite for enabling the new entropy representation or making new
-effectiveness claims, not a reason to describe unfinished research as a defect in
-an otherwise qualified existing representation. Final acceptance still requires
-every applicable existing release gate; a prohibited or missing required check
-remains deferred, not passed. Optional research must not reopen unrelated accepted
-contracts indefinitely.
+Preserve not-requested, measured and incomplete timing states. Failed completion
+counts no completed launch; failed elapsed query retains actual work and
+unavailable timing. Fixed clocks and throwing optional event/query providers
+qualify counters-only behavior without performance calculations. Keep deadlines,
+completion waits, checked cleanup and real device admission. Default measured
+consumers remain registered and deferred when prohibited.
 
-## N02 — Measurement-Held Research
+## D01, R01 And T01 — Dependencies, Analysis And Portable Tools
 
-- **N02 — Neutron effectiveness:** the retained
-  [public-corpus evidence](docs/neutron-public-corpus-benchmark.md) reports limited
-  gains for its stated native source and workload. When measurement is permitted,
-  follow with controlled paired CPU/GPU comparisons and independent workload classes.
-  Preserve complete archive sizes and byte-exact readback; current evidence does
-  not establish broad size superiority or a GPU speedup.
-- **N01/N02 — Compression research:** evaluate the retained primary-source research before
-  another broad crawl. Test GPU-suitable dictionary search, parsing, entropy and
-  lossless model-data ideas, counting every model, dictionary and format byte.
-  Keep Neutron GPU-only and separate from efforts 1–9. Adopt an idea only after
-  independent correctness, malformed-input and representative size measurements.
-  Current priorities are wider independent numerical contexts, batched GPU work,
-  compact entropy representations and context modelling for text. Evaluate a small
-  learned selector on held-out files only after collecting an exhaustive candidate
-  oracle: count training/inference cost and every decoder/model byte. A classifier
-  can order trials; it cannot justify dropping a competitive candidate in a
-  minimum-size mode without a proven lower bound. Track native CPU, ZIP/Deflate,
-  Gzip, Bzip2, Zstandard and LZMA-family results separately, including losses.
-  Lossy model quantization is not a lossless archive technique.
+- **D01:** review runtimes, build tools, Actions and agent providers as separate
+  graphs at useful dependency boundaries. Capture official metadata, constraints,
+  provenance and licenses once per graph. Upgrade compatible pins after fresh/update
+  installed-consumer and recovery tests. Empty Dependabot results do not establish
+  freshness. Vulnerability work stays with the separate security owner this round.
+- **R01:** preserve source/analyzer acceptance and the exact governance baseline.
+  The last retained DeepSource state was quota exhaustion; current eligibility
+  was not rechecked here. On an actual provider/owner update, use the canonical
+  paginated inventory, reconcile counts and bind exact source/run/configuration.
+  No support request, payment, account move or analyzer reduction is authorized.
+- **T01:** use canonical launchers for mandatory Caveman, actual CocoIndex queries
+  and admitted Crawl4AI extraction. Preserve failures, receipts and checkout/provider
+  binding. Refresh indexes when navigation needs them; distinguish site refusals
+  from provider defects. Do not replace another task's registration or repeatedly
+  reinstall a qualified provider.
+- **Harness ownership:** preserve correctness roles, complete CTest role admission
+  and default measurement registration. Retain controls proving correctness-only
+  execution cannot start benchmarks. Bound owned children, pipes, output and cleanup;
+  leave unrelated host work untouched.
 
-Reuse completed checks only when source, tools, configuration and outputs still
-match. Resume from the retained local evidence and current GitHub audit rather
-than repeating unchanged scans or benchmarks.
+Native test freshness is now part of the existing receipt and execution mechanism:
+CMake declares executable targets, version-two receipts bind default-built outputs,
+and component/full drivers request exact artifact admission before execution.
+Real-file tests cover stale/missing artifacts, target/path/configuration mismatch,
+excluded outputs, historical-receipt migration and both Windows PowerShell hosts.
+The CMake correctness contract verifies nested declarations, target/directory
+exclusions and actual tiny-build outputs without launching fixtures. Preserve
+tests-disabled build roles, incremental reuse after migration, default measurement
+registration and current full/component consumers. The live product build passed
+with matching broad-run output digests; fixture success alone cannot
+qualify future changes. The CLI uses one configuration option, rejects explicit
+mismatches and derives the current receipt configuration only when execution
+requests omit it. Earlier functional results remain scoped evidence of what ran
+with their original artifact binding.
+
+## Batch Decisions And Resumption
+
+Every coherent pass ends with one decision: retain a demonstrated repair or
+improvement with matching evidence; reject a hypothesis with evidence; or name
+its unmet prerequisite. Reopen only when source, consumer or external evidence
+changes. Research resolves named decisions; avoid speculative rewrite loops and
+repeated unchanged checks.
+
+N01/N02 and remaining C01/C02 work retain their scope. Inactive research does not
+make an existing representation defective, and release approval does not complete
+the broader optimization goal. A demonstrated defect interrupts the affected
+path; speculative opportunities do not reopen unrelated accepted contracts
+indefinitely. Reconcile this plan with actual candidate evidence and every
+applicable release criterion before final review.

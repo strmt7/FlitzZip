@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/progress.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -23,9 +24,10 @@ struct RpmPayloadInfo {
 };
 
 // Purpose: Parse the RPM lead, signature header, package header, and payload descriptor.
-// Inputs: `archive_path` is an RPM package candidate.
+// Inputs: `archive_path` is an RPM package candidate; `checkpoint` is synchronously borrowed across bounded header
+// reads and record checks. Its original exception propagates without retention.
 // Outputs: Returns payload offset/size/compression metadata; throws `ArchiveError` for malformed or unsupported RPM
 // containers.
-RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path);
+RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path, const ProgressCheckpoint& checkpoint = {});
 
 }  // namespace flitzzip

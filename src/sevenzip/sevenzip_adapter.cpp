@@ -4,6 +4,7 @@
 #include "lzma/bounded_sdk_allocator.hpp"
 
 #include "core/checksum.hpp"
+#include "core/archive_stream_progress.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
@@ -17,11 +18,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <fstream>
 #include <limits>
 #include <memory>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -114,86 +117,138 @@ std::uint64_t checked_add_7z_bytes(std::uint64_t total, std::uint64_t size) {
     return total;
 }
 
-struct SevenZipFileStream {
-    ISeekInStream vt{};
+struct SevenZipFileState {
     std::ifstream input;
     std::uint64_t size = 0;
+    const ProgressCheckpoint* checkpoint = nullptr;
+    std::exception_ptr failure;
+};
+
+// The SDK pointer is interconvertible with this standard-layout first member;
+// C++ stream ownership remains separate from the native interface object.
+struct SevenZipFileStream {
+    ISeekInStream vt{};
+    SevenZipFileState* state = nullptr;
+};
+static_assert(std::is_standard_layout_v<SevenZipFileStream>);
+
+// Borrow a phase callback only until its synchronous SDK call returns, including
+// failure unwinding. Never retain an extraction function's local progress owner.
+class ScopedSevenZipCheckpoint {
+  public:
+    ScopedSevenZipCheckpoint(SevenZipFileState& state, const ProgressCheckpoint& checkpoint) noexcept
+        : state_(state), previous_(state.checkpoint) {
+        state_.checkpoint = &checkpoint;
+    }
+    ~ScopedSevenZipCheckpoint() {
+        state_.checkpoint = previous_;
+    }
+    ScopedSevenZipCheckpoint(const ScopedSevenZipCheckpoint&) = delete;
+    ScopedSevenZipCheckpoint& operator=(const ScopedSevenZipCheckpoint&) = delete;
+
+  private:
+    SevenZipFileState& state_;
+    const ProgressCheckpoint* previous_;
 };
 
 // Purpose: Recover the owning stream from an SDK stream vtable pointer.
 // Inputs: `stream` points to the first member of `SevenZipFileStream`.
 // Outputs: Returns the owning C++ stream object.
-SevenZipFileStream& sevenzip_stream_from_vtable(ISeekInStreamPtr stream) {
-    return *reinterpret_cast<SevenZipFileStream*>(const_cast<ISeekInStream*>(stream));
+SevenZipFileState& sevenzip_stream_from_vtable(ISeekInStreamPtr stream) {
+    return *reinterpret_cast<const SevenZipFileStream*>(stream)->state;
 }
 
 // Purpose: Read bytes for the LZMA SDK from a C++ input stream.
 // Inputs: `stream` is the SDK stream pointer, `buffer` receives bytes, and `size` is in/out byte count.
 // Outputs: Mutates `size` with bytes read and returns an SDK status.
-SRes sevenzip_stream_read(ISeekInStreamPtr stream, void* buffer, std::size_t* size) {
+SRes sevenzip_stream_read(ISeekInStreamPtr stream, void* buffer, std::size_t* size) noexcept {
     auto& self = sevenzip_stream_from_vtable(stream);
     const auto requested = *size;
     if (requested == 0) {
         return SZ_OK;
     }
-    self.input.read(static_cast<char*>(buffer), static_cast<std::streamsize>(requested));
-    *size = static_cast<std::size_t>(std::max<std::streamsize>(0, self.input.gcount()));
-    if (*size == requested || self.input.eof()) {
-        self.input.clear();
-        return SZ_OK;
+    if (self.failure) {
+        *size = 0U;
+        return SZ_ERROR_PROGRESS;
     }
-    return SZ_ERROR_READ;
+    try {
+        if (self.checkpoint != nullptr) {
+            invoke_archive_checkpoint(*self.checkpoint);
+        }
+        self.input.read(static_cast<char*>(buffer), static_cast<std::streamsize>(requested));
+        *size = static_cast<std::size_t>(std::max<std::streamsize>(0, self.input.gcount()));
+        if (*size == requested || self.input.eof()) {
+            self.input.clear();
+            return SZ_OK;
+        }
+        return SZ_ERROR_READ;
+    } catch (...) {
+        self.failure = std::current_exception();
+        *size = 0U;
+        return SZ_ERROR_PROGRESS;
+    }
 }
 
 // Purpose: Seek the LZMA SDK input stream.
 // Inputs: `stream` is the SDK stream pointer, `position` is in/out offset, and `origin` is the seek origin.
 // Outputs: Resolves every signed offset without overflow, updates the absolute position, or returns an SDK error.
-SRes sevenzip_stream_seek(ISeekInStreamPtr stream, Int64* position, ESzSeek origin) {
+SRes sevenzip_stream_seek(ISeekInStreamPtr stream, Int64* position, ESzSeek origin) noexcept {
     auto& self = sevenzip_stream_from_vtable(stream);
-    std::uint64_t base = 0;
-    if (origin == SZ_SEEK_CUR) {
-        const auto current = self.input.tellg();
-        if (current < 0) {
+    if (self.failure) {
+        return SZ_ERROR_PROGRESS;
+    }
+    try {
+        if (self.checkpoint != nullptr) {
+            invoke_archive_checkpoint(*self.checkpoint);
+        }
+        std::uint64_t base = 0;
+        if (origin == SZ_SEEK_CUR) {
+            const auto current = self.input.tellg();
+            if (current < 0) {
+                return SZ_ERROR_READ;
+            }
+            base = static_cast<std::uint64_t>(current);
+        } else if (origin == SZ_SEEK_END) {
+            base = self.size;
+        } else if (origin != SZ_SEEK_SET) {
+            return SZ_ERROR_PARAM;
+        }
+        const auto requested = *position;
+        const auto target = checked_stream_seek_position(base, requested, self.size);
+        if (!target || *target > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
+            return SZ_ERROR_PARAM;
+        }
+        self.input.clear();
+        self.input.seekg(static_cast<std::streamoff>(*target), std::ios::beg);
+        if (!self.input) {
             return SZ_ERROR_READ;
         }
-        base = static_cast<std::uint64_t>(current);
-    } else if (origin == SZ_SEEK_END) {
-        base = self.size;
-    } else if (origin != SZ_SEEK_SET) {
-        return SZ_ERROR_PARAM;
+        *position = static_cast<Int64>(*target);
+        return SZ_OK;
+    } catch (...) {
+        self.failure = std::current_exception();
+        return SZ_ERROR_PROGRESS;
     }
-    const auto requested = *position;
-    const auto target = checked_stream_seek_position(base, requested, self.size);
-    if (!target || *target > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
-        return SZ_ERROR_PARAM;
-    }
-    self.input.clear();
-    self.input.seekg(static_cast<std::streamoff>(*target), std::ios::beg);
-    if (!self.input) {
-        return SZ_ERROR_READ;
-    }
-    *position = static_cast<Int64>(*target);
-    return SZ_OK;
 }
 
 class SevenZipArchive {
   public:
     // Purpose: Open a 7z archive and parse its database through the LZMA SDK.
-    // Inputs: `archive_path` identifies the archive to read.
+    // Inputs: `archive_path` identifies the archive; checkpoints borrow the caller's observer synchronously.
     // Outputs: Owns SDK stream/database state or throws on open/parse failure.
-    explicit SevenZipArchive(const std::filesystem::path& archive_path) {
+    explicit SevenZipArchive(const std::filesystem::path& archive_path, const ProgressCheckpoint& checkpoint) {
         try {
-            file_.input.open(archive_path, std::ios::binary);
-            if (!file_.input) {
+            file_state_.input.open(archive_path, std::ios::binary);
+            if (!file_state_.input) {
                 throw ArchiveError("cannot open 7z archive: " + path_diagnostic_utf8(archive_path));
             }
-            file_.input.seekg(0, std::ios::end);
-            const auto end = file_.input.tellg();
+            file_state_.input.seekg(0, std::ios::end);
+            const auto end = file_state_.input.tellg();
             if (end < 0) {
                 throw ArchiveError("failed to determine 7z archive size: " + path_diagnostic_utf8(archive_path));
             }
-            file_.size = static_cast<std::uint64_t>(end);
-            file_.input.seekg(0, std::ios::beg);
+            file_state_.size = static_cast<std::uint64_t>(end);
+            file_state_.input.seekg(0, std::ios::beg);
             file_.vt.Read = sevenzip_stream_read;
             file_.vt.Seek = sevenzip_stream_seek;
 
@@ -209,8 +264,8 @@ class SevenZipArchive {
             initialize_crc32_backend();
             SzArEx_Init(&database_);
             database_initialized_ = true;
-            throw_on_7z_error(SzArEx_Open(&database_, &look_stream_.vt, &allocator_, &allocator_),
-                              "failed to open 7z archive");
+            call_sdk(checkpoint, "failed to open 7z archive",
+                     [&] { return SzArEx_Open(&database_, &look_stream_.vt, &allocator_, &allocator_); });
         } catch (...) {
             cleanup();
             throw;
@@ -255,12 +310,13 @@ class SevenZipArchive {
     // Purpose: Extract one file into the SDK-owned solid-block cache.
     // Inputs: `index` is the 7z file index.
     // Outputs: Returns the decoded byte window for that file or throws on decoder failure.
-    std::span<const std::byte> extract_to_cache(UInt32 index) {
+    std::span<const std::byte> extract_to_cache(UInt32 index, const ProgressCheckpoint& checkpoint) {
         std::size_t offset = 0;
         std::size_t size = 0;
-        throw_on_7z_error(SzArEx_Extract(&database_, &look_stream_.vt, index, &block_index_, &out_buffer_,
-                                         &out_buffer_size_, &offset, &size, &allocator_, &allocator_),
-                          "failed to extract 7z member");
+        call_sdk(checkpoint, "failed to extract 7z member", [&] {
+            return SzArEx_Extract(&database_, &look_stream_.vt, index, &block_index_, &out_buffer_, &out_buffer_size_,
+                                  &offset, &size, &allocator_, &allocator_);
+        });
         if (offset > out_buffer_size_ || size > out_buffer_size_ - offset) {
             throw ArchiveError("7z decoder returned an invalid output window");
         }
@@ -280,8 +336,19 @@ class SevenZipArchive {
     }
 
   private:
+    template <class Work> void call_sdk(const ProgressCheckpoint& checkpoint, const char* context, Work&& work) {
+        ScopedSevenZipCheckpoint binding(file_state_, checkpoint);
+        invoke_archive_checkpoint(checkpoint);
+        const auto status = std::forward<Work>(work)();
+        if (file_state_.failure) {
+            std::rethrow_exception(file_state_.failure);
+        }
+        throw_on_7z_error(status, context);
+    }
+
     BoundedSdkAllocator allocator_{kMaxSevenZipDecoderAllocationBytes};
-    SevenZipFileStream file_{};
+    SevenZipFileState file_state_{};
+    SevenZipFileStream file_{.state = &file_state_};
     CLookToRead2 look_stream_{};
     CSzArEx database_{};
     bool database_initialized_ = false;
@@ -385,7 +452,8 @@ void reject_unsupported_7z_attributes(const CSzArEx& database, UInt32 index, boo
 // Purpose: Build and validate FlitzZip metadata from a parsed 7z database.
 // Inputs: `database` is the parsed SDK archive.
 // Outputs: Returns all entries and total output size after archive-wide path validation.
-SevenZipMetadata scan_7z_metadata(CSzArEx& database) {
+SevenZipMetadata scan_7z_metadata(CSzArEx& database, const ProgressCheckpoint& checkpoint) {
+    invoke_archive_checkpoint(checkpoint);
     if (database.NumFiles > kMaxSevenZipEntries) {
         throw ArchiveError("7z entry count exceeds FlitzZip resource limit");
     }
@@ -394,6 +462,7 @@ SevenZipMetadata scan_7z_metadata(CSzArEx& database) {
     std::vector<ArchivePathValidationEntry> validation_entries;
     validation_entries.reserve(database.NumFiles);
     for (UInt32 index = 0; index < database.NumFiles; ++index) {
+        invoke_archive_checkpoint(checkpoint);
         const bool directory = SzArEx_IsDir(&database, index) != 0;
         reject_unsupported_7z_attributes(database, index, directory);
         const auto path = sevenzip_entry_path(database, index, metadata.path_metadata_bytes);
@@ -417,6 +486,7 @@ SevenZipMetadata scan_7z_metadata(CSzArEx& database) {
             .encoding = ArchivePathEncoding::Utf8,
         });
     }
+    invoke_archive_checkpoint(checkpoint);
     validate_archive_path_set(validation_entries);
     return metadata;
 }
@@ -424,12 +494,14 @@ SevenZipMetadata scan_7z_metadata(CSzArEx& database) {
 // Purpose: Validate every 7z file payload before destination writes start.
 // Inputs: `archive` owns the SDK state and `metadata` lists validated entries.
 // Outputs: Throws on decode/CRC failure or size mismatch.
-void validate_7z_payloads(SevenZipArchive& archive, const SevenZipMetadata& metadata) {
+void validate_7z_payloads(SevenZipArchive& archive, const SevenZipMetadata& metadata,
+                          const ProgressCheckpoint& checkpoint) {
     for (const auto& entry : metadata.entries) {
+        invoke_archive_checkpoint(checkpoint);
         if (entry.directory) {
             continue;
         }
-        const auto payload = archive.extract_to_cache(entry.index);
+        const auto payload = archive.extract_to_cache(entry.index, checkpoint);
         if (payload.size() != entry.size) {
             throw ArchiveError("7z decoder output size does not match validated metadata: " + entry.path);
         }
@@ -441,7 +513,8 @@ void validate_7z_payloads(SevenZipArchive& archive, const SevenZipMetadata& meta
 // Inputs: `destination` is the extraction root, `entry` names the UTF-8 target, `payload` contains decoded bytes, and
 // `overwrite` controls replacement. Outputs: Publishes the verified file or throws after cleanup.
 void publish_7z_payload(const std::filesystem::path& destination, const SevenZipEntry& entry,
-                        std::span<const std::byte> payload, bool overwrite) {
+                        std::span<const std::byte> payload, bool overwrite, ProgressState& progress,
+                        const ProgressCallback& progress_callback) {
     const auto target = safe_join_archive_path(destination, entry.path, ArchivePathEncoding::Utf8);
     auto temporary = reserve_file_publish_target(target);
     try {
@@ -449,14 +522,22 @@ void publish_7z_payload(const std::filesystem::path& destination, const SevenZip
         if (!output) {
             throw ArchiveError("failed to create temporary 7z extraction target: " + path_diagnostic_utf8(target));
         }
-        output.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
-        if (!output) {
-            throw ArchiveError("failed to write temporary 7z extraction target: " + path_diagnostic_utf8(target));
+        std::size_t copied = 0U;
+        while (copied < payload.size()) {
+            publish_progress(progress, progress_callback);
+            const auto count = std::min(detail::kStreamConsumerWindowBytes, payload.size() - copied);
+            output.write(reinterpret_cast<const char*>(payload.data() + copied), static_cast<std::streamsize>(count));
+            if (!output) {
+                throw ArchiveError("failed to write temporary 7z extraction target: " + path_diagnostic_utf8(target));
+            }
+            copied += count;
+            progress.add_bytes(count);
         }
         output.close();
         if (!output) {
             throw ArchiveError("failed to finalize temporary 7z extraction target: " + path_diagnostic_utf8(target));
         }
+        publish_progress(progress, progress_callback);
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
     } catch (...) {
@@ -474,6 +555,7 @@ void extract_7z_payloads(SevenZipArchive& archive, const SevenZipMetadata& metad
                          const ProgressCallback& progress_callback) {
     ProgressState progress;
     progress.start(OperationKind::Extract, metadata.total_file_bytes, metadata.entries.size());
+    const ProgressCheckpoint checkpoint = [&] { publish_progress(progress, progress_callback); };
     for (const auto& entry : metadata.entries) {
         progress.set_current(entry.path);
         publish_progress(progress, progress_callback);
@@ -484,12 +566,11 @@ void extract_7z_payloads(SevenZipArchive& archive, const SevenZipMetadata& metad
             publish_progress(progress, progress_callback);
             continue;
         }
-        const auto payload = archive.extract_to_cache(entry.index);
+        const auto payload = archive.extract_to_cache(entry.index, checkpoint);
         if (payload.size() != entry.size) {
             throw ArchiveError("7z decoder output size does not match validated metadata: " + entry.path);
         }
-        publish_7z_payload(destination, entry, payload, overwrite);
-        progress.add_bytes(entry.size);
+        publish_7z_payload(destination, entry, payload, overwrite, progress, progress_callback);
         progress.finish_entry();
         publish_progress(progress, progress_callback);
     }
@@ -504,9 +585,10 @@ OperationStats extract_7z(const std::filesystem::path& archive_path, const std::
                           bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
-    SevenZipArchive archive(archive_source.path());
-    const auto metadata = scan_7z_metadata(archive.database());
-    validate_7z_payloads(archive, metadata);
+    const auto validation_checkpoint = make_borrowed_archive_validation_checkpoint(std::cref(progress_callback));
+    SevenZipArchive archive(archive_source.path(), validation_checkpoint);
+    const auto metadata = scan_7z_metadata(archive.database(), validation_checkpoint);
+    validate_7z_payloads(archive, metadata, validation_checkpoint);
     create_verified_directories(destination);
     extract_7z_payloads(archive, metadata, destination, overwrite, progress_callback);
 

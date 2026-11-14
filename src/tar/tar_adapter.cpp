@@ -1,4 +1,5 @@
 #include "tar/tar_adapter.hpp"
+#include "core/archive_stream_progress.hpp"
 #include "tar/tar_reader.hpp"
 #include "tar/tar_header_fields.hpp"
 
@@ -109,17 +110,9 @@ void write_tar_padding(std::ostream& output, std::uint64_t size) {
 // Purpose: Consume an exact byte count from a possibly non-seekable input stream.
 // Inputs: `input` is the source stream, `size` is the byte count, and `label` names the consumed region.
 // Outputs: Reads and discards exactly `size` bytes, or throws on truncation/read failure.
-void discard_stream_bytes(std::istream& input, std::uint64_t size, const char* label) {
-    std::array<char, kTarIoBufferBytes> buffer{};
-    std::uint64_t remaining = size;
-    while (remaining > 0) {
-        const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
-        input.read(buffer.data(), static_cast<std::streamsize>(chunk));
-        if (input.gcount() != static_cast<std::streamsize>(chunk)) {
-            throw ArchiveError(std::string(label) + " is truncated");
-        }
-        remaining -= chunk;
-    }
+void discard_stream_bytes(std::istream& input, std::uint64_t size, const char* label,
+                          const ProgressCheckpoint& checkpoint = {}) {
+    consume_exact_stream_bytes(input, size, [](std::span<const char>) {}, label, checkpoint);
 }
 
 // Purpose: Copy a bounded file payload into a TAR output stream.
@@ -453,36 +446,44 @@ std::string tar_entry_path(const std::array<char, kTarBlockSize>& header, char t
 // Purpose: Advance an input stream past a TAR payload and its padding.
 // Inputs: `input` is positioned at payload start, `size` is the payload byte count, and `seekable` selects seek or
 // discard mode. Outputs: Moves to the next header or throws on invalid seek.
-void skip_tar_payload(std::istream& input, std::uint64_t size, bool seekable) {
+void skip_tar_payload(std::istream& input, std::uint64_t size, bool seekable,
+                      const ProgressCheckpoint& checkpoint = {}) {
     const auto padded = checked_add_tar_bytes(size, tar_padding(size), "TAR payload size overflows");
     if (!seekable) {
-        discard_stream_bytes(input, padded, "TAR payload");
+        discard_stream_bytes(input, padded, "TAR payload", checkpoint);
         return;
     }
     if (padded > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
         throw ArchiveError("TAR payload is too large to seek");
     }
+    invoke_archive_checkpoint(checkpoint);
     input.seekg(static_cast<std::streamoff>(padded), std::ios::cur);
     if (!input) {
         throw ArchiveError("TAR payload is truncated");
     }
+    invoke_archive_checkpoint(checkpoint);
 }
 
 // Purpose: Read a bounded metadata payload into memory.
 // Inputs: `input` is positioned at payload start and `size` is the metadata byte count.
 // Outputs: Returns payload bytes as a string and consumes payload padding.
-std::string read_tar_metadata_payload(std::istream& input, std::uint64_t size) {
+std::string read_tar_metadata_payload(std::istream& input, std::uint64_t size,
+                                      const ProgressCheckpoint& checkpoint = {}) {
     if (size > kMaxTarMetadataPayloadBytes) {
         throw ArchiveError("TAR metadata payload exceeds FlitzZip resource limit");
     }
     std::string payload(static_cast<std::size_t>(size), '\0');
-    input.read(payload.data(), static_cast<std::streamsize>(payload.size()));
-    if (static_cast<std::uint64_t>(input.gcount()) != size) {
-        throw ArchiveError("TAR metadata payload is truncated");
-    }
+    std::size_t offset = 0;
+    consume_exact_stream_bytes(
+        input, size,
+        [&](std::span<const char> bytes) {
+            std::copy(bytes.begin(), bytes.end(), payload.data() + offset);
+            offset += bytes.size();
+        },
+        "TAR metadata payload", checkpoint);
     const auto padding = tar_padding(size);
     if (padding > 0) {
-        discard_stream_bytes(input, padding, "TAR metadata padding");
+        discard_stream_bytes(input, padding, "TAR metadata padding", checkpoint);
     }
     return payload;
 }
@@ -587,13 +588,14 @@ std::string parse_gnu_long_name(std::string payload) {
 // Inputs: Current header/type, payload stream, persistent extension state and cumulative metadata bytes.
 // Outputs: Returns whether a bounded extension was consumed; throws before accepting invalid metadata.
 bool consume_tar_extension(std::istream& input, const std::array<char, kTarBlockSize>& header, char typeflag,
-                           TarExtensionState& extensions, std::uint64_t& metadata_bytes) {
+                           TarExtensionState& extensions, std::uint64_t& metadata_bytes,
+                           const ProgressCheckpoint& checkpoint = {}) {
     if (typeflag != 'x' && typeflag != 'g' && typeflag != 'L') {
         return false;
     }
     const auto size = parse_tar_number(header, 124, 12, "metadata size");
     metadata_bytes = checked_add_archive_path_metadata_bytes(metadata_bytes, size, "TAR extension metadata");
-    auto payload = read_tar_metadata_payload(input, size);
+    auto payload = read_tar_metadata_payload(input, size, checkpoint);
     if (typeflag == 'L') {
         extensions.local.path = TarPathOverride{parse_gnu_long_name(std::move(payload)), false};
     } else {
@@ -648,20 +650,22 @@ std::uint64_t bounded_tar_payload_offset(std::istream& input, std::uint64_t size
 // skipping, and `archive_size` bounds seekable extents. Outputs: Returns validated metadata or throws on malformed,
 // unsafe, or resource-exhaustive records.
 detail::TarScanResult detail::scan_tar_stream(std::istream& input, bool seekable,
-                                              std::optional<std::uint64_t> archive_size) {
+                                              std::optional<std::uint64_t> archive_size,
+                                              const ProgressCheckpoint& checkpoint) {
     if (seekable && !archive_size) {
         throw ArchiveError("seekable TAR scan requires a known archive extent");
     }
     TarScanResult result;
     TarExtensionState extensions;
     for (;;) {
+        invoke_archive_checkpoint(checkpoint);
         std::array<char, kTarBlockSize> header{};
         if (!read_tar_header(input, header, seekable ? archive_size : std::nullopt)) {
             break;
         }
         validate_tar_checksum(header);
         const auto typeflag = header[156] == '\0' ? '0' : header[156];
-        if (consume_tar_extension(input, header, typeflag, extensions, result.path_metadata_bytes)) {
+        if (consume_tar_extension(input, header, typeflag, extensions, result.path_metadata_bytes, checkpoint)) {
             continue;
         }
         auto entry = resolve_tar_entry(header, typeflag, extensions);
@@ -680,7 +684,7 @@ detail::TarScanResult detail::scan_tar_stream(std::istream& input, bool seekable
                 entry.size = 0;
             }
             result.entries.push_back(std::move(entry));
-            skip_tar_payload(input, size, seekable);
+            skip_tar_payload(input, size, seekable, checkpoint);
             continue;
         }
         if (typeflag == '1' || typeflag == '2') {
@@ -699,6 +703,7 @@ detail::TarScanResult detail::scan_tar_stream(std::istream& input, bool seekable
     std::vector<ArchivePathValidationEntry> validation_entries;
     validation_entries.reserve(result.entries.size());
     for (const auto& entry : result.entries) {
+        invoke_archive_checkpoint(checkpoint);
         result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
             result.path_metadata_bytes, entry.path.size(), "TAR path validation metadata");
         validation_entries.push_back(ArchivePathValidationEntry{
@@ -707,7 +712,9 @@ detail::TarScanResult detail::scan_tar_stream(std::istream& input, bool seekable
             .encoding = entry.encoding,
         });
     }
+    invoke_archive_checkpoint(checkpoint);
     validate_archive_path_set(validation_entries);
+    invoke_archive_checkpoint(checkpoint);
     return result;
 }
 
@@ -716,12 +723,12 @@ namespace {
 // Purpose: Scan a seekable TAR file and validate metadata before any extraction writes occur.
 // Inputs: `archive_path` is the TAR file to scan.
 // Outputs: Returns validated entry metadata and total file bytes; throws on malformed or unsafe TAR records.
-TarScanResult scan_tar(const std::filesystem::path& archive_path) {
+TarScanResult scan_tar(const std::filesystem::path& archive_path, const ProgressCheckpoint& checkpoint = {}) {
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open TAR archive: " + path_diagnostic_utf8(archive_path));
     }
-    return scan_tar_stream(input, true, regular_file_size(archive_path));
+    return scan_tar_stream(input, true, regular_file_size(archive_path), checkpoint);
 }
 
 // Purpose: Copy one already-positioned TAR payload from a stream to a verified temporary file.
@@ -729,7 +736,8 @@ TarScanResult scan_tar(const std::filesystem::path& archive_path) {
 // and `overwrite` controls replacement. Outputs: Publishes the verified file atomically and consumes payload padding,
 // or throws.
 void extract_tar_stream_file_payload(std::istream& input, const TarEntryMetadata& entry,
-                                     const std::filesystem::path& target, bool overwrite) {
+                                     const std::filesystem::path& target, bool overwrite, ProgressState& progress,
+                                     const ProgressCallback& progress_callback) {
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing TAR extraction target: " + path_diagnostic_utf8(target));
     }
@@ -750,6 +758,8 @@ void extract_tar_stream_file_payload(std::istream& input, const TarEntryMetadata
             }
             write_bytes(output, buffer.data(), chunk);
             remaining -= chunk;
+            progress.add_bytes(chunk);
+            publish_progress(progress, progress_callback);
         }
         const auto padding = tar_padding(entry.size);
         if (padding > 0) {
@@ -759,6 +769,7 @@ void extract_tar_stream_file_payload(std::istream& input, const TarEntryMetadata
         if (!output) {
             throw ArchiveError("failed to flush TAR extraction target: " + path_diagnostic_utf8(temporary_target.file));
         }
+        publish_progress(progress, progress_callback);
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
         temporary_active = false;
@@ -791,17 +802,21 @@ void detail::extract_validated_tar_stream(std::istream& input, const TarScanResu
                                           const ProgressCallback& progress_callback) {
     ProgressState progress;
     progress.start(OperationKind::Extract, scanned.total_file_bytes, scanned.entries.size());
+    const ProgressCheckpoint checkpoint =
+        progress_callback ? ProgressCheckpoint([&] { publish_progress(progress, progress_callback); })
+                          : ProgressCheckpoint{};
     TarExtensionState extensions;
     std::uint64_t metadata_bytes = 0;
     std::size_t entry_index = 0;
     for (;;) {
+        invoke_archive_checkpoint(checkpoint);
         std::array<char, kTarBlockSize> header{};
         if (!read_tar_header(input, header)) {
             break;
         }
         validate_tar_checksum(header);
         const auto typeflag = header[156] == '\0' ? '0' : header[156];
-        if (consume_tar_extension(input, header, typeflag, extensions, metadata_bytes)) {
+        if (consume_tar_extension(input, header, typeflag, extensions, metadata_bytes, checkpoint)) {
             continue;
         }
         auto actual = resolve_tar_entry(header, typeflag, extensions);
@@ -821,8 +836,7 @@ void detail::extract_validated_tar_stream(std::istream& input, const TarScanResu
                 skip_tar_payload(input, size, false);
                 progress.finish_entry();
             } else {
-                extract_tar_stream_file_payload(input, expected, target, overwrite);
-                progress.add_bytes(expected.size);
+                extract_tar_stream_file_payload(input, expected, target, overwrite, progress, progress_callback);
                 progress.finish_entry();
             }
             ++entry_index;
@@ -847,7 +861,7 @@ namespace {
 // Inputs: `input` is the archive stream, `entry` supplies size and offset, and `target` is the final extraction path.
 // Outputs: Publishes the verified file atomically or throws; leaves no known temporary payload on failure.
 void extract_tar_file_payload(std::ifstream& input, const TarEntryMetadata& entry, const std::filesystem::path& target,
-                              bool overwrite) {
+                              bool overwrite, ProgressState& progress, const ProgressCallback& progress_callback) {
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing TAR extraction target: " + path_diagnostic_utf8(target));
     }
@@ -872,11 +886,14 @@ void extract_tar_file_payload(std::ifstream& input, const TarEntryMetadata& entr
             }
             write_bytes(output, buffer.data(), chunk);
             remaining -= chunk;
+            progress.add_bytes(chunk);
+            publish_progress(progress, progress_callback);
         }
         output.close();
         if (!output) {
             throw ArchiveError("failed to flush TAR extraction target: " + path_diagnostic_utf8(temporary_target.file));
         }
+        publish_progress(progress, progress_callback);
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
         temporary_active = false;
@@ -911,6 +928,7 @@ TarWriteStats write_tar_stream(const Manifest& manifest, std::ostream& output,
         progress.finish_entry();
     }
     write_tar_footer(output);
+    publish_progress(progress, progress_callback);
     return TarWriteStats{
         .input_bytes = manifest.total_file_bytes,
         .entries = static_cast<std::uint64_t>(manifest.entries.size()),
@@ -1028,7 +1046,9 @@ OperationStats extract_tar(const std::filesystem::path& archive_path, const std:
                            bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
-    const auto scanned = scan_tar(archive_source.path());
+    const auto validation_checkpoint = make_archive_validation_checkpoint(progress_callback);
+    invoke_archive_checkpoint(validation_checkpoint);
+    const auto scanned = scan_tar(archive_source.path(), validation_checkpoint);
     create_verified_directories(destination);
 
     std::ifstream input(archive_source.path(), std::ios::binary);
@@ -1047,10 +1067,10 @@ OperationStats extract_tar(const std::filesystem::path& archive_path, const std:
             progress.finish_entry();
             continue;
         }
-        extract_tar_file_payload(input, entry, target, overwrite);
-        progress.add_bytes(entry.size);
+        extract_tar_file_payload(input, entry, target, overwrite, progress, progress_callback);
         progress.finish_entry();
     }
+    publish_progress(progress, progress_callback);
 
     OperationStats stats;
     stats.input_bytes = archive_source.size();
@@ -1068,14 +1088,17 @@ OperationStats extract_tar_gzip(const std::filesystem::path& archive_path, const
                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
+    const auto validation_checkpoint = make_archive_validation_checkpoint(progress_callback);
+    invoke_archive_checkpoint(validation_checkpoint);
     GzipInputStream scan_input(archive_source.path());
-    const auto scanned = scan_tar_stream(scan_input, false);
-    scan_input.finish();
+    const auto scanned = scan_tar_stream(scan_input, false, std::nullopt, validation_checkpoint);
+    finish_archive_stream(scan_input, validation_checkpoint);
     create_verified_directories(destination);
 
     GzipInputStream extract_input(archive_source.path());
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
-    extract_input.finish();
+    finish_archive_stream(extract_input, make_archive_finishing_checkpoint(progress_callback, scanned.total_file_bytes,
+                                                                           scanned.entries.size()));
 
     OperationStats stats;
     stats.input_bytes = extract_input.input_bytes();
@@ -1093,14 +1116,17 @@ OperationStats extract_tar_bzip2(const std::filesystem::path& archive_path, cons
                                  bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
+    const auto validation_checkpoint = make_archive_validation_checkpoint(progress_callback);
+    invoke_archive_checkpoint(validation_checkpoint);
     Bzip2InputStream scan_input(archive_source.path());
-    const auto scanned = scan_tar_stream(scan_input, false);
-    scan_input.finish();
+    const auto scanned = scan_tar_stream(scan_input, false, std::nullopt, validation_checkpoint);
+    finish_archive_stream(scan_input, validation_checkpoint);
     create_verified_directories(destination);
 
     Bzip2InputStream extract_input(archive_source.path());
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
-    extract_input.finish();
+    finish_archive_stream(extract_input, make_archive_finishing_checkpoint(progress_callback, scanned.total_file_bytes,
+                                                                           scanned.entries.size()));
 
     OperationStats stats;
     stats.input_bytes = extract_input.input_bytes();
@@ -1119,14 +1145,17 @@ OperationStats extract_tar_xz(const std::filesystem::path& archive_path, const s
                               bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
+    const auto validation_checkpoint = make_archive_validation_checkpoint(progress_callback);
+    invoke_archive_checkpoint(validation_checkpoint);
     XzInputStream scan_input(archive_source.path());
-    const auto scanned = scan_tar_stream(scan_input, false);
-    scan_input.finish();
+    const auto scanned = scan_tar_stream(scan_input, false, std::nullopt, validation_checkpoint);
+    finish_archive_stream(scan_input, validation_checkpoint);
     create_verified_directories(destination);
 
     XzInputStream extract_input(archive_source.path());
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
-    extract_input.finish();
+    finish_archive_stream(extract_input, make_archive_finishing_checkpoint(progress_callback, scanned.total_file_bytes,
+                                                                           scanned.entries.size()));
 
     OperationStats stats;
     stats.input_bytes = extract_input.input_bytes();
@@ -1145,14 +1174,17 @@ OperationStats extract_tar_lzip(const std::filesystem::path& archive_path, const
                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
+    const auto validation_checkpoint = make_archive_validation_checkpoint(progress_callback);
+    invoke_archive_checkpoint(validation_checkpoint);
     LzipInputStream scan_input(archive_source.path());
-    const auto scanned = scan_tar_stream(scan_input, false);
-    scan_input.finish();
+    const auto scanned = scan_tar_stream(scan_input, false, std::nullopt, validation_checkpoint);
+    finish_archive_stream(scan_input, validation_checkpoint);
     create_verified_directories(destination);
 
     LzipInputStream extract_input(archive_source.path());
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
-    extract_input.finish();
+    finish_archive_stream(extract_input, make_archive_finishing_checkpoint(progress_callback, scanned.total_file_bytes,
+                                                                           scanned.entries.size()));
 
     OperationStats stats;
     stats.input_bytes = extract_input.input_bytes();
@@ -1170,14 +1202,17 @@ OperationStats extract_tar_zstd(const std::filesystem::path& archive_path, const
                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
+    const auto validation_checkpoint = make_archive_validation_checkpoint(progress_callback);
+    invoke_archive_checkpoint(validation_checkpoint);
     ZstdInputStream scan_input(archive_source.path());
-    const auto scanned = scan_tar_stream(scan_input, false);
-    scan_input.finish();
+    const auto scanned = scan_tar_stream(scan_input, false, std::nullopt, validation_checkpoint);
+    finish_archive_stream(scan_input, validation_checkpoint);
     create_verified_directories(destination);
 
     ZstdInputStream extract_input(archive_source.path());
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
-    extract_input.finish();
+    finish_archive_stream(extract_input, make_archive_finishing_checkpoint(progress_callback, scanned.total_file_bytes,
+                                                                           scanned.entries.size()));
 
     OperationStats stats;
     stats.input_bytes = extract_input.input_bytes();

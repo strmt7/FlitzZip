@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/archive_name_encoding.hpp"
+#include "core/progress.hpp"
 
 #include <cstdint>
 #include <istream>
@@ -30,7 +31,9 @@ struct ArScanResult {
 // Purpose: Validate an entire bounded AR stream before the filesystem adapter publishes any entries.
 // Inputs: Input starts at offset zero; archive_size is its independently established extent; encoding selects names.
 // Outputs: Owns validated metadata or throws on invalid framing, unsafe paths, resource limits or incomplete input.
-// The borrowed seek-position-aware stream must remain alive throughout this synchronous call.
-ArScanResult scan_ar_stream(std::istream& input, std::uint64_t archive_size, ArchivePathEncoding encoding);
+// The borrowed seek-position-aware stream and optional throwing checkpoint remain alive throughout this
+// synchronous call. Checkpoints run between metadata records and before final path-set validation.
+ArScanResult scan_ar_stream(std::istream& input, std::uint64_t archive_size, ArchivePathEncoding encoding,
+                            const ProgressCheckpoint& checkpoint = {});
 
 }  // namespace flitzzip::detail

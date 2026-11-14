@@ -1,4 +1,5 @@
 #include "lzip/lzip_stream.hpp"
+#include "core/decoded_input_buffer.hpp"
 #include "lzma/bounded_sdk_allocator.hpp"
 
 #include "core/checksum.hpp"
@@ -181,7 +182,7 @@ class ScopedLzipDecoder {
 
 }  // namespace
 
-class LzipInputStream::Buffer final : public std::streambuf {
+class LzipInputStream::Buffer final : public DecodedInputBuffer {
   public:
     // Purpose: Open bounded compressed input without decoding or publishing payload bytes.
     // Inputs: archive_path is the untrusted regular lzip source path.
@@ -443,6 +444,12 @@ LzipInputStream::~LzipInputStream() = default;
 
 void LzipInputStream::finish() {
     buffer_->finish();
+}
+
+// Consume only a successfully written decoder-owned window; framing and get-area
+// lifetime remain governed by the existing input buffer.
+std::size_t LzipInputStream::transfer_to(std::ostream& output, std::size_t maximum_bytes) {
+    return buffer_->transfer_to(output, maximum_bytes);
 }
 
 std::uint64_t LzipInputStream::input_bytes() const {

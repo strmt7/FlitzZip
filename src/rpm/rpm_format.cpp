@@ -1,6 +1,7 @@
 #include "rpm/rpm_format.hpp"
 #include "core/path_text.hpp"
 
+#include "core/archive_stream_progress.hpp"
 #include "core/file_size.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
@@ -66,10 +67,16 @@ std::uint64_t checked_mul_rpm_bytes(std::uint64_t lhs, std::uint64_t rhs, const 
 // Purpose: Read exactly one byte range from an RPM stream.
 // Inputs: `input` is the RPM stream, `buffer` receives bytes, and `label` names the region.
 // Outputs: Fills the buffer or throws when the file is truncated.
-void read_exact(std::istream& input, char* buffer, std::size_t size, const char* label) {
-    input.read(buffer, static_cast<std::streamsize>(size));
-    if (input.gcount() != static_cast<std::streamsize>(size)) {
-        throw ArchiveError(std::string(label) + " is truncated");
+void read_exact(std::istream& input, char* buffer, std::size_t size, const char* label,
+                const ProgressCheckpoint& checkpoint) {
+    for (std::size_t completed = 0U; completed < size;) {
+        invoke_archive_checkpoint(checkpoint);
+        const auto count = std::min(size - completed, detail::kStreamConsumerWindowBytes);
+        input.read(buffer + completed, static_cast<std::streamsize>(count));
+        if (input.gcount() != static_cast<std::streamsize>(count)) {
+            throw ArchiveError(std::string(label) + " is truncated");
+        }
+        completed += count;
     }
 }
 
@@ -128,7 +135,7 @@ std::uint64_t align_rpm_eight(std::uint64_t offset) {
 // `collect_payload_tags` selects the two package-header strings needed for payload decoding.
 // Outputs: Returns the byte offset immediately after the header and collected string entries.
 RpmHeaderScan read_rpm_header(std::ifstream& input, std::uint64_t archive_size, const char* label,
-                              bool collect_payload_tags) {
+                              bool collect_payload_tags, const ProgressCheckpoint& checkpoint) {
     const auto start_pos = input.tellg();
     if (start_pos == std::istream::pos_type(-1)) {
         throw ArchiveError(std::string("failed to read RPM ") + label + " header offset");
@@ -136,7 +143,7 @@ RpmHeaderScan read_rpm_header(std::ifstream& input, std::uint64_t archive_size, 
     const auto start_offset = static_cast<std::uint64_t>(start_pos);
 
     std::array<unsigned char, kRpmHeaderPrefixBytes> prefix{};
-    read_exact(input, reinterpret_cast<char*>(prefix.data()), prefix.size(), label);
+    read_exact(input, reinterpret_cast<char*>(prefix.data()), prefix.size(), label, checkpoint);
     if (!std::equal(kRpmHeaderMagic.begin(), kRpmHeaderMagic.end(), prefix.begin()) || prefix[3] != 1U) {
         throw ArchiveError(std::string("malformed RPM ") + label + " header magic");
     }
@@ -163,16 +170,17 @@ RpmHeaderScan read_rpm_header(std::ifstream& input, std::uint64_t archive_size, 
 
     std::vector<std::array<unsigned char, kRpmIndexEntryBytes>> entries(index_count);
     for (auto& entry : entries) {
-        read_exact(input, reinterpret_cast<char*>(entry.data()), entry.size(), "RPM header index");
+        read_exact(input, reinterpret_cast<char*>(entry.data()), entry.size(), "RPM header index", checkpoint);
     }
     std::vector<unsigned char> store(store_size);
     if (!store.empty()) {
-        read_exact(input, reinterpret_cast<char*>(store.data()), store.size(), "RPM header store");
+        read_exact(input, reinterpret_cast<char*>(store.data()), store.size(), "RPM header store", checkpoint);
     }
 
     RpmHeaderScan result;
     result.end_offset = end_offset;
     for (const auto& entry : entries) {
+        invoke_archive_checkpoint(checkpoint);
         const auto tag = read_be32(entry.data());
         const auto type = read_be32(entry.data() + 4U);
         const auto offset = read_be32(entry.data() + 8U);
@@ -214,9 +222,9 @@ RpmHeaderScan read_rpm_header(std::ifstream& input, std::uint64_t archive_size, 
 // Purpose: Read and validate the fixed 96-byte RPM lead.
 // Inputs: `input` is positioned at the file start.
 // Outputs: Throws when the file is not an RPM lead supported by FlitzZip.
-void read_rpm_lead(std::ifstream& input) {
+void read_rpm_lead(std::ifstream& input, const ProgressCheckpoint& checkpoint) {
     std::array<unsigned char, kRpmLeadBytes> lead{};
-    read_exact(input, reinterpret_cast<char*>(lead.data()), lead.size(), "RPM lead");
+    read_exact(input, reinterpret_cast<char*>(lead.data()), lead.size(), "RPM lead", checkpoint);
     if (!std::equal(kRpmLeadMagic.begin(), kRpmLeadMagic.end(), lead.begin())) {
         throw ArchiveError("malformed RPM lead magic");
     }
@@ -278,14 +286,14 @@ std::optional<RpmPayloadCompression> compression_from_magic(const std::array<uns
 // Inputs: `input` is the RPM stream, `payload_offset` is the absolute start, and `payload_size` bounds readable bytes.
 // Outputs: Returns a zero-filled six-byte buffer containing available leading payload bytes.
 std::array<unsigned char, 6U> read_payload_magic(std::ifstream& input, std::uint64_t payload_offset,
-                                                 std::uint64_t payload_size) {
+                                                 std::uint64_t payload_size, const ProgressCheckpoint& checkpoint) {
     std::array<unsigned char, 6U> magic{};
     const auto to_read = static_cast<std::size_t>(std::min<std::uint64_t>(magic.size(), payload_size));
     if (to_read == 0U) {
         return magic;
     }
     seek_rpm_offset(input, payload_offset, "RPM payload");
-    read_exact(input, reinterpret_cast<char*>(magic.data()), to_read, "RPM payload magic");
+    read_exact(input, reinterpret_cast<char*>(magic.data()), to_read, "RPM payload magic", checkpoint);
     return magic;
 }
 
@@ -294,7 +302,8 @@ std::array<unsigned char, 6U> read_payload_magic(std::ifstream& input, std::uint
 // Purpose: Parse and validate the RPM headers, then locate and classify the bounded payload stream.
 // Inputs: `archive_path` identifies an untrusted RPM package that must remain readable for the scan.
 // Outputs: Returns validated payload offsets, sizes, and compression metadata; throws ArchiveError on malformed input.
-RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path) {
+RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path, const ProgressCheckpoint& checkpoint) {
+    invoke_archive_checkpoint(checkpoint);
     const auto archive_size = regular_file_size(archive_path);
     if (archive_size < kRpmLeadBytes) {
         throw ArchiveError("RPM file is too small");
@@ -305,14 +314,14 @@ RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path) {
         throw ArchiveError("cannot open RPM package: " + path_diagnostic_utf8(archive_path));
     }
 
-    read_rpm_lead(input);
-    const auto signature = read_rpm_header(input, archive_size, "signature", false);
+    read_rpm_lead(input, checkpoint);
+    const auto signature = read_rpm_header(input, archive_size, "signature", false, checkpoint);
     const auto main_header_offset = align_rpm_eight(signature.end_offset);
     if (main_header_offset > archive_size) {
         throw ArchiveError("RPM signature padding extends past end of file");
     }
     seek_rpm_offset(input, main_header_offset, "RPM package header");
-    const auto package_header = read_rpm_header(input, archive_size, "package", true);
+    const auto package_header = read_rpm_header(input, archive_size, "package", true, checkpoint);
     const auto payload_offset = package_header.end_offset;
     if (payload_offset >= archive_size) {
         throw ArchiveError("RPM payload is empty");
@@ -326,7 +335,7 @@ RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path) {
 
     const auto payload_size = archive_size - payload_offset;
     const auto from_header = compression_from_header(payload_compressor);
-    const auto from_magic = compression_from_magic(read_payload_magic(input, payload_offset, payload_size));
+    const auto from_magic = compression_from_magic(read_payload_magic(input, payload_offset, payload_size, checkpoint));
     if (!from_header.has_value() && !from_magic.has_value()) {
         throw ArchiveError("unsupported or unrecognized RPM payload compression");
     }
@@ -334,6 +343,7 @@ RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path) {
         throw ArchiveError("RPM payload compressor does not match payload magic");
     }
     const auto compression = from_header.has_value() ? *from_header : *from_magic;
+    invoke_archive_checkpoint(checkpoint);
 
     return RpmPayloadInfo{
         .offset = payload_offset,

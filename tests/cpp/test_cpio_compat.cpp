@@ -1,6 +1,8 @@
 #include "test_util.hpp"
+#include "test_flzip_helpers.hpp"
 #include "test_legacy_name.hpp"
 #include "test_compat_fixture.hpp"
+#include "test_archive_entry_progress.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -153,6 +155,36 @@ void write_one_entry_cpio(const std::filesystem::path& archive, std::string_view
 }
 
 }  // namespace
+
+TEST_CASE(cpio_create_progress_reports_final_completed_entry) {
+    for (const bool compressed : {false, true}) {
+        flitzzip_test::require_archive_entry_completion(
+            "cpio-create-entry-progress", false,
+            [compressed](const auto& sources, const auto& archive, const auto& callback) {
+                return compressed ? flitzzip::compress_cpio_gzip(sources, archive, 5, callback)
+                                  : flitzzip::compress_cpio(sources, archive, callback);
+            },
+            [compressed](const auto& archive, const auto& output, bool overwrite, const auto& callback) {
+                return compressed ? flitzzip::extract_cpio_gzip(archive, output, overwrite, callback)
+                                  : flitzzip::extract_cpio(archive, output, overwrite, callback);
+            });
+    }
+}
+
+TEST_CASE(cpio_extract_progress_reports_final_completed_entry) {
+    for (const bool compressed : {false, true}) {
+        flitzzip_test::require_archive_entry_completion(
+            "cpio-extract-entry-progress", true,
+            [compressed](const auto& sources, const auto& archive, const auto& callback) {
+                return compressed ? flitzzip::compress_cpio_gzip(sources, archive, 5, callback)
+                                  : flitzzip::compress_cpio(sources, archive, callback);
+            },
+            [compressed](const auto& archive, const auto& output, bool overwrite, const auto& callback) {
+                return compressed ? flitzzip::extract_cpio_gzip(archive, output, overwrite, callback)
+                                  : flitzzip::extract_cpio(archive, output, overwrite, callback);
+            });
+    }
+}
 
 // Purpose: Check the production hex writer over every field width and unsigned boundary.
 // Inputs: Fixed literal oracles, powers of two and their neighbors, and 65,536 deterministic 32-bit values.
@@ -476,15 +508,29 @@ TEST_CASE(cpio_unicode_member_names_roundtrip) {
 // Inputs: A handcrafted `070702` CPIO entry with a valid checksum.
 // Outputs: Throws if extraction fails or restored contents differ.
 TEST_CASE(cpio_crc_format_extracts_when_checksum_matches) {
-    const auto root = test_temp_dir("cpio-crc-ok");
-    const auto archive = root / "good-crc.cpio";
-    const std::string payload = "payload";
-    write_one_entry_cpio(archive, "070702", "payload.txt", kTestCpioRegularMode, 1, payload, cpio_payload_sum(payload));
-
-    const auto output = root / "out";
-    const auto stats = flitzzip::extract_cpio(archive, output, false);
-    REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(payload.size()));
-    REQUIRE_EQ(read_text_file(output / "payload.txt"), payload);
+    flitzzip_test::ScopedTestDirectory cleanup{test_temp_dir("cpio-crc-ok")};
+    const auto& root = cleanup.path;
+    const auto plain = root / "good-crc.cpio";
+    const auto wrapped = root / "good-crc.cpgz";
+    std::string large(2U * 65536U + 17U, '\0');
+    for (std::size_t index = 0; index < large.size(); ++index) {
+        large[index] = static_cast<char>(index & 255U);
+    }
+    REQUIRE_EQ(cpio_payload_sum(large), 16711816U);
+    std::size_t index = 0;
+    for (const auto& payload : {std::string{}, std::string("payload"), large}) {
+        write_one_entry_cpio(plain, "070702", "payload.txt", kTestCpioRegularMode, 1, payload,
+                             cpio_payload_sum(payload));
+        (void)flitzzip::compress_gzip_file(plain, wrapped);
+        for (const bool compressed : {false, true}) {
+            const auto output = root / (std::to_string(index) + (compressed ? "-gzip" : "-plain"));
+            const auto stats = compressed ? flitzzip::extract_cpio_gzip(wrapped, output, false)
+                                          : flitzzip::extract_cpio(plain, output, false);
+            REQUIRE_EQ(stats.output_bytes, payload.size());
+            REQUIRE_EQ(read_text_file(output / "payload.txt"), payload);
+        }
+        ++index;
+    }
 }
 
 // Purpose: Verify CRC-format CPIO archives fail closed when the payload checksum is wrong.

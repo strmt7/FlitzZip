@@ -34,8 +34,11 @@ struct TarScanResult {
 // Purpose: Validate TAR metadata through the same reader used by filesystem and filtered extraction.
 // Inputs: A borrowed stream beginning at zero; seekable requires its independently established archive_size.
 // Outputs: Owns the publication plan or throws on invalid metadata, incomplete input or a read failure.
+// The optional synchronous checkpoint may cancel at record/bounded-read boundaries;
+// its original exception propagates before destination work starts.
 TarScanResult scan_tar_stream(std::istream& input, bool seekable,
-                              std::optional<std::uint64_t> archive_size = std::nullopt);
+                              std::optional<std::uint64_t> archive_size = std::nullopt,
+                              const ProgressCheckpoint& checkpoint = {});
 
 // Purpose: Restore a filtered TAR stream while independently checking every record against its admitted plan.
 // Inputs: Borrowed input starts at zero; scanned came from scan_tar_stream; destination and overwrite select output.

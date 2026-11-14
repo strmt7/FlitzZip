@@ -9,7 +9,9 @@ namespace flitzzip {
 
 // Purpose: Extract the CPIO payload from an RPM package with FlitzZip path-safety checks.
 // Inputs: `archive_path` is an RPM package, `destination` is the extraction root, `overwrite` allows existing targets
-// only when true, and `progress_callback` receives CPIO extraction progress snapshots. Outputs: Returns operation
+// only when true. `progress_callback` is synchronously borrowed during metadata, staging, decoding and CPIO
+// publication; preparation has unknown totals and zero published counters. Its original exception propagates after
+// private payload cleanup. Outputs: Returns operation
 // statistics; throws on malformed RPM metadata, unsupported payload compression, unsafe CPIO paths, refused overwrite,
 // or verified-file publication failures.
 OperationStats extract_rpm(const std::filesystem::path& archive_path, const std::filesystem::path& destination,

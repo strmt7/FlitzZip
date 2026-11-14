@@ -140,10 +140,18 @@ covered without a lower-version cutoff; newer versions must be detected and
 rejected. Feature choices migrate. `RemoveExistingProducts` stays after
 `InstallInitialize`, inside the rollback transaction, before installing new
 components. Shortcut markers use HKMU so their registry ownership matches the
-installation context. References:
+installation context. Published per-machine packages must recover the previous
+installation directory through the related product's x64 registry entry before
+costing in both interactive and silent sequences, then register the resolved
+directory for subsequent upgrades. Compiled-table mutation controls cover the
+linked search, registry view, sequencing and location publication. The internal
+per-user test package does not qualify this published per-machine upgrade path.
+References:
 [WiX MajorUpgrade](https://docs.firegiant.com/wix/schema/wxs/majorupgrade/),
 [RegistryValue](https://docs.firegiant.com/wix/schema/wxs/registryvalue/) and
-[Microsoft upgrade table](https://learn.microsoft.com/en-us/windows/win32/msi/upgrade-table).
+[Microsoft upgrade table](https://learn.microsoft.com/en-us/windows/win32/msi/upgrade-table),
+[registry lookup](https://learn.microsoft.com/en-us/windows/win32/msi/reglocator-table)
+and [AppSearch sequencing](https://learn.microsoft.com/en-us/windows/win32/msi/appsearch-action).
 
 ## Qualifying installer changes
 

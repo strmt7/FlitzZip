@@ -64,55 +64,6 @@ void validate_gpu_codec_options(const GpuCodecOptions& options) {
                                        options.force_cpu);
 }
 
-// Purpose: Validate a dense independent-block batch before CPU work, HIP dispatch, or metadata allocation.
-// Inputs: input_size is bounded source storage; lengths describe consecutive blocks under the selected block_size.
-// Outputs: Returns for exact positive coverage, including the empty batch; throws ArchiveError otherwise.
-void validate_encode_batch(std::size_t input_size, std::span<const std::uint32_t> lengths, std::uint32_t block_size) {
-    if (lengths.size() > kMaxEncodeBatchBlocks) {
-        throw ArchiveError("encode batch exceeds the block-count limit");
-    }
-    std::size_t consumed = 0;
-    for (const auto length : lengths) {
-        if (length == 0 || length > block_size || length > input_size - consumed) {
-            throw ArchiveError("encode batch block is outside its input or block-size limit");
-        }
-        consumed += length;
-    }
-    if (consumed != input_size) {
-        throw ArchiveError("encode batch blocks do not cover the input exactly");
-    }
-}
-
-// Purpose: Apply the existing CPU block encoder to a validated independent-block batch.
-// Inputs: input and lengths have exact bounded coverage; options select the same policy as separate chunk encoding.
-// Outputs: Returns independent descriptors, a bounded preallocated payload, and CRCs without GPU use.
-EncodedBlockBatch encode_block_batch_cpu(std::span<const std::byte> input, std::span<const std::uint32_t> lengths,
-                                         const ArchiveCodecOptions& options) {
-    EncodedBlockBatch batch;
-    batch.encoded.blocks.reserve(lengths.size());
-    batch.block_crc32.reserve(lengths.size());
-    // Each native encoded member is no larger than raw; avoid transient growth reallocations.
-    batch.encoded.payload.reserve(input.size());
-    std::size_t offset = 0;
-    for (const auto length : lengths) {
-        const auto source = input.subspan(offset, length);
-        auto encoded = encode_chunk_cpu(source, options);
-        if (encoded.blocks.size() != 1) {
-            throw ArchiveError("independent CPU batch block produced an unexpected descriptor count");
-        }
-        auto block = encoded.blocks.front();
-        block.encoded_offset += batch.encoded.payload.size();
-        batch.encoded.blocks.push_back(block);
-        batch.encoded.payload.insert(batch.encoded.payload.end(), encoded.payload.begin(), encoded.payload.end());
-        const auto checksum = crc32(source);
-        batch.block_crc32.push_back(checksum);
-        batch.encoded.source_crc32 = crc32_combine(batch.encoded.source_crc32, checksum, length);
-        offset += length;
-    }
-    batch.encoded.source_crc32_available = true;
-    return batch;
-}
-
 // Purpose: Select an explicit codec backend before work; never retry a failed HIP operation on CPU.
 // Inputs: Validated options and an optional native block table; neither is modified.
 // Outputs: Returns true for HIP or false for expected CPU routes; contradictory/required policies throw GpuError.
@@ -605,10 +556,7 @@ EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOpti
 #else
     (void)use_hip;
 #endif
-    auto encoded = encode_chunk_cpu(std::span<const std::byte>(input.data(), input.size()), cpu_options);
-    encoded.source_crc32 = crc32(std::span<const std::byte>(input.data(), input.size()));
-    encoded.source_crc32_available = true;
-    return encoded;
+    return encode_owned_chunk_cpu(std::move(input), cpu_options);
 }
 
 // Purpose: Dispatch a bounded independent-block batch with explicit backend selection and propagated HIP failures.
@@ -617,7 +565,6 @@ EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOpti
 EncodedBlockBatch encode_owned_block_batch(std::vector<std::byte> input, std::span<const std::uint32_t> block_lengths,
                                            const GpuCodecOptions& options) {
     validate_gpu_codec_options(options);
-    validate_codec_span_size(input.size(), "codec batch input");
     validate_encode_batch(input.size(), block_lengths, options.block_size);
     const bool use_hip = select_hip_codec(options);
 #if FLITZZIP_ENABLE_HIP
@@ -632,7 +579,7 @@ EncodedBlockBatch encode_owned_block_batch(std::vector<std::byte> input, std::sp
 #else
     (void)use_hip;
 #endif
-    return encode_block_batch_cpu(input, block_lengths, archive_codec_options(options));
+    return encode_owned_block_batch_cpu(std::move(input), block_lengths, archive_codec_options(options));
 }
 
 // Purpose: Decode one native FLZIP chunk through HIP when allowed, otherwise through the CPU codec.

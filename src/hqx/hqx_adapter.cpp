@@ -2,6 +2,7 @@
 #include "core/path_text.hpp"
 
 #include "core/file_manifest.hpp"
+#include "core/archive_input_progress.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limit_checks.hpp"
@@ -157,9 +158,10 @@ class HqxExtractParser {
     }
 
     // Purpose: Finalize extraction after the terminating HQX colon has been reached.
-    // Inputs: None; the parser must already be in the done state.
+    // Inputs: The parser must be done; input_progress checkpoints the complete
+    // validated input after output close and before guarded publication.
     // Outputs: Publishes the verified data fork into the destination or throws without leaving a final partial file.
-    void finish() {
+    void finish(ArchiveInputProgress& input_progress) {
         if (state_ != HqxParseState::Done) {
             throw ArchiveError("BinHex stream ended before all CRC-checked sections were complete");
         }
@@ -167,6 +169,7 @@ class HqxExtractParser {
         if (!output_) {
             throw ArchiveError("failed to finalize BinHex extraction target: " + path_diagnostic_utf8(target_));
         }
+        input_progress.finish();
         commit_verified_file(temporary_, target_, overwrite_);
         cleanup_file_publish_target(temporary_);
         temporary_active_ = false;
@@ -477,10 +480,10 @@ bool is_hqx_whitespace(unsigned char byte) {
 // Inputs: `input` is positioned at stream start.
 // Outputs: Leaves `input` positioned immediately after the payload-start colon, or throws on missing/malformed
 // preamble.
-void seek_hqx_payload_start(std::ifstream& input) {
+void seek_hqx_payload_start(std::ifstream& input, ArchiveInputProgress& input_progress) {
     std::size_t matched = 0;
     for (std::size_t scanned = 0; scanned < kMaxHqxPreambleBytes; ++scanned) {
-        const auto next = input.get();
+        const auto next = input_progress.read_byte(input);
         if (next == std::char_traits<char>::eof()) {
             throw ArchiveError("BinHex stream ended before the required header comment");
         }
@@ -498,7 +501,7 @@ void seek_hqx_payload_start(std::ifstream& input) {
         throw ArchiveError("BinHex preamble exceeds FlitzZip metadata limit");
     }
     for (;;) {
-        const auto next = input.get();
+        const auto next = input_progress.read_byte(input);
         if (next == std::char_traits<char>::eof()) {
             throw ArchiveError("BinHex stream ended before the payload-start colon");
         }
@@ -515,12 +518,12 @@ void seek_hqx_payload_start(std::ifstream& input) {
 // Purpose: Decode the HQX payload body into one data-fork parser.
 // Inputs: `input` is positioned after the payload-start colon and `parser` receives logical bytes.
 // Outputs: Stops after the terminating colon and rejects non-whitespace trailing data.
-void decode_hqx_payload(std::ifstream& input, HqxExtractParser& parser) {
+void decode_hqx_payload(std::ifstream& input, HqxExtractParser& parser, ArchiveInputProgress& input_progress) {
     HqxRleDecoder rle(parser);
     HqxSixBitDecoder decoder(rle);
     bool saw_end_colon = false;
     for (;;) {
-        const auto next = input.get();
+        const auto next = input_progress.read_byte(input);
         if (next == std::char_traits<char>::eof()) {
             break;
         }
@@ -539,7 +542,8 @@ void decode_hqx_payload(std::ifstream& input, HqxExtractParser& parser) {
     }
     decoder.finish();
     std::istream::int_type next = std::char_traits<char>::eof();
-    while (!std::char_traits<char>::eq_int_type((next = input.get()), std::char_traits<char>::eof())) {
+    while (
+        !std::char_traits<char>::eq_int_type((next = input_progress.read_byte(input)), std::char_traits<char>::eof())) {
         const auto byte = static_cast<unsigned char>(std::char_traits<char>::to_char_type(next));
         if (!is_hqx_whitespace(byte)) {
             throw ArchiveError("BinHex stream contains trailing data after the terminating colon");
@@ -574,17 +578,17 @@ OperationStats extract_hqx_file(const std::filesystem::path& archive_path, const
     progress.set_current("BinHex data fork");
     publish_progress(progress, progress_callback);
 
+    ArchiveInputProgress input_progress(progress, std::cref(progress_callback), archive_size);
     HqxExtractParser parser(destination, overwrite, progress);
     try {
-        seek_hqx_payload_start(input);
-        decode_hqx_payload(input, parser);
-        parser.finish();
+        seek_hqx_payload_start(input, input_progress);
+        decode_hqx_payload(input, parser, input_progress);
+        parser.finish(input_progress);
     } catch (...) {
         parser.cleanup();
         throw;
     }
 
-    progress.add_bytes(archive_size);
     progress.finish_entry();
     publish_progress(progress, progress_callback);
 

@@ -1,5 +1,6 @@
 #include "zstd/zstd_stream.hpp"
 
+#include "core/decoded_input_buffer.hpp"
 #include "core/file_manifest.hpp"
 #include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
@@ -292,7 +293,7 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
     std::uint32_t compression_workers_ = 0;
 };
 
-class ZstdInputStream::Buffer final : public std::streambuf {
+class ZstdInputStream::Buffer final : public DecodedInputBuffer {
   public:
     // Purpose: Open and initialize a bounded Zstandard decompression stream.
     // Inputs: `archive_path` is a regular `.zst`/`.zstd` source admitted as immutable before runtime initialization.
@@ -507,6 +508,12 @@ ZstdInputStream::~ZstdInputStream() = default;
 void ZstdInputStream::finish() {
     buffer_->finish();
     clear();
+}
+
+// Consume only a successfully written decoder-owned window; framing and get-area
+// lifetime remain governed by the existing input buffer.
+std::size_t ZstdInputStream::transfer_to(std::ostream& output, std::size_t maximum_bytes) {
+    return buffer_->transfer_to(output, maximum_bytes);
 }
 
 std::uint64_t ZstdInputStream::input_bytes() const {

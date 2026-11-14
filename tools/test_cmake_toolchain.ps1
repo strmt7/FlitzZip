@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'cmake_toolchain.ps1')
+$toolchain = Get-CMakeToolchainLock
 
 # Purpose: Require a tool-integrity failure without allowing an expected exception to pass silently.
 # Inputs: Action is an isolated hash/cache admission check expected to throw.
@@ -25,7 +26,8 @@ try {
     Assert-CMakeToolHash -Path $fixture -Expected $expected
     [IO.File]::WriteAllText($fixture, 'abd', [Text.UTF8Encoding]::new($false))
     Assert-CMakeRejection { Assert-CMakeToolHash -Path $fixture -Expected $expected }
-    $bin = Join-Path $root 'out/tools/cmake-4.4.5/cmake-4.4.5-windows-x86_64/bin'
+    $lockedVersion = $toolchain.version
+    $bin = Join-Path $root "out/tools/cmake-$lockedVersion/cmake-$lockedVersion-windows-x86_64/bin"
     New-Item -ItemType Directory -Path $bin | Out-Null
     $fake = Join-Path $bin 'cmake.exe'
     [IO.File]::WriteAllText($fake, 'not an executable', [Text.UTF8Encoding]::new($false))
@@ -41,8 +43,8 @@ try {
 }
 $cmake = Find-CMake -RepoRoot $repo
 $version = & $cmake --version
-if ($LASTEXITCODE -ne 0 -or $version[0] -ne 'cmake version 4.4.5') {
-    throw 'The repository must use the verified CMake 4.4.5 toolchain.'
+if ($LASTEXITCODE -ne 0 -or $version[0] -cne "cmake version $($toolchain.version)") {
+    throw "The repository must use the verified CMake $($toolchain.version) toolchain."
 }
 Write-Output 'CMake toolchain integrity tests passed.'
 
@@ -81,11 +83,13 @@ function Test-CMakeCompilerAbiRepair {
     param([string]$RepoRoot, [string]$CMake)
     $fixtureRoot = Join-Path $RepoRoot ('out/cmake-abi-contract-' + [guid]::NewGuid().ToString('N'))
     $fixtureInstall = Join-Path $fixtureRoot 'installation'
-    $modules = Join-Path $fixtureInstall 'share/cmake-4.4/Modules'
+    $lockedVersion = (Get-CMakeToolchainLock).version
+    $moduleVersion = ([version]$lockedVersion).ToString(2)
+    $modules = Join-Path $fixtureInstall "share/cmake-$moduleVersion/Modules"
     New-Item -ItemType Directory -Path $modules | Out-Null
     $header = Join-Path $modules 'CMakeCompilerABI.h'
     $install = Split-Path (Split-Path $CMake)
-    $production = Join-Path $install 'share/cmake-4.4/Modules/CMakeCompilerABI.h'
+    $production = Join-Path $install "share/cmake-$moduleVersion/Modules/CMakeCompilerABI.h"
     $patched = [IO.File]::ReadAllText($production)
     $prefix = "#ifndef FLITZZIP_CMAKE_COMPILER_ABI_H`n#define FLITZZIP_CMAKE_COMPILER_ABI_H`n"
     $suffix = "`n#endif /* FLITZZIP_CMAKE_COMPILER_ABI_H */`n"
@@ -138,15 +142,23 @@ function Test-CMakeToolchainManifest {
     param([string]$RepoRoot)
     $fixture = Join-Path $RepoRoot ('out/cmake-manifest-' + [guid]::NewGuid().ToString('N') + '.sha256')
     $original = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'cmake-toolchain.sha256'))
-    $lines = $original.TrimEnd().Split("`n")
+    $lines = @($original.TrimEnd() -split '\r?\n')
+    $archiveName = "cmake-$((Get-CMakeToolchainLock).version)-windows-x86_64.zip"
+    if (-not $lines[0].EndsWith("  $archiveName", [StringComparison]::Ordinal)) {
+        throw 'Checksum mutation fixture does not identify the pinned release asset.'
+    }
     try {
         [IO.File]::WriteAllText($fixture, $original)
         Get-CMakeToolchainLock -Path $fixture | Out-Null
+        foreach ($newline in @("`n", "`r`n")) {
+            [IO.File]::WriteAllText($fixture, ($lines -join $newline) + $newline)
+            Get-CMakeToolchainLock -Path $fixture | Out-Null
+        }
         foreach ($mutation in @(
             ($original + $lines[0] + "`n"),
             (($lines | Select-Object -Skip 1) -join "`n"),
             ('x' + $original.Substring(1)),
-            ($original + $lines[0].Replace('cmake-4.4.5-windows-x86_64.zip', 'unknown.exe') + "`n"),
+            ($original + $lines[0].Replace($archiveName, 'unknown.exe') + "`n"),
             ('x' * 16385))) {
             [IO.File]::WriteAllText($fixture, $mutation)
             Assert-CMakeRejection { Get-CMakeToolchainLock -Path $fixture }

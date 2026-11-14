@@ -3,12 +3,46 @@
 #include "core/rans_block.hpp"
 
 #include <algorithm>
+#include <numeric>
+#include <tuple>
 
 namespace flitzzip::hip_detail {
 namespace {
 
 constexpr std::size_t kEncoderModelBytes =
     256U * sizeof(RansModelRow) + 65536U + (65536U + 66048U + 65536U + 256U) * sizeof(std::uint32_t);
+
+using CandidateOrder = std::array<std::uint16_t, kRansEncodeMaxCandidates>;
+static_assert(kRansEncodeMaxCandidates <= 65536U);
+
+void validate_encoder_options(const RansEncodeCandidate& candidate, std::size_t exclusive_limit,
+                              std::size_t source_bytes) {
+    if (candidate.precision < 8U || candidate.precision > 16U || candidate.context_bits > 8U ||
+        candidate.segment_shift < 8U || candidate.segment_shift > 12U || exclusive_limit > source_bytes) {
+        throw ArchiveError("rANS encoder options or complete payload budget are invalid");
+    }
+}
+
+auto candidate_reuse_key(const RansEncodeCandidate& candidate, std::uint16_t index) {
+    const auto model_shift = candidate.context_bits == 0U ? 8U : candidate.segment_shift;
+    return std::tuple{candidate.context_bits, model_shift, candidate.precision, candidate.segment_shift, index};
+}
+
+// order is nonempty, seed-first, and the remaining exact candidate groups are
+// sorted by requested index. Compact in place; no trial or winner is discarded.
+std::span<std::uint16_t> unique_candidate_order(std::span<std::uint16_t> order,
+                                                std::span<const RansEncodeCandidate> candidates) {
+    std::size_t count = 1U;
+    auto previous = order.front();
+    for (const auto index : order.subspan(1U)) {
+        if (candidates[index] == candidates.front() || candidates[index] == candidates[previous]) {
+            continue;
+        }
+        order[count++] = index;
+        previous = index;
+    }
+    return order.first(count);
+}
 
 void encoder_checkpoint(const std::function<void()>& checkpoint) {
     if (checkpoint) {
@@ -85,6 +119,13 @@ RansEncodeWorkspaceRequirements rans_encode_workspace_requirements(std::size_t s
         sizeof(RansEncoder) + 65536U * sizeof(std::uint32_t) + (segments + 1U) * sizeof(std::uint32_t) + source_bytes;
     return {host, scratch + rans_statistics_workspace_requirements().device_bytes, scratch, segments,
             static_cast<std::uint32_t>(slots)};
+}
+
+RansEncodeWorkspaceRequirements rans_encode_search_workspace_requirements(std::size_t source_bytes) {
+    auto required = rans_encode_workspace_requirements(source_bytes);
+    required.host_bytes += source_bytes + sizeof(CandidateOrder) + sizeof(std::optional<RansEncodeSearchResult>) +
+                           sizeof(std::optional<std::vector<std::byte>>);
+    return required;
 }
 
 RansEncoder::RansEncoder(std::span<const std::byte> device_source, GpuTelemetry* telemetry,
@@ -320,10 +361,7 @@ std::vector<std::byte> RansEncoder::serialize(std::uint32_t shift, std::size_t f
 std::optional<std::vector<std::byte>> RansEncoder::encode(std::uint32_t precision, std::uint32_t context_bits,
                                                           std::uint32_t segment_shift, std::size_t exclusive_limit,
                                                           const std::function<void()>& checkpoint) {
-    if (precision < 8U || precision > 16U || context_bits > 8U || segment_shift < 8U || segment_shift > 12U ||
-        exclusive_limit > source_.size()) {
-        throw ArchiveError("rANS encoder options or complete payload budget are invalid");
-    }
+    validate_encoder_options({precision, context_bits, segment_shift}, exclusive_limit, source_.size());
     require_current_device();
     try {
         encoder_checkpoint(checkpoint);
@@ -354,6 +392,48 @@ std::optional<std::vector<std::byte>> RansEncoder::encode(std::uint32_t precisio
         reusable_ = drained && statistics_.is_reusable();
         throw;
     }
+}
+
+std::optional<RansEncodeSearchResult> RansEncoder::encode_best(std::span<const RansEncodeCandidate> candidates,
+                                                               std::size_t exclusive_limit,
+                                                               const std::function<void()>& checkpoint) {
+    if (candidates.size() > kRansEncodeMaxCandidates || exclusive_limit > source_.size()) {
+        throw ArchiveError("rANS candidate search count or complete payload budget is invalid");
+    }
+    for (const auto& candidate : candidates) {
+        validate_encoder_options(candidate, exclusive_limit, source_.size());
+    }
+    require_current_device();
+    if (candidates.empty()) {
+        encoder_checkpoint(checkpoint);
+        return std::nullopt;
+    }
+    CandidateOrder order;
+    auto active = std::span(order).first(candidates.size());
+    std::iota(active.begin(), active.end(), std::uint16_t{0U});
+    // The original first trial establishes a bound before cache grouping. Keep
+    // its priority even when later execution order differs from requested order.
+    std::ranges::sort(active.subspan(1U), [&](auto first, auto second) {
+        return candidate_reuse_key(candidates[first], first) < candidate_reuse_key(candidates[second], second);
+    });
+    active = unique_candidate_order(active, candidates);
+    std::optional<RansEncodeSearchResult> best;
+    for (const auto index : active) {
+        auto limit = exclusive_limit;
+        if (best) {
+            // An earlier requested option must still be allowed to tie a winner
+            // found out of order. Both frames remain strictly below the caller's
+            // incumbent budget; size()+1 is bounded by that admitted budget.
+            limit = best->payload.size() + (index < best->candidate_index ? 1U : 0U);
+        }
+        const auto& candidate = candidates[index];
+        auto payload = encode(candidate.precision, candidate.context_bits, candidate.segment_shift, limit, checkpoint);
+        if (payload && (!best || payload->size() < best->payload.size() ||
+                        (payload->size() == best->payload.size() && index < best->candidate_index))) {
+            best = RansEncodeSearchResult{std::move(*payload), index};
+        }
+    }
+    return best;
 }
 
 void RansEncoder::close_checked() {

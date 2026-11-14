@@ -1,5 +1,6 @@
 #include "wim/wim_adapter.hpp"
 
+#include "core/archive_stream_progress.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
@@ -121,9 +122,53 @@ std::string wide_to_utf8(const wchar_t* value) {
     return result;
 }
 
+// A WIMStruct borrows this observer only during synchronous open/scan/extract
+// calls. It outlives every handle carrying its progress context. No exception
+// may cross wimlib's C ABI; retain the first one and rethrow after native return.
+class WimProgressObserver final {
+  public:
+    explicit WimProgressObserver(const ProgressCallback& observer) noexcept : observer_(observer) {}
+    WimProgressObserver(const WimProgressObserver&) = delete;
+    WimProgressObserver& operator=(const WimProgressObserver&) = delete;
+
+    void set_phase(const char* note) noexcept {
+        note_ = note;
+    }
+    [[nodiscard]] bool failed() const noexcept {
+        return static_cast<bool>(failure_);
+    }
+    void rethrow_failure() const {
+        if (failure_) {
+            std::rethrow_exception(failure_);
+        }
+    }
+    [[nodiscard]] wimlib_progress_func_t native_function() const noexcept {
+        return observer_ ? notify : nullptr;
+    }
+
+  private:
+    static wimlib_progress_status notify(wimlib_progress_msg, wimlib_progress_info*, void* context) noexcept {
+        auto& self = *static_cast<WimProgressObserver*>(context);
+        if (self.failure_) {
+            return WIMLIB_PROGRESS_STATUS_ABORT;
+        }
+        try {
+            self.observer_({.operation = OperationKind::Extract, .note = self.note_});
+            return WIMLIB_PROGRESS_STATUS_CONTINUE;
+        } catch (...) {
+            self.failure_ = std::current_exception();
+            return WIMLIB_PROGRESS_STATUS_ABORT;
+        }
+    }
+
+    const ProgressCallback& observer_;
+    const char* note_ = "Validating";
+    std::exception_ptr failure_;
+};
+
 class WimRuntime final {
   public:
-    using OpenWimFn = int (*)(const wimlib_tchar*, int, WIMStruct**);
+    using OpenWimFn = decltype(&wimlib_open_wim_with_progress);
     using GetWimInfoFn = int (*)(WIMStruct*, wimlib_wim_info*);
     using IterateDirTreeFn = int (*)(WIMStruct*, int, const wimlib_tchar*, int, wimlib_iterate_dir_tree_callback_t,
                                      void*);
@@ -138,7 +183,7 @@ class WimRuntime final {
     // Inputs: None.
     // Outputs: Owns the checked DLL handle and required ABI symbols or throws on loader/version/init failure.
     WimRuntime() : module_(load_trusted_app_local_runtime(kWimlibDllName, FLITZZIP_WIMLIB_RUNTIME_DLL_SHA256)) {
-        open_wim_ = load_required_symbol<OpenWimFn>("wimlib_open_wim");
+        open_wim_ = load_required_symbol<OpenWimFn>("wimlib_open_wim_with_progress");
         get_wim_info_ = load_required_symbol<GetWimInfoFn>("wimlib_get_wim_info");
         iterate_dir_tree_ = load_required_symbol<IterateDirTreeFn>("wimlib_iterate_dir_tree");
         extract_image_ = load_required_symbol<ExtractImageFn>("wimlib_extract_image");
@@ -174,12 +219,21 @@ class WimRuntime final {
     }
 
     // Purpose: Open a WIM file with integrity checking and split-WIM rejection.
-    // Inputs: `archive_path` is the archive path selected by the user.
+    // Inputs: `archive_path` is the archive path; `progress` must outlive the returned handle.
     // Outputs: Returns a raw WIM handle owned by the caller or throws with a wimlib diagnostic.
-    [[nodiscard]] WIMStruct* open_checked_wim(const std::filesystem::path& archive_path) const {
+    [[nodiscard]] WIMStruct* open_checked_wim(const std::filesystem::path& archive_path,
+                                              WimProgressObserver& progress) const {
         WIMStruct* wim = nullptr;
         constexpr int kOpenFlags = WIMLIB_OPEN_FLAG_CHECK_INTEGRITY | WIMLIB_OPEN_FLAG_ERROR_IF_SPLIT;
-        const int status = open_wim_(archive_path.wstring().c_str(), kOpenFlags, &wim);
+        progress.set_phase("Validating");
+        const int status =
+            open_wim_(archive_path.wstring().c_str(), kOpenFlags, &wim, progress.native_function(), &progress);
+        if (progress.failed()) {
+            if (status == 0 && wim != nullptr) {
+                free_wim_(wim);
+            }
+            progress.rethrow_failure();
+        }
         if (status != 0 || wim == nullptr) {
             throw ArchiveError("failed to open standalone WIM archive: " + error_message(status));
         }
@@ -211,10 +265,13 @@ class WimRuntime final {
     // Purpose: Extract one validated WIM image into a private staging directory.
     // Inputs: `wim` is an open handle, `image` is one-based, and `target` is the staging root for that image.
     // Outputs: Writes staged files or throws with a wimlib diagnostic.
-    void extract_image(WIMStruct* wim, std::uint32_t image, const std::filesystem::path& target) const {
+    void extract_image(WIMStruct* wim, std::uint32_t image, const std::filesystem::path& target,
+                       WimProgressObserver& progress) const {
         constexpr int kExtractFlags =
             WIMLIB_EXTRACT_FLAG_NO_ACLS | WIMLIB_EXTRACT_FLAG_NORPFIX | WIMLIB_EXTRACT_FLAG_NO_ATTRIBUTES;
+        progress.set_phase("Decoding WIM image");
         const int status = extract_image_(wim, static_cast<int>(image), target.wstring().c_str(), kExtractFlags);
+        progress.rethrow_failure();
         if (status != 0) {
             throw ArchiveError("failed to stage WIM image: " + error_message(status));
         }
@@ -387,6 +444,7 @@ struct WimScanContext {
     std::uint32_t image = 0;
     bool multi_image = false;
     std::exception_ptr failure;
+    const ProgressCheckpoint* checkpoint = nullptr;
 };
 
 // Purpose: Record one validated WIM directory tree entry during wimlib iteration.
@@ -443,6 +501,9 @@ int wim_scan_callback(const wimlib_dir_entry* entry, void* user_context) noexcep
         if (entry == nullptr || context == nullptr) {
             throw ArchiveError("WIM scanner received an invalid callback");
         }
+        if (context->checkpoint != nullptr) {
+            invoke_archive_checkpoint(*context->checkpoint);
+        }
         record_wim_entry(*context, *entry);
         return 0;
     } catch (...) {
@@ -456,8 +517,10 @@ int wim_scan_callback(const wimlib_dir_entry* entry, void* user_context) noexcep
 // Purpose: Scan all WIM images and validate archive-wide paths before extraction starts.
 // Inputs: `runtime` dispatches wimlib calls and `archive_path` identifies the user-selected WIM archive.
 // Outputs: Returns validated metadata or throws on malformed, unsupported, or unsafe archive contents.
-WimMetadata scan_wim_metadata(const WimRuntime& runtime, const std::filesystem::path& archive_path) {
-    WimHandle wim(runtime, runtime.open_checked_wim(archive_path));
+WimMetadata scan_wim_metadata(const WimRuntime& runtime, const std::filesystem::path& archive_path,
+                              const ProgressCheckpoint& checkpoint, WimProgressObserver& progress) {
+    invoke_archive_checkpoint(checkpoint);
+    WimHandle wim(runtime, runtime.open_checked_wim(archive_path, progress));
     const auto info = runtime.info(wim.get());
     if (info.image_count == 0U) {
         throw ArchiveError("WIM archive contains no images");
@@ -471,11 +534,13 @@ WimMetadata scan_wim_metadata(const WimRuntime& runtime, const std::filesystem::
     std::vector<ArchivePathValidationEntry> validation_entries;
     const bool multi_image = info.image_count > 1U;
     for (std::uint32_t image = 1; image <= info.image_count; ++image) {
+        invoke_archive_checkpoint(checkpoint);
         WimScanContext context{
             .metadata = &metadata,
             .validation_entries = &validation_entries,
             .image = image,
             .multi_image = multi_image,
+            .checkpoint = &checkpoint,
         };
         const int status = runtime.iterate_image(wim.get(), image, wim_scan_callback, &context);
         if (context.failure) {
@@ -488,6 +553,7 @@ WimMetadata scan_wim_metadata(const WimRuntime& runtime, const std::filesystem::
     if (metadata.entries.empty()) {
         throw ArchiveError("WIM archive contains no extractable entries");
     }
+    invoke_archive_checkpoint(checkpoint);
     validate_archive_path_set(validation_entries);
     return metadata;
 }
@@ -520,7 +586,8 @@ void cleanup_wim_stage(const ReservedFilePublishTarget& stage) {
 // file size, and `overwrite` controls replacement. Outputs: Publishes the file atomically or throws after cleaning the
 // temporary publication target.
 void publish_staged_wim_file(const std::filesystem::path& source, const std::filesystem::path& target,
-                             std::uint64_t expected_size, bool overwrite) {
+                             std::uint64_t expected_size, bool overwrite, ProgressState& progress,
+                             const ProgressCallback& progress_callback) {
     const auto staged_source = pin_source_file(source);
     if (staged_source.size() != expected_size) {
         throw ArchiveError("staged WIM payload size does not match validated metadata: " +
@@ -540,6 +607,7 @@ void publish_staged_wim_file(const std::filesystem::path& source, const std::fil
         std::vector<char> buffer(kWimCopyBufferBytes);
         std::uint64_t copied = 0;
         while (copied < expected_size) {
+            publish_progress(progress, progress_callback);
             const auto remaining = expected_size - copied;
             const auto requested = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
             input.read(buffer.data(), static_cast<std::streamsize>(requested));
@@ -552,11 +620,13 @@ void publish_staged_wim_file(const std::filesystem::path& source, const std::fil
                 throw ArchiveError("failed to write temporary WIM extraction target: " + path_diagnostic_utf8(target));
             }
             copied += read;
+            progress.add_bytes(read);
         }
         output.close();
         if (!output) {
             throw ArchiveError("failed to finalize temporary WIM extraction target: " + path_diagnostic_utf8(target));
         }
+        publish_progress(progress, progress_callback);
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
@@ -572,12 +642,15 @@ void publish_staged_wim_file(const std::filesystem::path& source, const std::fil
 // Inputs: `runtime`, `archive_path`, and `metadata` identify the archive and image count; `stage` is the private root.
 // Outputs: Writes staged files below image-specific stage directories or throws on wimlib failure.
 void stage_wim_images(const WimRuntime& runtime, const std::filesystem::path& archive_path, const WimMetadata& metadata,
-                      const std::filesystem::path& stage) {
-    WimHandle wim(runtime, runtime.open_checked_wim(archive_path));
+                      const std::filesystem::path& stage, const ProgressCheckpoint& checkpoint,
+                      WimProgressObserver& progress) {
+    invoke_archive_checkpoint(checkpoint);
+    WimHandle wim(runtime, runtime.open_checked_wim(archive_path, progress));
     for (std::uint32_t image = 1; image <= metadata.image_count; ++image) {
+        invoke_archive_checkpoint(checkpoint);
         const auto image_stage = stage / ("image-" + std::to_string(image));
         create_verified_directories(image_stage);
-        runtime.extract_image(wim.get(), image, image_stage);
+        runtime.extract_image(wim.get(), image, image_stage, progress);
     }
 }
 
@@ -599,8 +672,7 @@ void publish_wim_entries(const WimMetadata& metadata, const std::filesystem::pat
         } else {
             const auto image_stage = stage / ("image-" + std::to_string(entry.image));
             const auto source = join_normalized_path(image_stage, entry.source_path);
-            publish_staged_wim_file(source, target, entry.size, overwrite);
-            progress.add_bytes(entry.size);
+            publish_staged_wim_file(source, target, entry.size, overwrite, progress, progress_callback);
         }
         progress.finish_entry();
         publish_progress(progress, progress_callback);
@@ -622,12 +694,15 @@ OperationStats extract_wim(const std::filesystem::path& archive_path, const std:
     }
     const auto archive_source = pin_source_file(archive_path);
     const auto& runtime = wim_runtime();
-    const auto metadata = scan_wim_metadata(runtime, archive_source.path());
+    WimProgressObserver native_progress(progress_callback);
+    const auto validation_checkpoint = make_borrowed_archive_validation_checkpoint(std::cref(progress_callback));
+    const auto metadata = scan_wim_metadata(runtime, archive_source.path(), validation_checkpoint, native_progress);
     create_verified_directories(destination);
     const auto stage = reserve_wim_stage(destination);
     bool stage_active = true;
     try {
-        stage_wim_images(runtime, archive_source.path(), metadata, stage.directory);
+        stage_wim_images(runtime, archive_source.path(), metadata, stage.directory, validation_checkpoint,
+                         native_progress);
         publish_wim_entries(metadata, destination, stage.directory, overwrite, progress_callback);
         cleanup_wim_stage(stage);
         stage_active = false;

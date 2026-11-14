@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/path_safety.hpp"
+#include "core/progress.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -32,9 +33,10 @@ constexpr ArchivePathEncoding cab_entry_path_encoding(std::uint16_t attributes) 
 std::string normalize_cab_entry_path(std::string raw_path);
 
 // Purpose: Parse and validate CAB metadata without decompressing file payloads.
-// Inputs: `archive_path` is a CAB file candidate.
+// Inputs: `archive_path` is a CAB file candidate. Optional checkpoints are borrowed
+// synchronously between metadata records; their original exceptions propagate.
 // Outputs: Returns validated file names/sizes; throws on malformed headers, spanning cabinets, unsafe paths, or
 // resource-limit violations.
-CabMetadata scan_cab_metadata(const std::filesystem::path& archive_path);
+CabMetadata scan_cab_metadata(const std::filesystem::path& archive_path, const ProgressCheckpoint& checkpoint = {});
 
 }  // namespace flitzzip

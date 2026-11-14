@@ -1,6 +1,7 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 #include "test_source_session.hpp"
+#include "test_stream_progress.hpp"
 
 #include "arc/arc_adapter.hpp"
 #include "core/archive_format.hpp"
@@ -159,7 +160,30 @@ void require_arc_rejection_before_output(const std::filesystem::path& archive, c
     REQUIRE_TRUE(!std::filesystem::exists(destination));
 }
 
+void check_arc_extraction_cancellation(bool validation) {
+    const auto root = test_temp_dir(validation ? "arc-validation-cancellation" : "arc-window-cancellation");
+    const auto archive = root / "payload.arc";
+    const auto expected = flitzzip_test::stream_cancellation_payload();
+    write_binary_file(
+        archive, make_arc_archive({ArcFixtureEntry{.name = "payload", .payload = {expected.begin(), expected.end()}}}));
+    if (validation) {
+        flitzzip_test::require_validation_cancellation(archive, root / "out", "payload", expected,
+                                                       &flitzzip::extract_arc);
+    } else {
+        flitzzip_test::require_stream_window_cancellation(archive, root / "out", "payload", expected,
+                                                          &flitzzip::extract_arc);
+    }
+}
+
 }  // namespace
+
+TEST_CASE(arc_extraction_validation_is_cancellable) {
+    check_arc_extraction_cancellation(true);
+}
+
+TEST_CASE(arc_extraction_payload_windows_are_cancellable) {
+    check_arc_extraction_cancellation(false);
+}
 
 // Purpose: Verify native ARC extraction for unpacked method-1 and method-2 files.
 // Inputs: A handcrafted ARC fixture with old and new unpacked entries.

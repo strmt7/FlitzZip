@@ -8,9 +8,10 @@ namespace flitzzip {
 
 // Purpose: Extract files from an LHA/LZH archive with FlitzZip path-safety checks.
 // Inputs: `archive_path` is an LHA/LZH archive, `destination` is the extraction root, `overwrite` allows existing
-// targets only when true, and `progress_callback` receives extraction progress snapshots. Outputs: Returns operation
-// statistics; throws on malformed LHA metadata, unsafe paths, symlink entries, resource-limit violations, refused
-// overwrite, decode failure, CRC mismatch, or verified-file publication failure.
+// targets only when true. `progress_callback` is synchronously borrowed through validation and bounded payload
+// windows; its original exception propagates, and a final checkpoint precedes each file's publication. Outputs: Returns
+// operation statistics; throws on malformed LHA metadata, unsafe paths, symlink entries, resource-limit violations,
+// refused overwrite, decode failure, CRC mismatch, or verified-file publication failure.
 OperationStats extract_lha(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                            bool overwrite, const ProgressCallback& progress_callback = {});
 

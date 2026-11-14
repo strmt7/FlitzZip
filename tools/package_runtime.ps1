@@ -36,6 +36,143 @@ function Assert-FlitzZipPackagedRuntime {
     }
 }
 
+# Snapshot declared absolute files under one payload root. Each digest is read
+# under a write-denying handle; duplicate declarations name one owned file.
+function Get-FlitzZipPayloadSnapshot {
+    param([Parameter(Mandatory = $true)][string]$PackageRoot,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$FilePath)
+    $ErrorActionPreference = 'Stop'
+    $root = Get-Item -LiteralPath $PackageRoot -Force
+    if (-not $root.PSIsContainer -or ($root.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Installed payload root is redirected or invalid.'
+    }
+    $rootPath = $root.FullName.TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $prefix = $rootPath + [IO.Path]::DirectorySeparatorChar
+    $payload = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::OrdinalIgnoreCase)
+    $checkedDirectories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in $FilePath) {
+        if ([string]::IsNullOrWhiteSpace($line) -or -not [IO.Path]::IsPathRooted($line)) {
+            throw 'Payload declaration contains an invalid file path.'
+        }
+        $path = [IO.Path]::GetFullPath($line)
+        if (-not $path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Payload declaration contains a file outside its root.'
+        }
+        $name = $path.Substring($prefix.Length).Replace('\', '/')
+        if ($payload.ContainsKey($name)) { continue }
+        $file = Get-Item -LiteralPath $path -Force
+        if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Declared payload is redirected or not a file.'
+        }
+        for ($parent = $file.Directory; $parent; $parent = $parent.Parent) {
+            if (-not $checkedDirectories.Add($parent.FullName)) { break }
+            if ($parent.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw 'Declared payload directory is redirected.'
+            }
+            if ($parent.FullName -ieq $rootPath) { break }
+        }
+        $stream = [IO.File]::Open($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try {
+            $length = $stream.Length
+            $digest = (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash.ToLowerInvariant()
+        } finally { $stream.Dispose() }
+        $payload.Add($name, [pscustomobject]@{ path = $file.FullName; length = $length; sha256 = $digest })
+    }
+    if (-not $payload.get_Count()) { throw 'Payload declaration contains no files.' }
+    return ,$payload
+}
+
+# Capture only CMake-declared files, not arbitrary staging contents. Retain this
+# snapshot through package publication and the installed/repair consumer checks.
+function Get-FlitzZipInstalledPayload {
+    param([Parameter(Mandatory = $true)][string]$StageRoot,
+        [Parameter(Mandatory = $true)][string]$InstallManifest)
+    $ErrorActionPreference = 'Stop'
+    return ,(Get-FlitzZipPayloadSnapshot -PackageRoot $StageRoot `
+        -FilePath @(Get-Content -LiteralPath $InstallManifest -Encoding UTF8))
+}
+
+# Verify every installer-owned file against captured staging bytes, independently
+# of executable/runtime admission. Unmanaged files are neither removed nor adopted.
+function Assert-FlitzZipInstalledPayload {
+    param([Parameter(Mandatory = $true)][string]$PackageRoot,
+        [Parameter(Mandatory = $true)][Collections.Generic.Dictionary[string, object]]$Payload)
+    $ErrorActionPreference = 'Stop'
+    $root = [IO.Path]::GetFullPath($PackageRoot)
+    $paths = @($Payload.get_Keys() | ForEach-Object { Join-Path $root $_ })
+    $actual = Get-FlitzZipPayloadSnapshot -PackageRoot $root -FilePath $paths
+    foreach ($name in $Payload.get_Keys()) {
+        if (-not $actual.ContainsKey($name) -or $actual[$name].length -ne $Payload[$name].length -or
+            $actual[$name].sha256 -cne $Payload[$name].sha256) {
+            throw "Installed payload differs from the staged release bytes: $name"
+        }
+    }
+}
+
+# Write the exact installed-file snapshot, including hidden files, through the
+# existing ZIP implementation. Only relative archive names enter the artifact;
+# diagnostics and any other files outside the snapshot cannot become payload.
+function New-FlitzZipPortablePackage {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Low')]
+    param([Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][Collections.Generic.Dictionary[string, object]]$Payload)
+    $ErrorActionPreference = 'Stop'
+    if (-not $PSCmdlet.ShouldProcess($Path, 'Create portable ZIP from the installed payload')) { return }
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create, $true)
+        try {
+            # CLR accessors bypass dictionary keys named Keys, Count or Values.
+            foreach ($name in @($Payload.get_Keys() | Sort-Object)) {
+                $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $Payload[$name].path,
+                    $name, [IO.Compression.CompressionLevel]::Optimal)
+            }
+        } finally { $archive.Dispose() }
+    } finally { $stream.Dispose() }
+}
+
+# Validate the newly generated ZIP against the pre-check install snapshot before
+# atomic publication. Extra, missing, duplicate or changed files fail the entire
+# candidate; no diagnostic filename or content category receives an exclusion.
+# Read byte identities directly from a completed ZIP. Installed-file qualification
+# retains this snapshot instead of CMake's manifest, which CPack can overwrite.
+function Get-FlitzZipPortablePayload {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $ErrorActionPreference = 'Stop'
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($Path)
+    try {
+        $payload = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($entry in $archive.Entries) {
+            $name = $entry.FullName.Replace('\', '/')
+            if ($name.EndsWith('/') -and $entry.Length -eq 0) { continue }
+            if ($name.EndsWith('/')) { throw "ZIP contains a nonempty directory: $name" }
+            if ($payload.ContainsKey($name)) { throw "ZIP contains a duplicate installed file: $name" }
+            $stream = $entry.Open()
+            try { $digest = (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash.ToLowerInvariant() }
+            finally { $stream.Dispose() }
+            $payload.Add($name, [pscustomobject]@{ length = $entry.Length; sha256 = $digest })
+        }
+        if (-not $payload.get_Count()) { throw 'ZIP declares no payload files.' }
+        return ,$payload
+    } finally { $archive.Dispose() }
+}
+
+# Check the complete ZIP identity against the pre-publication CMake snapshot.
+function Assert-FlitzZipPortablePayload {
+    param([Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][Collections.Generic.Dictionary[string, object]]$Payload)
+    $actual = Get-FlitzZipPortablePayload -Path $Path
+    foreach ($name in $actual.get_Keys()) {
+        if (-not $Payload.ContainsKey($name)) { throw "ZIP contains a file outside the install manifest: $name" }
+        if ($actual[$name].length -ne $Payload[$name].length) { throw "ZIP installed file length differs: $name" }
+        if ($actual[$name].sha256 -cne $Payload[$name].sha256) { throw "ZIP installed file bytes differ: $name" }
+    }
+    if ($actual.get_Count() -ne $Payload.get_Count()) { throw 'ZIP omits files from the install manifest.' }
+}
+
 # Run one native packaging command and reject failure before inspecting outputs.
 # The executable is selected by the pinned tool resolver; arguments remain an array.
 function Invoke-FlitzZipPackageTool {
@@ -46,6 +183,40 @@ function Invoke-FlitzZipPackageTool {
     }
     & $FilePath @Arguments
     if ($LASTEXITCODE -ne 0) { throw "${Operation} failed with exit code $LASTEXITCODE." }
+}
+
+# Exercise the actual portable archive in a fresh extraction, never the builder's
+# staging directory. Test receives package/workspace paths and owns no files after
+# returning. Its output or failure is preserved; extraction is removed in either case.
+function Invoke-FlitzZipPortableSmoke {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Low')]
+    param(
+        [Parameter(Mandatory = $true)][string]$ArchivePath,
+        [Parameter(Mandatory = $true)][string]$WorkRoot,
+        [Parameter(Mandatory = $true)][scriptblock]$Test
+    )
+    $ErrorActionPreference = 'Stop'
+    $root = Get-Item -LiteralPath $WorkRoot -Force -ErrorAction Stop
+    if (-not $root.PSIsContainer -or ($root.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Portable smoke parent is redirected or invalid.'
+    }
+    if (-not $PSCmdlet.ShouldProcess($ArchivePath, 'Extract and test the portable package')) { return }
+    $workspace = Join-Path $root.FullName ('portable-smoke-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $workspace -ErrorAction Stop | Out-Null
+    try {
+        $packageRoot = Join-Path $workspace 'package'
+        Expand-Archive -LiteralPath $ArchivePath -DestinationPath $packageRoot -ErrorAction Stop
+        & $Test $packageRoot $workspace
+    } finally {
+        $owned = Get-Item -LiteralPath $workspace -Force -ErrorAction Stop
+        $resolved = [IO.Path]::GetFullPath($owned.FullName)
+        if ($resolved -cne [IO.Path]::GetFullPath($workspace) -or
+            [IO.Path]::GetDirectoryName($resolved) -cne [IO.Path]::GetDirectoryName($workspace) -or
+            ($owned.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Refusing redirected portable smoke workspace cleanup.'
+        }
+        Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop
+    }
 }
 
 # Generate in a fresh owned directory, validate there, then atomically publish.

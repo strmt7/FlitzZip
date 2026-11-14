@@ -29,7 +29,8 @@ function Get-CMakeToolchainLock {
         }
         $records[$Matches[2]] = $Matches[1]
     }
-    $archive = 'cmake-4.4.5-windows-x86_64.zip'
+    $version = '4.5.0'
+    $archive = "cmake-$version-windows-x86_64.zip"
     $keys = @($archive, 'bin/cmake.exe', 'bin/cpack.exe', 'bin/ctest.exe',
         'Modules/CMakeCompilerABI.upstream.h', 'Modules/CMakeCompilerABI.guarded.h',
         'Modules/CMakeCompilerABI.previous.h')
@@ -37,7 +38,7 @@ function Get-CMakeToolchainLock {
         throw 'Pinned CMake provenance inventory is invalid.'
     }
     return [pscustomobject]@{
-        version = '4.4.5'
+        version = $version
         archive_sha256 = $records[$archive]
         executables_sha256 = [pscustomobject]@{
             'cmake.exe' = $records['bin/cmake.exe']
@@ -55,8 +56,10 @@ function Get-CMakeToolchainLock {
 # Outputs: Atomically adds a complete header guard, or rejects drift, links and interrupted publication.
 function Repair-CMakeCompilerAbiHeader {
     param([Parameter(Mandatory = $true)][string]$Install)
+    $lock = Get-CMakeToolchainLock
+    $moduleVersion = ([version]$lock.version).ToString(2)
     $directory = $Install
-    foreach ($part in @('share', 'cmake-4.4', 'Modules')) {
+    foreach ($part in @('share', "cmake-$moduleVersion", 'Modules')) {
         $directory = Join-Path $directory $part
         if (-not (Test-Path -LiteralPath $directory -PathType Container) -or
             ((Get-Item -LiteralPath $directory).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
@@ -64,7 +67,6 @@ function Repair-CMakeCompilerAbiHeader {
         }
     }
     $path = Join-Path $directory 'CMakeCompilerABI.h'
-    $lock = Get-CMakeToolchainLock
     $original = $lock.abi_header_original_sha256
     $repaired = $lock.abi_header_patched_sha256
     if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or

@@ -148,25 +148,19 @@ OperationStats extract_gzip_file(const std::filesystem::path& archive_path, cons
     if (!output) {
         throw ArchiveError("cannot create Gzip extraction target: " + path_diagnostic_utf8(target));
     }
-    std::array<char, kGzipBufferBytes> buffer{};
     std::uint64_t reported_payload_bytes = 0;
     for (;;) {
-        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        const auto bytes_read = input.gcount();
-        if (bytes_read > 0) {
-            output.write(buffer.data(), bytes_read);
-            if (!output) {
-                throw ArchiveError("failed to write Gzip extraction target: " + path_diagnostic_utf8(target));
-            }
+        std::size_t bytes_read = 0U;
+        try {
+            bytes_read = input.transfer_to(output, kGzipBufferBytes);
+        } catch (const std::ios_base::failure&) {
+            throw ArchiveError("failed to write Gzip extraction target: " + path_diagnostic_utf8(target));
         }
         const auto payload_read = input.compressed_payload_read_bytes();
         progress.add_bytes(payload_read - reported_payload_bytes);
         reported_payload_bytes = payload_read;
         publish_progress(progress, progress_callback);
-        if (input.bad()) {
-            throw ArchiveError("failed to read Gzip stream");
-        }
-        if (input.eof()) {
+        if (bytes_read == 0U) {
             break;
         }
     }

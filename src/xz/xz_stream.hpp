@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <istream>
@@ -23,6 +24,13 @@ class XzInputStream final : public std::istream {
     // Inputs: None.
     // Outputs: Throws if compressed payload validation fails.
     void finish();
+
+    // Write at most one owned decoded window, bounded by maximum_bytes. Zero
+    // means EOF (or a zero maximum); short positive results are not EOF. This
+    // does not update istream flags/gcount. Failed writes leave the window intact;
+    // failed stream state throws ios_base::failure, other exceptions propagate.
+    // No concurrent or reentrant source operation is permitted.
+    [[nodiscard]] std::size_t transfer_to(std::ostream& output, std::size_t maximum_bytes);
 
     // Purpose: Report compressed archive bytes consumed by the stream source.
     // Inputs: None.

@@ -50,7 +50,7 @@ It distinguishes reviewed practices from work not yet implemented or measured.
   publishes file descriptions, exact byte counts, and original MD5 digests.
   [Canterbury](https://corpus.canterbury.ac.nz/descriptions/) explains why
   corpus selection matters and why no small set represents every user file.
-  [Zstd's CLI manual](https://github.com/facebook/zstd/blob/dev/programs/zstd.1.md)
+  [Zstd's CLI manual](https://github.com/meta/zstd/blob/dev/programs/zstd.1.md)
   expressly warns that its in-memory benchmark depends on file content and
   uses a different measurement boundary from normal CLI I/O.
 

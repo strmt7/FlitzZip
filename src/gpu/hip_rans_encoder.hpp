@@ -16,11 +16,33 @@ struct RansEncodeWorkspaceRequirements {
     std::uint32_t slot_bytes;
 };
 
+// Covers every legal precision/context/segment-shift combination. Repeated
+// options are permitted within this bound and keep their requested priority.
+inline constexpr std::size_t kRansEncodeMaxCandidates = 9U * 9U * 5U;
+
+struct RansEncodeCandidate {
+    std::uint32_t precision;
+    std::uint32_t context_bits;
+    std::uint32_t segment_shift;
+
+    bool operator==(const RansEncodeCandidate&) const = default;
+};
+
+struct RansEncodeSearchResult {
+    std::vector<std::byte> payload;
+    std::size_t candidate_index;
+};
+
 // Allocation-free logical storage plan for a 1..16 MiB source. Charge host_bytes
 // before constructing an encoder; separately charge resident source, retained
 // winners, workers, callback captures and allocator bookkeeping. The operation
 // reserves its device scratch through the existing aggregate HIP budget.
 [[nodiscard]] RansEncodeWorkspaceRequirements rans_encode_workspace_requirements(std::size_t source_bytes);
+
+// Same device reservation as one encoder. Host planning additionally covers
+// bounded scheduling storage and two simultaneous frames during winner selection.
+// Charge this plan instead of the single-trial plan before using encode_best().
+[[nodiscard]] RansEncodeWorkspaceRequirements rans_encode_search_workspace_requirements(std::size_t source_bytes);
 
 // One thread-affine encoder borrows immutable resident source bytes and live
 // telemetry on the calling thread's current device. Preceding writes must be
@@ -57,6 +79,18 @@ class RansEncoder {
     [[nodiscard]] std::optional<std::vector<std::byte>> encode(std::uint32_t precision, std::uint32_t context_bits,
                                                                std::uint32_t segment_shift, std::size_t exclusive_limit,
                                                                const std::function<void()>& checkpoint = {});
+
+    // Search at most kRansEncodeMaxCandidates explicit options, all validated
+    // before work. Returns the smallest strict improvement over exclusive_limit;
+    // equal sizes retain the earliest requested index, independently of execution
+    // order. Seed with the first option, then group remaining trials for model
+    // reuse. Exact duplicate options share one trial with the earliest requested
+    // priority. Returned storage survives subsequent trials. Empty search observes
+    // its checkpoint without device work; failures propagate without a partial
+    // winner or CPU retry. Caller charges the search workspace plan above.
+    [[nodiscard]] std::optional<RansEncodeSearchResult> encode_best(std::span<const RansEncodeCandidate> candidates,
+                                                                    std::size_t exclusive_limit,
+                                                                    const std::function<void()>& checkpoint = {});
     void close_checked();
 
   private:

@@ -207,13 +207,19 @@ workers and queue depth times the existing four-worker per-window ceiling.
 Each context allowance includes the identity-pinned Zstandard 1.5.7
 `ZSTD_estimateCCtxSize` bound, trial bytes beyond raw, and miniz state plus a
 short-tail trial that can coexist with retained Zstandard storage. The
-[upstream estimate contract](https://github.com/facebook/zstd/blob/v1.5.7/lib/zstd.h)
+[upstream estimate contract](https://github.com/meta/zstd/blob/v1.5.7/lib/zstd.h)
 covers all levels up to the requested maximum for dictionary-free,
 single-threaded one-shot calls. It excludes streaming. This experimental API
 is accepted only through the already version- and hash-pinned DLL.
 
-Optional-HIP small-file batches reserve their bounded CPU fallback output once
-and admit an additional member/output overlap and batch metadata allowance.
+Optional-HIP small-file batches retain conservative CPU output, member/output
+overlap and batch-metadata allowances. The serial CPU batch encoder checksums each
+original block before compacting its completed representation into the owned input
+allocation. A selected block never grows, so the dense output prefix cannot touch
+the next unread block; overlapping raw moves use `memmove`. Nonempty output takes
+that allocation, while all-fill output retains no payload storage. The allocation
+and byte-identity controls establish removal of a second source-sized accumulator,
+not a measured speedup. Memory admission remains conservative and unchanged.
 Forced-CPU production and RAM validation share the native estimator; required-HIP
 operations do not claim CPU compression workspace or allow hidden CPU encoding.
 Explicit queue requests beyond the complete estimate continue to fail before
@@ -268,7 +274,7 @@ table is 128 MiB. Other codec buffers are additional; these table settings are
 not a claim of a 256 MiB total-process cap. The window matches the existing
 bounded decompressor. Single-stream operation and checksums remain unchanged.
 The stable parameter meanings were checked against the
-[pinned Zstandard 1.5.7 header](https://github.com/facebook/zstd/blob/v1.5.7/lib/zstd.h).
+[pinned Zstandard 1.5.7 header](https://github.com/meta/zstd/blob/v1.5.7/lib/zstd.h).
 
 Tests cover every product level, stream lifetime, and an 8 MiB deterministic
 long-distance-repeat workload. Higher effort does not guarantee the smallest

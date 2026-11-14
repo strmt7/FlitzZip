@@ -1,6 +1,7 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 #include "test_source_session.hpp"
+#include "test_stream_progress.hpp"
 
 #include "arj/arj_adapter.hpp"
 #include "core/archive_format.hpp"
@@ -208,7 +209,32 @@ void require_arj_archive_rejected(const std::vector<unsigned char>& bytes, const
     REQUIRE_EQ(count_regular_files(output), 1U);
 }
 
+void check_arj_extraction_cancellation(bool validation) {
+    const auto root = test_temp_dir(validation ? "arj-validation-cancellation" : "arj-window-cancellation");
+    const auto archive = root / "payload.arj";
+    const auto expected = flitzzip_test::stream_cancellation_payload();
+    write_binary_file(
+        archive, make_arj_archive({ArjFixtureEntry{.name = "payload", .payload = {expected.begin(), expected.end()}}}));
+    if (validation) {
+        // Pass main/local header and extension checkpoints before cancelling
+        // inside the large stored-payload CRC scan.
+        flitzzip_test::require_validation_cancellation(archive, root / "out", "payload", expected,
+                                                       &flitzzip::extract_arj, 7U);
+    } else {
+        flitzzip_test::require_stream_window_cancellation(archive, root / "out", "payload", expected,
+                                                          &flitzzip::extract_arj);
+    }
+}
+
 }  // namespace
+
+TEST_CASE(arj_extraction_validation_is_cancellable) {
+    check_arj_extraction_cancellation(true);
+}
+
+TEST_CASE(arj_extraction_payload_windows_are_cancellable) {
+    check_arj_extraction_cancellation(false);
+}
 
 // Purpose: Verify native ARJ extraction for stored file and directory entries.
 // Inputs: A handcrafted ARJ fixture with method-0 regular files and one directory.

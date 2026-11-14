@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'flitzzip_verification.psm1') -Force
+. (Join-Path $PSScriptRoot 'native_process_arguments.ps1')
 
 # Purpose: Reject missing hosted routing, policy or backend qualification evidence.
 # Inputs: Condition describes an expected invariant; Message identifies the affected boundary.
@@ -46,6 +47,103 @@ Assert-NativeCi (Test-NativeCTestFailFast (Get-Content (Join-Path $PSScriptRoot 
 Assert-NativeCi (Test-NativeCTestFailFast '& $ctestExe --output-on-failure --stop-on-failure') 'valid CTest fail-fast control'
 Assert-NativeCi (-not (Test-NativeCTestFailFast "# --stop-on-failure`n& `$ctestExe --output-on-failure")) 'comment cannot replace CTest fail-fast behavior'
 Assert-NativeCi (-not (Test-NativeCTestFailFast 'Write-Output "& $ctestExe --stop-on-failure"')) 'displayed command cannot replace CTest execution'
+
+# This partial source check is paired with live public archive-operation smoke.
+function Test-NativeKernelProbeContract {
+    param([string]$Source)
+    $tokens = $null
+    $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($Source, [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { return $false }
+    $functions = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Invoke-KernelBoundaryProbe'
+    }, $true))
+    if ($functions.Count -ne 1) { return $false }
+    $parameters = @($functions[0].Body.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -ceq 'Command' })
+    if ($parameters.Count -ne 1) { return $false }
+    $sets = @($parameters[0].Attributes | Where-Object { $_.TypeName.FullName -ceq 'ValidateSet' })
+    if ($sets.Count -ne 1) { return $false }
+    $values = @($sets[0].PositionalArguments)
+    if ($values.Count -ne 4 -or @($values | Where-Object {
+                $_ -isnot [Management.Automation.Language.StringConstantExpressionAst]
+            }).Count) { return $false }
+    $verbs = @($values | ForEach-Object { $_.Value })
+    foreach ($expected in @('dependency-check', 'compress', 'verify', 'extract')) {
+        if (@($verbs | Where-Object { $_ -ceq $expected }).Count -ne 1) { return $false }
+    }
+    $measured = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.StringConstantExpressionAst] -and
+        $node.Value -match '^\s*(memory-benchmark|benchmark-suite)(\s|$)'
+    }, $true))
+    return $measured.Count -eq 0
+}
+
+$kernelProbeSource = Get-Content (Join-Path $PSScriptRoot 'test_hip_kernel_boundary.ps1') -Raw
+$kernelVerbs = "[ValidateSet('dependency-check', 'compress', 'verify', 'extract')]"
+Assert-NativeCi (Test-NativeKernelProbeContract $kernelProbeSource) 'kernel smoke permits ordinary operations only'
+Assert-NativeCi (-not (Test-NativeKernelProbeContract $kernelProbeSource.Replace($kernelVerbs, ''))) 'missing command admission is rejected'
+Assert-NativeCi (-not (Test-NativeKernelProbeContract $kernelProbeSource.Replace($kernelVerbs,
+            "[ValidateSet('dependency-check', 'compress', 'verify', 'extract', 'memory-benchmark')]"))) 'measurement verb cannot enter kernel smoke'
+Assert-NativeCi (-not (Test-NativeKernelProbeContract ($kernelProbeSource + [Environment]::NewLine +
+            '& $cli ''memory-benchmark --force-cpu'''))) 'direct measurement cannot bypass probe admission'
+Assert-NativeCi (Test-NativeKernelProbeContract ($kernelProbeSource + [Environment]::NewLine +
+            '# memory-benchmark is forbidden here')) 'comments do not masquerade as executed commands'
+
+# Native parsing is independent of the quoting implementation. Release shell
+# storage even if managed allocation or conversion fails.
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+namespace FlitzZip.Tests {
+    public static class NativeArgumentOracle {
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr CommandLineToArgvW(string commandLine, out int count);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LocalFree(IntPtr block);
+        public static string[] Parse(string commandLine) {
+            int count;
+            IntPtr block = CommandLineToArgvW(commandLine, out count);
+            if (block == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
+            try {
+                string[] result = new string[count];
+                for (int index = 0; index < count; ++index)
+                    result[index] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(block, index * IntPtr.Size));
+                return result;
+            } finally { LocalFree(block); }
+        }
+    }
+}
+'@
+
+# The unquoted control must lose identity on the same vectors that production
+# quoting preserves. No product build or workload runs.
+function Test-NativeArgumentRoundTrip {
+    param([scriptblock]$Quote)
+    $values = @('', 'simple', 'two words', ('tab' + [char]9 + 'value'), 'Q:\',
+        'Q:\trailing path\', '"quoted"', 'slashes\\"quote', '\\server\share\',
+        ('Unicode-' + [char]0x03BB + '-' + [char]0x6F22), 'Q:\backslashes\\')
+    $arguments = @($values | ForEach-Object { & $Quote $_ })
+    $parsed = [FlitzZip.Tests.NativeArgumentOracle]::Parse('probe.exe ' + ($arguments -join ' '))
+    if ($parsed.Count -ne $values.Count + 1) { return $false }
+    for ($index = 0; $index -lt $values.Count; ++$index) {
+        if ($parsed[$index + 1] -cne $values[$index]) { return $false }
+    }
+    return $true
+}
+Assert-NativeCi (Test-NativeArgumentRoundTrip { param($value) ConvertTo-FlitzZipWindowsArgument -Value $value }) 'native argument bytes survive shared quoting'
+Assert-NativeCi (-not (Test-NativeArgumentRoundTrip { param($value) $value })) 'unquoted control loses argument identity'
+$nullArgumentRejected = $false
+try { $null = ConvertTo-FlitzZipWindowsArgument -Value ('left' + [char]0 + 'right') }
+catch {
+    if ($_.Exception.Message -notlike '*null character*') { throw }
+    $nullArgumentRejected = $true
+}
+Assert-NativeCi $nullArgumentRejected 'embedded null is rejected before command creation'
 
 $script:NativeCiWorkflowRules = @{}
 

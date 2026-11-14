@@ -1,6 +1,7 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 #include "test_source_session.hpp"
+#include "test_stream_progress.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -331,6 +332,24 @@ TEST_CASE(lzma_known_size_rejects_every_truncation) {
                 std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{}), 1);
         }
     }
+}
+
+// Independent marked and unmarked SDK frames must both observe cancellation
+// between output windows, preserve caller data and allow complete extraction.
+TEST_CASE(lzma_extract_cancellation_between_output_windows) {
+    const auto root = test_temp_dir("lzma-window-cancellation");
+    const auto archive = root / "payload.lzma";
+    std::string expected;
+    constexpr std::string_view pattern = "0123456789abcdef\n";
+    while (expected.size() < 131072U) {
+        expected.append(pattern.substr(0U, std::min<std::size_t>(pattern.size(), 131072U - expected.size())));
+    }
+    write_fixture(archive, kBoundary131072MarkedLzma);
+    flitzzip_test::require_stream_window_cancellation(archive, root / "marked", "payload", expected,
+                                                      &flitzzip::extract_lzma_file);
+    write_fixture(archive, kBoundary131072UnmarkedLzma);
+    flitzzip_test::require_stream_window_cancellation(archive, root / "unmarked", "payload", expected,
+                                                      &flitzzip::extract_lzma_file);
 }
 
 // Purpose: Verify known-size completion after multiple decoder calls and at an exact buffer boundary.

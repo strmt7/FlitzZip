@@ -869,6 +869,10 @@ TEST_CASE(flzip_cpu_efforts_preserve_complete_frame_winners) {
             options.compression_level = effort;
             const auto encoded = flitzzip::encode_chunk(input, options);
             REQUIRE_EQ(encoded.payload, best);
+            // Search can replace a large early winner with a much smaller frame.
+            // Keep no more payload capacity than fresh dense assembly would own.
+            const auto compact_capacity = std::vector<std::byte>(encoded.payload.size()).capacity();
+            REQUIRE_TRUE(encoded.payload.capacity() <= compact_capacity);
             REQUIRE_EQ(encoded.blocks.size(), 1U);
             REQUIRE_EQ(encoded.blocks.front().kind,
                        best.size() < input.size() ? flitzzip::BlockKind::CpuZstd : flitzzip::BlockKind::Raw);
@@ -1255,6 +1259,143 @@ TEST_CASE(flzip_default_block_size_roundtrip) {
     std::filesystem::remove_all(root);
 }
 
+// Derive complete native CPU frame bytes directly from the upstream codecs,
+// independently of FlitzZip's candidate selection, chunking and archive writer.
+// Uniform blocks have no payload; strict comparisons retain earlier ties. The
+// control records whether discarding lower-effort winners would increase size.
+std::vector<std::byte> cpu_archive_effort_frame_oracle(std::span<const std::byte> input, int maximum_effort,
+                                                       bool& latest_only_loses) {
+    if (input.empty() || std::ranges::all_of(input, [&](auto value) { return value == input.front(); })) {
+        return {};
+    }
+    std::vector<std::byte> best(input.begin(), input.end());
+    const auto& zstd = flitzzip::zstd_runtime();
+    const bool full_block = input.size() >= 4096U;
+    std::vector<std::byte> trial(full_block ? zstd.block_compress_bound(input.size())
+                                            : mz_compressBound(static_cast<mz_ulong>(input.size())));
+    for (int effort = 1; effort <= maximum_effort; ++effort) {
+        auto written = trial.size();
+        if (full_block) {
+            written = zstd.compress_block(trial.data(), trial.size(), input.data(), input.size(), effort);
+            REQUIRE_TRUE(!zstd.is_error(written));
+        } else {
+            auto available = static_cast<mz_ulong>(trial.size());
+            REQUIRE_EQ(mz_compress2(reinterpret_cast<unsigned char*>(trial.data()), &available,
+                                    reinterpret_cast<const unsigned char*>(input.data()),
+                                    static_cast<mz_ulong>(input.size()), effort),
+                       MZ_OK);
+            written = available;
+        }
+        REQUIRE_TRUE(written <= trial.size());
+        latest_only_loses |= std::min(written, input.size()) > best.size();
+        if (written < best.size()) {
+            best.assign(trial.begin(), trial.begin() + static_cast<std::ptrdiff_t>(written));
+        }
+    }
+    return best;
+}
+
+// One small fixed fixture crosses Zstandard, raw, fill and short Deflate frames.
+// No corpus selection, timing or performance claim is derived from these bytes.
+std::vector<std::byte> cpu_archive_effort_fixture() {
+    constexpr std::size_t block_bytes = 65536U;
+    std::vector<std::byte> input(3U * block_bytes + 511U, std::byte{0x5A});
+    std::uint32_t state = 0x917DD82FU;
+    for (std::size_t index = 0U; index < 2U * block_bytes; ++index) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        input[index] = static_cast<std::byte>(index < block_bytes ? state & 15U : state & 255U);
+    }
+    for (std::size_t index = 3U * block_bytes; index < input.size(); ++index) {
+        input[index] = static_cast<std::byte>('a' + index % 7U);
+    }
+    return input;
+}
+
+// Compare actual complete archives with independent frame bytes and fixed wire
+// overhead at every effort, across two chunk/worker policies. Empty/tiny entries,
+// per-file block boundaries and exact restored bytes must survive both policies.
+TEST_CASE(flzip_cpu_archive_efforts_preserve_complete_size_across_chunk_boundaries) {
+    ScopedTestDirectory cleanup{test_temp_dir("cpu-archive-effort")};
+    const auto& root = cleanup.path;
+    const std::array<std::string, 3> names{"blocks.bin", "empty.bin", "tiny.bin"};
+    const std::array<std::vector<std::byte>, 3> inputs{cpu_archive_effort_fixture(),
+                                                       {},
+                                                       {std::byte{'a'}, std::byte{'b'}, std::byte{'c'}, std::byte{'d'},
+                                                        std::byte{'e'}, std::byte{'f'}, std::byte{'g'}}};
+    std::vector<std::filesystem::path> sources;
+    for (std::size_t file = 0U; file < names.size(); ++file) {
+        sources.push_back(root / names[file]);
+        std::ofstream output(sources.back(), std::ios::binary);
+        output.write(reinterpret_cast<const char*>(inputs[file].data()),
+                     static_cast<std::streamsize>(inputs[file].size()));
+        REQUIRE_TRUE(output.good());
+    }
+    // Wire overhead: 12-byte index header, 24-byte footer, three 35-byte
+    // entry records plus UTF-8 names, and five 18-byte block descriptors.
+    const std::uint64_t framing = 12U + 24U + 3U * 35U + 5U * 18U + 10U + 9U + 8U;
+    constexpr std::uint32_t block_bytes = 65536U;
+    bool latest_only_loses = false;
+    for (const auto chunk_blocks : {1U, 2U}) {
+        auto previous_size = std::numeric_limits<std::uint64_t>::max();
+        for (int effort = 1; effort <= 9; ++effort) {
+            std::vector<std::byte> expected_payload;
+            for (const auto& input : inputs) {
+                for (std::size_t offset = 0U; offset < input.size(); offset += block_bytes) {
+                    const auto block =
+                        std::span(input).subspan(offset, std::min<std::size_t>(block_bytes, input.size() - offset));
+                    const auto frame = cpu_archive_effort_frame_oracle(block, effort, latest_only_loses);
+                    expected_payload.insert(expected_payload.end(), frame.begin(), frame.end());
+                }
+            }
+            flitzzip::CompressOptions options;
+            options.force_cpu = true;
+            options.gpu_required = false;
+            options.block_size = block_bytes;
+            options.chunk_size = chunk_blocks * block_bytes;
+            options.worker_count = chunk_blocks;
+            options.max_inflight_chunks = chunk_blocks;
+            options.compression_level = effort;
+            const auto archive = root / "effort.flzip";
+            const auto stats = flitzzip::compress_flzip(sources, archive, options);
+            const auto expected_size = expected_payload.size() + framing;
+            REQUIRE_EQ(stats.output_bytes, expected_size);
+            REQUIRE_EQ(std::filesystem::file_size(archive), expected_size);
+            REQUIRE_TRUE(stats.output_bytes <= previous_size);
+            REQUIRE_TRUE(!stats.gpu_used);
+            previous_size = stats.output_bytes;
+            {
+                std::ifstream file(archive, std::ios::binary);
+                std::vector<std::byte> payload(expected_payload.size());
+                file.read(reinterpret_cast<char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
+                REQUIRE_EQ(static_cast<std::size_t>(file.gcount()), payload.size());
+                REQUIRE_EQ(payload, expected_payload);
+            }
+            flitzzip::ExtractOptions extract;
+            extract.force_cpu = true;
+            extract.gpu_required = false;
+            extract.block_size = block_bytes;
+            extract.chunk_size = chunk_blocks * block_bytes;
+            extract.worker_count = chunk_blocks;
+            extract.max_inflight_chunks = chunk_blocks;
+            const auto restored = root / "restored";
+            (void)flitzzip::extract_flzip(archive, restored, extract);
+            for (std::size_t file = 0U; file < names.size(); ++file) {
+                std::ifstream input(restored / names[file], std::ios::binary);
+                REQUIRE_TRUE(input.is_open());
+                const std::string bytes(std::istreambuf_iterator<char>(input), {});
+                REQUIRE_EQ(std::as_bytes(std::span(bytes)).size(), inputs[file].size());
+                REQUIRE_TRUE(std::ranges::equal(std::as_bytes(std::span(bytes)), inputs[file]));
+            }
+            std::filesystem::remove_all(restored);
+            std::filesystem::remove(archive);
+        }
+    }
+    REQUIRE_TRUE(latest_only_loses);
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Verify the production default compression level is balanced, not fastest-only.
 // Inputs: A repetitive temporary payload compressed with explicit level 1 and default options.
 // Outputs: Default compression must not produce a larger archive than explicit fastest mode.
@@ -1521,7 +1662,7 @@ TEST_CASE(flzip_cpu_pattern_expansion_boundaries) {
 // Purpose: Measure public CPU decoding of bounded version-four pattern blocks without filesystem writes.
 // Inputs: An explicit environment opt-in and eight deterministic 16 MiB pattern blocks.
 // Outputs: Prints a median decode time only after byte-exact validation; never asserts a timing threshold.
-TEST_CASE(flzip_cpu_pattern_decode_benchmark_opt_in) {
+TEST_CASE(flzip_cpu_pattern_decode_benchmark_opt_in, TestExecutionRole::Measurement) {
     wchar_t enabled[2]{};
     if (GetEnvironmentVariableW(L"FLITZZIP_PATTERN_CPU_BENCHMARK", enabled, 2U) != 1U || enabled[0] != L'1') {
         return;

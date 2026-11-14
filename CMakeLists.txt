@@ -1120,6 +1120,18 @@ if(FLITZZIP_BUILD_TESTS)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_runtime_manifest.cmake")
   set_tests_properties(flitzzip_runtime_manifest_contracts
                        PROPERTIES TIMEOUT 15 LABELS correctness)
+  set(_inventory_contract_dir "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake")
+  add_test(
+    NAME flitzzip_native_executable_inventory_contracts
+    COMMAND
+      "${CMAKE_COMMAND}" "-DREPO_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+      "-DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/native-inventory"
+      "-DTEST_GENERATOR=${CMAKE_GENERATOR}"
+      "-DTEST_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
+      "-DTEST_TOOLSET=${CMAKE_GENERATOR_TOOLSET}" -P
+      "${_inventory_contract_dir}/test_native_executable_inventory.cmake")
+  set_tests_properties(flitzzip_native_executable_inventory_contracts
+                       PROPERTIES TIMEOUT 250 LABELS correctness)
   if(WIN32)
     set(FLITZZIP_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
     include(cmake/ZstdTests.cmake)
@@ -1144,8 +1156,8 @@ if(FLITZZIP_BUILD_FUZZERS)
                              PRIVATE FLITZZIP_ENABLE_HIP=0)
   target_compile_options(flitzzip_rans_block_fuzzer
                          PRIVATE -fsanitize=fuzzer,address,undefined)
-  target_link_options(flitzzip_rans_block_fuzzer
-                      PRIVATE -fsanitize=fuzzer,address,undefined)
+  target_link_options(flitzzip_rans_block_fuzzer PRIVATE
+                      -fsanitize=fuzzer,address,undefined)
 
   add_executable(flitzzip_path_safety_fuzzer fuzz/path_safety_fuzzer.cpp
                                              src/core/path_safety.cpp)
@@ -1345,3 +1357,6 @@ set(CPACK_FLITZZIP_PACKAGE_VERSION "${FLITZZIP_PACKAGE_VERSION}")
 set(CPACK_PROJECT_CONFIG_FILE
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FlitzZipMsiVersion.cmake")
 include(CPack)
+
+include(cmake/NativeExecutableInventory.cmake)
+flitzzip_write_native_executable_inventory()

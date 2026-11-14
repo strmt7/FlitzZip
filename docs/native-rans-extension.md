@@ -179,6 +179,43 @@ reaches the available budget. A trial that survives the bound must still
 finish and beat the previous winner after all framing is counted. Equal sizes
 retain the previous representation and its minimum archive version.
 
+### Bounded candidate search
+
+The private `RansEncoder::encode_best` operation searches an explicit set of at
+most 405 candidates, covering the full legal precision/context/segment-shift
+matrix. Candidate storage remains borrowed, live and immutable throughout the
+call, including checkpoints. Validate every option before starting device work.
+
+Evaluate the first requested candidate before grouping the remaining trials by
+their reusable statistics and model identity. This establishes an initial size
+bound while avoiding repeated normalization when unconditional models share a
+precision across segment shifts. The result must equal the smallest complete
+frame in the requested set; equal sizes retain the earliest requested index.
+Execution order must not change that priority. An earlier requested candidate
+evaluated later may therefore tie a provisional winner, while still remaining
+strictly below the caller's original incumbent budget.
+
+Exact duplicate precision/context/segment-shift triples share one device trial.
+Compact the bounded schedule before execution, retaining the earliest requested
+representative, including repetitions of the seed. Every supplied option must
+still pass validation. This removes redundant encoding without changing the
+possible payloads or winner priority; it needs no additional scheduling allocation.
+Checkpoints observe executed trials rather than a promised count of proposals.
+Independent fixed-input controls compare complete payloads, requested winner
+indices, kernel launches and transfer bytes with explicitly unique cohorts.
+
+Use `rans_encode_search_workspace_requirements` before constructing the owner
+for this operation. Its host estimate includes bounded ordering storage and two
+simultaneous candidate frames during replacement; device storage is shared with
+the single-trial encoder. Charge other retained winners and borrowed source
+owners separately. Errors and cancellation discard the partial search result
+and propagate through the existing HIP owner, with no CPU retry.
+
+This operation returns private frames. It does not register an archive kind,
+enable the product writer or replace the adoption criteria below. Fixed-input
+kernel-call counts can qualify avoided device work; they do not establish a
+throughput improvement or representative compression advantage.
+
 ## Production integration boundaries
 
 Integrate through the existing archive and HIP owners rather than retaining a

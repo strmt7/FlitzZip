@@ -6,6 +6,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'native_process_arguments.ps1')
 if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
@@ -20,31 +21,6 @@ if (-not (Test-Path -LiteralPath $testRunner)) {
     throw "Native fixture test binary not found. Run tools/build.ps1 first."
 }
 
-# Purpose: Preserve one exact argument through the Windows CRT command-line parser.
-# Inputs: Value is a possibly empty argument, including spaces, quotes, or trailing backslashes.
-# Outputs: Returns a correctly quoted ProcessStartInfo.Arguments component.
-function ConvertTo-MatrixArgument {
-    param([AllowEmptyString()][string]$Value)
-
-    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
-    $builder = [System.Text.StringBuilder]::new()
-    [void]$builder.Append('"')
-    $slashes = 0
-    foreach ($char in $Value.ToCharArray()) {
-        if ($char -eq '\') { ++$slashes; continue }
-        if ($char -eq '"') {
-            [void]$builder.Append(('\' * ($slashes * 2 + 1)))
-        } elseif ($slashes -gt 0) {
-            [void]$builder.Append(('\' * $slashes))
-        }
-        [void]$builder.Append($char)
-        $slashes = 0
-    }
-    if ($slashes -gt 0) { [void]$builder.Append(('\' * ($slashes * 2))) }
-    [void]$builder.Append('"')
-    return $builder.ToString()
-}
-
 # Purpose: Execute one matrix command without leaking its native exit code to the host shell.
 # Inputs: FilePath/Arguments select the executable; optional fixture paths select export and working directory.
 # Outputs: Returns exit code and captured lines; throws on launch failure or the two-minute deadline.
@@ -53,7 +29,7 @@ function Invoke-MatrixProcess {
 
     $start = [System.Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $FilePath
-    $start.Arguments = (($Arguments | ForEach-Object { ConvertTo-MatrixArgument -Value $_ }) -join ' ')
+    $start.Arguments = (($Arguments | ForEach-Object { ConvertTo-FlitzZipWindowsArgument -Value $_ }) -join ' ')
     $start.WorkingDirectory = if ($WorkingDirectory) { $WorkingDirectory } else { $repo }
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true

@@ -2,15 +2,19 @@
 # Inputs: Existing package and an allowlisted table. Outputs: String-valued row dictionaries; releases all COM owners.
 function Get-MsiTable {
     param([Parameter(Mandatory = $true)][string]$Path,
-        [ValidateSet('Property', 'Upgrade', 'InstallExecuteSequence', 'Registry', 'LaunchCondition', 'CustomAction', 'Binary')][string]$Table)
+        [ValidateSet('Property', 'Upgrade', 'InstallExecuteSequence', 'InstallUISequence', 'Registry', 'LaunchCondition',
+            'CustomAction', 'Binary', 'AppSearch', 'RegLocator')][string]$Table)
     $columns = @(switch ($Table) {
         'Property' { @('Property', 'Value') }
         'Upgrade' { @('UpgradeCode', 'VersionMin', 'VersionMax', 'Language', 'Attributes', 'Remove', 'ActionProperty') }
         'InstallExecuteSequence' { @('Action', 'Condition', 'Sequence') }
+        'InstallUISequence' { @('Action', 'Condition', 'Sequence') }
         'Registry' { @('Registry', 'Root', 'Key', 'Name', 'Value', 'Component_') }
         'LaunchCondition' { @('Condition', 'Description') }
         'CustomAction' { @('Action', 'Type', 'Source', 'Target') }
         'Binary' { @('Name') }
+        'AppSearch' { @('Property', 'Signature_') }
+        'RegLocator' { @('Signature_', 'Root', 'Key', 'Name', 'Type') }
     })
     $installer = $database = $view = $record = $null
     try {
@@ -36,6 +40,45 @@ function Get-MsiTable {
         foreach ($owner in @($record, $view, $database, $installer)) {
             if ($owner) { $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($owner) }
         }
+    }
+}
+
+# Published per-machine upgrades must recover the previous chosen directory before
+# either interactive or silent costing, then register the resolved location for
+# the next direct upgrade. Inspect the linked MSI tables, not generated XML text.
+function Assert-MsiInstallLocationContract {
+    param([Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$RelatedProperty)
+    $search = @(Get-MsiTable -Path $Path -Table AppSearch | Where-Object Property -CEQ 'INSTALL_ROOT')
+    $locators = @(Get-MsiTable -Path $Path -Table RegLocator)
+    if ($search.Count -ne 1) { throw 'MSI install location requires one linked registry search.' }
+    $locator = @($locators | Where-Object Signature_ -CEQ $search[0].Signature_)
+    $expectedKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\[$RelatedProperty]"
+    if ($locator.Count -ne 1 -or $locator[0].Root -cne '2' -or $locator[0].Type -cne '18' -or
+        $locator[0].Key -cne $expectedKey -or $locator[0].Name -cne 'InstallLocation') {
+        throw 'MSI install location must read the related x64 machine product registration.'
+    }
+    foreach ($table in @('InstallUISequence', 'InstallExecuteSequence')) {
+        $sequence = @{}
+        foreach ($row in @(Get-MsiTable -Path $Path -Table $table)) { $sequence[$row.Action] = $row }
+        foreach ($action in @('FindRelatedProducts', 'AppSearch', 'CostInitialize')) {
+            if (-not $sequence.ContainsKey($action) -or [int]$sequence[$action].Sequence -le 0 -or
+                $sequence[$action].Condition -cne '') {
+                throw 'MSI install location requires unconditional detection and search before costing.'
+            }
+        }
+        if ([int]$sequence.FindRelatedProducts.Sequence -ge [int]$sequence.AppSearch.Sequence -or
+            [int]$sequence.AppSearch.Sequence -ge [int]$sequence.CostInitialize.Sequence) {
+            throw 'MSI install location requires unconditional detection and search before costing.'
+        }
+    }
+    $setter = @(Get-MsiTable -Path $Path -Table CustomAction | Where-Object Source -CEQ 'ARPINSTALLLOCATION')
+    if ($setter.Count -ne 1 -or $setter[0].Type -cne '51' -or $setter[0].Target -cne '[INSTALL_ROOT]' -or
+        -not $sequence.ContainsKey($setter[0].Action) -or -not $sequence.ContainsKey('CostFinalize') -or
+        -not $sequence.ContainsKey('InstallValidate') -or $sequence[$setter[0].Action].Condition -cne '' -or
+        [int]$sequence[$setter[0].Action].Sequence -le [int]$sequence.CostFinalize.Sequence -or
+        [int]$sequence[$setter[0].Action].Sequence -ge [int]$sequence.InstallValidate.Sequence) {
+        throw 'MSI install location must publish the resolved directory after costing.'
     }
 }
 
@@ -76,6 +119,9 @@ function Assert-MsiUpgradeContract {
     })
     if ($markers.Count -ne 2 -or @($markers | Where-Object { $_.Root -ne '-1' }).Count) {
         throw 'Optional shortcut ownership must follow the installation context (HKMU).'
+    }
+    if ($ExpectedScope -eq 'perMachine') {
+        Assert-MsiInstallLocationContract -Path $Path -RelatedProperty $remove[0].ActionProperty
     }
     return [pscustomobject]$properties
 }

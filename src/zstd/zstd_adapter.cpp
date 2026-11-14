@@ -141,20 +141,15 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
         OperationPhaseStats phases;
         const auto stream_started = std::chrono::steady_clock::now();
         phases.setup_seconds = std::chrono::duration<double>(stream_started - started).count();
-        std::array<char, kZstdCopyBufferBytes> buffer{};
         for (;;) {
-            input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-            const auto bytes_read = static_cast<std::size_t>(input.gcount());
-            if (bytes_read > 0U) {
-                output.write(buffer.data(), static_cast<std::streamsize>(bytes_read));
-                if (!output) {
-                    throw ArchiveError("failed to write Zstandard extraction target: " + path_diagnostic_utf8(target));
-                }
+            std::size_t bytes_read = 0U;
+            publish_progress(progress, progress_callback);
+            try {
+                bytes_read = input.transfer_to(output, kZstdCopyBufferBytes);
+            } catch (const std::ios_base::failure&) {
+                throw ArchiveError("failed to write Zstandard extraction target: " + path_diagnostic_utf8(target));
             }
-            if (input.bad()) {
-                throw ArchiveError("failed to read Zstandard stream");
-            }
-            if (input.eof()) {
+            if (bytes_read == 0U) {
                 break;
             }
         }
@@ -164,6 +159,7 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
         if (!output) {
             throw ArchiveError("failed to finalize Zstandard extraction target: " + path_diagnostic_utf8(target));
         }
+        publish_progress(progress, progress_callback);
         const auto publication_started = std::chrono::steady_clock::now();
         phases.stream_seconds = std::chrono::duration<double>(publication_started - stream_started).count();
         publication.commit(overwrite);

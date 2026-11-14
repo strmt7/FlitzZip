@@ -29,6 +29,13 @@ note is enough; do not create another tracking system.
 
 ### External Failure Controls
 
+Validate observations against the live object before interpreting them as a
+product failure. Windows [directory enumeration](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfilew)
+can return stale file attributes. To observe an active writer's current extent,
+query a scoped shared-read handle with [GetFileSizeEx](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfilesizeex),
+then close it before interrupting the writer. Retain a bounded observation control;
+do not add production flushes, sleeps or retries to accommodate a cached probe.
+
 Prefer real OS rejection, independently framed corrupt input and bounded stream
 failures. If those cannot reach the contract, use a narrow per-instance adapter
 around the external dependency. Preserve production API semantics and keep

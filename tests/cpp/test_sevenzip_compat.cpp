@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_sevenzip_unicode_fixture.hpp"
+#include "test_stream_progress.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -75,16 +76,18 @@ std::uint32_t sevenzip_crc32(std::span<const unsigned char> bytes) {
 
 // Purpose: Wrap an unencoded next-header body in a complete 7z signature header.
 // Inputs: `next_header` contains a small attacker-controlled 7z metadata stream.
-// Outputs: Returns a checksum-correct archive with no packed payload bytes.
-std::vector<unsigned char> make_unencoded_7z(std::span<const unsigned char> next_header) {
+// Outputs: Returns a checksum-correct archive with an unencoded header and optional packed bytes.
+std::vector<unsigned char> make_unencoded_7z(std::span<const unsigned char> next_header,
+                                             std::span<const unsigned char> packed = {}) {
     std::vector<unsigned char> start_fields;
-    append_le64(start_fields, 0U);
+    append_le64(start_fields, packed.size());
     append_le64(start_fields, next_header.size());
     append_le32(start_fields, sevenzip_crc32(next_header));
 
     std::vector<unsigned char> archive{0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0x00, 0x04};
     append_le32(archive, sevenzip_crc32(start_fields));
     archive.insert(archive.end(), start_fields.begin(), start_fields.end());
+    archive.insert(archive.end(), packed.begin(), packed.end());
     archive.insert(archive.end(), next_header.begin(), next_header.end());
     return archive;
 }
@@ -127,7 +130,58 @@ std::vector<unsigned char> make_empty_named_7z(std::u16string_view name) {
     return make_unencoded_7z(header);
 }
 
+// Independently frame one Copy-method folder. Nine-byte size fields avoid an
+// additional variable-length integer encoder; CRCs cover exact serialized bytes.
+std::filesystem::path make_7z_cancellation_archive(const std::filesystem::path& root, std::string_view expected) {
+    const std::span<const unsigned char> payload(reinterpret_cast<const unsigned char*>(expected.data()),
+                                                 expected.size());
+    std::vector<unsigned char> header{1, 4, 6, 0, 1, 9, 0xFF};
+    append_le64(header, payload.size());
+    // End PackInfo; one inline folder with one Copy coder and its unpacked size.
+    header.insert(header.end(), {0, 7, 11, 1, 0, 1, 1, 0, 12, 0xFF});
+    append_le64(header, payload.size());
+    header.insert(header.end(), {10, 1});
+    append_le32(header, sevenzip_crc32(payload));
+    // End UnpackInfo and MainStreamsInfo; one UTF-16 name in FilesInfo.
+    header.insert(header.end(), {0, 0, 5, 1, 17, 25, 0});
+    for (const auto unit : std::u16string_view(u"payload.bin")) {
+        header.push_back(static_cast<unsigned char>(unit & 255U));
+        header.push_back(static_cast<unsigned char>(unit >> 8U));
+    }
+    header.insert(header.end(), {0, 0, 0, 0});
+    const auto archive = root / "input.7z";
+    write_7z_fixture(archive, make_unencoded_7z(header, payload));
+    return archive;
+}
+
 }  // namespace
+
+TEST_CASE(sevenzip_cancellation_fixture_has_valid_stored_payload) {
+    flitzzip_test::with_stream_cancellation_fixture("7z-cancel-valid", make_7z_cancellation_archive,
+                                                    [](const auto& archive, const auto& output, const auto& expected) {
+                                                        flitzzip_test::require_stream_fixture_readback(
+                                                            archive, output, expected, flitzzip::extract_7z);
+                                                        flitzzip_test::export_compat_fixture(archive, output);
+                                                    });
+}
+
+TEST_CASE(sevenzip_extraction_validation_is_cancellable) {
+    flitzzip_test::with_stream_cancellation_fixture("7z-cancel-validation", make_7z_cancellation_archive,
+                                                    [](const auto& archive, const auto& output, const auto& expected) {
+                                                        flitzzip_test::require_validation_cancellation(
+                                                            archive, output, "payload.bin", expected,
+                                                            flitzzip::extract_7z, 3U);
+                                                    });
+}
+
+TEST_CASE(sevenzip_extraction_payload_windows_are_cancellable) {
+    flitzzip_test::with_stream_cancellation_fixture("7z-cancel-windows", make_7z_cancellation_archive,
+                                                    [](const auto& archive, const auto& output, const auto& expected) {
+                                                        flitzzip_test::require_stream_window_cancellation(
+                                                            archive, output, "payload.bin", expected,
+                                                            flitzzip::extract_7z, true);
+                                                    });
+}
 
 // Purpose: Prove signed seek admission at every small position and the independently calculated 64-bit extremes.
 // Inputs: Bounded exhaustive small arithmetic and explicit minimum/maximum signed/unsigned cases; no filesystem work.

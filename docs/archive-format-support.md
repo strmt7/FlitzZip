@@ -45,7 +45,7 @@ Primary and project-owned sources reviewed:
 - XXEncode alphabet and legacy line-structure notes: <https://nerdmosis.com/tools/encode-and-decode-uuencode-xxencode>
 - bzip2/libbzip2: <https://sourceware.org/bzip2/>
 - XZ Embedded: <https://github.com/tukaani-project/xz-embedded>
-- Zstandard/libzstd: <https://github.com/facebook/zstd>
+- Zstandard/libzstd: <https://github.com/meta/zstd>
 - Zstandard RFC 8878: <https://www.rfc-editor.org/rfc/rfc8878>
 - Lhasa LHA/LZH library: <https://github.com/fragglet/lhasa>
 - wimlib Windows Imaging library: <https://wimlib.net/>

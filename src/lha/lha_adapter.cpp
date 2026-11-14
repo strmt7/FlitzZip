@@ -1,6 +1,7 @@
 #include "lha/lha_adapter.hpp"
 #include "core/path_text.hpp"
 
+#include "core/archive_stream_progress.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
@@ -15,8 +16,10 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -224,17 +227,31 @@ std::string lha_header_path(const LHAFileHeader& header) {
     return path;
 }
 
-// Purpose: Validate every LHA member path and payload before destination writes start.
-// Inputs: `source` pins the archive object and seals its physical byte extent for the complete scan.
-// Outputs: Returns safe metadata; throws on parser failure, unsafe path, unsupported entry type, CRC mismatch, or
-// resource exhaustion.
-LhaMetadata scan_lha_metadata(const PinnedSourceFile& source) {
+// Drain through bounded native reads before the original CRC/length check.
+// The checkpoint is a synchronous borrow invoked only outside Lhasa C calls;
+// its original exception propagates without crossing the library boundary.
+bool check_lha_payload(LHAReader* reader, std::span<unsigned char> buffer, const ProgressCheckpoint& checkpoint) {
+    for (;;) {
+        invoke_archive_checkpoint(checkpoint);
+        if (lha_reader_read(reader, buffer.data(), buffer.size()) == 0U) {
+            break;
+        }
+    }
+    return lha_reader_check(reader, nullptr, nullptr) != 0;
+}
+
+// Validate every member before destination writes. Source and checkpoint remain
+// borrowed throughout; preparation never reports published bytes or entries.
+LhaMetadata scan_lha_metadata(const PinnedSourceFile& source, const ProgressCheckpoint& checkpoint) {
+    invoke_archive_checkpoint(checkpoint);
     LhaReaderSession session(source);
     LhaMetadata metadata;
     std::vector<ArchivePathValidationEntry> validation_entries;
     std::uint32_t entry_count = 0;
+    std::array<unsigned char, kLhaReadBufferBytes> buffer{};
 
     for (;;) {
+        invoke_archive_checkpoint(checkpoint);
         LHAFileHeader* header = session.next_header();
         if (header == nullptr) {
             break;
@@ -251,7 +268,7 @@ LhaMetadata scan_lha_metadata(const PinnedSourceFile& source) {
             "LHA retained path metadata");
         if (!directory) {
             metadata.total_file_bytes = checked_add_lha_bytes(metadata.total_file_bytes, header->length);
-            if (lha_reader_check(session.reader(), nullptr, nullptr) == 0) {
+            if (!check_lha_payload(session.reader(), buffer, checkpoint)) {
                 throw ArchiveError("LHA payload CRC or size check failed: " + normalized_path);
             }
         }
@@ -269,15 +286,17 @@ LhaMetadata scan_lha_metadata(const PinnedSourceFile& source) {
     if (metadata.entries.empty()) {
         throw ArchiveError("LHA archive contains no readable entries");
     }
+    invoke_archive_checkpoint(checkpoint);
     validate_archive_path_set(validation_entries);
     return metadata;
 }
 
 // Purpose: Write one decoded LHA payload through FlitzZip's atomic publication path.
 // Inputs: `reader` is positioned on `entry`, `destination` is the extraction root, and `overwrite` controls
-// replacement. Outputs: Publishes the verified file or throws after cleanup.
+// replacement. Progress counts successful writes once; the borrowed checkpoint may throw before commit.
+// Outputs: Publishes the verified file or throws after cleanup; completion is the caller's post-commit transition.
 void publish_lha_payload(LHAReader* reader, const LhaEntry& entry, const std::filesystem::path& destination,
-                         bool overwrite) {
+                         bool overwrite, ProgressState& progress, const ProgressCheckpoint& checkpoint) {
     const auto target = safe_join_archive_path(destination, entry.path);
     auto temporary = reserve_file_publish_target(target);
     try {
@@ -289,6 +308,7 @@ void publish_lha_payload(LHAReader* reader, const LhaEntry& entry, const std::fi
         std::array<unsigned char, kLhaReadBufferBytes> buffer{};
         std::uint64_t written = 0;
         while (written < entry.size) {
+            invoke_archive_checkpoint(checkpoint);
             const auto remaining = entry.size - written;
             const auto request = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
             const auto decoded = lha_reader_read(reader, buffer.data(), request);
@@ -303,8 +323,9 @@ void publish_lha_payload(LHAReader* reader, const LhaEntry& entry, const std::fi
                 throw ArchiveError("failed to write temporary LHA extraction target: " + path_diagnostic_utf8(target));
             }
             written += static_cast<std::uint64_t>(decoded);
+            progress.add_bytes(static_cast<std::uint64_t>(decoded));
         }
-        if (lha_reader_check(reader, nullptr, nullptr) == 0) {
+        if (!check_lha_payload(reader, buffer, checkpoint)) {
             throw ArchiveError("LHA payload CRC or size changed during publication: " + entry.path);
         }
 
@@ -312,6 +333,7 @@ void publish_lha_payload(LHAReader* reader, const LhaEntry& entry, const std::fi
         if (!output) {
             throw ArchiveError("failed to finalize temporary LHA extraction target: " + path_diagnostic_utf8(target));
         }
+        invoke_archive_checkpoint(checkpoint);
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
     } catch (...) {
@@ -327,12 +349,14 @@ void publish_lha_payload(LHAReader* reader, const LhaEntry& entry, const std::fi
 void extract_lha_payloads(const PinnedSourceFile& source, const LhaMetadata& metadata,
                           const std::filesystem::path& destination, bool overwrite,
                           const ProgressCallback& progress_callback) {
-    LhaReaderSession session(source);
     ProgressState progress;
     progress.start(OperationKind::Extract, metadata.total_file_bytes, metadata.entries.size());
+    const ProgressCheckpoint checkpoint = [&] { publish_progress(progress, progress_callback); };
+    LhaReaderSession session(source);
     std::size_t metadata_index = 0;
 
     for (;;) {
+        invoke_archive_checkpoint(checkpoint);
         LHAFileHeader* header = session.next_header();
         if (header == nullptr) {
             break;
@@ -351,8 +375,7 @@ void extract_lha_payloads(const PinnedSourceFile& source, const LhaMetadata& met
         if (entry.directory) {
             create_verified_directories(safe_join_archive_path(destination, entry.path));
         } else {
-            publish_lha_payload(session.reader(), entry, destination, overwrite);
-            progress.add_bytes(entry.size);
+            publish_lha_payload(session.reader(), entry, destination, overwrite, progress, checkpoint);
         }
         progress.finish_entry();
         publish_progress(progress, progress_callback);
@@ -372,7 +395,8 @@ OperationStats extract_lha(const std::filesystem::path& archive_path, const std:
                            bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
-    const auto metadata = scan_lha_metadata(archive_source);
+    const auto checkpoint = make_borrowed_archive_validation_checkpoint(std::cref(progress_callback));
+    const auto metadata = scan_lha_metadata(archive_source, checkpoint);
     create_verified_directories(destination);
     extract_lha_payloads(archive_source, metadata, destination, overwrite, progress_callback);
 

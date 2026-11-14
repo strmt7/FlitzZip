@@ -3,6 +3,7 @@
 
 #include <array>
 #include <limits>
+#include <utility>
 #include <vector>
 
 #if FLITZZIP_ENABLE_HIP
@@ -42,6 +43,25 @@ std::vector<std::byte> encoder_source(std::uint32_t bytes) {
     source.front() = std::byte{0xFF};
     return source;
 }
+
+struct ModelLaunchCounter {
+    const void* kernel = nullptr;
+    std::size_t count = 0U;
+
+    HipRuntimeCalls calls() noexcept {
+        HipRuntimeCalls runtime;
+        runtime.context = this;
+        runtime.launch = launch;
+        return runtime;
+    }
+
+    static hipError_t launch(void* context, const void* kernel, dim3 grid, dim3 block, void** arguments,
+                             std::size_t shared_bytes, hipStream_t stream, hipEvent_t start, hipEvent_t stop) noexcept {
+        auto& self = *static_cast<ModelLaunchCounter*>(context);
+        self.count += kernel == self.kernel ? 1U : 0U;
+        return native_hip_launch(nullptr, kernel, grid, block, arguments, shared_bytes, stream, start, stop);
+    }
+};
 
 std::uint32_t independent_encoder_crc(std::span<const std::byte> bytes) {
     std::uint32_t value = 0xFFFFFFFFU;
@@ -102,6 +122,291 @@ TEST_CASE(gpu_rans_encoder_workspace_counts_padding_all_models_and_returned_payl
                                                        std::numeric_limits<std::size_t>::max()}) {
         require_encoder_error<ArchiveError>([&] { (void)rans_encode_workspace_requirements(bytes); });
     }
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_search_workspace_covers_retained_trial_and_order) {
+#if FLITZZIP_ENABLE_HIP
+    for (const auto bytes : {1U, 257U, kRansCountMaxBytes}) {
+        const auto single = rans_encode_workspace_requirements(bytes);
+        const auto search = rans_encode_search_workspace_requirements(bytes);
+        REQUIRE_EQ(search.device_bytes, single.device_bytes);
+        REQUIRE_EQ(search.scratch_bytes, single.scratch_bytes);
+        REQUIRE_EQ(search.host_bytes, single.host_bytes + bytes + kRansEncodeMaxCandidates * sizeof(std::uint16_t) +
+                                          sizeof(std::optional<RansEncodeSearchResult>) +
+                                          sizeof(std::optional<std::vector<std::byte>>));
+    }
+    require_encoder_error<ArchiveError>([] { (void)rans_encode_search_workspace_requirements(0U); });
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_search_preserves_requested_winner_and_reuses_gpu_models) {
+#if FLITZZIP_ENABLE_HIP
+    if (!query_gpu_info().available) {
+        return;
+    }
+    constexpr std::array<RansEncodeCandidate, 6U> candidates{{
+        {16U, 0U, 9U},
+        {8U, 0U, 8U},
+        {12U, 0U, 9U},
+        {16U, 0U, 8U},
+        {8U, 0U, 9U},
+        {12U, 0U, 8U},
+    }};
+    const auto source = encoder_source(2049U);
+    HipDeviceMemoryReservation reservation(source.size() + 2U, "rANS search input");
+    CountDeviceBuffer<std::byte> input(static_cast<std::uint32_t>(source.size()));
+    input.reset(source);
+    const auto before = encoder_reserved_bytes();
+    std::optional<RansEncodeSearchResult> expected;
+    ModelLaunchCounter baseline{hip_kernel_api().normalize_rans_models};
+    {
+        RansEncoder encoder({input.data(), source.size()}, nullptr, {}, baseline.calls());
+        for (std::size_t index = 0U; index < candidates.size(); ++index) {
+            const auto& candidate = candidates[index];
+            auto payload =
+                encoder.encode(candidate.precision, candidate.context_bits, candidate.segment_shift, source.size());
+            REQUIRE_TRUE(payload.has_value());
+            if (!expected || payload->size() < expected->payload.size()) {
+                expected = RansEncodeSearchResult{std::move(*payload), index};
+            }
+        }
+        encoder.close_checked();
+    }
+    REQUIRE_EQ(baseline.count, 6U);
+    REQUIRE_EQ(encoder_reserved_bytes(), before);
+    ModelLaunchCounter grouped{hip_kernel_api().normalize_rans_models};
+    {
+        RansEncoder encoder({input.data(), source.size()}, nullptr, {}, grouped.calls());
+        const auto actual = encoder.encode_best(candidates, source.size());
+        REQUIRE_TRUE(actual.has_value());
+        REQUIRE_EQ(actual->candidate_index, expected->candidate_index);
+        REQUIRE_EQ(actual->payload, expected->payload);
+        REQUIRE_EQ(grouped.count, 4U);
+        require_encoder_readback(actual->payload, source, true);
+        encoder.close_checked();
+    }
+    REQUIRE_EQ(encoder_reserved_bytes(), before);
+    REQUIRE_EQ(input.read(static_cast<std::uint32_t>(source.size())), source);
+    input.release_checked();
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_search_conditional_groups_match_fresh_trial_oracle) {
+#if FLITZZIP_ENABLE_HIP
+    if (!query_gpu_info().available) {
+        return;
+    }
+    constexpr std::array<RansEncodeCandidate, 9U> candidates{{
+        {12U, 4U, 9U},
+        {8U, 8U, 8U},
+        {16U, 1U, 10U},
+        {8U, 0U, 9U},
+        {16U, 4U, 8U},
+        {12U, 8U, 9U},
+        {8U, 4U, 9U},
+        {16U, 8U, 12U},
+        {12U, 4U, 9U},
+    }};
+    const auto source = encoder_source(33025U);
+    HipDeviceMemoryReservation reservation(source.size() + 2U, "rANS conditional search input");
+    CountDeviceBuffer<std::byte> input(static_cast<std::uint32_t>(source.size()));
+    input.reset(source);
+    const auto before = encoder_reserved_bytes();
+    std::optional<RansEncodeSearchResult> expected;
+    for (std::size_t index = 0U; index < candidates.size(); ++index) {
+        RansEncoder fresh({input.data(), source.size()}, nullptr);
+        const auto& candidate = candidates[index];
+        auto payload =
+            fresh.encode(candidate.precision, candidate.context_bits, candidate.segment_shift, source.size());
+        if (payload && (!expected || payload->size() < expected->payload.size())) {
+            expected = RansEncodeSearchResult{std::move(*payload), index};
+        }
+        fresh.close_checked();
+    }
+    REQUIRE_TRUE(expected.has_value());
+    REQUIRE_EQ(encoder_reserved_bytes(), before);
+    RansEncoder encoder({input.data(), source.size()}, nullptr);
+    const auto actual = encoder.encode_best(candidates, source.size());
+    REQUIRE_TRUE(actual.has_value());
+    REQUIRE_EQ(actual->candidate_index, expected->candidate_index);
+    REQUIRE_EQ(actual->payload, expected->payload);
+    require_encoder_readback(actual->payload, source, true);
+    REQUIRE_TRUE(!encoder.encode_best(candidates, expected->payload.size()).has_value());
+    REQUIRE_EQ(actual->payload, expected->payload);
+    encoder.close_checked();
+    REQUIRE_EQ(encoder_reserved_bytes(), before);
+    REQUIRE_EQ(input.read(static_cast<std::uint32_t>(source.size())), source);
+    input.release_checked();
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_search_reordered_ties_keep_original_priority) {
+#if FLITZZIP_ENABLE_HIP
+    if (!query_gpu_info().available) {
+        return;
+    }
+    constexpr std::array<RansEncodeCandidate, 5U> candidates{{
+        {16U, 0U, 8U},
+        {8U, 0U, 8U},
+        {16U, 0U, 9U},
+        {8U, 0U, 9U},
+        {12U, 0U, 9U},
+    }};
+    const std::vector<std::byte> source(513U, std::byte{0xFF});
+    HipDeviceMemoryReservation reservation(source.size() + 2U, "rANS search tie input");
+    CountDeviceBuffer<std::byte> input(static_cast<std::uint32_t>(source.size()));
+    input.reset(source);
+    {
+        RansEncoder control({input.data(), source.size()}, nullptr);
+        std::optional<RansEncodeSearchResult> wrong;
+        for (const auto index : {0U, 1U, 3U, 4U, 2U}) {
+            const auto& candidate = candidates[index];
+            auto payload = control.encode(candidate.precision, candidate.context_bits, candidate.segment_shift,
+                                          wrong ? wrong->payload.size() : source.size());
+            if (payload) {
+                wrong = RansEncodeSearchResult{std::move(*payload), index};
+            }
+        }
+        REQUIRE_TRUE(wrong.has_value());
+        REQUIRE_EQ(wrong->candidate_index, 3U);  // A strict budget loses the earlier requested tie.
+        control.close_checked();
+    }
+    GpuTelemetry telemetry{GpuObservationMode::CountersOnly};
+    RansEncoder encoder({input.data(), source.size()}, &telemetry);
+    const auto actual = encoder.encode_best(candidates, source.size());
+    REQUIRE_TRUE(actual.has_value());
+    REQUIRE_EQ(actual->candidate_index, 2U);
+    const auto expected = rans_singleton_payload(513U, 16U, 0U, 9U, 255U);
+    REQUIRE_EQ(actual->payload, expected);
+    require_encoder_readback(actual->payload, source, true);
+    const auto launches = snapshot_gpu_telemetry(telemetry).kernel_launches;
+    REQUIRE_TRUE(!encoder.encode_best(candidates, expected.size()).has_value());
+    REQUIRE_EQ(snapshot_gpu_telemetry(telemetry).kernel_launches, launches);
+    REQUIRE_EQ(actual->payload, expected);
+    encoder.close_checked();
+    input.release_checked();
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+// Repeated requests must retain exact winner priority without repeating device
+// encoding. Explicit unique cohorts provide the oracle, not elapsed-time samples.
+TEST_CASE(gpu_rans_encoder_search_duplicates_preserve_bytes_without_repeating_device_work) {
+#if FLITZZIP_ENABLE_HIP
+    if (!query_gpu_info().available) {
+        return;
+    }
+    const auto source = encoder_source(4097U);
+    HipDeviceMemoryReservation reservation(source.size() + 2U, "rANS duplicate search input");
+    CountDeviceBuffer<std::byte> input(static_cast<std::uint32_t>(source.size()));
+    input.reset(source);
+    const auto before = encoder_reserved_bytes();
+    const auto observe = [&](std::span<const RansEncodeCandidate> candidates) {
+        GpuTelemetry telemetry{GpuObservationMode::CountersOnly};
+        RansEncoder encoder({input.data(), source.size()}, &telemetry);
+        auto result = encoder.encode_best(candidates, source.size());
+        encoder.close_checked();
+        return std::pair{std::move(result), snapshot_gpu_telemetry(telemetry)};
+    };
+    constexpr std::array<RansEncodeCandidate, 1U> one{{{16U, 0U, 8U}}};
+    constexpr std::array<RansEncodeCandidate, 4U> repeated{{
+        {16U, 0U, 8U},
+        {16U, 0U, 8U},
+        {16U, 0U, 8U},
+        {16U, 0U, 8U},
+    }};
+    constexpr std::array<RansEncodeCandidate, 3U> unique{{{16U, 0U, 8U}, {12U, 0U, 9U}, {16U, 0U, 10U}}};
+    constexpr std::array<RansEncodeCandidate, 7U> mixed{{
+        {16U, 0U, 8U},
+        {12U, 0U, 9U},
+        {12U, 0U, 9U},
+        {16U, 0U, 8U},
+        {12U, 0U, 9U},
+        {16U, 0U, 10U},
+        {16U, 0U, 10U},
+    }};
+    constexpr std::array<std::size_t, 3U> first_requested{0U, 1U, 5U};
+    using Candidates = std::span<const RansEncodeCandidate>;
+    for (const bool multiple_groups : {false, true}) {
+        auto [expected, unique_work] = observe(multiple_groups ? Candidates(unique) : Candidates(one));
+        auto [actual, repeated_work] = observe(multiple_groups ? Candidates(mixed) : Candidates(repeated));
+        REQUIRE_TRUE(expected.has_value() && actual.has_value());
+        REQUIRE_TRUE(unique_work.kernel_launches > 0U);
+        REQUIRE_EQ(actual->payload, expected->payload);
+        REQUIRE_EQ(actual->candidate_index, first_requested[expected->candidate_index]);
+        REQUIRE_EQ(repeated_work.kernel_launches, unique_work.kernel_launches);
+        REQUIRE_EQ(repeated_work.h2d_bytes, unique_work.h2d_bytes);
+        REQUIRE_EQ(repeated_work.d2h_bytes, unique_work.d2h_bytes);
+        require_encoder_readback(actual->payload, source, true);
+        REQUIRE_EQ(encoder_reserved_bytes(), before);
+    }
+    REQUIRE_EQ(input.read(static_cast<std::uint32_t>(source.size())), source);
+    input.release_checked();
+#else
+    REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
+#endif
+}
+
+TEST_CASE(gpu_rans_encoder_search_validates_all_options_and_discards_cancelled_winner) {
+#if FLITZZIP_ENABLE_HIP
+    if (!query_gpu_info().available) {
+        return;
+    }
+    const std::vector<std::byte> source(513U, std::byte{0xFF});
+    HipDeviceMemoryReservation reservation(source.size() + 2U, "rANS bounded search input");
+    CountDeviceBuffer<std::byte> input(static_cast<std::uint32_t>(source.size()));
+    input.reset(source);
+    std::size_t first_trial_checkpoints = 0U;
+    {
+        RansEncoder baseline({input.data(), source.size()}, nullptr);
+        REQUIRE_TRUE(baseline.encode(16U, 0U, 8U, source.size(), [&] { ++first_trial_checkpoints; }).has_value());
+        baseline.close_checked();
+    }
+    GpuTelemetry telemetry{GpuObservationMode::CountersOnly};
+    RansEncoder encoder({input.data(), source.size()}, &telemetry);
+    std::array<RansEncodeCandidate, kRansEncodeMaxCandidates + 1U> options;
+    std::ranges::fill(options, RansEncodeCandidate{16U, 0U, 8U});
+    const auto launches = snapshot_gpu_telemetry(telemetry).kernel_launches;
+    require_encoder_error<ArchiveError>([&] { (void)encoder.encode_best(options, source.size()); });
+    for (const auto invalid :
+         {RansEncodeCandidate{7U, 0U, 8U}, RansEncodeCandidate{17U, 0U, 8U}, RansEncodeCandidate{8U, 9U, 8U},
+          RansEncodeCandidate{8U, 0U, 7U}, RansEncodeCandidate{8U, 0U, 13U}}) {
+        const std::array<RansEncodeCandidate, 2U> mixed{{{16U, 0U, 8U}, invalid}};
+        require_encoder_error<ArchiveError>([&] { (void)encoder.encode_best(mixed, source.size()); });
+    }
+    require_encoder_error<ArchiveError>([&] { (void)encoder.encode_best({}, source.size() + 1U); });
+    REQUIRE_TRUE(!encoder.encode_best(std::span(options).first(kRansEncodeMaxCandidates), 0U).has_value());
+    std::size_t empty_checkpoints = 0U;
+    REQUIRE_TRUE(!encoder.encode_best({}, source.size(), [&] { ++empty_checkpoints; }).has_value());
+    REQUIRE_EQ(empty_checkpoints, 1U);
+    REQUIRE_EQ(snapshot_gpu_telemetry(telemetry).kernel_launches, launches);
+    const std::array<RansEncodeCandidate, 2U> valid{{{16U, 0U, 8U}, {16U, 0U, 9U}}};
+    std::size_t checkpoints = 0U;
+    require_encoder_error<std::runtime_error>([&] {
+        (void)encoder.encode_best(valid, source.size(), [&] {
+            if (++checkpoints == first_trial_checkpoints + 1U) {
+                throw std::runtime_error("cancel after the first complete search winner");
+            }
+        });
+    });
+    REQUIRE_EQ(checkpoints, first_trial_checkpoints + 1U);
+    const auto recovered = encoder.encode_best(valid, source.size());
+    REQUIRE_TRUE(recovered.has_value());
+    REQUIRE_EQ(recovered->candidate_index, 1U);
+    REQUIRE_EQ(recovered->payload, rans_singleton_payload(513U, 16U, 0U, 9U, 255U));
+    encoder.close_checked();
+    require_encoder_error<GpuError>([&] { (void)encoder.encode_best({}, source.size()); });
+    input.release_checked();
 #else
     REQUIRE_TRUE(!flitzzip::query_gpu_info().available);
 #endif

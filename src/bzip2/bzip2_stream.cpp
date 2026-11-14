@@ -1,5 +1,6 @@
 #include "bzip2/bzip2_stream.hpp"
 
+#include "core/decoded_input_buffer.hpp"
 #include "core/file_manifest.hpp"
 #include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
@@ -244,7 +245,7 @@ class Bzip2OutputStream::Buffer final : public std::streambuf {
     std::uint64_t output_bytes_ = 0;
 };
 
-class Bzip2InputStream::Buffer final : public std::streambuf {
+class Bzip2InputStream::Buffer final : public DecodedInputBuffer {
   public:
     // Purpose: Open a bounded Bzip2 decoder and initialize its owned input/output buffers.
     // Inputs: `archive_path` names untrusted regular input; immutable source admission precedes decoder allocation.
@@ -451,6 +452,12 @@ Bzip2InputStream::~Bzip2InputStream() = default;
 void Bzip2InputStream::finish() {
     buffer_->finish();
     clear();
+}
+
+// Consume only a successfully written decoder-owned window; framing and get-area
+// lifetime remain governed by the existing input buffer.
+std::size_t Bzip2InputStream::transfer_to(std::ostream& output, std::size_t maximum_bytes) {
+    return buffer_->transfer_to(output, maximum_bytes);
 }
 
 std::uint64_t Bzip2InputStream::input_bytes() const {

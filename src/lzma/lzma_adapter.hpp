@@ -8,7 +8,8 @@ namespace flitzzip {
 
 // Purpose: Extract a legacy LZMA-Alone `.lzma` stream with path-safe single-file publication.
 // Inputs: `archive_path` is the `.lzma` stream, `destination` is the extraction root, `overwrite` controls replacement,
-// and `progress_callback` receives synchronous progress snapshots. Outputs: Returns operation statistics; throws on
+// and `progress_callback` receives synchronous snapshots between bounded decode windows and before publication.
+// Observer errors propagate unchanged while private output is removed. Outputs: Returns operation statistics; throws on
 // malformed LZMA data, unsafe output name, refused overwrite, resource limits, or verified-file publication failures.
 OperationStats extract_lzma_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                  bool overwrite, const ProgressCallback& progress_callback = {});

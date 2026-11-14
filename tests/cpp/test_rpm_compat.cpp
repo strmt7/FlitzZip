@@ -1,9 +1,12 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 #include "test_legacy_name.hpp"
+#include "test_stream_progress.hpp"
+#include "test_rpm_cancellation_fixtures.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
+#include "core/windows_handle.hpp"
 #include "cpio/cpio_adapter.hpp"
 #include "gzip/gzip_stream.hpp"
 #include "rpm/rpm_adapter.hpp"
@@ -18,6 +21,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -179,9 +183,10 @@ std::filesystem::path make_cpio_payload(const std::filesystem::path& root, std::
 }  // namespace
 
 // Purpose: Build a minimal CPIO stream with explicit raw member-name bytes for RPM encoding tests.
-// Inputs: Destination path and a bounded raw filename; the payload is the literal string "rpm".
+// Inputs: Destination path, bounded raw filename and payload; historical callers keep the literal "rpm".
 // Outputs: Writes one aligned regular-file record and the required trailer without using production name encoding.
-void write_rpm_name_payload(const std::filesystem::path& path, std::string_view name) {
+void write_rpm_name_payload(const std::filesystem::path& path, std::string_view name,
+                            std::string_view payload = "rpm") {
     std::ofstream output(path, std::ios::binary);
     for (const bool trailer : {false, true}) {
         const auto member = trailer ? std::string_view("TRAILER!!!") : name;
@@ -191,7 +196,7 @@ void write_rpm_name_payload(const std::filesystem::path& path, std::string_view 
                                                    0U,
                                                    1U,
                                                    0U,
-                                                   trailer ? 0U : 3U,
+                                                   trailer ? 0U : static_cast<std::uint32_t>(payload.size()),
                                                    0U,
                                                    0U,
                                                    0U,
@@ -214,7 +219,10 @@ void write_rpm_name_payload(const std::filesystem::path& path, std::string_view 
             output.put('\0');
         }
         if (!trailer) {
-            output.write("rpm\0", 4);
+            output.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+            for (auto size = payload.size(); size % 4U != 0U; ++size) {
+                output.put('\0');
+            }
         }
     }
 }
@@ -666,4 +674,266 @@ TEST_CASE(rpm_header_boundary_mutations_preserve_destination) {
     write_rpm_bytes(payload, std::array<unsigned char, 1>{1U});
     write_rpm_fixture(archive, payload, "");
     require_rpm_rejected_without_publication(archive, root / "unknown", "unrecognized RPM payload compression");
+}
+
+namespace {
+struct RpmPreparationFixture {
+    std::filesystem::path archive;
+    std::string expected;
+    std::uint64_t encoded_bytes;
+    std::uint64_t decoded_bytes;
+};
+
+// Extend the existing independent raw Zstandard fixture to bounded multi-block
+// frames: single segment, four-byte content size, raw blocks, no checksum.
+std::vector<unsigned char> raw_rpm_zstd_frame(std::span<const unsigned char> data) {
+    REQUIRE_TRUE(!data.empty() && data.size() <= 1024U * 1024U);
+    std::vector<unsigned char> bytes{0x28, 0xB5, 0x2F, 0xFD, 0xA0};
+    for (unsigned shift = 0; shift < 4U; ++shift) {
+        bytes.push_back(static_cast<unsigned char>((data.size() >> (shift * 8U)) & 255U));
+    }
+    for (std::size_t position = 0U; position < data.size();) {
+        const auto count = std::min<std::size_t>(128U * 1024U, data.size() - position);
+        const auto header = static_cast<std::uint32_t>((count << 3U) | (position + count == data.size() ? 1U : 0U));
+        for (unsigned shift = 0; shift < 3U; ++shift) {
+            bytes.push_back(static_cast<unsigned char>((header >> (shift * 8U)) & 255U));
+        }
+        bytes.insert(bytes.end(), data.begin() + static_cast<std::ptrdiff_t>(position),
+                     data.begin() + static_cast<std::ptrdiff_t>(position + count));
+        position += count;
+    }
+    return bytes;
+}
+
+RpmPreparationFixture make_rpm_preparation_fixture(const std::filesystem::path& root, std::string_view method) {
+    std::filesystem::create_directories(root);
+    std::string expected(524305U, '\0');
+    for (std::size_t i = 0U; i < expected.size(); ++i) {
+        expected[i] = static_cast<char>(i % 251U);
+    }
+    const auto cpio = root / "source.cpio";
+    write_rpm_name_payload(cpio, "payload.bin", expected);
+    const auto compressed = root / "encoded.payload";
+    if (method == "gzip") {
+        write_rpm_bytes(compressed, flitzzip_test::kRpmCancellationGzip);
+    } else if (method == "bzip2") {
+        write_rpm_bytes(compressed, flitzzip_test::kRpmCancellationBzip2);
+    } else if (method == "xz") {
+        write_rpm_bytes(compressed, flitzzip_test::kRpmCancellationXz);
+    } else if (method == "zstd") {
+        write_rpm_bytes(compressed, raw_rpm_zstd_frame(read_binary_file(cpio)));
+    } else {
+        REQUIRE_EQ(method, "none");
+    }
+    const auto payload = method == "none" ? cpio : compressed;
+    const auto archive = root / "input.rpm";
+    write_rpm_fixture(archive, payload, method);
+    return {archive, std::move(expected), std::filesystem::file_size(payload), std::filesystem::file_size(cpio)};
+}
+
+constexpr auto kRpmExtract = static_cast<flitzzip_test::ArchiveExtractor>(flitzzip::extract_rpm);
+
+void require_rpm_phase_cancellation(std::string_view method, std::string_view phase, std::size_t cancel_after = 1U) {
+    flitzzip_test::ScopedTestDirectory cleanup{test_temp_dir("rpm-preparation-phase")};
+    const auto fixture = make_rpm_preparation_fixture(cleanup.path, method);
+    flitzzip_test::require_validation_cancellation(fixture.archive, cleanup.path / "output", "payload.bin",
+                                                   fixture.expected, kRpmExtract, cancel_after, phase);
+    std::filesystem::remove_all(cleanup.path);
+}
+
+// Directory enumeration can cache an open writer's previous size on Windows.
+// Query a separately owned shared-read handle, closing it before observer abort.
+std::uint64_t active_rpm_payload_size(const std::filesystem::path& path) {
+    const flitzzip::windows_detail::HandleOwner handle(
+        CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+    REQUIRE_TRUE(handle && handle.get() != INVALID_HANDLE_VALUE);
+    LARGE_INTEGER size{};
+    REQUIRE_TRUE(GetFileSizeEx(handle.get(), &size) != FALSE);
+    REQUIRE_TRUE(size.QuadPart >= 0);
+    return static_cast<std::uint64_t>(size.QuadPart);
+}
+
+// Observe actual partial private staging bytes, rather than assuming a callback
+// count means useful work occurred. Source and target identities survive abort.
+void require_rpm_partial_preparation(std::string_view method, bool decoding) {
+    flitzzip_test::ScopedTestDirectory cleanup{test_temp_dir("rpm-preparation-window")};
+    const auto fixture = make_rpm_preparation_fixture(cleanup.path, method);
+    const auto output = cleanup.path / "output";
+    std::filesystem::create_directory(output);
+    const auto target = output / "payload.bin";
+    const auto original = flitzzip_test::source_session_fixture_bytes(fixture.archive);
+    for (const bool existing : {false, true}) {
+        if (existing) {
+            std::ofstream(target, std::ios::binary) << "preserved preparation target";
+        }
+        struct Observer {
+            std::filesystem::path root;
+            std::string_view phase;
+            std::string_view filename;
+            std::uint64_t full_size;
+            std::size_t interruptions = 0U;
+
+            void operator()(const flitzzip::ProgressSnapshot& snapshot) {
+                if (snapshot.note != phase) {
+                    return;
+                }
+                REQUIRE_TRUE(flitzzip_test::is_prepublication_progress(snapshot));
+                for (const auto& file : std::filesystem::recursive_directory_iterator(root)) {
+                    if (file.is_regular_file() && file.path().filename() == filename) {
+                        const auto bytes = active_rpm_payload_size(file.path());
+                        if (bytes > 0U && bytes < full_size) {
+                            ++interruptions;
+                            throw flitzzip_test::SourceSessionInterrupted();
+                        }
+                    }
+                }
+            }
+        };
+        const flitzzip::ProgressCallback callback =
+            Observer{output, decoding ? "Decoding RPM payload" : "Preparing RPM payload",
+                     decoding || method == "none" ? "payload.tmp" : "payload.compressed",
+                     decoding ? fixture.decoded_bytes : fixture.encoded_bytes};
+        bool interrupted = false;
+        try {
+            (void)kRpmExtract(fixture.archive, output, true, callback);
+        } catch (const flitzzip_test::SourceSessionInterrupted&) {
+            interrupted = true;
+        }
+        REQUIRE_TRUE(interrupted);
+        REQUIRE_TRUE(callback.target<Observer>() != nullptr);
+        REQUIRE_EQ(callback.target<Observer>()->interruptions, 1U);
+        REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{}),
+                   existing ? 1 : 0);
+        if (existing) {
+            REQUIRE_EQ(read_text_file(target), "preserved preparation target");
+        }
+        REQUIRE_EQ(flitzzip_test::source_session_fixture_bytes(fixture.archive), original);
+        {
+            const flitzzip::windows_detail::HandleOwner source(CreateFileW(
+                fixture.archive.c_str(), GENERIC_READ, 0U, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+            REQUIRE_TRUE(source && source.get() != INVALID_HANDLE_VALUE);
+        }
+        const auto stats = kRpmExtract(fixture.archive, output, true, {});
+        REQUIRE_EQ(stats.input_bytes, original.size());
+        REQUIRE_EQ(stats.output_bytes, fixture.expected.size());
+        REQUIRE_EQ(read_text_file(target), fixture.expected);
+        REQUIRE_TRUE(std::filesystem::remove(target));
+    }
+    std::filesystem::remove_all(cleanup.path);
+}
+}  // namespace
+
+TEST_CASE(rpm_preparation_fixtures_decode_exact_bytes) {
+    flitzzip_test::ScopedTestDirectory cleanup{test_temp_dir("rpm-independent-preparation")};
+    for (const auto method : {"none", "gzip", "bzip2", "xz", "zstd"}) {
+        const auto root = cleanup.path / method;
+        const auto fixture = make_rpm_preparation_fixture(root, method);
+        const auto output = root / "output";
+        const auto stats = kRpmExtract(fixture.archive, output, false, {});
+        REQUIRE_EQ(stats.input_bytes, std::filesystem::file_size(fixture.archive));
+        REQUIRE_EQ(stats.output_bytes, fixture.expected.size());
+        REQUIRE_EQ(stats.entries, 1U);
+        REQUIRE_EQ(read_text_file(output / "payload.bin"), fixture.expected);
+    }
+    std::filesystem::remove_all(cleanup.path);
+}
+
+TEST_CASE(rpm_publication_reports_completed_entries) {
+    flitzzip_test::ScopedTestDirectory cleanup{test_temp_dir("rpm-completed-entry")};
+    for (const auto method : {"none", "gzip", "bzip2", "xz", "zstd"}) {
+        const auto root = cleanup.path / method;
+        const auto fixture = make_rpm_preparation_fixture(root, method);
+        flitzzip_test::require_stream_fixture_readback(fixture.archive, root / "output", fixture.expected, kRpmExtract);
+    }
+    std::filesystem::remove_all(cleanup.path);
+}
+
+TEST_CASE(rpm_metadata_preparation_is_cancellable) {
+    require_rpm_phase_cancellation("none", "Reading RPM metadata", 5U);
+}
+
+TEST_CASE(rpm_plain_staging_is_cancellable) {
+    require_rpm_phase_cancellation("none", "Preparing RPM payload");
+}
+TEST_CASE(rpm_gzip_staging_is_cancellable) {
+    require_rpm_phase_cancellation("gzip", "Preparing RPM payload");
+}
+TEST_CASE(rpm_bzip2_staging_is_cancellable) {
+    require_rpm_phase_cancellation("bzip2", "Preparing RPM payload");
+}
+TEST_CASE(rpm_xz_staging_is_cancellable) {
+    require_rpm_phase_cancellation("xz", "Preparing RPM payload");
+}
+TEST_CASE(rpm_zstd_staging_is_cancellable) {
+    require_rpm_phase_cancellation("zstd", "Preparing RPM payload");
+}
+
+TEST_CASE(rpm_plain_staging_windows_are_cancellable) {
+    require_rpm_partial_preparation("none", false);
+}
+TEST_CASE(rpm_zstd_staging_windows_are_cancellable) {
+    require_rpm_partial_preparation("zstd", false);
+}
+TEST_CASE(rpm_gzip_decoding_windows_are_cancellable) {
+    require_rpm_partial_preparation("gzip", true);
+}
+TEST_CASE(rpm_bzip2_decoding_windows_are_cancellable) {
+    require_rpm_partial_preparation("bzip2", true);
+}
+TEST_CASE(rpm_xz_decoding_windows_are_cancellable) {
+    require_rpm_partial_preparation("xz", true);
+}
+TEST_CASE(rpm_zstd_decoding_windows_are_cancellable) {
+    require_rpm_partial_preparation("zstd", true);
+}
+
+TEST_CASE(rpm_publication_windows_preserve_staging_cleanup) {
+    flitzzip_test::ScopedTestDirectory cleanup{test_temp_dir("rpm-publication-window")};
+    for (const auto method : {"none", "gzip", "bzip2", "xz", "zstd"}) {
+        const auto root = cleanup.path / method;
+        const auto fixture = make_rpm_preparation_fixture(root, method);
+        flitzzip_test::require_stream_window_cancellation(fixture.archive, root / "output", "payload.bin",
+                                                          fixture.expected, kRpmExtract, true);
+    }
+    std::filesystem::remove_all(cleanup.path);
+}
+
+// Extending only unused header-store bytes must add bounded observation windows.
+// Payload, index cardinality and retained metadata stay independently identical.
+TEST_CASE(rpm_metadata_checkpoints_scale_with_header_store) {
+    flitzzip_test::ScopedTestDirectory cleanup{test_temp_dir("rpm-metadata-windows")};
+    const auto fixture = make_rpm_preparation_fixture(cleanup.path, "gzip");
+    const auto original = read_binary_file(fixture.archive);
+    const auto payload_offset = original.size() - static_cast<std::size_t>(fixture.encoded_bytes);
+    constexpr std::size_t padding = 12U * 65536U;
+    auto padded = original;
+    const auto store_size = (static_cast<std::uint32_t>(padded[124]) << 24U) |
+                            (static_cast<std::uint32_t>(padded[125]) << 16U) |
+                            (static_cast<std::uint32_t>(padded[126]) << 8U) | padded[127];
+    for (unsigned i = 0U; i < 4U; ++i) {
+        padded[124U + i] = static_cast<unsigned char>((store_size + padding) >> ((3U - i) * 8U));
+    }
+    padded.insert(padded.begin() + static_cast<std::ptrdiff_t>(payload_offset), padding, 0U);
+    const auto large = cleanup.path / "large.rpm";
+    write_rpm_bytes(large, padded);
+    const auto observe = [&](const auto& archive, const auto& output) {
+        std::size_t metadata_calls = 0U;
+        const auto stats = kRpmExtract(archive, output, false, [&](const auto& snapshot) {
+            if (snapshot.note == "Reading RPM metadata") {
+                REQUIRE_TRUE(flitzzip_test::is_prepublication_progress(snapshot));
+                ++metadata_calls;
+            }
+        });
+        REQUIRE_EQ(stats.entries, 1U);
+        REQUIRE_EQ(read_text_file(output / "payload.bin"), fixture.expected);
+        return metadata_calls;
+    };
+    const auto base_calls = observe(fixture.archive, cleanup.path / "base-output");
+    const auto large_calls = observe(large, cleanup.path / "large-output");
+    REQUIRE_TRUE(large_calls >= base_calls + padding / 65536U);
+    flitzzip_test::require_validation_cancellation(large, cleanup.path / "cancel-output", "payload.bin",
+                                                   fixture.expected, kRpmExtract, base_calls + 1U,
+                                                   "Reading RPM metadata");
+    std::filesystem::remove_all(cleanup.path);
 }

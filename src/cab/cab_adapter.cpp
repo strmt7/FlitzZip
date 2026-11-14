@@ -2,6 +2,7 @@
 
 #include "cab/cab_file_descriptor.hpp"
 #include "cab/cab_format.hpp"
+#include "core/archive_stream_progress.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
@@ -9,6 +10,7 @@
 #include "core/progress.hpp"
 #include "core/result.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -54,7 +56,6 @@ using CabEntryMap = std::map<std::pair<std::string, ArchivePathEncoding>, CabVal
 struct CabOutputTarget {
     ReservedFilePublishTarget temporary;
     std::filesystem::path final_path;
-    std::uint64_t size = 0;
     // Destruction closes the payload before the reservation removes its private tree.
     detail::CabFileDescriptor descriptor{};
 };
@@ -66,7 +67,9 @@ struct CabFdiContext {
     bool overwrite = false;
     bool progress_enabled = false;
     ProgressState progress;
-    ProgressCallback progress_callback;
+    // FDICopy and its teardown finish before the caller's observer expires.
+    const ProgressCallback* progress_callback = nullptr;
+    ProgressCheckpoint validation_checkpoint;
     CabEntryMap entries;
     std::unordered_map<INT_PTR, CabOutputTarget> outputs;
     std::string error_message;
@@ -126,12 +129,26 @@ std::string cab_fdi_error_message(const ERF& perf) {
            ", fdi_type=" + std::to_string(perf.erfType) + ", native_error=" + std::to_string(perf.fError) + ")";
 }
 
+bool cab_callback_failed(const CabFdiContext& context) noexcept {
+    return context.callback_exception || !context.error_message.empty();
+}
+
 // Purpose: Publish progress from inside a CAB callback.
 // Inputs: `context` owns optional progress state and callback.
 // Outputs: Calls the user's progress callback when progress tracking is active.
 void publish_cab_progress(CabFdiContext& context) {
-    if (context.progress_enabled && context.progress_callback) {
-        publish_progress(context.progress, context.progress_callback);
+    if (!cab_callback_failed(context) && context.progress_enabled && context.progress_callback != nullptr &&
+        *context.progress_callback) {
+        publish_progress(context.progress, *context.progress_callback);
+    }
+}
+
+// Native read/write callbacks use this only inside their exception barrier.
+void checkpoint_cab_pass(CabFdiContext& context) {
+    if (context.pass == CabFdiPass::Validate) {
+        invoke_archive_checkpoint(context.validation_checkpoint);
+    } else {
+        publish_cab_progress(context);
     }
 }
 
@@ -182,20 +199,61 @@ FNOPEN(cab_fdi_open) {
     return -1;
 }
 
+// Bound each CRT operation while preserving FDI's short-transfer/error contract.
+// The caller-owned buffer and observer stay borrowed only through this callback;
+// cancellation is latched here rather than unwound through the Windows C ABI.
+template <class Transfer> UINT transfer_cab_windows(UINT requested, Transfer transfer) noexcept {
+    UINT completed = 0U;
+    try {
+        while (completed < requested) {
+            if (g_cab_fdi_context != nullptr) {
+                if (cab_callback_failed(*g_cab_fdi_context)) {
+                    return static_cast<UINT>(-1);
+                }
+                checkpoint_cab_pass(*g_cab_fdi_context);
+            }
+            const auto count =
+                static_cast<UINT>(std::min<std::size_t>(requested - completed, detail::kStreamConsumerWindowBytes));
+            const auto transferred = transfer(completed, count);
+            if (transferred < 0) {
+                return static_cast<UINT>(-1);
+            }
+            completed += static_cast<UINT>(transferred);
+            if (static_cast<UINT>(transferred) != count) {
+                return completed;
+            }
+        }
+        return completed;
+    } catch (...) {
+        if (g_cab_fdi_context != nullptr) {
+            capture_cab_callback_exception(*g_cab_fdi_context);
+        }
+        return static_cast<UINT>(-1);
+    }
+}
+
 // Purpose: Read bytes for the Windows FDI engine.
 // Inputs: `hf` is a CRT file descriptor, `pv` receives bytes, and `cb` is the requested byte count.
-// Outputs: Returns bytes read, or `UINT_MAX` on CRT read failure.
+// Outputs: Returns bytes read, or UINT_MAX after native failure or a latched observer exception.
 FNREAD(cab_fdi_read) {
-    const auto read = _read(static_cast<int>(hf), pv, cb);
-    return read < 0 ? static_cast<UINT>(-1) : static_cast<UINT>(read);
+    return transfer_cab_windows(cb, [&](UINT offset, UINT count) {
+        return _read(static_cast<int>(hf), static_cast<char*>(pv) + offset, count);
+    });
 }
 
 // Purpose: Write decompressed bytes for the Windows FDI engine.
 // Inputs: `hf` is a CRT file descriptor, `pv` provides bytes, and `cb` is the byte count.
-// Outputs: Returns bytes written, or `UINT_MAX` on CRT write failure.
+// Outputs: Returns bytes written and counts only successful member bytes; latches observer exceptions and returns
+// UINT_MAX.
 FNWRITE(cab_fdi_write) {
-    const auto written = _write(static_cast<int>(hf), pv, cb);
-    return written < 0 ? static_cast<UINT>(-1) : static_cast<UINT>(written);
+    return transfer_cab_windows(cb, [&](UINT offset, UINT count) {
+        const auto written = _write(static_cast<int>(hf), static_cast<const char*>(pv) + offset, count);
+        if (written > 0 && g_cab_fdi_context != nullptr && g_cab_fdi_context->progress_enabled &&
+            g_cab_fdi_context->outputs.contains(hf)) {
+            g_cab_fdi_context->progress.add_bytes(static_cast<std::uint64_t>(written));
+        }
+        return written;
+    });
 }
 
 // Purpose: Close a CRT file descriptor opened for FDI.
@@ -229,18 +287,20 @@ INT_PTR open_cab_discard_sink() {
 }
 
 // Purpose: Start extracting one validated CAB file to a private temporary file.
-// Inputs: `context` owns validation/extraction state, `path` is normalized, and `size` is the FDI-reported uncompressed
-// size; `encoding` is the validated filename declaration. Outputs: Returns a tracked descriptor or -1;
+// Inputs: `context` owns validation/extraction state, `path` is normalized and
+// `encoding` is the validated filename declaration. Outputs: Returns a tracked descriptor or -1;
 // all resources remain owned during allocation failure.
-INT_PTR open_cab_extract_target(CabFdiContext& context, const std::string& path, std::uint64_t size,
-                                ArchivePathEncoding encoding) {
+INT_PTR open_cab_extract_target(CabFdiContext& context, const std::string& path, ArchivePathEncoding encoding) {
     try {
+        if (cab_callback_failed(context)) {
+            return -1;
+        }
         if (context.progress_enabled) {
             context.progress.set_current(path);
             publish_cab_progress(context);
         }
         const auto target = safe_join_archive_path(context.destination, path, encoding);
-        CabOutputTarget output{.temporary = reserve_file_publish_target(target), .final_path = target, .size = size};
+        CabOutputTarget output{.temporary = reserve_file_publish_target(target), .final_path = target};
         output.descriptor =
             detail::CabFileDescriptor(_wopen(output.temporary.file.wstring().c_str(),
                                              _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE));
@@ -281,10 +341,14 @@ bool close_and_publish_cab_output(CabFdiContext& context, INT_PTR hf) {
     }
 
     try {
+        if (cab_callback_failed(context)) {
+            cleanup_file_publish_target(output.temporary);
+            return false;
+        }
+        publish_cab_progress(context);
         commit_verified_file(output.temporary, output.final_path, context.overwrite);
         cleanup_file_publish_target(output.temporary);
         if (context.progress_enabled) {
-            context.progress.add_bytes(output.size);
             context.progress.finish_entry();
             publish_cab_progress(context);
         }
@@ -337,7 +401,7 @@ FNFDINOTIFY(cab_fdi_notify) {
                 }
                 return sink;
             }
-            return open_cab_extract_target(*context, path, size, encoding);
+            return open_cab_extract_target(*context, path, encoding);
         }
         case fdintCLOSE_FILE_INFO:
             return close_and_publish_cab_output(*context, pfdin->hf) ? TRUE : FALSE;
@@ -415,20 +479,21 @@ CabEntryMap build_cab_entry_map(const CabMetadata& metadata) {
 
 // Purpose: Run one CAB FDI pass with the provided scanner metadata.
 // Inputs: `archive_path` is the CAB, `destination` is used by extraction, `metadata` is prevalidated, `pass` selects
-// validation or extraction, and progress fields are optional. Outputs: Returns normally on success or throws on
-// decompression, path, I/O, or publication failures.
+// validation or extraction. Both progress arguments are synchronous borrows. Outputs: Returns normally on success or
+// throws on decompression, path, I/O, or publication failures.
 void run_cab_fdi_pass(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                       const CabMetadata& metadata, CabFdiPass pass, bool overwrite,
-                      ProgressCallback progress_callback) {
+                      const ProgressCallback& progress_callback, const ProgressCheckpoint& validation_checkpoint) {
     auto context = std::make_shared<CabFdiContext>();
     context->archive_path = archive_path;
     context->destination = destination;
     context->pass = pass;
     context->overwrite = overwrite;
     context->entries = build_cab_entry_map(metadata);
-    if (progress_callback) {
+    context->validation_checkpoint = validation_checkpoint;
+    if (pass == CabFdiPass::Extract && progress_callback) {
         context->progress_enabled = true;
-        context->progress_callback = std::move(progress_callback);
+        context->progress_callback = &progress_callback;
         context->progress.start(OperationKind::Extract, metadata.total_file_bytes, metadata.entries.size());
     }
 
@@ -456,12 +521,15 @@ OperationStats extract_cab(const std::filesystem::path& archive_path, const std:
 #else
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
-    const auto metadata = scan_cab_metadata(archive_source.path());
+    const auto validation_checkpoint = make_borrowed_archive_validation_checkpoint(std::cref(progress_callback));
+    const auto metadata = scan_cab_metadata(archive_source.path(), validation_checkpoint);
 
-    run_cab_fdi_pass(archive_source.path(), destination, metadata, CabFdiPass::Validate, overwrite, {});
+    run_cab_fdi_pass(archive_source.path(), destination, metadata, CabFdiPass::Validate, overwrite, progress_callback,
+                     validation_checkpoint);
     create_verified_directories(destination);
 
-    run_cab_fdi_pass(archive_source.path(), destination, metadata, CabFdiPass::Extract, overwrite, progress_callback);
+    run_cab_fdi_pass(archive_source.path(), destination, metadata, CabFdiPass::Extract, overwrite, progress_callback,
+                     {});
 
     OperationStats stats;
     stats.input_bytes = archive_source.size();

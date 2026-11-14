@@ -318,35 +318,38 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $false
-          $packageRoot = Join-Path $PWD 'out/install-Release'
-          $cli = Join-Path $packageRoot 'bin/flitzzip_cli.exe'
           . ./tools/package_runtime.ps1
-          Assert-FlitzZipPackagedRuntime -PackageRoot $packageRoot -HipEnabled $true
-          $dependency = & $cli dependency-check
-          $dependencyExit = $LASTEXITCODE
-          $dependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'portable-dependency-check.txt')
-          Assert-FlitzZipHipDependencyState -Output $dependency -ExitCode $dependencyExit
-          $global:LASTEXITCODE = 0
-          & tools/format_matrix_smoke.ps1 -Configuration Release -WorkRoot $env:RUNNER_TEMP -CliPath $cli
+          $portable = Join-Path $PWD "out/$env:PACKAGE_BASE-portable.zip"
+          Invoke-FlitzZipPortableSmoke -ArchivePath $portable -WorkRoot $env:RUNNER_TEMP -Confirm:$false -Test {
+              param($packageRoot, $smokeRoot)
+              $cli = Join-Path $packageRoot 'bin/flitzzip_cli.exe'
+              Assert-FlitzZipPackagedRuntime -PackageRoot $packageRoot -HipEnabled $true
+              $dependency = & $cli dependency-check
+              $dependencyExit = $LASTEXITCODE
+              $dependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'portable-dependency-check.txt')
+              Assert-FlitzZipHipDependencyState -Output $dependency -ExitCode $dependencyExit
+              $global:LASTEXITCODE = 0
+              & tools/format_matrix_smoke.ps1 -Configuration Release -WorkRoot $env:RUNNER_TEMP -CliPath $cli
 
-          # Exercise packaged native SHA-256 separately from the shared CPU compatibility matrix.
-          $root = Join-Path $env:RUNNER_TEMP 'flitzzip-portable-native-smoke'
-          $input = Join-Path $root 'input'
-          New-Item -ItemType Directory -Force -Path $input | Out-Null
-          $source = Join-Path $input 'alpha.txt'
-          Set-Content -LiteralPath $source -Value "FlitzZip release smoke $env:RELEASE_TAG"
-          $archive = Join-Path $root 'archive.flzip'
-          $mode = if ($dependencyExit -eq 0) { '--require-gpu' } else { '--force-cpu' }
-          & $cli compress --format flzip $mode --sha256 --output $archive $input
-          if ($LASTEXITCODE -ne 0) { throw 'Packaged native compression failed.' }
-          & $cli verify --sha256 $archive
-          if ($LASTEXITCODE -ne 0) { throw 'Packaged native verification failed.' }
-          $extracted = Join-Path $root 'extracted'
-          & $cli extract $mode --output $extracted $archive
-          if ($LASTEXITCODE -ne 0) { throw 'Packaged native extraction failed.' }
-          $restored = Join-Path $extracted 'input/alpha.txt'
-          if ((Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath $restored).Hash) {
-              throw 'Packaged native readback differs from the complete source.'
+              # Exercise packaged native SHA-256 separately from the shared CPU compatibility matrix.
+              $root = Join-Path $smokeRoot 'native'
+              $input = Join-Path $root 'input'
+              New-Item -ItemType Directory -Force -Path $input | Out-Null
+              $source = Join-Path $input 'alpha.txt'
+              Set-Content -LiteralPath $source -Value "FlitzZip release smoke $env:RELEASE_TAG"
+              $archive = Join-Path $root 'archive.flzip'
+              $mode = if ($dependencyExit -eq 0) { '--require-gpu' } else { '--force-cpu' }
+              & $cli compress --format flzip $mode --sha256 --output $archive $input
+              if ($LASTEXITCODE -ne 0) { throw 'Packaged native compression failed.' }
+              & $cli verify --sha256 $archive
+              if ($LASTEXITCODE -ne 0) { throw 'Packaged native verification failed.' }
+              $extracted = Join-Path $root 'extracted'
+              & $cli extract $mode --output $extracted $archive
+              if ($LASTEXITCODE -ne 0) { throw 'Packaged native extraction failed.' }
+              $restored = Join-Path $extracted 'input/alpha.txt'
+              if ((Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath $restored).Hash) {
+                  throw 'Packaged native readback differs from the complete source.'
+              }
           }
 
       - name: MSI install smoke
@@ -365,6 +368,9 @@ jobs:
           $repairLog = Join-Path $env:RUNNER_TEMP "flitzzip-msi-repair.log"
           $uninstallLog = Join-Path $env:RUNNER_TEMP "flitzzip-msi-uninstall.log"
           $expectedCli = Join-Path $env:ProgramFiles "FlitzZip\bin\flitzzip_cli.exe"
+          . ./tools/package_runtime.ps1
+          $portablePayload = Get-FlitzZipPortablePayload -Path (Join-Path $PWD "out/$env:PACKAGE_BASE-portable.zip")
+          $installedRoot = Split-Path -Parent (Split-Path -Parent $expectedCli)
           $installed = $false
           try {
               Invoke-CheckedMsiExec `
@@ -376,12 +382,12 @@ jobs:
               if (-not (Test-Path -LiteralPath $expectedCli)) {
                   throw "Installed CLI was not found at the release MSI Program Files path: $expectedCli"
               }
+              Assert-FlitzZipInstalledPayload -PackageRoot $installedRoot -Payload $portablePayload
               $dependency = & $expectedCli dependency-check
               $dependencyExit = $LASTEXITCODE
               $dependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "flitzzip-msi-dependency-check.txt")
               if ($env:ENABLE_HIP -eq "true") {
-                  . ./tools/package_runtime.ps1
-                  Assert-FlitzZipPackagedRuntime -PackageRoot (Split-Path -Parent (Split-Path -Parent $expectedCli)) -HipEnabled $true
+                  Assert-FlitzZipPackagedRuntime -PackageRoot $installedRoot -HipEnabled $true
                   Assert-FlitzZipHipDependencyState -Output $dependency -ExitCode $dependencyExit
               } elseif ($dependencyExit -ne 0) {
                   throw "Installed dependency check failed with exit code $dependencyExit."
@@ -391,8 +397,11 @@ jobs:
               if ((Get-FileHash -LiteralPath $expectedCli -Algorithm SHA256).Hash -ne $expectedCliHash) {
                   throw 'Installed CLI differs from the staged release binary.'
               }
-              # This freshly installed package owns the exact leaf; repair must restore its original bytes.
-              Remove-Item -LiteralPath $expectedCli -Force
+              # Only this freshly installed package's declared files are removed.
+              # Forced repair must restore every payload byte, not just its CLI.
+              foreach ($name in $portablePayload.get_Keys()) {
+                  Remove-Item -LiteralPath (Join-Path $installedRoot $name) -Force
+              }
               Invoke-CheckedMsiExec `
                 -Phase "MSI repair" `
                 -Arguments @("/fa", $msi, "/qn", "/norestart", "/L*v", $repairLog) `
@@ -401,6 +410,7 @@ jobs:
               if (-not (Test-Path -LiteralPath $expectedCli)) {
                   throw "Installed CLI was not found after MSI repair at the release MSI Program Files path: $expectedCli"
               }
+              Assert-FlitzZipInstalledPayload -PackageRoot $installedRoot -Payload $portablePayload
               if ((Get-FileHash -LiteralPath $expectedCli -Algorithm SHA256).Hash -ne $expectedCliHash) {
                   throw 'MSI repair did not restore the exact staged CLI bytes.'
               }
@@ -408,7 +418,7 @@ jobs:
               $repairDependencyExit = $LASTEXITCODE
               $repairDependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "flitzzip-msi-repair-dependency-check.txt")
               if ($env:ENABLE_HIP -eq "true") {
-                  Assert-FlitzZipPackagedRuntime -PackageRoot (Split-Path -Parent (Split-Path -Parent $expectedCli)) -HipEnabled $true
+                  Assert-FlitzZipPackagedRuntime -PackageRoot $installedRoot -HipEnabled $true
                   Assert-FlitzZipHipDependencyState -Output $repairDependency -ExitCode $repairDependencyExit
               } elseif ($repairDependencyExit -ne 0) {
                   throw "Repaired dependency check failed with exit code $repairDependencyExit."

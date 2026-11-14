@@ -2,6 +2,7 @@
 #include "core/path_text.hpp"
 
 #include "core/bounded_text_io.hpp"
+#include "core/archive_input_progress.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
@@ -31,6 +32,7 @@ constexpr std::string_view kXxeAlphabet = "+-0123456789ABCDEFGHIJKLMNOPQRSTUVWXY
 struct XxeHeader {
     std::string entry_name;
     std::size_t lines_consumed = 0;
+    std::uint64_t bytes_consumed = 0;
 };
 
 // Purpose: Encode one six-bit XXEncode value.
@@ -61,8 +63,8 @@ void write_xxe_line(std::ofstream& output, const std::string& line) {
 // Purpose: Read one bounded XXEncode text line without allowing unbounded allocation.
 // Inputs: `input` is the source stream and `line` receives bytes excluding CR/LF.
 // Outputs: Returns true for a line, false at clean EOF before any bytes; throws on overlong lines or I/O errors.
-bool read_xxe_line(std::ifstream& input, std::string& line) {
-    return read_bounded_text_line(input, line, kMaxXxeLineBytes, "XXEncoded");
+bool read_xxe_line(std::ifstream& input, std::string& line, std::size_t* physical_bytes = nullptr) {
+    return read_bounded_text_line(input, line, kMaxXxeLineBytes, "XXEncoded", physical_bytes);
 }
 
 // Purpose: Test whether a line contains only ignorable whitespace after an XXEncode end marker.
@@ -99,14 +101,18 @@ std::string parse_begin_line(const std::string& line) {
 // Outputs: Returns the parsed header and consumed line count; throws when no valid begin line is found.
 XxeHeader read_xxe_header(std::ifstream& input) {
     std::string line;
+    std::uint64_t bytes_consumed = 0;
     for (std::size_t line_index = 1; line_index <= kMaxXxePreambleLines; ++line_index) {
-        if (!read_xxe_line(input, line)) {
+        std::size_t line_bytes = 0;
+        if (!read_xxe_line(input, line, &line_bytes)) {
             throw ArchiveError("XXEncoded stream ended before begin line");
         }
+        bytes_consumed += line_bytes;
         if (line.starts_with("begin ")) {
             return XxeHeader{
                 .entry_name = parse_begin_line(line),
                 .lines_consumed = line_index,
+                .bytes_consumed = bytes_consumed,
             };
         }
     }
@@ -332,7 +338,9 @@ OperationStats extract_xxe_file(const std::filesystem::path& requested_archive,
         std::vector<unsigned char> decoded;
         bool saw_zero_line = false;
         std::size_t line_count = header.lines_consumed;
-        while (read_xxe_line(input, line)) {
+        ArchiveInputProgress input_progress(progress, std::cref(progress_callback), archive_size,
+                                            header.bytes_consumed);
+        while (input_progress.read_line(input, line, kMaxXxeLineBytes, "XXEncoded")) {
             ++line_count;
             if (!saw_zero_line) {
                 if (!decode_xxe_payload_line(line, decoded)) {
@@ -346,8 +354,6 @@ OperationStats extract_xxe_file(const std::filesystem::path& requested_archive,
                 }
                 output_size = checked_add_extracted_output_bytes(
                     output_size, static_cast<std::uint64_t>(decoded.size()), "XXE output");
-                progress.add_bytes(line.size() + 1U);
-                publish_progress(progress, progress_callback);
                 continue;
             }
             if (line == "end") {
@@ -358,7 +364,7 @@ OperationStats extract_xxe_file(const std::filesystem::path& requested_archive,
         if (!saw_zero_line || line != "end") {
             throw ArchiveError("XXEncoded stream ended before the end marker");
         }
-        while (read_xxe_line(input, line)) {
+        while (input_progress.read_line(input, line, kMaxXxeLineBytes, "XXEncoded")) {
             ++line_count;
             if (!is_blank_or_whitespace(line)) {
                 throw ArchiveError("XXEncoded stream contains trailing data after end marker");
@@ -371,6 +377,7 @@ OperationStats extract_xxe_file(const std::filesystem::path& requested_archive,
         if (!output) {
             throw ArchiveError("failed to finalize XXE extraction target: " + path_diagnostic_utf8(target));
         }
+        input_progress.finish();
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
