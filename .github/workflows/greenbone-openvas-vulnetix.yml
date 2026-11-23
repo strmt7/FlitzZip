@@ -40,7 +40,7 @@ jobs:
             const { execFileSync } = require('node:child_process');
             execFileSync(process.execPath, ['--test', '.github/openvas/resolve_config.test.cjs'], { stdio: 'inherit' });
       - name: Validate signed Vulnetix installation and upload interface
-        uses: Vulnetix/cli@397ab8905b860c351d75a8fea222de8413989fbc # v4.24.6
+        uses: Vulnetix/cli@18edc73599060b4050c321546dfa65c230ad7da5 # v4.24.36
         with:
           version: "4.24.6"
           verify-provenance: "true"
